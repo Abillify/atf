@@ -19,6 +19,7 @@ import { pgvectorVersionAtLeast } from "./pg-helpers.js";
 export interface EngineDetection {
   detectBm25Engine(
     exec?: Pick<PoolClient, "query">,
+    table?: string,
   ): Promise<Bm25EngineName | null>;
   checkPgvectorVersion(
     exec?: Pick<PoolClient, "query">,
@@ -47,7 +48,7 @@ export function createEngineDetection(deps: {
   let bm25Engine: Bm25EngineName | null | undefined;
   let bm25FallbackWarned = false;
 
-  async function detectBm25Engine(
+  async function detectBm25EngineByExtension(
     exec?: Pick<PoolClient, "query">,
   ): Promise<Bm25EngineName | null> {
     if (bm25Engine !== undefined) return bm25Engine;
@@ -72,10 +73,66 @@ export function createEngineDetection(deps: {
       logger.warn(
         "FTS_RANKER=bm25 requested but neither pg_search nor vchord_bm25 is installed; falling back to ts_rank_cd",
       );
-    } else if (bm25Engine !== null) {
-      logger.info({ engine: bm25Engine }, "BM25 lexical ranking enabled");
     }
     return bm25Engine;
+  }
+  // An installed extension is not enough: `content ||| q` / `bm25_score(id)`
+  // only work against a `USING bm25` index on the collection table, which
+  // this service never creates. Without it every lexical query would fail
+  // instead of falling back, so the engine counts as usable for a table only
+  // when such an index exists. A positive answer is cached for the process; a
+  // negative one for a minute, so creating the index takes effect without a
+  // restart.
+  const BM25_INDEX_RECHECK_MS = 60_000;
+  const bm25IndexByTable = new Map<string, { present: boolean; checkedAt: number }>();
+  const bm25IndexWarned = new Set<string>();
+  async function hasBm25Index(
+    table: string,
+    exec?: Pick<PoolClient, "query">,
+  ): Promise<boolean> {
+    const known = bm25IndexByTable.get(table);
+    if (
+      known !== undefined &&
+      (known.present || Date.now() - known.checkedAt < BM25_INDEX_RECHECK_MS)
+    ) {
+      return known.present;
+    }
+    let present = false;
+    try {
+      const res = await (exec ?? pool).query(
+        `SELECT 1 FROM pg_indexes
+          WHERE schemaname = current_schema() AND tablename = $1
+            AND indexdef ~* 'USING bm25'
+          LIMIT 1`,
+        [table],
+      );
+      present = (res.rows?.length ?? 0) > 0;
+    } catch (err) {
+      logger.warn({ err, table }, "BM25 index detection failed");
+    }
+    bm25IndexByTable.set(table, { present, checkedAt: Date.now() });
+    return present;
+  }
+  async function detectBm25Engine(
+    exec?: Pick<PoolClient, "query">,
+    table?: string,
+  ): Promise<Bm25EngineName | null> {
+    const engine = await detectBm25EngineByExtension(exec);
+    if (engine === null || table === undefined) {
+      if (engine !== null) {
+        logger.info({ engine }, "BM25 lexical ranking enabled");
+      }
+      return engine;
+    }
+    if (await hasBm25Index(table, exec)) return engine;
+    if (!bm25IndexWarned.has(table)) {
+      bm25IndexWarned.add(table);
+      logger.warn(
+        { engine, table },
+        "FTS_RANKER=bm25 requested and the extension is installed, but the collection table has no `USING bm25` index; falling back to ts_rank_cd for it",
+      );
+    }
+    return null;
   }
 
   // ── pgvector version gate (Req 4.2) ───────────────────────────────────────

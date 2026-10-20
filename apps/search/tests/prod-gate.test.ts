@@ -40,6 +40,8 @@ function cfg(over: Partial<Config> = {}): Config {
     documentAclDefault: "deny",
     exposeErrorDetail: false,
     rateLimit: 120,
+    rateLimitRedisUrl: null,
+    replicas: 1,
     trustProxy: true,
     nodeEnv: "production",
     authzEnforcement: "required",
@@ -304,6 +306,31 @@ describe("throttling findings", () => {
       warns(cfg({ trustProxy: false })).some((m) => m.includes("TRUST_PROXY")),
     ).toBe(true);
   });
+
+  it("flags REPLICAS > 1 without a shared Redis store (per-replica budget)", () => {
+    expect(
+      fatals(cfg({ replicas: 3, rateLimitRedisUrl: null })).some(
+        (m) =>
+          m.includes("REPLICAS is 3") && m.includes("RATE_LIMIT_REDIS_URL"),
+      ),
+    ).toBe(true);
+  });
+
+  it("stays quiet on REPLICAS > 1 once RATE_LIMIT_REDIS_URL is set", () => {
+    expect(
+      fatals(
+        cfg({ replicas: 3, rateLimitRedisUrl: "redis://redis:6379" }),
+      ).some((m) => m.includes("REPLICAS")),
+    ).toBe(false);
+  });
+
+  it("stays quiet on the single-replica default", () => {
+    expect(
+      fatals(cfg({ replicas: 1, rateLimitRedisUrl: null })).some((m) =>
+        m.includes("REPLICAS"),
+      ),
+    ).toBe(false);
+  });
 });
 
 
@@ -316,6 +343,43 @@ describe("transaction and static-service production contract", () => {
     ).toBe(true);
   });
 
+  describe("transaction token algorithms (ADR-0035)", () => {
+    it("HS256 only: needs the shared secret, and says it is a shared secret (warning, not fatal)", () => {
+      const hs = cfg({ transactionAlgorithms: ["HS256"], transactionJwksUri: null });
+      expect(fatals(hs)).toEqual([]);
+      expect(warns(hs).some((message) => message.includes("accepts HS256"))).toBe(true);
+      expect(
+        fatals(cfg({ transactionAlgorithms: ["HS256"], transactionSecret: "short" })).some((m) =>
+          m.includes("TRANSACTION_HS256_SECRET"),
+        ),
+      ).toBe(true);
+    });
+    it("EdDSA through an https JWKS needs no shared secret and raises no warning", () => {
+      const asym = cfg({
+        transactionAlgorithms: ["EdDSA"],
+        transactionSecret: null,
+        transactionJwksUri: "https://runtime.internal/.well-known/atf-transaction-jwks.json",
+      });
+      expect(fatals(asym)).toEqual([]);
+      expect(warns(asym).some((message) => message.includes("TRANSACTION_ALGORITHMS"))).toBe(false);
+    });
+    it("a rolling migration (HS256 + EdDSA) is allowed but keeps warning until HS256 is dropped", () => {
+      const both = cfg({
+        transactionAlgorithms: ["HS256", "EdDSA"],
+        transactionJwksUri: "https://runtime.internal/jwks",
+      });
+      expect(fatals(both)).toEqual([]);
+      expect(warns(both).some((message) => message.includes("accepts HS256"))).toBe(true);
+    });
+    it("refuses an asymmetric algorithm without an https JWKS URL in production", () => {
+      const missing = fatals(cfg({ transactionAlgorithms: ["EdDSA"], transactionSecret: null, transactionJwksUri: null }));
+      expect(missing.some((m) => m.includes("TRANSACTION_JWKS_URI"))).toBe(true);
+      const plain = fatals(
+        cfg({ transactionAlgorithms: ["ES256"], transactionSecret: null, transactionJwksUri: "http://runtime.internal/jwks" }),
+      );
+      expect(plain.some((m) => m.includes("https"))).toBe(true);
+    });
+  });
   it("requires the documented tenant and complete static-service scopes", () => {
     const report = fatals(
       cfg({

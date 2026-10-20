@@ -28,6 +28,7 @@ import {
   buildBinaryDenseQuery,
   buildFtsQuery,
   buildHybridQuery,
+  buildLexicalOrTsQuery,
   candidatePoolSize,
   CursorNotSupportedError,
   AccessScopeRequiredError,
@@ -649,12 +650,86 @@ describe("buildFtsQuery", () => {
     const f = flat(build(rankedCursor).sql);
     // $2 is the tenant bind of the mandatory scope; the cursor score is $3.
     expect(f).toContain(
-      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) < $3::float8",
+      "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) < $3::float8",
     );
   });
 
   it("returns only rows that actually match the query", () => {
-    expect(build().sql).toContain("ts_search @@ websearch_to_tsquery");
+    expect(build().sql).toContain("ts_search @@ to_tsquery");
+  });
+
+  /**
+   * The lexical branch previously went through `websearch_to_tsquery`, which
+   * ANDs bare terms. A natural-language question ("Wie hoch ist die Miete im
+   * Mietvertrag") then matched no chunk at all, the lexical list came back
+   * empty, and the hybrid search silently degraded to pure vector search. The
+   * query is now tokenised here and every term becomes an OR-ed operand, so a
+   * chunk matching ANY term joins the lexical list — the OR semantics the `|||`
+   * BM25 operator already had.
+   */
+  describe("lexical OR tsquery (buildLexicalOrTsQuery)", () => {
+    it("ORs every term of a natural-language question", () => {
+      expect(
+        buildLexicalOrTsQuery("Wie hoch ist die Miete im Mietvertrag"),
+      ).toBe("'Wie' | 'hoch' | 'ist' | 'die' | 'Miete' | 'im' | 'Mietvertrag'");
+    });
+
+    it("binds the OR tsquery, not the raw question, for the tsvector branch", () => {
+      const { sql, params } = buildFtsQuery(
+        TABLE,
+        "german",
+        10,
+        undefined,
+        false,
+        0,
+        "Wie hoch ist die Miete im Mietvertrag",
+        serviceScope,
+      );
+      expect(flat(sql)).toContain("ts_search @@ to_tsquery('german', $1)");
+      expect(params[0]).toBe(
+        "'Wie' | 'hoch' | 'ist' | 'die' | 'Miete' | 'im' | 'Mietvertrag'",
+      );
+    });
+
+    it("binds the raw query text for the bm25 ||| operator", () => {
+      const { params } = buildLexical({
+        ranker: "bm25",
+        bm25Engine: "pg_search",
+      });
+      expect(params[0]).toBe("mietvertrag");
+    });
+
+    it("deduplicates repeated terms", () => {
+      expect(buildLexicalOrTsQuery("Miete miete Miete")).toBe(
+        "'Miete' | 'miete'",
+      );
+      expect(buildLexicalOrTsQuery("mietvertrag mietvertrag")).toBe(
+        "'mietvertrag'",
+      );
+    });
+
+    it("quotes each term so tsquery syntax inside it cannot become an operator", () => {
+      expect(buildLexicalOrTsQuery("A & B | C ! D (E) F:G")).toBe(
+        "'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'",
+      );
+      // The tokenizer keeps only letters/digits, so `'` and `\` never reach a
+      // token; the escaping below is defence in depth (mirrors identifier.ts).
+      expect(buildLexicalOrTsQuery("it's a \\ test")).toBe(
+        "'it' | 's' | 'a' | 'test'",
+      );
+    });
+
+    it("keeps digits and unicode letters as terms", () => {
+      expect(buildLexicalOrTsQuery("ISO9001 §5 Straße 2015")).toBe(
+        "'ISO9001' | '5' | 'Straße' | '2015'",
+      );
+    });
+
+    it("yields an empty tsquery for a query without word tokens", () => {
+      expect(buildLexicalOrTsQuery("")).toBe("");
+      expect(buildLexicalOrTsQuery("   ")).toBe("");
+      expect(buildLexicalOrTsQuery("?!&")).toBe("");
+    });
   });
 
   // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranker is
@@ -663,15 +738,15 @@ describe("buildFtsQuery", () => {
     it("defaults to ts_rank_cd with length normalisation (32)", () => {
       const f = flat(build().sql);
       expect(f).toContain(
-        "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) AS text_score",
+        "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) AS text_score",
       );
-      expect(f).toContain("ts_search @@ websearch_to_tsquery('german', $1)");
+      expect(f).toContain("ts_search @@ to_tsquery('german', $1)");
     });
 
     it("keeps the legacy ts_rank expression for ranker ts_rank", () => {
       const f = flat(buildLexical({ ranker: "ts_rank", bm25Engine: null }).sql);
       expect(f).toContain(
-        "ts_rank(ts_search, websearch_to_tsquery('german', $1)) AS text_score",
+        "ts_rank(ts_search, to_tsquery('german', $1)) AS text_score",
       );
       expect(f).not.toContain("ts_rank_cd");
     });
@@ -697,7 +772,7 @@ describe("buildFtsQuery", () => {
     it("falls back to ts_rank_cd when bm25 is requested but no extension was detected", () => {
       const f = flat(buildLexical({ ranker: "bm25", bm25Engine: null }).sql);
       expect(f).toContain(
-        "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) AS text_score",
+        "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) AS text_score",
       );
       expect(f).not.toContain("paradedb");
       expect(f).not.toContain("|||");
@@ -851,9 +926,9 @@ describe("buildHybridQuery", () => {
   it("ranks the txt CTE with ts_rank_cd and length normalisation by default", () => {
     const f = flat(build(10, 0).sql);
     expect(f).toContain(
-      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $2), 32) AS tscore",
+      "ts_rank_cd(ts_search, to_tsquery('german', $2), 32) AS tscore",
     );
-    expect(f).toContain("ts_search @@ websearch_to_tsquery('german', $2)");
+    expect(f).toContain("ts_search @@ to_tsquery('german', $2)");
   });
 
   it("ranks the txt CTE with paradedb.score for bm25 via pg_search", () => {
@@ -872,7 +947,7 @@ describe("buildHybridQuery", () => {
       build(10, 0, undefined, false, { ranker: "bm25", bm25Engine: null }).sql,
     );
     expect(f).toContain(
-      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $2), 32) AS tscore",
+      "ts_rank_cd(ts_search, to_tsquery('german', $2), 32) AS tscore",
     );
     expect(f).not.toContain("paradedb");
   });

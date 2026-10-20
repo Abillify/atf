@@ -663,28 +663,64 @@ export interface LexicalRanker {
 const TS_RANK_CD_LENGTH_NORMALIZATION = 32;
 
 /**
- * The match predicate and score expression for the lexical list.
+ * Turn a free-text query into OR-ed `to_tsquery` operand text.
  *
- * Default (`ts_rank_cd`): the GIN-indexed `ts_search @@ websearch_to_tsquery`
- * predicate with `ts_rank_cd(..., 32)`. `ts_rank` keeps the legacy un-
- * normalised expression verbatim. `bm25` (extension detected): ParadeDB
- * pg_search scores via `paradedb.score(id)` over its `bm25` index, VectorChord-
- * bm25 via `bm25_score(id)`; both match with the `|||` operator on `content`.
+ * `websearch_to_tsquery` ANDs bare terms, so a natural-language question
+ * ("Wie hoch ist die Miete im Mietvertrag?") almost never matches a single
+ * chunk and the lexical list comes back empty — the hybrid search silently
+ * degrades to pure vector search. Instead we tokenise the query here and emit
+ * every token as a single-quoted tsquery operand joined by `|`, so a chunk
+ * matching ANY query term participates in the lexical list (the same OR
+ * semantics the `|||` BM25 operator already has). Quoting follows the tsquery
+ * rules (mirrors `buildIdentifierTsQuery`): operators inside a token (`:`,
+ * `&`, `!`, parentheses) can never become tsquery syntax, and each operand is
+ * still run through the configured text-search config, so stemming and
+ * stopword removal happen in PostgreSQL exactly as at ingest. A query with no
+ * word tokens yields `""` — an empty tsquery that matches nothing, the same
+ * net effect the old `websearch_to_tsquery('')` had.
+ */
+export function buildLexicalOrTsQuery(queryText: string): string {
+  const tokens = [...new Set(queryText.match(/[\p{L}\p{N}]+/gu) ?? [])];
+  if (tokens.length === 0) return "";
+  return tokens
+    .map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`)
+    .join(" | ");
+}
+
+/**
+ * The match predicate and score expression for the lexical list. The query
+ * parameter is added to `p` here so its value and its SQL form stay together:
+ * the raw text for the BM25 `|||` operator, the OR-tsquery text for the
+ * tsvector branches.
+ *
+ * Default (`ts_rank_cd`): the GIN-indexed `ts_search @@ to_tsquery` predicate
+ * with `ts_rank_cd(..., 32)`, matching ANY query term (see
+ * `buildLexicalOrTsQuery`). `ts_rank` keeps the legacy un-normalised score
+ * expression. `bm25` (extension detected): ParadeDB pg_search scores via
+ * `paradedb.score(id)` over its `bm25` index, VectorChord-bm25 via
+ * `bm25_score(id)`; both match with the `|||` operator on `content` (already
+ * OR semantics over the raw query text).
  */
 export function buildLexicalQuerySql(
   lexical: LexicalRanker | undefined,
   language: string,
-  queryPh: string,
+  p: SqlParams,
+  queryText: string,
 ): { match: string; score: string } {
   const name = lexical?.ranker ?? "ts_rank_cd";
   if (name === "bm25" && lexical?.bm25Engine) {
     const scoreFn =
       lexical.bm25Engine === "pg_search" ? "paradedb.score" : "bm25_score";
+    const queryPh = p.add(queryText);
     return { match: `content ||| ${queryPh}`, score: `${scoreFn}(id)` };
   }
-  const tsq = `websearch_to_tsquery('${language}', ${queryPh})`;
+  const queryPh = p.add(buildLexicalOrTsQuery(queryText));
+  const tsq = `to_tsquery('${language}', ${queryPh})`;
   if (name === "ts_rank") {
-    return { match: `ts_search @@ ${tsq}`, score: `ts_rank(ts_search, ${tsq})` };
+    return {
+      match: `ts_search @@ ${tsq}`,
+      score: `ts_rank(ts_search, ${tsq})`,
+    };
   }
   return {
     match: `ts_search @@ ${tsq}`,
@@ -777,7 +813,15 @@ export function buildFtsQuery(
   }
 
   const p = new SqlParams();
-  const queryPh = p.add(queryText);
+  // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd with length
+  // normalisation; bm25 only when a BM25 extension was detected. The query
+  // parameter is added here (first parameter of the query) by the builder.
+  const { match, score } = buildLexicalQuerySql(
+    lexical,
+    language,
+    p,
+    queryText,
+  );
   const temporalFilter = buildTemporalFilterSql(
     p,
     table,
@@ -790,9 +834,6 @@ export function buildFtsQuery(
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
   const accessSql = buildAccessSql(p, scope);
-  // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd with length
-  // normalisation; bm25 only when a BM25 extension was detected.
-  const { match, score } = buildLexicalQuerySql(lexical, language, queryPh);
   const cursorSql = buildScoreCursorSql(p, cursor, score);
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
@@ -954,7 +995,12 @@ export function buildHybridQuery(
 
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
-  const queryPh = p.add(queryText);
+  // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranks with
+  // ts_rank_cd + length normalisation by default; bm25 only when a BM25
+  // extension was detected (the caller passes the engine in, or null to
+  // keep the default). The lexical query parameter is added here, right after
+  // the dense vector, so it stays the second parameter of the query.
+  const lexicalSql = buildLexicalQuerySql(lexical, language, p, queryText);
   // Pool must cover limit + offset, or a deep page silently comes back empty.
   const candidateLimit = candidatePoolSize(
     limit,
@@ -1045,12 +1091,6 @@ export function buildHybridQuery(
   // term is COALESCEd to 0. Setting the flag to false restores the legacy
   // `COALESCE(rank, 1000)` behaviour verbatim (upgrade-hint in CHANGELOG).
   const missingZero = rrfOptions?.missingZero ?? true;
-
-  // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranks with
-  // ts_rank_cd + length normalisation by default; bm25 only when a BM25
-  // extension was detected (the caller passes the engine in, or null to
-  // keep the default).
-  const lexicalSql = buildLexicalQuerySql(lexical, language, queryPh);
 
   // Identifier list (Req 12.3): only when the query resolved to at least one
   // unit id. Empty/omitted → no ident CTE, no join, no term, so the emitted SQL

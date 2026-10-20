@@ -243,6 +243,34 @@ describe("commitCompleteness (Req 5.9)", () => {
   it("accepts an empty document declared with pageCount 0", () => {
     expect(commitCompleteness({ accepted: [], pageCount: 0, hasDocumentEnd: true })).toEqual({ ok: true });
   });
+  describe("a pages window (contract 2.4, firstPage > 1)", () => {
+    it("checks coverage over [firstPage, pageCount], not over [1, pageCount]", () => {
+      expect(
+        commitCompleteness({ accepted: [{ from: 5, to: 9 }], pageCount: 9, hasDocumentEnd: true, firstPage: 5 }),
+      ).toEqual({ ok: true });
+    });
+    it("still reports a gap inside the window and a missing first or last page of it", () => {
+      const inner = commitCompleteness({
+        accepted: [{ from: 5, to: 6 }, { from: 8, to: 9 }],
+        pageCount: 9,
+        hasDocumentEnd: true,
+        firstPage: 5,
+      });
+      expect(inner.ok === false && inner.missingRanges).toEqual([{ from: 7, to: 7 }]);
+      const first = commitCompleteness({ accepted: [{ from: 6, to: 9 }], pageCount: 9, hasDocumentEnd: true, firstPage: 5 });
+      expect(first.ok === false && first.missingRanges).toEqual([{ from: 5, to: 5 }]);
+      const last = commitCompleteness({ accepted: [{ from: 5, to: 8 }], pageCount: 9, hasDocumentEnd: true, firstPage: 5 });
+      expect(last.ok === false && last.missingRanges).toEqual([{ from: 9, to: 9 }]);
+    });
+    it("without a firstPage the pages before the window are missing (a 2.3 stream is unchanged)", () => {
+      const res = commitCompleteness({ accepted: [{ from: 5, to: 9 }], pageCount: 9, hasDocumentEnd: true });
+      expect(res.ok === false && res.missingRanges).toEqual([{ from: 1, to: 4 }]);
+    });
+    it("uses firstPage for the gaps of an open stream too", () => {
+      const res = commitCompleteness({ accepted: [{ from: 6, to: 7 }], pageCount: null, hasDocumentEnd: false, firstPage: 5 });
+      expect(res.ok === false && res.missingRanges).toEqual([{ from: 5, to: 5 }]);
+    });
+  });
 });
 
 describe("isUnitVisible (Req 6.4, 5.11)", () => {

@@ -137,7 +137,11 @@ describe("diversifyResults — per-section cap", () => {
   it("uses DEFAULT_SECTION_CAP when no cap is given", () => {
     const sec = ["S"];
     const results = Array.from({ length: DEFAULT_SECTION_CAP + 2 }, (_, i) =>
-      result({ id: String(i), score: 1 - i * 0.1, metadata: { section_path: sec } }),
+      result({
+        id: String(i),
+        score: 1 - i * 0.1,
+        metadata: { section_path: sec },
+      }),
     );
     expect(diversifyResults(results)).toHaveLength(DEFAULT_SECTION_CAP);
   });
@@ -162,6 +166,75 @@ describe("diversifyResults — per-section cap", () => {
     ];
     const out = diversifyResults(results, { perSectionCap: 2 });
     expect(out.map((r) => r.id)).toEqual(["a1", "a2", "b1", "b2"]);
+  });
+
+  /**
+   * The cap bucket is document-scoped: "Einleitung" in ten different manuals
+   * is ten different sections. Previously the bucket key was the bare section
+   * path, so the cap applied ACROSS documents and nine of ten manuals lost
+   * their intro hits entirely.
+   */
+  it("caps the same section path per document, not across documents", () => {
+    const results = [
+      result({
+        id: "d1",
+        score: 0.9,
+        base_ref: "manual-1",
+        reference: "manual-1#0",
+        metadata: { section_path: ["Einleitung"] },
+      }),
+      result({
+        id: "d2",
+        score: 0.8,
+        base_ref: "manual-2",
+        reference: "manual-2#0",
+        metadata: { section_path: ["Einleitung"] },
+      }),
+      result({
+        id: "d3",
+        score: 0.7,
+        base_ref: "manual-3",
+        reference: "manual-3#0",
+        metadata: { section_path: ["Einleitung"] },
+      }),
+      result({
+        id: "d1b",
+        score: 0.6,
+        base_ref: "manual-1",
+        reference: "manual-1#1",
+        metadata: { section_path: ["Einleitung"] },
+      }),
+      result({
+        id: "d2b",
+        score: 0.5,
+        base_ref: "manual-2",
+        reference: "manual-2#1",
+        metadata: { section_path: ["Einleitung"] },
+      }),
+    ];
+    const out = diversifyResults(results, { perSectionCap: 1 });
+    // One hit per document survives; the extra manual-1/manual-2 hits drop.
+    expect(out.map((r) => r.id)).toEqual(["d1", "d2", "d3"]);
+  });
+
+  it("falls back to reference when base_ref is missing for the cap bucket", () => {
+    const results = [
+      result({
+        id: "a",
+        score: 0.9,
+        base_ref: "",
+        reference: "doc-a#0",
+        metadata: { section_path: ["S"] },
+      }),
+      result({
+        id: "b",
+        score: 0.8,
+        base_ref: "",
+        reference: "doc-b#0",
+        metadata: { section_path: ["S"] },
+      }),
+    ];
+    expect(diversifyResults(results, { perSectionCap: 1 })).toHaveLength(2);
   });
 
   it("preserves score order of survivors", () => {
@@ -198,6 +271,101 @@ describe("diversifyResults — collapse same table/figure", () => {
     const out = diversifyResults(results);
     expect(out).toHaveLength(1);
     expect(out[0]?.id).toBe("f-b");
+  });
+
+  /**
+   * `table_id` / `figure_id` are assigned per document by Extract, so two data
+   * sheets that both carry "T1" / "F1" are different objects. The collapse key
+   * used to be the bare id, so the lower-scoring document silently lost its hit.
+   */
+  it("does not collapse the same table_id across different documents", () => {
+    const results = [
+      result({
+        id: "a-t1",
+        score: 0.9,
+        base_ref: "sheet-a",
+        reference: "sheet-a#0",
+        metadata: { table_id: "T1" },
+      }),
+      result({
+        id: "b-t1",
+        score: 0.6,
+        base_ref: "sheet-b",
+        reference: "sheet-b#0",
+        metadata: { table_id: "T1" },
+      }),
+    ];
+    const out = diversifyResults(results, { perSectionCap: 0 });
+    expect(out.map((r) => r.id)).toEqual(["a-t1", "b-t1"]);
+  });
+
+  it("does not collapse the same figure_id across different documents", () => {
+    const results = [
+      result({
+        id: "a-f1",
+        score: 0.9,
+        base_ref: "sheet-a",
+        reference: "sheet-a#0",
+        metadata: { figure_id: "F1" },
+      }),
+      result({
+        id: "b-f1",
+        score: 0.6,
+        base_ref: "sheet-b",
+        reference: "sheet-b#0",
+        metadata: { figure_id: "F1" },
+      }),
+    ];
+    const out = diversifyResults(results, { perSectionCap: 0 });
+    expect(out.map((r) => r.id)).toEqual(["a-f1", "b-f1"]);
+  });
+
+  it("still collapses the same table_id within one document when other documents share the id", () => {
+    const results = [
+      result({
+        id: "a-low",
+        score: 0.5,
+        base_ref: "sheet-a",
+        reference: "sheet-a#1",
+        metadata: { table_id: "T1" },
+      }),
+      result({
+        id: "b-only",
+        score: 0.7,
+        base_ref: "sheet-b",
+        reference: "sheet-b#0",
+        metadata: { table_id: "T1" },
+      }),
+      result({
+        id: "a-high",
+        score: 0.9,
+        base_ref: "sheet-a",
+        reference: "sheet-a#0",
+        metadata: { table_id: "T1" },
+      }),
+    ];
+    const out = diversifyResults(results, { perSectionCap: 0 });
+    expect(out.map((r) => r.id).sort()).toEqual(["a-high", "b-only"]);
+  });
+
+  it("falls back to reference when base_ref is missing for the collapse key", () => {
+    const results = [
+      result({
+        id: "x",
+        score: 0.9,
+        base_ref: "",
+        reference: "doc-x#0",
+        metadata: { table_id: "T1" },
+      }),
+      result({
+        id: "y",
+        score: 0.8,
+        base_ref: "",
+        reference: "doc-y#0",
+        metadata: { table_id: "T1" },
+      }),
+    ];
+    expect(diversifyResults(results, { perSectionCap: 0 })).toHaveLength(2);
   });
 
   it("keeps distinct tables/figures separate and never mutates inputs", () => {

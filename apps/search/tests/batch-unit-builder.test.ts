@@ -432,6 +432,16 @@ describe("buildUnitsFromRecords — summary units from document.end", () => {
     expect(doc?.pageEnd).toBe(3);
   });
 
+  it("spans the document unit over the window a pages-selection job streamed", async () => {
+    const windowed: DocumentEndRecord = { ...documentEnd, pageCount: 9, firstPage: 7 };
+    const units = await buildUnitsFromRecords(input([], { documentEnd: windowed }));
+    const [doc] = byType(units, "document");
+    expect(doc?.pageStart).toBe(7);
+    expect(doc?.pageEnd).toBe(9);
+    // Without firstPage the document unit starts at page 1, as before.
+    const whole = await buildUnitsFromRecords(input([], { documentEnd }));
+    expect(byType(whole, "document")[0]?.pageStart).toBe(1);
+  });
   it("links sections and pages to the document as parent", async () => {
     const units = await buildUnitsFromRecords(input([], { documentEnd }));
     const [doc] = byType(units, "document");

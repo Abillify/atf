@@ -48,10 +48,18 @@
  * so it shares all existing retry, circuit-breaker, and cache logic.
  */
 
+import type { TokenCounter } from "../token-counter.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Request, RequestHandler, Response } from "express";
 import type { Logger } from "pino";
+import {
+  jsonRpcErrorBody,
+  MCP_2026_PROTOCOL_VERSION,
+  paginate,
+  statelessEnvelope,
+  validateStatelessRequest,
+} from "@atf/mcp-2026";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -158,6 +166,8 @@ export interface McpHandlerOptions {
   sparseClient: SparseEmbeddingClient | null;
   queryCache: QueryEmbeddingCache | null;
   rerankerClient?: RerankerClient | null;
+  /** Tokenizer for token-fitted rerank inputs (shared with `/v2/search`). */
+  tokenCounter?: TokenCounter | null;
   /**
    * HyDE client forwarded from server config. When set and a search tool call
    * passes `hyde: true`, the query is expanded into a hypothetical document
@@ -685,7 +695,7 @@ export function createMcpHandlers(opts: McpHandlerOptions): {
 
 // ─── Stateless MCP 2026-07-28 adapter ───────────────────────────────────────
 
-export const MCP_2026_PROTOCOL_VERSION = "2026-07-28";
+export { MCP_2026_PROTOCOL_VERSION };
 
 interface Mcp2026Body {
   jsonrpc?: unknown;
@@ -711,25 +721,35 @@ function mcp2026Header(req: Request, name: string): string | undefined {
 }
 
 function mcp2026Error(res: Response, status: number, id: unknown, code: number, message: string): void {
-  res.status(status).json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+  res.status(status).json(jsonRpcErrorBody(id, code, message));
 }
 
+/** Offset pagination with the transaction-error vocabulary of this service. */
 function mcp2026Page<T>(items: T[], params: Record<string, unknown>): { items: T[]; nextCursor?: string } {
-  const size = params["pageSize"] ?? 100;
-  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > 1000) {
-    throw new TransactionError(400, { code: "INVALID_PAGE_SIZE", category: "validation", retryable: false, outcome: "denied" }, "pageSize must be an integer between 1 and 1000");
-  }
-  const rawCursor = params["cursor"];
-  if (rawCursor !== undefined && (typeof rawCursor !== "string" || !/^\d+$/.test(rawCursor))) {
-    throw new TransactionError(400, { code: "INVALID_CURSOR", category: "validation", retryable: false, outcome: "denied" }, "Invalid pagination cursor");
-  }
-  const offset = rawCursor === undefined ? 0 : Number(rawCursor);
-  if (!Number.isSafeInteger(offset)) {
-    throw new TransactionError(400, { code: "INVALID_CURSOR", category: "validation", retryable: false, outcome: "denied" }, "Invalid pagination cursor");
-  }
-  const page = items.slice(offset, offset + size);
-  const next = offset + page.length;
-  return { items: page, ...(next < items.length ? { nextCursor: String(next) } : {}) };
+  return paginate(items, params, {
+    invalidPageSize: () =>
+      new TransactionError(
+        400,
+        {
+          code: "INVALID_PAGE_SIZE",
+          category: "validation",
+          retryable: false,
+          outcome: "denied",
+        },
+        "pageSize must be an integer between 1 and 1000",
+      ),
+    invalidCursor: () =>
+      new TransactionError(
+        400,
+        {
+          code: "INVALID_CURSOR",
+          category: "validation",
+          retryable: false,
+          outcome: "denied",
+        },
+        "Invalid pagination cursor",
+      ),
+  });
 }
 
 /**
@@ -752,32 +772,23 @@ export function createMcp2026Handlers(
     endpoint: path,
     transport: "stateless-http",
   };
-  const envelope = (fields: Record<string, unknown>) => ({
-    resultType: "complete",
-    ...fields,
-    ttlMs: 0,
-    cacheScope: "request",
-    _meta: { serverInfo },
-  });
+  const envelope = (fields: Record<string, unknown>) =>
+    statelessEnvelope(serverInfo, fields);
 
   const post: RequestHandler = async (req, res) => {
     const body = (req.body ?? {}) as Mcp2026Body;
     try {
-      const protocol = mcp2026Header(req, "MCP-Protocol-Version");
-      if (body._meta?.["io.modelcontextprotocol/protocolVersion"] !== protocol) {
-        mcp2026Error(res, 400, body.id, -32020, "HeaderMismatch"); return;
+      const validation = validateStatelessRequest(
+        (name) => mcp2026Header(req, name),
+        body,
+        { requireJsonrpc20: true, namedMethods: ["tools/call"] },
+      );
+      if (!validation.ok) {
+        mcp2026Error(res, 400, body.id, validation.code, validation.message);
+        return;
       }
-      if (protocol !== MCP_2026_PROTOCOL_VERSION) {
-        mcp2026Error(res, 400, body.id, -32022, "UnsupportedProtocolVersion"); return;
-      }
-      const method = typeof body.method === "string" ? body.method : undefined;
-      if (body.jsonrpc !== "2.0" || !method || mcp2026Header(req, "Mcp-Method") !== method) {
-        mcp2026Error(res, 400, body.id, -32020, "HeaderMismatch"); return;
-      }
-      const params = body.params ?? {};
-      if (method === "tools/call" && (typeof params["name"] !== "string" || mcp2026Header(req, "Mcp-Name") !== params["name"])) {
-        mcp2026Error(res, 400, body.id, -32020, "HeaderMismatch"); return;
-      }
+      const { method } = validation;
+      const params = validation.params;
 
       const principal = getPrincipal(req);
       let result: Record<string, unknown>;

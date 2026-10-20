@@ -311,11 +311,42 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
           access.params,
         );
         const row = rows[0]!;
+        // What the data supports. A table created before the v2 columns existed
+        // has none of them: that is the answer "no unit graph", not an error.
+        let capabilities = {
+          unitRows: 0,
+          unitGraph: false,
+          outline: false,
+          pages: false,
+        };
+        try {
+          const caps = await client.query<{
+            units: string;
+            sections: string;
+            paged: string;
+          }>(
+            `SELECT COUNT(unit_id) AS units, COUNT(section_id) AS sections,
+                    COUNT(page_start) AS paged
+               FROM "${table}" WHERE ${where}${access.sql}`,
+            access.params,
+          );
+          const c = caps.rows[0];
+          const unitRows = parseInt(c?.units ?? "0", 10);
+          capabilities = {
+            unitRows,
+            unitGraph: unitRows > 0,
+            outline: parseInt(c?.sections ?? "0", 10) > 0,
+            pages: parseInt(c?.paged ?? "0", 10) > 0,
+          };
+        } catch (err) {
+          if ((err as { code?: string }).code !== "42703") throw err;
+        }
         return {
           collection,
           totalDocs: parseInt(row.docs, 10),
           totalChunks: parseInt(row.chunks, 10),
           pathPrefix: norm === "" ? null : norm,
+          capabilities,
         };
       });
     },

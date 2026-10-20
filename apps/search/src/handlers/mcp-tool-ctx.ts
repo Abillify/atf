@@ -13,6 +13,7 @@
  * the same defaults as `buildMcpServer`.
  */
 
+import type { TokenCounter } from "../token-counter.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Logger } from "pino";
 import type { AccessScope } from "../access-scope.js";
@@ -36,6 +37,11 @@ export interface McpToolContext {
   sparseClient: SparseEmbeddingClient | null;
   queryCache: QueryEmbeddingCache | null;
   rerankerClient?: RerankerClient | null;
+  /**
+   * Tokenizer used to fit the rerank inputs to the real token budget, as
+   * `/v2/search` does. null/absent = the character heuristic only.
+   */
+  tokenCounter?: TokenCounter | null;
   hydeClient?: HydeClient | null;
   logger: Logger;
   defaultCollection?: string;

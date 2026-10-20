@@ -25,6 +25,7 @@
  * never invokes this, so v1 `/search` is byte-for-byte unchanged.
  */
 
+import { mapWithConcurrency } from "../concurrency.js";
 import type { Logger } from "pino";
 import type {
 	PostgresClient,
@@ -101,6 +102,14 @@ export async function attachDocumentGroups(params: {
 }
 
 /**
+ * How many `expandUnit` lookups run at once. A page can carry up to 100 hits;
+ * an unbounded fan-out of one query per hit would take the whole connection
+ * pool (PG_POOL_MAX, default 20) for a single request and starve everything
+ * else. Order of the results is preserved.
+ */
+export const EXPAND_CONCURRENCY = 8;
+
+/**
  * Attach a small-to-big `expanded` field to each result, in place on a shallow
  * copy of the list (inputs are never mutated). Runs one bounded expansion query
  * per result. A failed or empty expansion leaves the result untouched, so a
@@ -132,8 +141,10 @@ export async function attachExpansions(params: {
 	// unbounded expansion (MAX_EXPAND_BUDGET_CHARS).
 	const budgetChars = clampBudgetChars(params.budgetChars);
 
-	return Promise.all(
-		results.map(async (result): Promise<ExpandedSearchResult> => {
+	return mapWithConcurrency(
+		results,
+		EXPAND_CONCURRENCY,
+		async (result): Promise<ExpandedSearchResult> => {
 			const coords = coordsForResult(result);
 			const res = await postgresClient.expandUnit(
 				collection,
@@ -164,6 +175,6 @@ export async function attachExpansions(params: {
 			// leave the result flat rather than attaching an empty expansion.
 			if (expanded.unit_count === 0 && expanded.content === "") return result;
 			return { ...result, expanded };
-		}),
+		},
 	);
 }

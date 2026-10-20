@@ -50,7 +50,7 @@ function pageBatch(from: number, to: number): { body: Buffer; digest: string } {
 }
 
 /** A `document.begin` batch declaring the page count. */
-function beginBatch(reference: string, pageCount?: number): { body: Buffer; digest: string } {
+function beginBatch(reference: string, pageCount?: number, firstPage?: number): { body: Buffer; digest: string } {
   const record = {
     type: "document.begin",
     contract: "atf-extract/2.0.0",
@@ -58,6 +58,7 @@ function beginBatch(reference: string, pageCount?: number): { body: Buffer; dige
     source: { filename: "doc.pdf", mimeType: "application/pdf", bytes: 1, sha256: "a".repeat(64) },
     pipeline: { extractor: "test" },
     ...(pageCount !== undefined ? { pageCount } : {}),
+    ...(firstPage !== undefined ? { firstPage } : {}),
   };
   const body = Buffer.from(`${JSON.stringify(record)}\n`);
   return { body, digest: createHash("sha256").update(body).digest("hex") };
@@ -265,6 +266,27 @@ describeIfPg("revision store · real postgres", () => {
     }
   });
 
+  it("commits a pages window [5, 9] without pages 1-4, and still rejects a gap inside it (contract 2.4)", async () => {
+    const complete = await newRevision("window-ok.pdf");
+    // Batch seqs stay absolute for a window; document.begin rides in the first batch sent.
+    const begin = beginBatch("window-ok.pdf", 9, 5).body;
+    const pages = pageBatch(5, 9).body;
+    const first = Buffer.concat([begin, pages]);
+    await stage(complete, 1, { body: first, digest: createHash("sha256").update(first).digest("hex") });
+    const ok = await store.finalCommit({ ...scope, revisionId: complete });
+    expect(ok.ok).toBe(true);
+
+    const gap = await newRevision("window-gap.pdf");
+    await stage(gap, 0, beginBatch("window-gap.pdf", 9, 5));
+    await stage(gap, 1, pageBatch(5, 6));
+    await stage(gap, 3, pageBatch(8, 9));
+    const rejected = await store.finalCommit({ ...scope, revisionId: gap });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.error.status).toBe(409);
+      expect(rejected.error.missingRanges).toEqual([{ from: 7, to: 7 }]);
+    }
+  });
   it("rejects a final commit with an unknown page count and no document.end (409)", async () => {
     const rev = await newRevision("noend.pdf");
     await stage(rev, 0, beginBatch("noend.pdf"));

@@ -1280,13 +1280,6 @@
       "rule": "lint/style/noNonNullAssertion",
       "severity": "warning",
       "file": "apps/search/src/handlers/mcp-search-tool.ts",
-      "hash": "0d5b1e2550fa40b9",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/search/src/handlers/mcp-search-tool.ts",
       "hash": "6d7b3f2ed2750344",
       "count": 1
     },
@@ -1561,13 +1554,6 @@
       "severity": "warning",
       "file": "apps/search/src/pg-methods-docs.ts",
       "hash": "ece4d2a3ce88c4ff",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/search/src/pg-methods-search.ts",
-      "hash": "5c04e9a3ace65cc2",
       "count": 1
     },
     {

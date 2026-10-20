@@ -1009,8 +1009,10 @@ function buildDocumentUnit(
   const text = [summary, outlineText].filter((p) => p.trim() !== "").join("\n\n");
   if (text.trim() === "") return null;
 
-  const pageStart = 1;
-  const pageEnd = doc.pageCount > 0 ? doc.pageCount : 1;
+  // The document spans the stream: page 1 unless the job processed a `pages`
+  // window (contract 2.4), whose first page document.end repeats.
+  const pageStart = doc.firstPage ?? 1;
+  const pageEnd = doc.pageCount > 0 ? Math.max(doc.pageCount, pageStart) : pageStart;
   const unitId = computeUnitId({
     revisionId,
     documentId,

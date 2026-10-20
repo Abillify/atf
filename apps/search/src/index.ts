@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { createRemoteJWKSet } from "jose";
 import express, {
   type Express,
   type Request,
@@ -217,6 +218,8 @@ export function createApp(
     max: config.rateLimit,
     windowMs: 60_000,
     trustProxy: config.trustProxy,
+    redisUrl: config.rateLimitRedisUrl,
+    logger,
   });
 
   // ── Circuit breakers — created before clients so status getters can be
@@ -405,6 +408,8 @@ export function createApp(
           scoreTransform: config.rerankScoreTransform,
           logger,
           timeoutMs: config.fetchTimeoutMs,
+          batchSize: config.rerankBatchSize,
+          batchConcurrency: config.rerankBatchConcurrency,
           circuitBreaker: rerankerBreaker,
           inputTokenCost: config.rerankInputTokenCost,
           outputTokenCost: config.rerankOutputTokenCost,
@@ -423,6 +428,8 @@ export function createApp(
           scoreTransform: config.rerankScoreTransform,
           logger,
           timeoutMs: config.fetchTimeoutMs,
+          batchSize: config.rerankBatchSize,
+          batchConcurrency: config.rerankBatchConcurrency,
           circuitBreaker: rerankerFallbackBreaker,
           inputTokenCost: config.rerankFallbackInputTokenCost,
           outputTokenCost: config.rerankFallbackOutputTokenCost,
@@ -459,6 +466,7 @@ export function createApp(
           maxTokens: config.hydeMaxTokens,
           enableThinking: config.hydeEnableThinking,
           token: config.hydeToken,
+          cacheTtlMs: config.hydeCacheTtlSeconds * 1000,
           logger: logger,
           timeoutMs: config.fetchTimeoutMs,
           circuitBreaker: hydeBreaker,
@@ -650,7 +658,12 @@ export function createApp(
   const deleteHandler = createDeleteHandler(postgresClient, logger);
   const adminStatsHandler = createAdminStatsHandler(postgresClient, logger);
   const healthHandler = createHealthHandler(
-    { postgresClient, embeddingClient },
+    {
+      postgresClient,
+      embeddingClient,
+      // P0-1: an instance without authentication says so on /health.
+      authDisabled: config.authnMode === "disabled",
+    },
     logger,
   );
   const listCollectionsHandler = createListCollectionsHandler(
@@ -785,6 +798,7 @@ export function createApp(
     },
     intervalMs: config.batchWorkerEnabled ? config.batchWorkerIntervalMs : 0,
     backoffMs: config.batchWorkerBackoffMs,
+    embedConcurrency: config.batchWorkerEmbedConcurrency,
     tokenCounter: unitTokenCounter,
     vecType: config.halfPrecision ? "halfvec" : "vector",
     // Contextual embedding header (task 3.3, Req 11.4/11.6): prepend a small
@@ -838,6 +852,7 @@ export function createApp(
     sparseClient,
     queryCache,
     rerankerClient,
+    tokenCounter: unitTokenCounter,
     logger,
     defaultCollection: config.defaultCollection,
     hybridSearchDefault: config.hybridSearch,
@@ -858,6 +873,10 @@ export function createApp(
     transactionConfig: {
       enforcement: config.transactionEnforcement,
       secret: config.transactionSecret,
+      algorithms: config.transactionAlgorithms,
+      ...(config.transactionJwksUri !== null
+        ? { jwks: createRemoteJWKSet(new URL(config.transactionJwksUri)) }
+        : {}),
       issuer: config.transactionIssuer,
       audience: config.transactionAudience,
       clockToleranceSeconds: config.transactionClockToleranceSeconds,
@@ -1548,7 +1567,7 @@ async function main(): Promise<void> {
     logger.fatal(
       `Refusing to start in '${readiness.environment}': ${readiness.fatal.length} ` +
         "production-readiness check(s) failed. Fix the settings above, or run with " +
-        "NODE_ENV=development to accept them explicitly.",
+        "ATF_PROFILE=development (or NODE_ENV=development) to accept them explicitly.",
     );
     process.exit(1);
   }

@@ -40,6 +40,16 @@ export interface HydeClientConfig {
   circuitBreaker?: CircuitBreaker;
   inputTokenCost?: number;
   outputTokenCost?: number;
+  /**
+   * How long a generated hypothetical document is reused for the identical
+   * query, in ms (HYDE_CACHE_TTL_SECONDS). 0/undefined disables the cache.
+   * The expansion is one LLM round-trip in front of every embedding, and
+   * agentic callers repeat the same query within a run. Only successful
+   * results are cached; concurrent identical requests share one call.
+   */
+  cacheTtlMs?: number;
+  /** Upper bound of cached expansions (oldest evicted first). Default 256. */
+  cacheMaxEntries?: number;
 }
 
 export interface HydeError {
@@ -266,18 +276,62 @@ export function createHydeClient(config: HydeClientConfig): HydeClient {
     return { ok: true, result: text, usage: { inputTokens, outputTokens, cost } };
   }
 
+  function expandUncached(query: string): Promise<HydeResponse> {
+    return retryWithBackoff(
+      () => doExpand(query),
+      (res) =>
+        !res.ok &&
+        (res.error.code === "HYDE_UNREACHABLE" ||
+          res.error.code === "HYDE_TIMEOUT"),
+      3,
+      100,
+      circuitBreaker,
+    );
+  }
+
+  const cacheTtlMs = Math.max(0, config.cacheTtlMs ?? 0);
+  if (cacheTtlMs === 0) return { expand: expandUncached };
+
+  // Process-local, bounded, time-limited. The expansion depends on the query
+  // text only (no tenant data goes in), so a hit is safe for any caller.
+  const maxEntries = Math.max(1, config.cacheMaxEntries ?? 256);
+  const cache = new Map<string, { text: string; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<HydeResponse>>();
   return {
-    expand(query: string): Promise<HydeResponse> {
-      return retryWithBackoff(
-        () => doExpand(query),
-        (res) =>
-          !res.ok &&
-          (res.error.code === "HYDE_UNREACHABLE" ||
-            res.error.code === "HYDE_TIMEOUT"),
-        3,
-        100,
-        circuitBreaker,
-      );
+    async expand(query: string): Promise<HydeResponse> {
+      const now = Date.now();
+      const hit = cache.get(query);
+      if (hit !== undefined) {
+        if (hit.expiresAt > now) {
+          // Re-insert: Map order doubles as LRU order.
+          cache.delete(query);
+          cache.set(query, hit);
+          return { ok: true, result: hit.text };
+        }
+        cache.delete(query);
+      }
+      const pending = inFlight.get(query);
+      if (pending !== undefined) {
+        // Same query already being expanded: share the call, and the cost.
+        const shared = await pending;
+        return shared.ok ? { ok: true, result: shared.result } : shared;
+      }
+      const call = expandUncached(query);
+      inFlight.set(query, call);
+      try {
+        const res = await call;
+        if (res.ok) {
+          cache.set(query, { text: res.result, expiresAt: Date.now() + cacheTtlMs });
+          while (cache.size > maxEntries) {
+            const oldest = cache.keys().next().value;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+          }
+        }
+        return res;
+      } finally {
+        inFlight.delete(query);
+      }
     },
   };
 }

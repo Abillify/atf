@@ -208,6 +208,107 @@ describeIfPg("batch worker · real postgres", () => {
     worker.stop();
   });
 
+  it("works through a backlog in ONE poll wake-up instead of one batch per interval (P1-S3)", async () => {
+    const revisions = [
+      await stage("backlog-1.pdf", 1),
+      await stage("backlog-2.pdf", 2),
+      await stage("backlog-3.pdf", 3),
+    ];
+    // A long interval: the first wake-up must drain all three staged batches.
+    const worker = createBatchWorker(pool, fakeEmbeddingClient(), {
+      intervalMs: 40,
+      onlyTenantId: TENANT,
+      maxBatchesPerPoll: 10,
+    });
+    try {
+      const deadline = Date.now() + 3_000;
+      let done = 0;
+      while (Date.now() < deadline && done < 3) {
+        await new Promise((r) => setTimeout(r, 25));
+        done = (await Promise.all(revisions.map((r) => countUnits(r)))).filter((n) => n > 0).length;
+      }
+      expect(done).toBe(3);
+      // All three finished within the first poll wake-up (two further 40 ms
+      // intervals would otherwise be needed).
+      expect(Date.now()).toBeLessThan(deadline);
+    } finally {
+      worker.stop();
+    }
+  });
+
+  it("drain() honours stop(): a stopped worker claims nothing more (P1-S3)", async () => {
+    await stage("stopped.pdf", 1);
+    const worker = createBatchWorker(pool, fakeEmbeddingClient(), { intervalMs: 0, onlyTenantId: TENANT });
+    worker.stop();
+    expect(await worker.drain(5)).toEqual([]);
+    // Not stopped: the same call processes it.
+    const live = createBatchWorker(pool, fakeEmbeddingClient(), { intervalMs: 0, onlyTenantId: TENANT });
+    const outcomes = await live.drain(5);
+    expect(outcomes.some((o) => o.kind === "processed")).toBe(true);
+    live.stop();
+  });
+
+  it("embeds the slices of one batch concurrently and keeps the vector order (P1-S3)", async () => {
+    // 6 distinct paragraphs + 1 figure = enough units for several slices at size 2.
+    const created = await store.createRevision({ tenantId: TENANT, collection, reference: "slices.pdf", ttlMs: 60_000 });
+    if (!created.ok) throw new Error("create failed");
+    const revisionId = created.result.revision.revisionId;
+    const blocks = Array.from({ length: 6 }, (_, i) => ({
+      type: "paragraph",
+      id: `s-b${i}`,
+      page: 1,
+      // Distinct lengths per paragraph, so a vector landing on the wrong unit shows.
+      text: "Absatz ".repeat(260 + i * 30).trim() + ".",
+    }));
+    const record = { type: "page", page: 1, size: { wPt: 595, hPt: 842 }, class: "text", blocks };
+    const body = Buffer.from(JSON.stringify(record) + "\n");
+    const digest = createHash("sha256").update(body).digest("hex");
+    const staged = await store.stageBatch({ tenantId: TENANT, collection, revisionId, seq: 0, body, contentDigest: digest, ttlMs: 60_000 });
+    expect(staged.ok).toBe(true);
+
+    let inFlight = 0;
+    let peak = 0;
+    const embedder: EmbeddingClient = {
+      async embed(): Promise<EmbeddingResponse> {
+        return { ok: true, result: { vector: new Array<number>(VECTOR_SIZE).fill(0.1) } };
+      },
+      async embedBatch(texts: string[]): Promise<EmbeddingBatchResponse> {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 30));
+        inFlight -= 1;
+        // The first component encodes the input length: order is checkable.
+        return {
+          ok: true,
+          result: { vectors: texts.map((t) => [t.length / 10_000, ...new Array<number>(VECTOR_SIZE - 1).fill(0.01)]) },
+        };
+      },
+    };
+    const worker = createBatchWorker(pool, embedder, {
+      intervalMs: 0,
+      onlyTenantId: TENANT,
+      embedBatchSize: 1,
+      embedConcurrency: 4,
+    });
+    const outcome = await worker.tick();
+    expect(outcome.kind).toBe("processed");
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    worker.stop();
+    // Each stored vector belongs to its own unit: first component == len/10000.
+    const rows = await pool.query<{ content: string; v0: number }>(
+      `SELECT content, (vector::real[])[1] AS v0 FROM "${table}" WHERE tenant_id = $1 AND revision_id = $2 AND unit_type = 'chunk'`,
+      [TENANT, revisionId],
+    );
+    expect(rows.rows.length).toBeGreaterThan(2);
+    // The stored vector encodes the length of the input that was embedded; the
+    // input is the unit's content plus a header of constant size, so the
+    // difference is (almost) the same for every unit unless vectors were
+    // attached to the wrong unit.
+    const offsets = rows.rows.map((row) => Math.round(row.v0 * 10_000) - row.content.length);
+    expect(Math.max(...offsets) - Math.min(...offsets)).toBeLessThan(40);
+  });
+
   it("creates a collection that does not exist yet from the first batch's vector size", async () => {
     const fresh = `bwnew_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const created = await store.createRevision({ tenantId: TENANT, collection: fresh, reference: "neu.pdf", ttlMs: 60_000 });

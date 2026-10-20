@@ -566,10 +566,17 @@ export interface DocumentInfo {
   metadata?: Record<string, unknown>;
   link?: string;
   sourceLabel?: string;
+  /**
+   * First page of the stream when the job processed a `pages` window (contract
+   * 2.4); absent = 1. The final commit checks completeness over
+   * `[firstPage, pageCount]`.
+   */
+  firstPage?: number;
 }
 
 /** Project a `document.begin` record onto the persisted {@link DocumentInfo}. */
 export function documentInfoOf(begin: {
+  firstPage?: number | undefined;
   title?: string | undefined;
   version?: DocumentVersion | undefined;
   email?: EmailHeaders | undefined;
@@ -588,6 +595,7 @@ export function documentInfoOf(begin: {
     ...(begin.metadata && Object.keys(begin.metadata).length > 0 ? { metadata: begin.metadata } : {}),
     ...(begin.link ? { link: begin.link } : {}),
     ...(begin.sourceLabel ? { sourceLabel: begin.sourceLabel } : {}),
+    ...(begin.firstPage !== undefined && begin.firstPage > 1 ? { firstPage: begin.firstPage } : {}),
   };
   return Object.keys(info).length > 0 ? info : undefined;
 }
@@ -611,6 +619,9 @@ export function parseDocumentInfo(value: unknown): DocumentInfo {
       : {}),
     ...(typeof raw.link === "string" && raw.link !== "" ? { link: raw.link } : {}),
     ...(typeof raw.sourceLabel === "string" && raw.sourceLabel !== "" ? { sourceLabel: raw.sourceLabel } : {}),
+    ...(typeof raw.firstPage === "number" && Number.isInteger(raw.firstPage) && raw.firstPage > 1
+      ? { firstPage: raw.firstPage }
+      : {}),
   };
 }
 

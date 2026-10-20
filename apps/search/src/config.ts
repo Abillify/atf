@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import type { ServerTlsConfig } from "@atf/security-kit";
+import {
+  resolveOperationalProfile,
+  type OperationalProfile,
+  type ServerTlsConfig,
+} from "@atf/security-kit";
 import { FTS_CONFIG_NAME_RE, isAllowedFtsLanguage } from "./collection-ddl.js";
 
 /**
@@ -48,7 +52,15 @@ export interface Config {
   embedInputField: string; // EMBED_INPUT_FIELD (default: "inputs")
   /** Optional secondary embedder, enabled only when its model is configured. */
   embedFallbackUrl: string | null; // EMBED_FALLBACK_URL
-  embedFallbackModel: string | null; // EMBED_FALLBACK_MODEL (enables fallback)
+  embedFallbackModel: string | null; // EMBED_FALLBACK_MODEL (enables fallback; must equal EMBED_MODEL unless EMBED_FALLBACK_SAME_SPACE=true)
+  /**
+   * Explicit operator assertion that a fallback model named differently from
+   * `EMBED_MODEL` still serves the SAME underlying model (same vector space),
+   * e.g. `bge-m3-8k:latest` on Ollama vs `BAAI/bge-m3` on TEI. Without this,
+   * a differing `EMBED_FALLBACK_MODEL` is a startup error: equal dimension is
+   * not equal vector space, and mixing spaces silently destroys relevance.
+   */
+  embedFallbackSameSpace: boolean; // EMBED_FALLBACK_SAME_SPACE (default: false)
   embedFallbackInputField: string; // EMBED_FALLBACK_INPUT_FIELD (default: "input")
   /** Required vector dimension for both embedding paths when configured. */
   embedExpectedDimension: number | null; // EMBED_EXPECTED_DIMENSION (optional positive int)
@@ -81,6 +93,10 @@ export interface Config {
   // Reranking
   rerankUrl: string; // RERANK_URL (default: EMBED_URL)
   rerankModel: string | null; // RERANK_MODEL (required to enable)
+  /** Documents per reranker request. Longer lists are split into batches. */
+  rerankBatchSize: number; // RERANK_BATCH_SIZE (default: 16)
+  /** Batch requests of one rerank call that run at once (1 = sequential). */
+  rerankBatchConcurrency: number; // RERANK_BATCH_CONCURRENCY (default: 2, 1-8)
   rerankInputSeparator: string; // RERANK_SEPARATOR (default: "\n")
   rerankCandidateMultiplier: number; // RERANK_CANDIDATE_MULTIPLIER (default: 4)
   /**
@@ -117,6 +133,10 @@ export interface Config {
   hybridSearch: boolean; // HYBRID_SEARCH (default: true)
   bodyLimit: string; // BODY_LIMIT (default: "10mb")
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
+  /** Shared Redis URL for the rate limiter; without it the budget is per replica. */
+  rateLimitRedisUrl: string | null; // RATE_LIMIT_REDIS_URL
+  /** Declared replica count — the prod gate flags per-replica state when > 1. */
+  replicas: number; // REPLICAS (default: 1)
 
   /**
    * Trust X-Forwarded-For for rate limiting.
@@ -218,6 +238,11 @@ export interface Config {
    * authentication (e.g. an agent orchestrator). Ignored for Bedrock. null = no header.
    */
   hydeToken: string | null; // HYDE_TOKEN (optional)
+  /**
+   * Seconds a generated HyDE document is reused for an identical query.
+   * 0 disables the cache. Process-local; bounded to 256 entries.
+   */
+  hydeCacheTtlSeconds: number; // HYDE_CACHE_TTL_SECONDS (default: 600)
 
   // ── Document summarization (ingest-time context prefix) ──────────────────
   /** URL of the chat-completions server for summarization. Default: EMBED_URL. */
@@ -374,6 +399,11 @@ export interface Config {
    * failure, in milliseconds (Requirement 5.4). Default: 30000.
    */
   batchWorkerBackoffMs: number; // BATCH_WORKER_BACKOFF_MS (default: 30000)
+  /**
+   * Embedding round-trips of one staged batch that run at once. Default 4
+   * (1 restores the strictly sequential slices).
+   */
+  batchWorkerEmbedConcurrency: number; // BATCH_WORKER_EMBED_CONCURRENCY (default: 4, 1-16)
 
   /**
    * Per-chunk contextual placement sentence via the SUMMARY_* text-LLM
@@ -556,14 +586,28 @@ export interface Config {
    */
   exposeErrorDetail: boolean;
   /**
-   * Deployment environment, used by the production readiness gate.
-   * NODE_ENV (default: "development").
+   * Effective operational profile: `ATF_PROFILE` (explicit, platform-wide)
+   * wins over `NODE_ENV`; unset means `development`. An unknown value fails
+   * config loading — a typo must not silently disable the production gates.
+   * Unlike before, the value is also normalized (trim + lowercase).
    */
-  nodeEnv: string;
+  nodeEnv: OperationalProfile; // ATF_PROFILE / NODE_ENV (default: "development")
 
   // Transaction Envelope v1 (MCP params._meta token or HTTP header)
   transactionEnforcement: "off" | "optional" | "required";
   transactionSecret: string | null;
+  /**
+   * TRANSACTION_JWKS_URI — the issuer's public keys (the runtime publishes
+   * `/.well-known/atf-transaction-jwks.json`) for ES256/EdDSA tokens. Null =
+   * only the shared HS256 secret verifies.
+   */
+  transactionJwksUri: string | null;
+  /**
+   * TRANSACTION_ALGORITHMS — the signing algorithms accepted at the same time.
+   * Default: HS256 when TRANSACTION_HS256_SECRET is set, plus ES256 and EdDSA
+   * when TRANSACTION_JWKS_URI is set (so a rolling migration accepts both).
+   */
+  transactionAlgorithms: Array<"HS256" | "ES256" | "EdDSA">;
   transactionIssuer: string;
   transactionAudience: string;
   transactionClockToleranceSeconds: number;
@@ -761,7 +805,11 @@ export function loadConfig(): Config {
     if (raw === undefined || raw.trim() === "") return defaultVal;
     const parsed = parseFloat(raw);
     if (exclusive) {
-      if (Number.isNaN(parsed) || parsed <= exclusive.gt || parsed >= exclusive.lt) {
+      if (
+        Number.isNaN(parsed) ||
+        parsed <= exclusive.gt ||
+        parsed >= exclusive.lt
+      ) {
         throw new Error(
           `${name} must be a float in (${exclusive.gt}, ${exclusive.lt})`,
         );
@@ -937,6 +985,24 @@ export function loadConfig(): Config {
     : null;
   const embedFallbackInputField =
     optionalString("EMBED_FALLBACK_INPUT_FIELD") ?? "input";
+  // A fallback served by a DIFFERENT embedding model writes vectors into a
+  // different space than the indexed ones: dimension equality (all the
+  // fallback client can validate) does not mean vector-space equality, and
+  // queries embedded by the wrong model silently return nonsense. Fail fast
+  // unless the operator explicitly asserts both names serve the same model.
+  const embedFallbackSameSpace = parseBoolEnv(
+    "EMBED_FALLBACK_SAME_SPACE",
+    false,
+  );
+  if (
+    embedFallbackModel !== null &&
+    embedFallbackModel !== embedModel &&
+    !embedFallbackSameSpace
+  ) {
+    throw new Error(
+      `EMBED_FALLBACK_MODEL (${embedFallbackModel}) differs from EMBED_MODEL (${embedModel}): fallback vectors would mix a second embedding space into the index and queries, silently destroying relevance — equal dimension is not the same vector space. Point EMBED_FALLBACK_MODEL at the same model as EMBED_MODEL, or set EMBED_FALLBACK_SAME_SPACE=true to assert both servers serve the same underlying model under different names.`,
+    );
+  }
   const embedExpectedDimensionRaw =
     process.env["EMBED_EXPECTED_DIMENSION"]?.trim();
   const embedExpectedDimension = embedExpectedDimensionRaw
@@ -1125,11 +1191,17 @@ export function loadConfig(): Config {
     "BATCH_WORKER_BACKOFF_MS",
     30_000,
   );
+  const batchWorkerEmbedConcurrency = Math.min(
+    16,
+    Math.max(1, parseNonNegIntEnv("BATCH_WORKER_EMBED_CONCURRENCY", 4)),
+  );
   const contextualChunkLlm = parseBoolEnv("CONTEXTUAL_CHUNK_LLM", false);
   const contextHeaderMaxFraction =
     parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ??
     0.15;
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
+  const rateLimitRedisUrl = optionalString("RATE_LIMIT_REDIS_URL");
+  const replicas = parseIntEnv("REPLICAS", 1, { min: 1 });
   const contextPrefixSizeRaw = parseIntEnv("CHUNK_CONTEXT_PREFIX_SIZE", 0);
   const contextPrefixSize =
     contextPrefixSizeRaw > 0 ? contextPrefixSizeRaw : null;
@@ -1153,9 +1225,9 @@ export function loadConfig(): Config {
     "allow",
   );
   const exposeErrorDetail = parseBoolEnv("EXPOSE_ERROR_DETAIL", false);
-  const nodeEnv = (process.env["NODE_ENV"] ?? "development")
-    .trim()
-    .toLowerCase();
+  // Explicit operational profile (ATF_PROFILE) first, then NODE_ENV; unknown
+  // values throw so a typo cannot silently downgrade production to warn-mode.
+  const nodeEnv = resolveOperationalProfile(process.env, ["NODE_ENV"]).profile;
   // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
   // defaults to dedicated migration Jobs (`bun run migrate`) instead.
   const migrateOnStart = parseBoolEnv(
@@ -1226,6 +1298,27 @@ export function loadConfig(): Config {
     "off",
   );
   const transactionSecret = optionalString("TRANSACTION_HS256_SECRET");
+  const transactionJwksUri = optionalString("TRANSACTION_JWKS_URI");
+  if (transactionJwksUri !== null) {
+    try {
+      const parsed = new URL(transactionJwksUri);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("not http(s)");
+    } catch {
+      throw new Error("TRANSACTION_JWKS_URI must be an http(s) URL");
+    }
+  }
+  const transactionAlgorithmsRaw = parseCsvEnv("TRANSACTION_ALGORITHMS");
+  const knownAlgorithms = ["HS256", "ES256", "EdDSA"] as const;
+  if (transactionAlgorithmsRaw.some((value) => !(knownAlgorithms as readonly string[]).includes(value))) {
+    throw new Error("TRANSACTION_ALGORITHMS must contain only HS256, ES256 or EdDSA");
+  }
+  const transactionAlgorithms: Array<"HS256" | "ES256" | "EdDSA"> =
+    transactionAlgorithmsRaw.length > 0
+      ? [...new Set(transactionAlgorithmsRaw)] as Array<"HS256" | "ES256" | "EdDSA">
+      : [
+          ...(transactionSecret ? (["HS256"] as const) : []),
+          ...(transactionJwksUri !== null ? (["ES256", "EdDSA"] as const) : []),
+        ];
   const transactionIssuer =
     optionalString("TRANSACTION_ISSUER") ?? "vectorsearch-client";
   const transactionAudience =
@@ -1247,10 +1340,18 @@ export function loadConfig(): Config {
   }
   const mcpServiceName = optionalString("MCP_SERVICE_NAME") ?? "vectorsearch";
   const mcpServiceVersion = optionalString("MCP_SERVICE_VERSION") ?? "1.0.0";
-  if (transactionEnforcement !== "off" && !transactionSecret) {
-    throw new Error(
-      "TRANSACTION_HS256_SECRET is required when TRANSACTION_ENFORCEMENT is optional or required",
-    );
+  if (transactionEnforcement !== "off") {
+    if (transactionAlgorithms.length === 0) {
+      throw new Error(
+        "TRANSACTION_HS256_SECRET or TRANSACTION_JWKS_URI is required when TRANSACTION_ENFORCEMENT is optional or required",
+      );
+    }
+    if (transactionAlgorithms.includes("HS256") && !transactionSecret) {
+      throw new Error("TRANSACTION_HS256_SECRET is required when TRANSACTION_ALGORITHMS accepts HS256");
+    }
+    if (transactionAlgorithms.some((alg) => alg !== "HS256") && transactionJwksUri === null) {
+      throw new Error("TRANSACTION_JWKS_URI is required when TRANSACTION_ALGORITHMS accepts ES256 or EdDSA");
+    }
   }
 
   // ── Enum fields ─────────────────────────────────────────────────────────────
@@ -1284,6 +1385,14 @@ export function loadConfig(): Config {
   // ── Reranking ───────────────────────────────────────────────────────────────
   const rerankUrl = resolveUrl("RERANK_URL", embedUrl);
   const rerankModel = optionalString("RERANK_MODEL");
+  const rerankBatchSize = Math.min(
+    256,
+    Math.max(1, parseNonNegIntEnv("RERANK_BATCH_SIZE", 16)),
+  );
+  const rerankBatchConcurrency = Math.min(
+    8,
+    Math.max(1, parseNonNegIntEnv("RERANK_BATCH_CONCURRENCY", 2)),
+  );
   const rerankInputSeparator = optionalString("RERANK_SEPARATOR") ?? "\n";
   const rerankDocumentsField =
     optionalString("RERANK_DOCUMENTS_FIELD") ?? "texts";
@@ -1335,6 +1444,7 @@ export function loadConfig(): Config {
   const hydeUrl = resolveUrl("HYDE_URL", embedUrl);
   const hydeModel = optionalString("HYDE_MODEL");
   const hydeToken = optionalString("HYDE_TOKEN");
+  const hydeCacheTtlSeconds = parseNonNegIntEnv("HYDE_CACHE_TTL_SECONDS", 600);
   const summaryUrl = resolveUrl("SUMMARY_URL", embedUrl);
   const summaryModel = optionalString("SUMMARY_MODEL");
   const summaryToken = optionalString("SUMMARY_TOKEN");
@@ -1489,6 +1599,7 @@ export function loadConfig(): Config {
     embedInputField,
     embedFallbackUrl,
     embedFallbackModel,
+    embedFallbackSameSpace,
     embedFallbackInputField,
     embedExpectedDimension,
     apiToken,
@@ -1503,6 +1614,8 @@ export function loadConfig(): Config {
     defaultChunkOverlap,
     rerankUrl,
     rerankModel,
+    rerankBatchSize,
+    rerankBatchConcurrency,
     rerankInputSeparator,
     rerankCandidateMultiplier,
     minRerankScore,
@@ -1517,6 +1630,8 @@ export function loadConfig(): Config {
     hybridSearch,
     bodyLimit,
     rateLimit,
+    rateLimitRedisUrl,
+    replicas,
     trustProxy,
     hnswEfSearch,
     hnswIterativeScan,
@@ -1537,6 +1652,7 @@ export function loadConfig(): Config {
     hydeMaxTokens,
     hydeEnableThinking,
     hydeToken,
+    hydeCacheTtlSeconds,
     summaryUrl,
     summaryModel,
     summaryMaxTokens,
@@ -1572,6 +1688,7 @@ export function loadConfig(): Config {
     batchWorkerEnabled,
     batchWorkerIntervalMs,
     batchWorkerBackoffMs,
+    batchWorkerEmbedConcurrency,
     contextualChunkLlm,
     contextHeaderMaxFraction,
     converter,
@@ -1598,9 +1715,11 @@ export function loadConfig(): Config {
     aclRequireIdentityWaiver,
     documentAclDefault,
     exposeErrorDetail,
-    nodeEnv: nodeEnv.length > 0 ? nodeEnv : "development",
+    nodeEnv,
     transactionEnforcement,
     transactionSecret,
+    transactionJwksUri,
+    transactionAlgorithms,
     transactionIssuer,
     transactionAudience,
     transactionClockToleranceSeconds,

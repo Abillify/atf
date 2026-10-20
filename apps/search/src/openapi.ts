@@ -2940,6 +2940,13 @@ export function buildOpenApiSpec(serverUrl: string) {
               description: "Target collection name. Default: `documents`.",
               schema: { type: "string", default: "documents" },
             },
+            {
+              name: "X-Valid-At",
+              in: "header",
+              description:
+                "RFC 3339 instant with explicit timezone. Selects the version valid at that instant for the candidates and the expansion, as on `/search`.",
+              schema: { type: "string", format: "date-time" },
+            },
           ],
           requestBody: {
             required: true,

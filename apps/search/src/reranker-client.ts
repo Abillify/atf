@@ -2,11 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 // vectorsearch/src/reranker-client.ts
+import { mapWithConcurrency } from "./concurrency.js";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import type pino from "pino";
 import { retryWithBackoff, type CircuitBreaker } from "./retry.js";
 import { injectTraceHeaders } from "./trace-context.js";
 import { recordUsage } from "./usage-context.js";
+
+/** Carries a failed batch response out of the concurrent mapping. */
+class RerankBatchFailure extends Error {
+  constructor(readonly response: RerankResponse) {
+    super("rerank batch failed");
+  }
+}
 
 export interface RerankerClientConfig {
   /**
@@ -52,6 +60,17 @@ export interface RerankerClientConfig {
   logger: pino.Logger;
   /** Abort fetch calls after this many milliseconds. Default: 30 000. */
   timeoutMs?: number;
+  /**
+   * Documents per reranker request (RERANK_BATCH_SIZE, default 16). A longer
+   * list is split into batches of this size.
+   */
+  batchSize?: number;
+  /**
+   * How many batch requests of one rerank call run at once
+   * (RERANK_BATCH_CONCURRENCY, default 2; 1 = strictly sequential, as before).
+   * A 100-hit rerank used to need ⌈100/16⌉ serial round-trips.
+   */
+  batchConcurrency?: number;
   /** Optional circuit breaker shared across all calls from this client. */
   circuitBreaker?: CircuitBreaker;
   inputTokenCost?: number;
@@ -393,7 +412,11 @@ export function createRerankerClient(
     return !res.ok && res.error.code === "RERANK_UNREACHABLE";
   }
 
-  const RERANK_BATCH_SIZE = 16;
+  const RERANK_BATCH_SIZE = Math.max(1, Math.floor(config.batchSize ?? 16));
+  const RERANK_BATCH_CONCURRENCY = Math.max(
+    1,
+    Math.floor(config.batchConcurrency ?? 2),
+  );
 
   return {
     async rerank(query: string, documents: string[]): Promise<RerankResponse> {
@@ -484,14 +507,32 @@ export function createRerankerClient(
         let totalOutputTokens = 0;
         let totalCost = 0;
         let hasUsage = false;
-        for (
-          let offset = 0;
-          offset < documents.length;
-          offset += RERANK_BATCH_SIZE
-        ) {
-          const batch = documents.slice(offset, offset + RERANK_BATCH_SIZE);
-          const batchResult = await rerankBatch(query, batch, offset);
-          if (!batchResult.ok) return batchResult;
+        const offsets: number[] = [];
+        for (let offset = 0; offset < documents.length; offset += RERANK_BATCH_SIZE) {
+          offsets.push(offset);
+        }
+        // Batches run RERANK_BATCH_CONCURRENCY at a time; the results are
+        // consumed in batch order, and the first failed batch fails the call
+        // exactly as the sequential loop did (a failure also stops the
+        // batches that have not started yet).
+        const batchResults = await mapWithConcurrency(
+          offsets,
+          RERANK_BATCH_CONCURRENCY,
+          async (offset) => {
+            const result = await rerankBatch(
+              query,
+              documents.slice(offset, offset + RERANK_BATCH_SIZE),
+              offset,
+            );
+            if (!result.ok) throw new RerankBatchFailure(result);
+            return result;
+          },
+        ).catch((err: unknown) => {
+          if (err instanceof RerankBatchFailure) return err.response;
+          throw err;
+        });
+        if (!Array.isArray(batchResults)) return batchResults;
+        for (const batchResult of batchResults) {
           allScores.push(...batchResult.result);
           if (batchResult.usage) {
             hasUsage = true;

@@ -171,3 +171,15 @@ describe("GET /health/ready (requirement 12.5)", () => {
     );
   });
 });
+
+describe("auth: disabled signal (P0-1)", () => {
+  it("is reported while AUTHN_MODE=disabled and absent otherwise", async () => {
+    const postgresClient = createMockPostgresClient({});
+    const open = mockRes();
+    await createHealthHandler({ postgresClient, authDisabled: true }, logger)({} as never, open as never, vi.fn());
+    expect((open.body as { auth?: string }).auth).toBe("disabled");
+    const closed = mockRes();
+    await createHealthHandler({ postgresClient, authDisabled: false }, logger)({} as never, closed as never, vi.fn());
+    expect(closed.body).not.toHaveProperty("auth");
+  });
+});

@@ -56,6 +56,8 @@ const serviceScope: AccessScope = {
 interface FakePgOptions {
 	/** Installed BM25 extension names answered for the detection query. */
 	bm25Extensions?: string[];
+	/** Whether the collection table carries a `USING bm25` index (default true). */
+	bm25Index?: boolean;
 }
 
 function installFakePg(options: FakePgOptions = {}) {
@@ -83,6 +85,11 @@ function installFakePg(options: FakePgOptions = {}) {
 		if (sql.includes("FROM pg_extension WHERE extname IN")) {
 			return {
 				rows: (options.bm25Extensions ?? []).map((extname) => ({ extname })),
+			};
+		}
+		if (sql.includes("FROM pg_indexes")) {
+			return {
+				rows: (options.bm25Index ?? true) ? [{ "?column?": 1 }] : [],
 			};
 		}
 		return { rows: [], rowCount: 0 };
@@ -150,8 +157,8 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		const sql = await runFtsSearch(postgres);
 		expect(detectionQueries()).toHaveLength(0);
 		expect(sql).toContain(
-			"ts_rank_cd(ts_search, websearch_to_tsquery('simple', $1), 32)",
-		);
+      "ts_rank_cd(ts_search, to_tsquery('simple', $1), 32)",
+    );
 		await postgres.close();
 	});
 
@@ -191,8 +198,8 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		const second = await runFtsSearch(postgres);
 		for (const sql of [first, second]) {
 			expect(sql).toContain(
-				"ts_rank_cd(ts_search, websearch_to_tsquery('simple', $1), 32)",
-			);
+        "ts_rank_cd(ts_search, to_tsquery('simple', $1), 32)",
+      );
 			expect(sql).not.toContain("paradedb");
 		}
 		expect(warn).toHaveBeenCalledWith(
@@ -232,6 +239,46 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		const sql = searchStatements()[0] ?? "";
 		expect(sql).toContain("paradedb.score(id) AS tscore");
 		expect(sql).toContain("content ||| $2");
+		await postgres.close();
+	});
+	it("falls back to ts_rank_cd when the extension is installed but the table has no bm25 index", async () => {
+		installFakePg({ bm25Extensions: ["pg_search"], bm25Index: false });
+		const warn = vi.fn();
+		const logger = pino({ level: "silent" });
+		logger.warn = warn;
+		const postgres = client({ ftsRanker: "bm25", logger });
+		const first = await runFtsSearch(postgres);
+		const second = await runFtsSearch(postgres);
+		for (const sql of [first, second]) {
+			expect(sql).toContain("ts_rank_cd(ts_search, to_tsquery('simple', $1), 32)");
+			expect(sql).not.toContain("paradedb");
+			expect(sql).not.toContain("|||");
+		}
+		// One warning per table, naming the missing index.
+		const indexWarnings = warn.mock.calls.filter((args) =>
+			String(args[1] ?? args[0]).includes("no `USING bm25` index"),
+		);
+		expect(indexWarnings).toHaveLength(1);
+		await postgres.close();
+	});
+	it("does not re-check a table whose bm25 index was found", async () => {
+		installFakePg({ bm25Extensions: ["pg_search"], bm25Index: true });
+		const postgres = client({ ftsRanker: "bm25" });
+		await runFtsSearch(postgres);
+		await runFtsSearch(postgres);
+		const indexQueries = query.mock.calls.filter(([sql]) =>
+			String(sql).includes("FROM pg_indexes"),
+		);
+		expect(indexQueries).toHaveLength(1);
+		await postgres.close();
+	});
+	it("never queries pg_indexes at the ts_rank_cd default", async () => {
+		installFakePg({ bm25Extensions: ["pg_search"] });
+		const postgres = client();
+		await runFtsSearch(postgres);
+		expect(
+			query.mock.calls.filter(([sql]) => String(sql).includes("FROM pg_indexes")),
+		).toHaveLength(0);
 		await postgres.close();
 	});
 });

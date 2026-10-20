@@ -560,6 +560,22 @@ export interface CollectionStats {
   totalChunks: number;
   /** The path prefix the stats were scoped to, or null for the whole collection. */
   pathPrefix: string | null;
+  /**
+   * What the stored data supports, so a caller can decide which tools to offer
+   * instead of discovering empty answers. A collection ingested before the v2
+   * pipeline has chunk rows but no unit graph: `get_outline`, `get_pages`,
+   * `get_section` and `get_context` come back empty for it.
+   */
+  capabilities: {
+    /** Latest-version rows that carry a v2 `unit_id`. */
+    unitRows: number;
+    /** True when the collection has a v2 unit graph (any unit row). */
+    unitGraph: boolean;
+    /** `get_outline` / `get_section` have data (rows with a `section_id`). */
+    outline: boolean;
+    /** `get_pages` has data (rows with a `page_start`). */
+    pages: boolean;
+  };
 }
 
 /** Min/max/avg/median numeric distribution (all in the same unit). */

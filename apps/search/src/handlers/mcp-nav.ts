@@ -50,6 +50,7 @@ import { ASSET_VARIANTS } from "../asset-variants.js";
 import type { RenderCache, RegionBox } from "../render-cache.js";
 import { normalizeIdentifier } from "../identifier.js";
 import { expectedReferenceMatches } from "../expected-reference.js";
+import { responseTrustLabels } from "../content-trust.js";
 
 /** MIME types an image tool is allowed to stream back as MCP image content. */
 const IMAGE_MIME_TYPES = new Set([
@@ -287,7 +288,17 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
       const { body, summaries } = splitBody(result.result);
       const { markdown, truncated, total_chars } = joinMarkdown(body, cap);
       emitQueryActivity({ tool: "get_section", summary: `${result.result.length} unit${result.result.length === 1 ? "" : "s"} of ${section_id ?? section_path?.join(" › ")} in ${reference}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, reference, section_id, units: result.result.length, truncated } });
-      return json({ reference, section_id: section_id ?? null, section_path: section_path ?? null, markdown, units: body.length, truncated, total_chars, ...(summaries.length > 0 ? { summaries } : {}) });
+      return json({
+        reference,
+        section_id: section_id ?? null,
+        section_path: section_path ?? null,
+        markdown,
+        units: body.length,
+        truncated,
+        total_chars,
+        ...(summaries.length > 0 ? { summaries } : {}),
+        ...responseTrustLabels([markdown, ...summaries.map((s) => s.summary)]),
+      });
     },
   );
 
@@ -339,12 +350,32 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         });
         const joined = joinMarkdown(units.map((u, i) => ({ ...u, content: lines[i] ?? "" })), cap);
         emitQueryActivity({ tool: "get_pages", summary: `${units.length} unit summary of ${reference} ${from}-${to}`, status: "ok", startTime, detail: { collection: col, reference, from, to, units: units.length, format: "summary" } });
-        return json({ reference, from, to, format: "summary", summary: joined.markdown, units: units.length, truncated: joined.truncated });
+        return json({
+          reference,
+          from,
+          to,
+          format: "summary",
+          summary: joined.markdown,
+          units: units.length,
+          truncated: joined.truncated,
+          ...responseTrustLabels([joined.markdown]),
+        });
       }
       const { body, summaries } = splitBody(units);
       const { markdown, truncated, total_chars } = joinMarkdown(body, cap);
       emitQueryActivity({ tool: "get_pages", summary: `${body.length} unit${body.length === 1 ? "" : "s"} of ${reference} ${from}-${to}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, reference, from, to, units: body.length, truncated } });
-      return json({ reference, from, to, format: "markdown", markdown, units: body.length, truncated, total_chars, ...(summaries.length > 0 ? { summaries } : {}) });
+      return json({
+        reference,
+        from,
+        to,
+        format: "markdown",
+        markdown,
+        units: body.length,
+        truncated,
+        total_chars,
+        ...(summaries.length > 0 ? { summaries } : {}),
+        ...responseTrustLabels([markdown, ...summaries.map((s) => s.summary)]),
+      });
     },
   );
 
@@ -373,7 +404,13 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         return { content: [{ type: "text", text: `No visible unit "${unit_id}" in collection "${col}".` }], isError: true };
       }
       emitQueryActivity({ tool: "get_context", summary: `${b.length}+1+${a.length} units around ${unit_id}`, status: "ok", startTime, detail: { collection: col, unit_id, before: b.length, after: a.length } });
-      return json({ unit_id, before: b.map(shapeUnit), unit: shapeUnit(unit), after: a.map(shapeUnit) });
+      return json({
+        unit_id,
+        before: b.map(shapeUnit),
+        unit: shapeUnit(unit),
+        after: a.map(shapeUnit),
+        ...responseTrustLabels([...b, unit, ...a].map((u) => u.content)),
+      });
     },
   );
 
@@ -453,7 +490,15 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         { from: null, to: null },
       );
       emitQueryActivity({ tool: "get_table", summary: `${units.length} of ${total} row-group${total === 1 ? "" : "s"} for ${table_id}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, table_id, units: units.length, total, truncated } });
-      return json({ table_id, markdown, pages: pages.from != null ? pages : null, row_groups: units.length, total, truncated });
+      return json({
+        table_id,
+        markdown,
+        pages: pages.from != null ? pages : null,
+        row_groups: units.length,
+        total,
+        truncated,
+        ...responseTrustLabels([markdown]),
+      });
     },
   );
 
@@ -530,7 +575,11 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         else logger.warn({ error: figResult.error, unit_id }, "[MCP] follow_ref figure lookup failed");
       }
       emitQueryActivity({ tool: "follow_ref", summary: `${figures.length} referenced figure${figures.length === 1 ? "" : "s"} from ${unit_id}`, status: "ok", startTime, detail: { collection: col, unit_id, referenced: figures.length } });
-      return json({ unit: shapeUnit(unit), references: { figures } });
+      return json({
+        unit: shapeUnit(unit),
+        references: { figures },
+        ...responseTrustLabels([unit.content]),
+      });
     },
   );
 

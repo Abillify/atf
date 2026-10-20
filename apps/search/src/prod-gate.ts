@@ -22,6 +22,7 @@
  * decides whether to exit, which keeps this fully testable.
  */
 
+import type { OperationalProfile } from "@atf/security-kit";
 import type { Config } from "./config.js";
 
 export interface ProductionReadinessReport {
@@ -29,8 +30,8 @@ export interface ProductionReadinessReport {
   fatal: string[];
   /** Issues that are surfaced but do not abort. */
   warnings: string[];
-  /** The environment the gate judged against. */
-  environment: string;
+  /** The operational profile the gate judged against. */
+  environment: OperationalProfile;
 }
 
 /**
@@ -43,7 +44,7 @@ export function isAuthDisabled(config: Config): boolean {
 
 export function checkProductionReadiness(
   config: Config,
-  environment: string = config.nodeEnv,
+  environment: OperationalProfile = config.nodeEnv,
 ): ProductionReadinessReport {
   const fatal: string[] = [];
   const warnings: string[] = [];
@@ -56,7 +57,9 @@ export function checkProductionReadiness(
   // ── Authentication ────────────────────────────────────────────────────────
 
   if (isAuthDisabled(config)) {
-    flag("No authentication is configured (AUTHN_MODE=disabled) — ingest, delete, search and the MCP endpoint are open.");
+    flag(
+      "No authentication is configured (AUTHN_MODE=disabled) — ingest, delete, search and the MCP endpoint are open.",
+    );
   }
   if (isProd && config.authnMode !== "oidc") {
     fatal.push("Production requires AUTHN_MODE=oidc.");
@@ -72,7 +75,8 @@ export function checkProductionReadiness(
     );
   }
 
-  const tokenEnabled = config.authnMode === "token" || config.authnMode === "token_or_oidc";
+  const tokenEnabled =
+    config.authnMode === "token" || config.authnMode === "token_or_oidc";
   if (tokenEnabled && config.apiToken !== null && config.apiToken.length < 32) {
     flag(
       "API_TOKEN is shorter than 32 characters — it is a single shared secret " +
@@ -92,7 +96,9 @@ export function checkProductionReadiness(
   }
 
   if (config.monitorToken !== null && config.monitorToken.length < 32) {
-    flag("MONITOR_TOKEN is shorter than 32 characters — use a high-entropy value.");
+    flag(
+      "MONITOR_TOKEN is shorter than 32 characters — use a high-entropy value.",
+    );
   }
 
   if (
@@ -130,7 +136,9 @@ export function checkProductionReadiness(
   const staticCredentialConfigured = tokenEnabled;
   if (staticCredentialConfigured) {
     if (!config.defaultTenantId?.trim()) {
-      flag("DEFAULT_TENANT_ID is required when token authentication is enabled.");
+      flag(
+        "DEFAULT_TENANT_ID is required when token authentication is enabled.",
+      );
     }
     const requiredServiceScopes = [
       "vectorsearch.read",
@@ -140,34 +148,69 @@ export function checkProductionReadiness(
       "vectorsearch.acl.manage",
       "vectorsearch.metrics",
     ];
-    const missing = requiredServiceScopes.filter((scope) => !config.apiServiceScopes?.includes(scope));
+    const missing = requiredServiceScopes.filter(
+      (scope) => !config.apiServiceScopes?.includes(scope),
+    );
     if (missing.length > 0) {
-      flag(`API_SERVICE_SCOPES is missing required static-service scopes: ${missing.join(", ")}.`);
+      flag(
+        `API_SERVICE_SCOPES is missing required static-service scopes: ${missing.join(", ")}.`,
+      );
     }
   }
 
   if (config.transactionEnforcement !== "required") {
     flag("TRANSACTION_ENFORCEMENT must be required in production.");
   }
-  if (!config.transactionSecret || config.transactionSecret.length < 32) {
-    flag("TRANSACTION_HS256_SECRET must be a high-entropy value of at least 32 characters.");
+  const transactionAlgorithms = config.transactionAlgorithms ?? ["HS256"];
+  const acceptsHs256 = transactionAlgorithms.includes("HS256");
+  const acceptsAsymmetric = transactionAlgorithms.some((alg) => alg !== "HS256");
+  if (acceptsHs256 && (!config.transactionSecret || config.transactionSecret.length < 32)) {
+    flag(
+      "TRANSACTION_HS256_SECRET must be a high-entropy value of at least 32 characters.",
+    );
   }
-  if (!config.transactionIssuer?.trim()) flag("TRANSACTION_ISSUER must be non-empty.");
-  if (!config.transactionAudience?.trim()) flag("TRANSACTION_AUDIENCE must be non-empty.");
-  if (!Number.isInteger(config.transactionMaxTtlSeconds) || config.transactionMaxTtlSeconds < 1 || config.transactionMaxTtlSeconds > 900) {
+  if (acceptsAsymmetric) {
+    try {
+      if (new URL(config.transactionJwksUri ?? "").protocol !== "https:") {
+        flag("TRANSACTION_JWKS_URI must be an https URL in production: the keys that verify transaction tokens must not travel in clear text.");
+      }
+    } catch {
+      flag("TRANSACTION_JWKS_URI must be set to the issuer's JWKS URL when ES256 or EdDSA is accepted.");
+    }
+  }
+  if (acceptsHs256) {
+    warnings.push(
+      "TRANSACTION_ALGORITHMS accepts HS256: every holder of TRANSACTION_HS256_SECRET can mint transaction tokens this service accepts. " +
+        "Verify with the issuer's public key instead (TRANSACTION_JWKS_URI, ES256/EdDSA; docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md) " +
+        "and drop HS256 once every issuer has switched.",
+    );
+  }
+  if (!config.transactionIssuer?.trim())
+    flag("TRANSACTION_ISSUER must be non-empty.");
+  if (!config.transactionAudience?.trim())
+    flag("TRANSACTION_AUDIENCE must be non-empty.");
+  if (
+    !Number.isInteger(config.transactionMaxTtlSeconds) ||
+    config.transactionMaxTtlSeconds < 1 ||
+    config.transactionMaxTtlSeconds > 900
+  ) {
     flag("TRANSACTION_MAX_TTL_SECONDS must be between 1 and 900 seconds.");
   }
   const issuerMissingScopesClaim = config.apiOidcIssuers.some(
     (issuer) => config.authzEnabled && !issuer.scopesClaim,
   );
   if (isProd && issuerMissingScopesClaim) {
-    fatal.push("Every production API_OIDC_ISSUERS entry must configure scopesClaim.");
+    fatal.push(
+      "Every production API_OIDC_ISSUERS entry must configure scopesClaim.",
+    );
   }
   const issuerMissingTenantClaim = config.apiOidcIssuers.some(
     (issuer) => config.tenantIsolationEnabled && !issuer.tenantClaim,
   );
   if (issuerMissingTenantClaim) {
-    flag("Every API_OIDC_ISSUERS entry must configure tenantClaim when TENANT_ISOLATION_ENABLED=true.");
+    flag(
+      "Every API_OIDC_ISSUERS entry must configure tenantClaim when TENANT_ISOLATION_ENABLED=true.",
+    );
   }
 
   // ── JWT issuer pinning ────────────────────────────────────────────────────
@@ -261,6 +304,19 @@ export function checkProductionReadiness(
 
   if (config.rateLimit === 0) {
     flag("RATE_LIMIT is 0 — request throttling is disabled entirely.");
+  }
+
+  // Declaring REPLICAS > 1 without a shared store means every replica keeps
+  // its own GCRA budget: the effective service-wide limit is REPLICAS ×
+  // RATE_LIMIT. REPLICAS defaults to 1, so existing single-replica
+  // deployments are unaffected — only an explicit multi-replica declaration
+  // without RATE_LIMIT_REDIS_URL trips this.
+  if (config.replicas > 1 && !config.rateLimitRedisUrl) {
+    flag(
+      `REPLICAS is ${config.replicas} but RATE_LIMIT_REDIS_URL is unset — the rate ` +
+        `limit is per replica, so clients get up to ${config.replicas}× the budget. ` +
+        "Set RATE_LIMIT_REDIS_URL to share the throttle across replicas.",
+    );
   }
 
   if (!config.trustProxy) {

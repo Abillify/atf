@@ -75,7 +75,8 @@ export interface RevisionRow {
   /**
    * Declared page count: `document.begin.pageCount`, overridden by the
    * authoritative `document.end.pageCount`. The final commit checks the staged
-   * page coverage against `[1, page_count]`. Null while unknown.
+   * page coverage against `[first page, page_count]` (the first page is in
+   * `document_info.firstPage`, 1 without a `pages` window). Null while unknown.
    */
   page_count: number | null;
   /** True once a batch carrying the trailing `document.end` record is staged. */

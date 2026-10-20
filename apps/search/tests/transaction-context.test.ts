@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { describe, expect, it } from "vitest";
-import { SignJWT } from "jose";
+import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet, type JWTVerifyGetKey } from "jose";
 import {
   enforceRetrievalBudget,
   canonicalActionContractHash,
@@ -109,5 +109,67 @@ describe("Agent Transaction Fabric v1", () => {
   it("allows legacy calls only in optional mode", async () => {
     await expect(verifyTransactionToken(undefined, { ...config, enforcement: "optional" }, principal)).resolves.toEqual({ envelope: null, legacy: true });
     await expectCode(verifyTransactionToken(undefined, config, principal), "TRANSACTION_TOKEN_REQUIRED");
+  });
+});
+
+describe("asymmetric transaction tokens (ES256 / EdDSA through the issuer's JWKS)", () => {
+  async function issuer(alg: "EdDSA" | "ES256", kid = `key-${alg}`) {
+    const { privateKey, publicKey } = await generateKeyPair(alg, { extractable: true });
+    const jwk = { ...(await exportJWK(publicKey)), kid, alg, use: "sig" };
+    const jwks: JWTVerifyGetKey = createLocalJWKSet({ keys: [jwk] });
+    const sign = (payload: Record<string, unknown>) =>
+      new SignJWT(payload).setProtectedHeader({ alg, kid, typ: "at+jwt" }).sign(privateKey);
+    return { jwks, sign, privateKey };
+  }
+  const now = () => Math.floor(Date.now() / 1000);
+
+  it.each(["EdDSA", "ES256"] as const)("verifies a %s token against the JWKS", async (alg) => {
+    const { jwks, sign } = await issuer(alg);
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: [alg], jwks };
+    await expect(verifyTransactionToken(await sign(base(now())), cfg, principal)).resolves.toMatchObject({ legacy: false });
+  });
+
+  it("accepts HS256 and EdDSA side by side during a rolling migration", async () => {
+    const { jwks, sign } = await issuer("EdDSA");
+    const cfg: TransactionConfig = { ...config, algorithms: ["HS256", "EdDSA"], jwks };
+    await expect(verifyTransactionToken(await token(base(now())), cfg, principal)).resolves.toMatchObject({ legacy: false });
+    await expect(verifyTransactionToken(await sign(base(now())), cfg, principal)).resolves.toMatchObject({ legacy: false });
+  });
+
+  it("rejects an algorithm the deployment does not accept, whichever key would verify it", async () => {
+    const { jwks, sign } = await issuer("EdDSA");
+    // The shared secret is gone: a leaked HS256 token (or one forged with it) is refused outright.
+    const asymmetricOnly: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks };
+    await expectCode(verifyTransactionToken(await token(base(now())), asymmetricOnly, principal), "TRANSACTION_TOKEN_INVALID");
+    // And the other way round: a deployment still on HS256 does not trust a JWKS-signed token.
+    const hsOnly: TransactionConfig = { ...config, algorithms: ["HS256"], jwks };
+    await expectCode(verifyTransactionToken(await sign(base(now())), hsOnly, principal), "TRANSACTION_TOKEN_INVALID");
+    // The default (no `algorithms`) is HS256 only, exactly as before asymmetric tokens existed.
+    await expectCode(verifyTransactionToken(await sign(base(now())), { ...config, jwks }, principal), "TRANSACTION_TOKEN_INVALID");
+  });
+
+  it("rejects a token signed by a key that is not in the JWKS, and `none`", async () => {
+    const { jwks } = await issuer("EdDSA");
+    const stranger = await issuer("EdDSA", "key-EdDSA");
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks };
+    await expectCode(verifyTransactionToken(await stranger.sign(base(now())), cfg, principal), "TRANSACTION_TOKEN_INVALID");
+    const unsecured = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify(base(now()))).toString("base64url")}.`;
+    await expectCode(verifyTransactionToken(unsecured, cfg, principal), "TRANSACTION_TOKEN_INVALID");
+    await expectCode(verifyTransactionToken("not.a.jwt", cfg, principal), "TRANSACTION_TOKEN_INVALID");
+  });
+
+  it("still enforces issuer and audience, so a token minted for another service is refused", async () => {
+    const { jwks, sign } = await issuer("EdDSA");
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks };
+    await expectCode(verifyTransactionToken(await sign({ ...base(now()), aud: "mcpgate" }), cfg, principal), "TRANSACTION_TOKEN_INVALID");
+    await expectCode(verifyTransactionToken(await sign({ ...base(now()), iss: "someone-else" }), cfg, principal), "TRANSACTION_TOKEN_INVALID");
+  });
+
+  it("reports a misconfiguration (an accepted asymmetric algorithm without a key source) as a server error", async () => {
+    const { sign } = await issuer("EdDSA");
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"] };
+    await expectCode(verifyTransactionToken(await sign(base(now())), cfg, principal), "TRANSACTION_CONFIG_INVALID");
+    const noSecret: TransactionConfig = { ...config, secret: null, algorithms: ["HS256"] };
+    await expectCode(verifyTransactionToken(await token(base(now())), noSecret, principal), "TRANSACTION_CONFIG_INVALID");
   });
 });

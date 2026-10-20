@@ -330,6 +330,47 @@ describe("/v2/search handler", () => {
 		expect(pg.lookupFigureUnits).not.toHaveBeenCalled();
 	});
 
+	it("honours X-Valid-At (temporal scope, as on /search) and passes it to the candidate query", async () => {
+		const pg = mockPg({ search: { ok: true, result: [chunkHitWithRefs()] } });
+		const handler = createSearchV2Handler(mockEmbedding(), pg, logger);
+		const res = mockRes();
+		await handler(
+			mockReq(
+				{ query: "x" },
+				{ "x-valid-at": "2026-03-01T00:00:00+01:00" },
+			) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode ?? 200).toBe(200);
+		const call = (pg.search as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+		// Positional argument 19 of PostgresClient.search is `validAt`.
+		expect(call[19]).toBe("2026-02-28T23:00:00.000Z");
+	});
+	it("search without X-Valid-At leaves the temporal scope open", async () => {
+		const pg = mockPg({ search: { ok: true, result: [chunkHitWithRefs()] } });
+		const handler = createSearchV2Handler(mockEmbedding(), pg, logger);
+		await handler(
+			mockReq({ query: "x" }) as never,
+			mockRes() as never,
+			vi.fn(),
+		);
+		const call = (pg.search as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+		expect(call[19]).toBeUndefined();
+	});
+	it("rejects an X-Valid-At without a timezone with 400", async () => {
+		const pg = mockPg({ search: { ok: true, result: [] } });
+		const handler = createSearchV2Handler(mockEmbedding(), pg, logger);
+		const res = mockRes();
+		await handler(
+			mockReq({ query: "x" }, { "x-valid-at": "2026-03-01T00:00:00" }) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode).toBe(400);
+		expect(String((res.body as { error: string }).error)).toContain("X-Valid-At");
+		expect(pg.search).not.toHaveBeenCalled();
+	});
 	it("include_assets=refs returns asset ids/refs without URLs", async () => {
 		const pg = mockPg({ search: { ok: true, result: [chunkHitWithRefs()] } });
 		const handler = createSearchV2Handler(mockEmbedding(), pg, logger);

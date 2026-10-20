@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { createHash } from "node:crypto";
+import { canonicalSetJsonValue } from "@atf/canonical-json";
 import type { SearchResult } from "./postgres-client.js";
 
 const EVIDENCE_PACK_SCHEMA_VERSION = "v2";
@@ -147,35 +148,17 @@ function sha256(value: string): string {
   return createHash(SHA_256).update(value).digest("hex");
 }
 
+/**
+ * Set-normalising canonical structure: code-unit key order, `undefined`
+ * members dropped, and ARRAY elements de-duplicated and sorted so evidence
+ * arrays hash the same regardless of retrieval order (deliberate — never
+ * merge with the ordered modes of `@atf/canonical-json`). The implementation
+ * is that package's `canonicalSetJsonValue`, byte-identical to the former
+ * local helper (proven by `packages/canonical-json/test/differential.test.ts`)
+ * because evidence-pack hashes are content-addressed references.
+ */
 function canonicalJsonValue(value: unknown): CanonicalJsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
-    (typeof value === "number" && Number.isFinite(value))
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const normalized = value.map(canonicalJsonValue);
-    return [...new Map(
-      normalized
-        .map((item) => [JSON.stringify(item), item] as const)
-        .sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-    ).values()];
-  }
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(record)
-        .filter((key) => record[key] !== undefined)
-        .sort()
-        .map((key) => [key, canonicalJsonValue(record[key])]),
-    );
-  }
-  return null;
+  return canonicalSetJsonValue(value) as CanonicalJsonValue;
 }
 
 function canonicalFilter(

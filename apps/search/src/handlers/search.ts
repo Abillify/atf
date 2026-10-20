@@ -941,8 +941,10 @@ function fmtScore(v: number): string {
  */
 export function buildSearchSummary(opts: SearchActivityOptions): string {
   const { query, collection, mode, reranked, asyncRerank, results } = opts;
-  const truncated =
-    '"' + query.slice(0, 80) + (query.length > 80 ? "…" : "") + '"';
+  // Data minimisation (docs/operations-and-retrieval.md): the activity stream
+  // is process-wide — every operator subscriber sees every tenant's events —
+  // so the raw query text never goes into it, only its shape.
+  const truncated = "query[" + query.length + " chars]";
   const colPart = collection !== "documents" ? " in " + collection : "";
 
   // Compute best scores across all returned results.
@@ -1086,6 +1088,10 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
       if (overlapChars > 0 && merged.endsWith(nextContent.slice(0, overlapChars))) {
         // The overlap region is already present at the tail of `merged`.
         merged += nextContent.slice(overlapChars);
+      } else if (isChunkGap(prev, curr)) {
+        // The chunks between these two were not retrieved: say so, so a
+        // model never reads two distant passages as one continuous text.
+        merged += `\n\n${CHUNK_GAP_MARKER}\n\n${nextContent}`;
       } else {
         // No clean overlap match — just append with a newline separator.
         merged += "\n" + nextContent;
@@ -1103,6 +1109,20 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
   // Sort by document score descending (preserves relative ranking).
   docs.sort((a, b) => b.score - a.score);
   return docs;
+}
+
+/** Inserted between non-adjacent chunks of one document when they are merged. */
+export const CHUNK_GAP_MARKER = "[…]";
+
+/**
+ * True when both chunks carry a chunk index and `curr` is not the chunk right
+ * after `prev`, i.e. there is retrieved-nothing text between them. Without
+ * chunk info the adjacency is unknown and no marker is claimed.
+ */
+function isChunkGap(prev: SearchResult, curr: SearchResult): boolean {
+  const a = prev.chunk?.chunk_index;
+  const b = curr.chunk?.chunk_index;
+  return typeof a === "number" && typeof b === "number" && b - a > 1;
 }
 
 /**

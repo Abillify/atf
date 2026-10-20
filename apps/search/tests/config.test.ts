@@ -18,6 +18,8 @@ describe("Config", () => {
 
   beforeEach(() => {
     savedEnv = { ...process.env };
+    // Keep profile tests independent of a profile set on the host shell.
+    delete process.env["ATF_PROFILE"];
     process.env["POSTGRES_URL"] =
       "postgresql://user:pass@localhost:5432/vectorsearch";
     process.env["EMBED_URL"] = "http://embed:8080";
@@ -69,6 +71,34 @@ describe("Config", () => {
     process.env["NODE_ENV"] = "development";
     process.env["MIGRATE_ON_START"] = "false";
     expect(loadConfig().migrateOnStart).toBe(false);
+  });
+
+  // Betriebsprofil: ATF_PROFILE ist der plattformweite Schalter und überstimmt
+  // NODE_ENV; unbekannte Werte brechen den Start ab statt die Prod-Gates
+  // stillschweigend abzuschalten.
+  it("lets ATF_PROFILE override NODE_ENV", () => {
+    delete process.env["MIGRATE_ON_START"];
+    process.env["ATF_PROFILE"] = "production";
+    process.env["NODE_ENV"] = "development";
+    expect(loadConfig().nodeEnv).toBe("production");
+    expect(loadConfig().migrateOnStart).toBe(false);
+    process.env["ATF_PROFILE"] = "development";
+    process.env["NODE_ENV"] = "production";
+    expect(loadConfig().nodeEnv).toBe("development");
+  });
+
+  it("normalises case and whitespace in the profile", () => {
+    delete process.env["MIGRATE_ON_START"];
+    process.env["NODE_ENV"] = "  PRODUCTION ";
+    expect(loadConfig().nodeEnv).toBe("production");
+  });
+
+  it("fails fast on an unknown profile instead of disabling the gate", () => {
+    process.env["NODE_ENV"] = "prod";
+    expect(() => loadConfig()).toThrow("NODE_ENV");
+    process.env["NODE_ENV"] = "development";
+    process.env["ATF_PROFILE"] = "PRODUCTIVE";
+    expect(() => loadConfig()).toThrow("ATF_PROFILE");
   });
 
   it("defaults the RRF list weights to 1.0 (unchanged ranking)", () => {
@@ -212,6 +242,48 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("EMBED_MODEL");
   });
 
+  // A fallback embedding model that differs from the primary writes vectors
+  // into a different space than the indexed ones — equal dimension is not the
+  // same vector space, and the mismatch silently destroys relevance. Fail at
+  // startup unless the operator explicitly asserts a shared space.
+  describe("EMBED_FALLBACK_MODEL same-space guard", () => {
+    it("accepts a fallback model equal to the primary", () => {
+      process.env["EMBED_FALLBACK_MODEL"] = "text-embedding-3-small";
+      delete process.env["EMBED_FALLBACK_SAME_SPACE"];
+      expect(loadConfig().embedFallbackModel).toBe("text-embedding-3-small");
+    });
+
+    it("throws when the fallback model differs from the primary", () => {
+      process.env["EMBED_FALLBACK_MODEL"] = "bge-m3";
+      delete process.env["EMBED_FALLBACK_SAME_SPACE"];
+      expect(() => loadConfig()).toThrow("EMBED_FALLBACK_MODEL");
+      expect(() => loadConfig()).toThrow("same vector space");
+    });
+
+    it("accepts a differing fallback model with an explicit same-space assertion", () => {
+      process.env["EMBED_FALLBACK_MODEL"] = "BAAI/bge-m3";
+      process.env["EMBED_FALLBACK_SAME_SPACE"] = "true";
+      const config = loadConfig();
+      expect(config.embedFallbackModel).toBe("BAAI/bge-m3");
+      expect(config.embedFallbackSameSpace).toBe(true);
+    });
+
+    it("still throws when the same-space flag is present but false", () => {
+      process.env["EMBED_FALLBACK_MODEL"] = "bge-m3";
+      process.env["EMBED_FALLBACK_SAME_SPACE"] = "false";
+      expect(() => loadConfig()).toThrow("EMBED_FALLBACK_MODEL");
+    });
+
+    it("defaults embedFallbackSameSpace to false and stays unset without a fallback", () => {
+      delete process.env["EMBED_FALLBACK_MODEL"];
+      delete process.env["EMBED_FALLBACK_SAME_SPACE"];
+      const config = loadConfig();
+      expect(config.embedFallbackSameSpace).toBe(false);
+      expect(config.embedFallbackModel).toBeNull();
+      expect(config.embedFallbackUrl).toBeNull();
+    });
+  });
+
   it("succeeds when all required vars are set", () => {
     const config = loadConfig();
     expect(config.postgresUrl).toBe(
@@ -327,6 +399,44 @@ describe("Config", () => {
     expect(checkProductionReadiness(config).fatal).toEqual([]);
   });
 
+  describe("transaction token verification keys (ADR-0035)", () => {
+    const required = () => {
+      process.env["TRANSACTION_ENFORCEMENT"] = "required";
+    };
+    it("keeps HS256-only as the default when only the shared secret is set", () => {
+      required();
+      process.env["TRANSACTION_HS256_SECRET"] = "t".repeat(40);
+      expect(loadConfig()).toMatchObject({ transactionAlgorithms: ["HS256"], transactionJwksUri: null });
+    });
+    it("accepts the asymmetric algorithms too when a JWKS URL is set (a rolling migration)", () => {
+      required();
+      process.env["TRANSACTION_HS256_SECRET"] = "t".repeat(40);
+      process.env["TRANSACTION_JWKS_URI"] = "https://runtime.internal/.well-known/atf-transaction-jwks.json";
+      expect(loadConfig().transactionAlgorithms).toEqual(["HS256", "ES256", "EdDSA"]);
+    });
+    it("needs no shared secret once only asymmetric algorithms are accepted", () => {
+      required();
+      process.env["TRANSACTION_JWKS_URI"] = "https://runtime.internal/jwks";
+      process.env["TRANSACTION_ALGORITHMS"] = "EdDSA";
+      expect(loadConfig()).toMatchObject({ transactionAlgorithms: ["EdDSA"], transactionSecret: null });
+    });
+    it("refuses a configuration that can verify nothing, or names an unknown algorithm", () => {
+      required();
+      expect(() => loadConfig()).toThrow("TRANSACTION_HS256_SECRET or TRANSACTION_JWKS_URI");
+      process.env["TRANSACTION_JWKS_URI"] = "https://runtime.internal/jwks";
+      process.env["TRANSACTION_ALGORITHMS"] = "HS256";
+      expect(() => loadConfig()).toThrow("TRANSACTION_HS256_SECRET is required when TRANSACTION_ALGORITHMS accepts HS256");
+      process.env["TRANSACTION_ALGORITHMS"] = "EdDSA,none";
+      expect(() => loadConfig()).toThrow("only HS256, ES256 or EdDSA");
+      process.env["TRANSACTION_ALGORITHMS"] = "EdDSA";
+      process.env["TRANSACTION_JWKS_URI"] = "ftp://runtime.internal/jwks";
+      expect(() => loadConfig()).toThrow("http(s) URL");
+    });
+    it("is not required while enforcement is off", () => {
+      process.env["TRANSACTION_ENFORCEMENT"] = "off";
+      expect(loadConfig()).toMatchObject({ transactionAlgorithms: [], transactionJwksUri: null });
+    });
+  });
   it("loads DEFAULT_TENANT_ID and keeps the legacy OIDC alias compatible", () => {
     process.env["API_OIDC_DEFAULT_TENANT_ID"] = "  tenant-default  ";
     expect(loadConfig().defaultTenantId).toBe("tenant-default");

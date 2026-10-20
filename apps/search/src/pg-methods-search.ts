@@ -216,7 +216,10 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
           // the builders fall back to ts_rank_cd verbatim.
           const lexical: LexicalRanker | undefined =
             ftsRanker === "bm25"
-              ? { ranker: "bm25", bm25Engine: await detectBm25Engine(client) }
+              ? {
+                  ranker: "bm25",
+                  bm25Engine: await detectBm25Engine(client, table),
+                }
               : undefined;
 
           const { sql, params } = ftsOnly

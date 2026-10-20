@@ -19,15 +19,29 @@ import { emitActivity } from "../activity-emitter.js";
 import { DEFAULT_EXPAND_BUDGET_CHARS, MAX_EXPAND_BUDGET_CHARS, defaultBudgetCharsFor, type ExpandMode } from "../expansion.js";
 import { FIGURE_KINDS } from "../figure-kinds.js";
 import { FILTER_V2, UNIT_FILTER_V2, normalizeFilterV2, unitFilterV2HasPredicates, type UnitFilterV2 } from "../metadata.js";
-import { decodeCursor, encodeCursor, type FigureUnitInfo } from "../postgres-client.js";
-import { applyMinScore, diversifyResults, groupResultsBySection, groupResultsV2, retrievalScoreKind, type GroupByMode, type ScoreKind, type ScoreThreshold } from "../rerank-context.js";
+import {
+  decodeCursor,
+  encodeCursor,
+  prepareFtsContent,
+} from "../postgres-client.js";
+import {
+  groupResultsBySection,
+  retrievalScoreKind,
+  type GroupByMode,
+  type ScoreThreshold,
+} from "../rerank-context.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 import { shapeHitV2, type IncludeAssets } from "../search-v2-response.js";
 import { getUsageContext } from "../usage-context.js";
 import { newActivityId } from "./activity-stream.js";
-import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
-import { BadRequest, parseFilters, resolveReferencedFigures } from "./search-v2.js";
-import { buildSearchDetail, buildSearchSummary, groupResultsByDocument, rerankResultsWithStatus } from "./search.js";
+import {
+  CandidateSearchError,
+  EmbeddingFailedError,
+  runRetrievalPipeline,
+  type RetrievalPipelineResult,
+} from "./retrieval-pipeline.js";
+import { BadRequest, parseFilters } from "./search-v2.js";
+import { buildSearchDetail, buildSearchSummary } from "./search.js";
 import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
@@ -39,6 +53,7 @@ export function registerSearchTool(opts: McpToolContext): void {
     sparseClient,
     queryCache,
     rerankerClient = null,
+    tokenCounter = null,
     hydeClient = null,
     logger,
     defaultCollection = "documents",
@@ -413,7 +428,10 @@ export function registerSearchTool(opts: McpToolContext): void {
       // HyDE query expansion (optional): generate a hypothetical answer
       // document and embed THAT instead of the raw query. The original `query`
       // is still used for the PostgreSQL FTS/ts_rank/lexical branch below (keeps exact terms).
-      let embedText = query;
+      // Same normalisation the other search surfaces apply before embedding
+      // (markdown/URL/long-token cleanup); a query that is nothing but such
+      // noise embeds as written.
+      let embedText = prepareFtsContent(query) || query;
       let hydeApplied = false;
       let hydeFallbackReason:
         | "not-requested"
@@ -438,82 +456,101 @@ export function registerSearchTool(opts: McpToolContext): void {
         }
       }
 
-      // Embed the (possibly HyDE-expanded) query text (cache-aware)
-      let vector: number[];
+      // Embed → sparse → candidates → rerank → document groups → diversify /
+      // threshold → slice → expansion → figure lookup: the shared retrieval
+      // core (see retrieval-pipeline.ts). The MCP-specific stage configuration:
+      // rerank WITHOUT token fitting or a minimum-candidate guard, the
+      // relevance threshold BEFORE the limit slice (so the page fills from the
+      // qualified set and `rerank_score_hits` can name every qualified
+      // document), document-group annotation on every hit, and figure
+      // resolution only in v2 mode when assets are enabled.
+      const expandMode =
+        expand === undefined || expand === "none"
+          ? undefined
+          : (expand as ExpandMode);
+      let pipe: RetrievalPipelineResult;
       try {
-        if (queryCache) {
-          vector = await queryCache.getOrEmbed(embedText, async () => {
-            const r = await embeddingClient.embed(embedText);
-            if (!r.ok) throw new Error(r.error.message);
-            return r.result.vector;
-          });
-        } else {
-          const r = await embeddingClient.embed(embedText);
-          if (!r.ok) throw new Error(r.error.message);
-          vector = r.result.vector;
-        }
+        pipe = await runRetrievalPipeline(
+          {
+            embeddingClient,
+            postgresClient,
+            queryCache,
+            sparseClient,
+            rerankerClient,
+          },
+          logger,
+          {
+            query,
+            embedText,
+            collection: col,
+            scope: accessScopeForMcp(),
+            filter: effectiveFilter,
+            limit,
+            fetchLimit,
+            hybrid: useHybrid,
+            includeAllVersions: include_all_versions ?? false,
+            offset: cursor ? 0 : offset,
+            candidateMultiplier,
+            tags: tags?.length ? tags : undefined,
+            cursor,
+            ftsOnly: false,
+            pathPrefix: path_prefix,
+            validAt: parseRfc3339DateTime(valid_at),
+            // Identifier RRF list only in v2 mode / on explicit request (Req 13.7).
+            searchOptions: identifierList
+              ? {
+                  identifierList: true,
+                  ...(explicitIdentifier
+                    ? { identifiers: [explicitIdentifier] }
+                    : {}),
+                }
+              : undefined,
+            logSparseFailure: false,
+            rerank: { active: rerankActive, tokenCounter },
+            documentGroups: true,
+            legacyGroupByDocument: groupByDocument,
+            diversify: groupBySection
+              ? "default"
+              : groupByV2 !== undefined
+                ? "uncapped"
+                : "none",
+            groupBy: groupByV2 ?? "none",
+            minScore: {
+              threshold: minScoreThreshold,
+              position: "before-slice",
+            },
+            expand:
+              expandMode !== undefined
+                ? {
+                    mode: expandMode,
+                    budgetChars:
+                      budget_chars ?? defaultBudgetCharsFor(expandMode),
+                    validAt: parseRfc3339DateTime(valid_at),
+                  }
+                : undefined,
+            resolveFigures: v2Requested && includeAssets !== "none",
+          },
+        );
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn({ err }, "[MCP] Embedding failed");
-        return {
-          content: [{ type: "text", text: `Embedding failed: ${msg}` }],
-          isError: true,
-        };
+        if (err instanceof EmbeddingFailedError) {
+          logger.warn({ err }, "[MCP] Embedding failed");
+          return {
+            content: [
+              { type: "text", text: `Embedding failed: ${err.message}` },
+            ],
+            isError: true,
+          };
+        }
+        if (err instanceof CandidateSearchError) {
+          logger.warn({ error: err.message }, "[MCP] Search failed");
+          return {
+            content: [{ type: "text", text: `Search failed: ${err.message}` }],
+            isError: true,
+          };
+        }
+        throw err;
       }
-
-      // Optional sparse vector for hybrid search (uses the expanded text too)
-      let sparseVec:
-        | import("../sparse-embedding-client.js").SparseVector
-        | undefined;
-      if (sparseClient && useHybrid) {
-        const r = await sparseClient.embedSparse(embedText);
-        if (r.ok) sparseVec = r.result;
-      }
-
-      const result = await postgresClient.search(
-        query,
-        vector,
-        fetchLimit,
-        col,
-        accessScopeForMcp(),
-        effectiveFilter,
-        useHybrid,
-        include_all_versions ?? false,
-        cursor ? 0 : offset,
-        candidateMultiplier,
-        sparseVec,
-        tags?.length ? tags : undefined,
-        cursor,
-        false, // ftsOnly
-        undefined, // baseRef
-        path_prefix, // pathPrefix — folder-scoped search
-        undefined,
-        undefined,
-        undefined,
-        parseRfc3339DateTime(valid_at),
-        // Identifier RRF list only in v2 mode / on explicit request (Req 13.7).
-        identifierList
-          ? {
-              identifierList: true,
-              ...(explicitIdentifier
-                ? { identifiers: [explicitIdentifier] }
-                : {}),
-            }
-          : undefined,
-      );
-
-      if (!result.ok) {
-        logger.warn({ error: result.error }, "[MCP] Search failed");
-        return {
-          content: [
-            { type: "text", text: `Search failed: ${result.error.message}` },
-          ],
-          isError: true,
-        };
-      }
-
-      let rankedResults = result.result;
-      let rerankStatus: {
+      const rerankStatus: {
         requested: boolean;
         available: boolean;
         applied: boolean;
@@ -526,127 +563,55 @@ export function registerSearchTool(opts: McpToolContext): void {
           | "failed"
           | "empty-or-invalid"
           | null;
-      } = {
-        requested: rerankRequested,
-        available: rerankerClient !== null,
-        applied: false,
-        complete: false,
-        scoredCount: 0,
-        inputCount: rankedResults.length,
-        fallbackReason: rerankRequested
-          ? rerankerClient === null
-            ? "unavailable"
-            : null
-          : "not-requested",
-      };
-      if (rerankActive) {
-        const rerankOutcome = await rerankResultsWithStatus(
-          rerankerClient!,
-          query,
-          rankedResults,
-          logger,
-        );
-        rankedResults = rerankOutcome.results;
-        rerankStatus = {
-          requested: true,
-          available: true,
-          applied: rerankOutcome.applied,
-          complete: rerankOutcome.complete,
-          scoredCount: rerankOutcome.scoredCount,
-          inputCount: rerankOutcome.inputCount,
-          fallbackReason: rerankOutcome.fallbackReason,
-        };
-      }
-      // Every hit names its e-mail thread / attachment parent (one query), so a
-      // model sees a message is part of a conversation and can read it whole
-      // with get_thread — not only when grouping.
-      rankedResults = await attachDocumentGroups({
-        postgresClient,
-        collection: col,
-        scope: accessScopeForMcp(),
-        results: rankedResults,
-        logger,
-      });
-      if (groupByDocument) {
-        rankedResults = groupResultsByDocument(rankedResults);
-      }
-      // Diversify for the single-document section view (task 3.5): collapse
-      // same table/figure and cap hits per section before grouping by section.
-      if (groupBySection) {
-        rankedResults = diversifyResults(rankedResults);
-      }
-      // v2 group_by (Req 13.6): diversify without the per-section cap, then
-      // merge per document / section (best score, document-order content).
-      if (groupByV2 !== undefined) {
-        rankedResults = groupResultsV2(
-          diversifyResults(rankedResults, { perSectionCap: 0 }),
-          groupByV2,
-        );
-      }
-      const countBeforeMinScore = rankedResults.length;
-      const finalScoreKind: ScoreKind = rerankStatus.applied
-        ? "rerank"
-        : retrievalScoreKind({ ftsOnly: false, hybrid: useHybrid });
-      const minScoreOutcome = applyMinScore(rankedResults, minScoreThreshold, finalScoreKind);
-      rankedResults = minScoreOutcome.results;
-      const countAfterMinScore = rankedResults.length;
+      } = pipe.rerank
+        ? {
+            requested: true,
+            available: true,
+            applied: pipe.rerank.applied,
+            complete: pipe.rerank.complete,
+            scoredCount: pipe.rerank.scoredCount,
+            inputCount: pipe.rerank.inputCount,
+            fallbackReason: pipe.rerank.fallbackReason,
+          }
+        : {
+            requested: rerankRequested,
+            available: rerankerClient !== null,
+            applied: false,
+            complete: false,
+            scoredCount: 0,
+            inputCount: pipe.candidateCount,
+            fallbackReason: rerankRequested
+              ? rerankerClient === null
+                ? "unavailable"
+                : null
+              : "not-requested",
+          };
       // Preserve compact provenance for every fully reranked candidate before
       // the normal response limit truncates content-heavy result objects. This
       // lets score-threshold consumers select all qualified documents without
       // expanding the public `results` payload to the full candidate pool.
+      // `pipe.qualified` is the post-threshold, pre-slice candidate list.
       const rerankScoreHits =
         rerankStatus.applied && rerankStatus.complete
-          ? rankedResults.map((item, index) => ({
+          ? pipe.qualified.map((item, index) => ({
               base_ref: item.base_ref,
               reference: item.reference,
               score: item.score,
               rank: index + 1,
             }))
           : [];
-      rankedResults = rankedResults.slice(0, limit);
+      const finalScoreKind = pipe.scoreKind;
+      const minScoreOutcome = pipe.minScore;
+      const countBeforeMinScore = pipe.countBeforeMinScore;
+      const countAfterMinScore = pipe.countAfterMinScore;
 
-      // Small-to-big expansion (task 3.6, Requirement 13.4): runs AFTER
-      // diversification/limit, mirroring the pipeline order in Requirement 13.1
-      // (… → diversify → EXPANSION → asset attach). Opt-in via `expand`; when
-      // omitted no `expanded` field is attached and the flat results are
-      // unchanged. Each hit's expansion honours the same visibility/ACL/revision
-      // predicates as the search itself.
-      const expandMode =
-        expand === undefined || expand === "none"
-          ? undefined
-          : (expand as ExpandMode);
-      const expandedResults =
-        expandMode !== undefined
-          ? await attachExpansions({
-              postgresClient,
-              collection: col,
-              scope: accessScopeForMcp(),
-              mode: expandMode,
-              budgetChars: budget_chars ?? defaultBudgetCharsFor(expandMode),
-              includeAllVersions: include_all_versions ?? false,
-              validAt: parseRfc3339DateTime(valid_at),
-              results: rankedResults,
-              logger,
-            })
-          : rankedResults;
-
-      // v2 asset attach (Req 13.5): resolve the referenced figures once per
-      // document so each hit's assets carry figure_kind/caption/page/bbox.
-      const figureInfo = new Map<string, FigureUnitInfo>();
-      if (v2Requested && includeAssets !== "none") {
-        await resolveReferencedFigures(
-          postgresClient,
-          col,
-          accessScopeForMcp(),
-          expandedResults,
-          figureInfo,
-          logger,
-        );
-      }
-
-      const hits = expandedResults.map((r) => {
+      const hits = pipe.results.map((r) => {
         const v2 = v2Requested
-          ? shapeHitV2(r, { collection: col, includeAssets, figureInfo })
+          ? shapeHitV2(r, {
+              collection: col,
+              includeAssets,
+              figureInfo: pipe.figureInfo,
+            })
           : null;
         return {
           id: r.id,
@@ -698,7 +663,7 @@ export function registerSearchTool(opts: McpToolContext): void {
       // document. Emitted as a parallel `sections` array; the flat `results`
       // stay unchanged so existing consumers are unaffected.
       const sections = groupBySection
-        ? groupResultsBySection(rankedResults).map((g) => ({
+        ? groupResultsBySection(pipe.results).map((g) => ({
             section_path: g.section_path,
             score: g.score,
             references: g.results.map((r) => r.reference),
@@ -714,7 +679,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         groupByV2 === undefined &&
         hits.length === limit
       ) {
-        const last = rankedResults[rankedResults.length - 1];
+        const last = pipe.results[pipe.results.length - 1];
         if (last) {
           // Include `score` — it is the value the query ordered by and thus part
           // of the keyset key. A cursor without it pages on `created` alone
@@ -737,7 +702,7 @@ export function registerSearchTool(opts: McpToolContext): void {
           collection: col,
           mode: useHybrid ? "hybrid" : "dense",
           reranked: rerankStatus.applied,
-          results: rankedResults,
+          results: pipe.results,
           filter: filter as
             | import("../postgres-client.js").SearchFilter
             | undefined,
@@ -746,7 +711,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         timestamp: new Date().toISOString(),
         duration_ms: Date.now() - searchStartTime,
         detail: buildSearchDetail({
-          results: rankedResults,
+          results: pipe.results,
           hybrid: useHybrid,
           reranked: rerankStatus.applied,
           collection: col,

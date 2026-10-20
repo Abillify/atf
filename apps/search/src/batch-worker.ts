@@ -45,6 +45,7 @@
  * (`finalizeRevision`), and when idle it resumes interrupted switches.
  */
 
+import { mapWithConcurrency } from "./concurrency.js";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Logger } from "pino";
@@ -145,6 +146,19 @@ export interface BatchWorkerOptions {
   /** Embedding batch size per HTTP round-trip. Default: 64. */
   embedBatchSize?: number;
   /**
+   * How many embedding round-trips of ONE staged batch run at once. The slices
+   * used to go out one after the other, so a batch of N slices paid N times the
+   * provider latency. Order of the vectors is preserved. Default: 4.
+   */
+  embedConcurrency?: number;
+  /**
+   * How many staged batches one wake-up of the poll loop may process back to
+   * back before it sleeps for `intervalMs` again. Without it a backlog of B
+   * batches took B poll intervals. The loop still stops at the first idle or
+   * error tick. Default: 25.
+   */
+  maxBatchesPerPoll?: number;
+  /**
    * Fraction of the chunk token budget the contextual embedding header may
    * occupy (task 3.3, Requirement 11.4). The header (title, section path,
    * pages, type, page summary) is prepended to each chunk/table/figure unit's
@@ -225,6 +239,8 @@ export function createBatchWorker(
   const minChunkTokens = options.minChunkTokens ?? 350;
   const maxChunkTokens = options.maxChunkTokens ?? 500;
   const embedBatchSize = options.embedBatchSize ?? 64;
+  const embedConcurrency = Math.max(1, options.embedConcurrency ?? 4);
+  const maxBatchesPerPoll = Math.max(1, options.maxBatchesPerPoll ?? 25);
   const vecType = options.vecType ?? "vector";
   const onlyTenantId = options.onlyTenantId;
   const onTick = options.onTick;
@@ -240,21 +256,27 @@ export function createBatchWorker(
    * batch (no partial commit).
    */
   async function embedAll(units: IndexUnit[]): Promise<number[][]> {
-    const vectors: number[][] = [];
+    const slices: IndexUnit[][] = [];
     for (let start = 0; start < units.length; start += embedBatchSize) {
-      const slice = units.slice(start, start + embedBatchSize);
-      const res = await embeddingClient.embedBatch(slice.map((u) => u.embedInput));
-      if (!res.ok) {
-        throw new EmbeddingFailure(`${res.error.code}: ${res.error.message}`);
-      }
-      if (res.result.vectors.length !== slice.length) {
-        throw new EmbeddingFailure(
-          `embedding provider returned ${res.result.vectors.length} vectors for ${slice.length} inputs`,
-        );
-      }
-      vectors.push(...res.result.vectors);
+      slices.push(units.slice(start, start + embedBatchSize));
     }
-    return vectors;
+    const perSlice = await mapWithConcurrency(
+      slices,
+      embedConcurrency,
+      async (slice) => {
+        const res = await embeddingClient.embedBatch(slice.map((u) => u.embedInput));
+        if (!res.ok) {
+          throw new EmbeddingFailure(`${res.error.code}: ${res.error.message}`);
+        }
+        if (res.result.vectors.length !== slice.length) {
+          throw new EmbeddingFailure(
+            `embedding provider returned ${res.result.vectors.length} vectors for ${slice.length} inputs`,
+          );
+        }
+        return res.result.vectors;
+      },
+    );
+    return perSlice.flat();
   }
 
   /**
@@ -671,6 +693,7 @@ export function createBatchWorker(
   async function drain(max = 1000): Promise<TickOutcome[]> {
     const outcomes: TickOutcome[] = [];
     for (let i = 0; i < max; i++) {
+      if (stopped) break;
       const outcome = await tick();
       outcomes.push(outcome);
       if (outcome.kind === "idle" || outcome.kind === "error") break;
@@ -680,12 +703,14 @@ export function createBatchWorker(
 
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  let stopped = false;
   if (intervalMs > 0) {
     timer = setInterval(() => {
       // Guard against overlapping ticks when a batch takes longer than the poll.
       if (running) return;
       running = true;
-      void tick()
+      // Work through the backlog before sleeping again (see maxBatchesPerPoll).
+      void drain(maxBatchesPerPoll)
         .catch((err) => logger?.warn({ err }, "Batch worker tick failed"))
         .finally(() => {
           running = false;
@@ -698,6 +723,7 @@ export function createBatchWorker(
     tick,
     drain,
     stop(): void {
+      stopped = true;
       if (timer) {
         clearInterval(timer);
         timer = null;

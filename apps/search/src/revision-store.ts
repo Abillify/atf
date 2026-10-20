@@ -283,20 +283,25 @@ export function missingRanges(covered: PageRange[], total: PageRange): PageRange
  * `document.end` page count, NOT from the span of what happened to arrive — a
  * missing first or last batch must be reported, not silently accepted.
  *
- *   - page count known → every page in `[1, pageCount]` must be covered;
+ *   - page count known → every page in `[firstPage, pageCount]` must be
+ *     covered (`firstPage` is 1 unless the job processed a `pages` window,
+ *     contract 2.4; `pageCount` is then the stream's LAST page);
  *   - page count unknown (streaming producer, no `document.end` yet) → the
  *     commit is rejected until the trailing `document.end` is staged; the gaps
- *     in `[1, max accepted page]` are reported so the producer can resend.
+ *     in `[firstPage, max accepted page]` are reported so the producer can resend.
  */
 export function commitCompleteness(args: {
   accepted: PageRange[];
   pageCount: number | null;
   hasDocumentEnd: boolean;
+  /** First page of the stream; absent = 1. */
+  firstPage?: number | null | undefined;
 }): { ok: true } | { ok: false; code: string; message: string; missingRanges: PageRange[] } {
   const { accepted, pageCount, hasDocumentEnd } = args;
+  const firstPage = args.firstPage !== null && args.firstPage !== undefined && args.firstPage > 1 ? args.firstPage : 1;
   if (pageCount !== null) {
     if (pageCount === 0) return { ok: true };
-    const missing = missingRanges(accepted, { from: 1, to: pageCount });
+    const missing = missingRanges(accepted, { from: firstPage, to: pageCount });
     if (missing.length === 0) return { ok: true };
     return {
       ok: false,
@@ -306,7 +311,7 @@ export function commitCompleteness(args: {
     };
   }
   const span = spanOf(accepted);
-  const gaps = span ? missingRanges(accepted, { from: 1, to: span.to }) : [];
+  const gaps = span ? missingRanges(accepted, { from: firstPage, to: span.to }) : [];
   if (!hasDocumentEnd) {
     return {
       ok: false,
@@ -776,6 +781,7 @@ export function createRevisionStore(pool: Pool): RevisionStore {
             accepted,
             pageCount: revision.page_count,
             hasDocumentEnd: revision.has_document_end,
+            firstPage: parseDocumentInfo(revision.document_info).firstPage ?? null,
           });
           if (!completeness.ok) {
             throw new RevisionStoreThrow({

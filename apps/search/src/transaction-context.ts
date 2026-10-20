@@ -3,7 +3,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { jwtVerify } from "jose";
+import { decodeProtectedHeader, jwtVerify, type JWTVerifyGetKey } from "jose";
 import * as z from "zod";
 import type { RequestPrincipal } from "./request-principal.js";
 
@@ -52,9 +52,26 @@ export const transactionEnvelopeSchema = z.object({
 
 export type TransactionEnvelope = z.infer<typeof transactionEnvelopeSchema>;
 export interface TransactionContext { envelope: TransactionEnvelope | null; legacy: boolean; }
+/**
+ * Signing algorithms a transaction token may carry. HS256 verifies against the
+ * shared `TRANSACTION_HS256_SECRET`; ES256/EdDSA verify against the issuer's
+ * public JWKS (`TRANSACTION_JWKS_URI`, e.g. the runtime's
+ * `/.well-known/atf-transaction-jwks.json`), so a verifier cannot mint tokens.
+ */
+export type TransactionAlgorithm = "HS256" | "ES256" | "EdDSA";
+export const TRANSACTION_ALGORITHMS: readonly TransactionAlgorithm[] = ["HS256", "ES256", "EdDSA"];
+
 export interface TransactionConfig {
   enforcement: TransactionEnforcement; secret: string | null; issuer: string;
   audience: string; clockToleranceSeconds: number; maxTtlSeconds: number;
+  /**
+   * Algorithms accepted at the same time (a rolling migration accepts HS256
+   * and EdDSA until the last issuer has switched). Absent = HS256 only, the
+   * behaviour before asymmetric tokens.
+   */
+  algorithms?: readonly TransactionAlgorithm[];
+  /** Key resolver for the asymmetric algorithms (a remote JWKS); required when one of them is accepted. */
+  jwks?: JWTVerifyGetKey;
 }
 export interface FabricErrorBody {
   code: string; category: "authentication" | "authorization" | "budget" | "deadline" | "validation" | "conflict" | "internal";
@@ -124,11 +141,26 @@ export async function verifyTransactionToken(token: string | undefined, config: 
     if (config.enforcement === "required") throw error("TRANSACTION_TOKEN_REQUIRED", "authentication", 401);
     return { envelope: null, legacy: true };
   }
-  if (!config.secret) throw error("TRANSACTION_CONFIG_INVALID", "internal", 500);
+  const accepted = config.algorithms ?? ["HS256"];
+  // The algorithm comes from the (unverified) header ONLY to pick the key
+  // source, and only from the configured allow-list: `none`, an algorithm the
+  // deployment does not accept and a symmetric/asymmetric mix-up all end here.
+  let alg: string | undefined;
+  try { alg = decodeProtectedHeader(token).alg; } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+  if (alg === undefined || !(accepted as readonly string[]).includes(alg)) throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401);
+  const verifyOptions = { issuer: config.issuer, audience: config.audience, clockTolerance: config.clockToleranceSeconds };
   let payload: unknown;
-  try {
-    ({ payload } = await jwtVerify(token, new TextEncoder().encode(config.secret), { algorithms: ["HS256"], issuer: config.issuer, audience: config.audience, clockTolerance: config.clockToleranceSeconds }));
-  } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+  if (alg === "HS256") {
+    if (!config.secret) throw error("TRANSACTION_CONFIG_INVALID", "internal", 500);
+    try {
+      ({ payload } = await jwtVerify(token, new TextEncoder().encode(config.secret), { ...verifyOptions, algorithms: ["HS256"] }));
+    } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+  } else {
+    if (!config.jwks) throw error("TRANSACTION_CONFIG_INVALID", "internal", 500);
+    try {
+      ({ payload } = await jwtVerify(token, config.jwks, { ...verifyOptions, algorithms: [alg] }));
+    } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+  }
   const parsed = transactionEnvelopeSchema.safeParse(payload);
   if (!parsed.success) throw error("TRANSACTION_ENVELOPE_INVALID", "validation", 400);
   const envelope = canonicalEnvelope(parsed.data);

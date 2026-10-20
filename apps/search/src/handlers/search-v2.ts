@@ -58,12 +58,7 @@ import type { EmbeddingClient } from "../embedding-client.js";
 import type { RerankerClient } from "../reranker-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
-import type {
-	PostgresClient,
-	SearchFilter,
-	SearchResult,
-	FigureUnitInfo,
-} from "../postgres-client.js";
+import type { PostgresClient, SearchFilter } from "../postgres-client.js";
 import { prepareFtsContent } from "../postgres-client.js";
 import {
 	FILTER_V2,
@@ -73,16 +68,13 @@ import {
 	type Metadata,
 	type UnitFilterV2,
 } from "../metadata.js";
-import { rerankResultsWithStatus } from "./search.js";
+import type { GroupByMode } from "../rerank-context.js";
 import {
-  applyMinScore,
-  retrievalScoreKind,
-  diversifyResults,
-  fitRerankInputs,
-  groupResultsV2,
-  type GroupByMode,
-} from "../rerank-context.js";
-import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
+  CandidateSearchError,
+  EmbeddingFailedError,
+  runRetrievalPipeline,
+  type RetrievalPipelineResult,
+} from "./retrieval-pipeline.js";
 import {
 	parseExpandMode,
 	DEFAULT_EXPAND_BUDGET_CHARS,
@@ -92,14 +84,14 @@ import {
 } from "../expansion.js";
 import type { TokenCounter } from "../token-counter.js";
 import { readHeader } from "../header-utils.js";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 import { responseTrustLabels } from "../content-trust.js";
 import { getPrincipal } from "../request-principal.js";
 import {
-	shapeHitV2,
-	referencedFigureIds,
-	type IncludeAssets,
-	type Granularity,
-	type SearchHitV2,
+  shapeHitV2,
+  type IncludeAssets,
+  type Granularity,
+  type SearchHitV2,
 } from "../search-v2-response.js";
 
 export interface SearchV2HandlerOptions {
@@ -349,6 +341,7 @@ export function createSearchV2Handler(
 
 	return async (req, res, next) => {
 		const log: Logger = (req as { log?: Logger }).log ?? logger;
+		const searchStartTime = Date.now();
 		try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       if (typeof body !== "object" || Array.isArray(body)) {
@@ -414,6 +407,18 @@ export function createSearchV2Handler(
       }
 
       const collection = readHeader(req, "x-collection") || "documents";
+      // Temporal scope, exactly as on /search: `X-Valid-At` (RFC 3339 with
+      // offset) selects the version valid at that instant for the candidate
+      // query and for the expansion.
+      let validAt: string | undefined;
+      try {
+        validAt = parseRfc3339DateTime(readHeader(req, "x-valid-at"));
+      } catch (error) {
+        res
+          .status(400)
+          .json({ error: `X-Valid-At ${(error as Error).message}` });
+        return;
+      }
       const rerankRequested = body.rerank === true;
       // The identifier RRF list (Req 12.3) is ON for v2 by default; the v1
       // /search handler never enables it (Req 13.7). `identifier_search:
@@ -440,45 +445,6 @@ export function createSearchV2Handler(
       const searchQuery = identifier ? `${query} ${identifier}` : query;
       const embedText = prepareFtsContent(searchQuery);
 
-      // 2. Embed the query (reusing the shared cache when configured).
-      let vector: number[] = [];
-      try {
-        if (queryCache) {
-          vector = await queryCache.getOrEmbed(embedText, async () => {
-            const r = await embeddingClient.embed(embedText);
-            if (!r.ok) throw new Error(r.error.message);
-            return r.result.vector;
-          });
-        } else {
-          const r = await embeddingClient.embed(embedText);
-          if (!r.ok) {
-            res
-              .status(502)
-              .json({ error: `Embedding failed: ${r.error.message}` });
-            return;
-          }
-          vector = r.result.vector;
-        }
-      } catch (err) {
-        log.warn({ err }, "v2 embedding failed");
-        res
-          .status(502)
-          .json({ error: `Embedding failed: ${(err as Error).message}` });
-        return;
-      }
-
-      // Sparse branch (optional, mirrors v1).
-      let sparseVec = undefined;
-      if (sparseClient !== null && hybridRequested) {
-        const sparseRes = await sparseClient.embedSparse(embedText);
-        if (sparseRes.ok) sparseVec = sparseRes.result;
-        else
-          log.warn(
-            { error: sparseRes.error },
-            "v2 sparse embedding failed; skipping",
-          );
-      }
-
       const scope = accessScopeForRequest(req);
       const { userId, userGroups } = getPrincipal(req);
       // Data minimisation (docs/operations-and-retrieval.md): raw query text
@@ -503,141 +469,96 @@ export function createSearchV2Handler(
       // Over-fetch when reranking / diversifying so the final window can be
       // filled after collapse (same heuristic as v1).
       const rerankActive = rerankRequested && rerankerClient !== null;
-      const fetchLimit = Math.min(
-        limit * Math.max(1, candidateMultiplier),
-        500,
-      );
 
-      // 2. Candidates — dense + ts_de + identifier RRF, tenant/ACL/temporal +
-      //    the v2 unit filters. Reuses the exact same search path as v1.
-      const searchResult = await postgresClient.search(
-        searchQuery,
-        vector,
-        fetchLimit,
-        collection,
-        scope,
-        filter,
-        hybridRequested,
-        false, // includeAllVersions
-        0, // offset
-        candidateMultiplier,
-        sparseVec,
-        undefined, // tags
-        undefined, // cursor
-        false, // ftsOnly
-        undefined, // baseRef
-        undefined, // pathPrefix
-        undefined, // timeoutMs
-        undefined, // signal
-        undefined, // onPlan
-        undefined, // validAt
-        {
-          identifierList,
-          ...(identifier ? { identifiers: [identifier] } : {}),
-        },
-      );
-      if (!searchResult.ok) {
-        const status =
-          searchResult.error.code === "INVALID_COLLECTION_NAME"
-            ? 400
-            : searchResult.error.code === "COLLECTION_NOT_FOUND"
-              ? 404
-              : 502;
-        log.warn({ error: searchResult.error }, "v2 search failed");
-        res.status(status).json({ error: searchResult.error.message });
-        return;
-      }
-
-      let results: SearchResult[] = searchResult.result;
-
-      // 3. Rerank with context (task 3.5) — reuses rerankResultsWithStatus.
-      //    With a tokenizer the inputs are trimmed to the real 1024-token
-      //    budget first; the reranked (possibly trimmed) copies are mapped
-      //    back to the untrimmed originals by id.
-      let rerankApplied = false;
-      if (rerankActive && rerankerClient !== null && results.length > 1) {
-        const fitted = await fitRerankInputs(results, options.tokenCounter);
-        const outcome = await rerankResultsWithStatus(
-          rerankerClient,
-          query,
-          fitted,
+      // 2-6. Candidates → rerank → diversify/group → MIN_RERANK_SCORE → slice
+      //      → expansion → figure lookup — the shared retrieval core (see
+      //      retrieval-pipeline.ts). The v2-specific stage configuration:
+      //      token-fitted rerank (only for >1 candidate), the threshold AFTER
+      //      the limit slice, and the figure lookup unless assets are "none".
+      let pipeline: RetrievalPipelineResult;
+      try {
+        pipeline = await runRetrievalPipeline(
+          {
+            embeddingClient,
+            postgresClient,
+            queryCache,
+            sparseClient,
+            rerankerClient,
+          },
           log,
+          {
+            query: searchQuery,
+            embedText,
+            rerankQuery: query,
+            collection,
+            scope,
+            filter,
+            limit,
+            fetchLimit: Math.min(limit * Math.max(1, candidateMultiplier), 500),
+            hybrid: hybridRequested,
+            includeAllVersions: false,
+            ...(validAt !== undefined ? { validAt } : {}),
+            offset: 0,
+            candidateMultiplier,
+            ftsOnly: false,
+            searchOptions: {
+              identifierList,
+              ...(identifier ? { identifiers: [identifier] } : {}),
+            },
+            logSparseFailure: true,
+            rerank: {
+              active: rerankActive,
+              tokenCounter: options.tokenCounter ?? null,
+              minResults: 2,
+            },
+            documentGroups: groupBy === "document" || expandMode === "document",
+            legacyGroupByDocument: false,
+            diversify: groupBy === "none" ? "default" : "uncapped",
+            groupBy,
+            minScore: {
+              threshold:
+                minRerankScore !== null
+                  ? { value: minRerankScore, kind: "rerank" }
+                  : null,
+              position: "after-slice",
+            },
+            expand:
+              expandMode !== undefined
+                ? {
+                    mode: expandMode,
+                    budgetChars,
+                    ...(validAt !== undefined ? { validAt } : {}),
+                  }
+                : undefined,
+            resolveFigures: includeAssets !== "none",
+          },
         );
-        results = restoreOriginalContent(outcome.results, results);
-        rerankApplied = outcome.applied;
+      } catch (err) {
+        if (err instanceof EmbeddingFailedError) {
+          log.warn({ err }, "v2 embedding failed");
+          res.status(502).json({ error: `Embedding failed: ${err.message}` });
+          return;
+        }
+        if (err instanceof CandidateSearchError) {
+          const status =
+            err.code === "INVALID_COLLECTION_NAME"
+              ? 400
+              : err.code === "COLLECTION_NOT_FOUND"
+                ? 404
+                : 502;
+          log.warn({ error: err.message }, "v2 search failed");
+          res.status(status).json({ error: err.message });
+          return;
+        }
+        throw err;
       }
 
-      // 4. Diversify (task 3.5): collapse same table/figure + cap per section.
-      //    With group_by the per-section cap is lifted: the group merges all
-      //    of a section's (or document's) hits instead of dropping them.
-      results = diversifyResults(
-        results,
-        groupBy === "none" ? {} : { perSectionCap: 0 },
-      );
-      // 4b. group_by (Req 13.6): merge per document / section, best score,
-      //     content in document order. A document's group (an e-mail
-      //     thread) is resolved first so `document` merges a thread.
-      if (groupBy === "document" || expandMode === "document") {
-        results = await attachDocumentGroups({
-          postgresClient,
+      const hits: SearchHitV2[] = pipeline.results.map((r) =>
+        shapeHitV2(r, {
           collection,
-          scope,
-          results,
-          logger: log,
-        });
-      }
-      results = groupResultsV2(results, groupBy);
-      results = results.slice(0, limit);
-
-      // 4c. MIN_RERANK_SCORE / abstention (task 6.10, Requirement 4.8): filter
-      //     the final ranking to the configured reranker threshold and report
-      //     an abstention signal when nothing qualifies; skipped (signalled)
-      //     when the scores are not reranker scores. Applied after
-      //     grouping/slicing so the limit is not consumed by dropped hits.
-      const finalScoreScale = rerankApplied
-        ? "rerank"
-        : retrievalScoreKind({ ftsOnly: false, hybrid: hybridRequested });
-      const minScoreOutcome = applyMinScore(
-        results,
-        minRerankScore !== null ? { value: minRerankScore, kind: "rerank" } : null,
-        finalScoreScale,
-      );
-      results = minScoreOutcome.results;
-
-      // 5. Small-to-big expansion (task 3.6) — reuses attachExpansions.
-      let expanded =
-        results as import("./expand-results.js").ExpandedSearchResult[];
-      if (expandMode !== undefined) {
-        expanded = await attachExpansions({
-          postgresClient,
-          collection,
-          scope,
-          mode: expandMode,
-          budgetChars,
-          includeAllVersions: false,
-          results,
-          logger: log,
-        });
-      }
-
-      // 6. Attach assets (Requirement 13.5): resolve the REFERENCED figures once
-      //    (batched by base_ref) so each hit's assets carry figure_kind/caption/
-      //    page/bbox, then shape the v2 response. Skipped entirely for
-      //    include_assets=none (no figure lookup, no assets field).
-      const figureInfo = new Map<string, FigureUnitInfo>();
-      if (includeAssets !== "none") {
-        await resolveReferencedFigures(
-          postgresClient,
-          collection,
-          scope,
-          expanded,
-          figureInfo,
-          log,
-        );
-      }
-
-      const hits: SearchHitV2[] = expanded.map((r) =>
-        shapeHitV2(r, { collection, includeAssets, figureInfo }),
+          includeAssets,
+          figureInfo: pipeline.figureInfo,
+        }),
       );
 
       if (scope.tenantId) {
@@ -645,7 +566,7 @@ export function createSearchV2Handler(
           tenantId: scope.tenantId,
           collection,
           query,
-          durationMs: 0,
+          durationMs: Date.now() - searchStartTime,
           resultsCount: hits.length,
           hybridSearch: hybridRequested,
           reranked: rerankActive,
@@ -658,79 +579,22 @@ export function createSearchV2Handler(
         content_trust: trust.content_trust,
         injection_risk: trust.injection_risk,
       };
-      res
-        .status(200)
-        .json(
-          minScoreOutcome.abstention
-            ? {
-                results: hits,
-                score_scale: finalScoreScale,
-                ...trustFields,
-                abstention: minScoreOutcome.abstention,
-              }
-            : { results: hits, score_scale: finalScoreScale, ...trustFields },
-        );
+      res.status(200).json(
+        pipeline.minScore.abstention
+          ? {
+              results: hits,
+              score_scale: pipeline.scoreKind,
+              ...trustFields,
+              abstention: pipeline.minScore.abstention,
+            }
+          : {
+              results: hits,
+              score_scale: pipeline.scoreKind,
+              ...trustFields,
+            },
+      );
     } catch (err) {
 			next(err);
 		}
 	};
-}
-
-/**
- * Resolve the referenced figures for a set of hits, grouped by document, into
- * `figureInfo` (figure_id → metadata). One lookup per distinct base_ref keeps
- * the ACL/visibility gates per document while avoiding an N+1 per figure.
- */
-export async function resolveReferencedFigures(
-	postgresClient: PostgresClient,
-	collection: string,
-	scope: ReturnType<typeof accessScopeForRequest>,
-	results: SearchResult[],
-	out: Map<string, FigureUnitInfo>,
-	log: Logger,
-): Promise<void> {
-	const byBaseRef = new Map<string, SearchResult[]>();
-	for (const r of results) {
-		const list = byBaseRef.get(r.base_ref) ?? [];
-		list.push(r);
-		byBaseRef.set(r.base_ref, list);
-	}
-	await Promise.all(
-		[...byBaseRef.entries()].map(async ([baseRef, group]) => {
-			const ids = referencedFigureIds(group);
-			if (ids.length === 0) return;
-			const res = await postgresClient.lookupFigureUnits(
-				collection,
-				scope,
-				baseRef,
-				ids,
-			);
-			if (!res.ok) {
-				log.warn(
-					{ error: res.error, baseRef },
-					"v2 figure lookup failed; assets degrade to refs",
-				);
-				return;
-			}
-			for (const info of res.result) out.set(info.figure_id, info);
-		}),
-	);
-}
-
-/**
- * Map reranked results (which may carry token-trimmed content from
- * {@link fitRerankInputs}) back to the untrimmed originals, keeping the rerank
- * score/order. Matched by `id`; a result with no original is kept as-is.
- */
-export function restoreOriginalContent(
-	reranked: SearchResult[],
-	originals: SearchResult[],
-): SearchResult[] {
-	const byId = new Map(originals.map((r) => [r.id, r]));
-	return reranked.map((r) => {
-		const original = byId.get(r.id);
-		return original && original.content !== r.content
-			? { ...r, content: original.content }
-			: r;
-	});
 }

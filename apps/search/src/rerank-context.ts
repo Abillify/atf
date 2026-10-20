@@ -173,19 +173,36 @@ export interface DiversifyOptions {
 }
 
 /**
+ * Document identity used to scope every diversification key: the `base_ref`
+ * (all versions/chunks of one document), falling back to `reference`. Extract
+ * numbers sections, tables and figures per document, so none of those ids is
+ * meaningful across documents.
+ */
+function diversifyDocumentKey(r: SearchResult): string {
+  return r.base_ref || r.reference;
+}
+
+/**
  * Diversify a ranked result list (design §7.1 step 4).
  *
  * Two independent passes, applied in this order:
  *
  *  1. Collapse duplicates: multiple hits of the SAME `table_id`, or multiple
- *     hits of the SAME `figure_id`, are collapsed to a single representative —
- *     the highest-scoring one — so a big table's many row-group units (or a
- *     figure indexed several ways) cannot flood the results.
+ *     hits of the SAME `figure_id`, WITHIN one document are collapsed to a
+ *     single representative — the highest-scoring one — so a big table's many
+ *     row-group units (or a figure indexed several ways) cannot flood the
+ *     results. The key is document-scoped (`base_ref`, falling back to
+ *     `reference`): ids are per document, and two data sheets that both carry
+ *     "table 1" must both survive.
  *
- *  2. Per-section cap: at most `perSectionCap` hits are kept per section path,
- *     keeping the highest-scoring ones. Hits with no section path are treated
- *     as their own unbounded bucket (never capped), because an empty path is
- *     "unknown section", not "the same section".
+ *  2. Per-section cap: at most `perSectionCap` hits are kept per section path
+ *     WITHIN each document (the `base_ref`, falling back to `reference`),
+ *     keeping the highest-scoring ones. The bucket is document-scoped on
+ *     purpose: identically-named sections in different documents ("Einleitung"
+ *     in ten manuals) are different sections and must not share one cap.
+ *     Hits with no section path are treated as their own unbounded bucket
+ *     (never capped), because an empty path is "unknown section", not "the
+ *     same section".
  *
  * The input order is otherwise preserved for hits that survive both passes, so
  * a list already sorted by score stays sorted. Inputs are never mutated.
@@ -203,7 +220,13 @@ export function diversifyResults(
   for (const r of results) {
     const tId = tableId(r);
     const fId = figureId(r);
-    const key = tId ? `table:${tId}` : fId ? `figure:${fId}` : null;
+    // Document-scoped: `table_id` / `figure_id` are assigned per document by
+    // Extract, so the same id in two documents is two different objects.
+    const key = tId
+      ? `${diversifyDocumentKey(r)}\u0000table:${tId}`
+      : fId
+        ? `${diversifyDocumentKey(r)}\u0000figure:${fId}`
+        : null;
     if (key === null) {
       collapsed.push(r);
       continue;
@@ -238,9 +261,12 @@ export function diversifyResults(
       kept.add(r);
       continue;
     }
-    const count = perSectionCount.get(section) ?? 0;
+    // Document-scoped bucket (same composite-key pattern as groupResultsV2):
+    // the same section path in two documents is two buckets, not one.
+    const bucket = `${diversifyDocumentKey(r)}\u0000${section}`;
+    const count = perSectionCount.get(bucket) ?? 0;
     if (count < perSectionCap) {
-      perSectionCount.set(section, count + 1);
+      perSectionCount.set(bucket, count + 1);
       kept.add(r);
     }
   }

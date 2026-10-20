@@ -117,8 +117,11 @@ Behaviour worth knowing:
   major other than 2 is 422. A `{ref}` that does not own the addressed revision is 409
   `REVISION_REFERENCE_MISMATCH`; reusing an `Idempotency-Key` for another document is 409.
 - The final commit checks coverage against the page count from `document.begin`/`document.end`
-  and answers 409 with `missingRanges` (including a missing first or last page). An unknown page
-  count without a staged `document.end` is 409 `COMMIT_DOCUMENT_END_MISSING`.
+  and answers 409 with `missingRanges` (including a missing first or last page). The stream is
+  expected from page 1, or from `document.begin.firstPage` when the job processed a `pages`
+  window (contract 2.4); the batch that carries `document.begin` can be any batch, and batch
+  seqs stay absolute. An unknown page count without a staged `document.end` is 409
+  `COMMIT_DOCUMENT_END_MISSING`.
 - An accepted final commit whose batches are not all processed yet answers **202**
   `{committed: true, pending: true, isLatest: false}`; `GET …/revisions/{rev}` then reports
   `commitPending: true`. The batch worker performs the switch once the last batch is processed,
@@ -195,7 +198,9 @@ lease, builds chunk/table/figure units (plus section/page/document summary units
 embedding failure rolls the batch back to `received` with `BATCH_WORKER_BACKOFF_MS` backoff; unit
 ids are deterministic, so reprocessing replaces in place. It also completes accepted final
 commits once their last batch is processed. Any deployment using the revision API needs it on
-at least one replica; `BATCH_WORKER_INTERVAL_MS` sets the poll interval (0 stops the loop).
+at least one replica; `BATCH_WORKER_INTERVAL_MS` sets the poll interval (0 stops the loop). A
+wake-up drains up to 25 batches before sleeping, and the chunks of one batch are embedded
+`BATCH_WORKER_EMBED_CONCURRENCY` (default 4) at a time.
 
 **Revision TTL cleaner.** An uncommitted revision that is neither committed nor heartbeated
 within `REVISION_TTL` seconds (default 14 days) is reaped every `REVISION_TTL_SWEEP_MS` (default
@@ -278,11 +283,22 @@ query
         └─ RRF fusion → optional rerank → results + citations
 ```
 
+The lexical list ORs the query terms (no `websearch` syntax). With `FTS_RANKER=bm25` it uses
+BM25 only on a table that has a `USING bm25` index — the index is not created by this service;
+a table without one falls back to the full-text ranking and logs a warning once (an index
+created later is picked up within a minute). Hits of one document are grouped with `[…]`
+between chunks that are not adjacent in it (`group_by_document`), and the MCP search tool
+embeds the same normalised query as the REST routes.
 Optional quality stages, each independently configurable: **HyDE** (search with a hypothetical
-answer rather than the raw question), **semantic chunking** (split on meaning, not character
+answer rather than the raw question; generations are cached per query for
+`HYDE_CACHE_TTL_SECONDS`, default 600, 0 = off), **semantic chunking** (split on meaning, not character
 count), **late chunking** and **contextual retrieval** (give each chunk its document context so
 it is not read out of context), and **reranking** (a second, more precise ordering, synchronous
-or streamed, with an optional fallback reranker).
+or streamed, with an optional fallback reranker; many candidates go out as parallel batches of
+`RERANK_BATCH_SIZE`, at most `RERANK_BATCH_CONCURRENCY` at a time). Context expansion of the
+hits of one search runs `EXPAND_CONCURRENCY` (default 8) at a time. `/v2/search` honours
+`X-Valid-At` like the other search routes, and `collection_stats` reports which retrieval
+features a collection supports (`capabilities`: `unitRows`, `unitGraph`, `outline`, `pages`).
 
 ## Two things that will bite you
 
@@ -294,6 +310,22 @@ revision change as a reindex.
 **The embedding request field.** OpenAI-compatible servers expect `input`; TEI expects `inputs`.
 `EMBED_INPUT_FIELD` selects it and defaults to `inputs`. A mismatch shows up as an opaque
 upstream error.
+
+## Transaction tokens
+
+With `TRANSACTION_ENFORCEMENT` on, a tool call carries a signed transaction token from the
+Runtime (the Agent Transaction Fabric envelope). Search verifies it with the shared
+`TRANSACTION_HS256_SECRET`, or — preferably — with the issuer's public keys at
+`TRANSACTION_JWKS_URI` (the Runtime serves `/.well-known/atf-transaction-jwks.json`) for
+ES256/EdDSA tokens, so a verifier cannot mint tokens. `TRANSACTION_ALGORITHMS` lists what is
+accepted at the same time (default: HS256 when the secret is set, plus ES256 and EdDSA when
+the JWKS URL is set), which lets issuers switch one at a time; the token's `alg` only picks
+the key source and only from that list. Issuer (`TRANSACTION_ISSUER`) and audience
+(`TRANSACTION_AUDIENCE`, default `vectorsearch`) must match, so a token minted for another
+service is refused. Production requires enforcement `required`, an https JWKS URL for the
+asymmetric algorithms, and warns while HS256 is accepted. The migration order is in
+[the upgrade guide](../../docs/UPGRADE.md) (item 20) and
+[ADR-0035](../../docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md).
 
 ## Access control
 
@@ -317,6 +349,10 @@ The v2 variables worth deciding deliberately:
 | `BATCH_WORKER` | false | Without it staged revision batches never become searchable |
 | `BATCH_WORKER_INTERVAL_MS` | 2000 | Poll interval; 0 stops the loop |
 | `BATCH_WORKER_BACKOFF_MS` | 30000 | Retry delay after an embedding failure |
+| `BATCH_WORKER_EMBED_CONCURRENCY` | 4 | Chunks of one batch embedded in parallel |
+| `RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY` | 16, 2 | Candidates per rerank request, and requests in flight |
+| `HYDE_CACHE_TTL_SECONDS` | 600 | HyDE generation cache lifetime; 0 disables |
+| `EXPAND_CONCURRENCY` | 8 | Hits expanded in parallel per search |
 | `REVISION_TTL` | 1209600 (seconds, 14 days) | Lifetime of an uncommitted, un-heartbeated revision |
 | `REVISION_TTL_SWEEP_MS` | 3600000 | Cleaner interval; 0 disables |
 | `REVISION_BATCH_BODY_LIMIT` | 50mb | Largest NDJSON page batch |
@@ -328,6 +364,7 @@ The v2 variables worth deciding deliberately:
 | `TOKENIZE_TIMEOUT_MS` | 5000 | 0 disables |
 | `TOKENIZE_CACHE_SIZE` | 2048 | 0 disables |
 | `CONTEXT_HEADER_MAX_FRACTION` | 0.15 | Share of the chunk token budget the contextual header may use |
+| `TRANSACTION_JWKS_URI`, `TRANSACTION_ALGORITHMS` | (unset), derived | Verify ES256/EdDSA transaction tokens against the Runtime's JWKS; the algorithms accepted at the same time |
 | `CONTEXTUAL_CHUNK_LLM` | false | One `SUMMARY_*` model call per chunk for a placement sentence; expensive |
 
 ## Further reading

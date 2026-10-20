@@ -105,6 +105,8 @@ export interface HealthCheckDeps {
   embeddingClient?: EmbeddingClient;
   /** Human-readable name → probe function. Return null = healthy. */
   extraProbes?: Record<string, () => Promise<string | null>>;
+  /** `AUTHN_MODE=disabled`: the response says so (`auth: "disabled"`). */
+  authDisabled?: boolean;
 }
 
 /**
@@ -207,6 +209,7 @@ export function createHealthHandler(
       res.status(allHealthy ? 200 : 503).json({
         status,
         timestamp: new Date().toISOString(),
+        ...(deps.authDisabled === true ? { auth: "disabled" } : {}),
         checks,
         ...(circuitBreakerStatuses.length > 0
           ? { circuit_breakers: circuitBreakers }

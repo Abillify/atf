@@ -72,6 +72,14 @@ describe("document info", () => {
     expect(parseDocumentInfo({ version: { source: "explicit" }, email: { messageId: 3 } })).toEqual({});
     expect(documentInfoOf({})).toBeUndefined();
   });
+  it("keeps firstPage only for a window that starts after page 1", () => {
+    const info = documentInfoOf({ firstPage: 5 });
+    expect(info).toEqual({ firstPage: 5 });
+    expect(parseDocumentInfo(JSON.parse(JSON.stringify(info)))).toEqual({ firstPage: 5 });
+    expect(documentInfoOf({ firstPage: 1 })).toBeUndefined();
+    expect(parseDocumentInfo({ firstPage: 0 })).toEqual({});
+    expect(parseDocumentInfo({ firstPage: "5" })).toEqual({});
+  });
 
   it("isOlderVersion only for a strictly older, comparable version", () => {
     const v = (label: string) => ({ version: { label, source: "page_label" as const } });

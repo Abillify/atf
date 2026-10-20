@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import { accessScopeForMcp } from "../access-scope.js";
+import { responseTrustLabels, trustLabels } from "../content-trust.js";
 import type { AssetScope } from "../asset-store.js";
 import { normalizePathPrefix, normalizeReference } from "../postgres-client.js";
 import { expectedReferenceMatches } from "../expected-reference.js";
@@ -492,11 +493,16 @@ export function registerCatalogTools(opts: McpToolContext): void {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
-      const result = await postgresClient.getDocument(col, accessScopeForMcp(), reference, {
-        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
-        ...(max_chars !== undefined ? { maxChars: max_chars } : {}),
-        ...(offset !== undefined ? { offset } : {}),
-      });
+      const result = await postgresClient.getDocument(
+        col,
+        accessScopeForMcp(),
+        reference,
+        {
+          ...(valid_at !== undefined ? { validAt: valid_at } : {}),
+          ...(max_chars !== undefined ? { maxChars: max_chars } : {}),
+          ...(offset !== undefined ? { offset } : {}),
+        },
+      );
       if (!result.ok) {
         emitQueryActivity({
           tool: "get_document",
@@ -540,11 +546,20 @@ export function registerCatalogTools(opts: McpToolContext): void {
       // An e-mail names its thread, so the caller knows the message is one
       // part of a conversation (read it whole with get_thread).
       const group = await documentGroupOf(col, result.result.reference);
+      // Content-trust labels ride along so a downstream scanner (the runtime's
+      // taint bridge) sees the same verdict this service computed.
+      const labels = trustLabels(result.result.content);
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(group ? { ...result.result, document_group: group } : result.result, null, 2),
+            text: JSON.stringify(
+              group
+                ? { ...result.result, document_group: group, ...labels }
+                : { ...result.result, ...labels },
+              null,
+              2,
+            ),
           },
         ],
       };
@@ -608,7 +623,14 @@ export function registerCatalogTools(opts: McpToolContext): void {
         emitQueryActivity({ tool: "get_thread", summary: `${reference} in ${col} — not found`, status: "error", startTime, detail: { collection: col, reference } });
         return { content: [{ type: "text", text: `No e-mail thread found for "${reference}" in collection "${col}".` }], isError: true };
       }
-      const messages: Array<{ reference: string; title: string | null; content: string; truncated: boolean }> = [];
+      const messages: Array<{
+        reference: string;
+        title: string | null;
+        content: string;
+        truncated: boolean;
+        content_trust: string;
+        injection_risk: string;
+      }> = [];
       let used = 0;
       let truncated = false;
       // A folder scope keeps a comparison side from reading the other side's
@@ -632,6 +654,7 @@ export function registerCatalogTools(opts: McpToolContext): void {
           title: read.result.title,
           content: read.result.content,
           truncated: read.result.truncated === true,
+          ...trustLabels(read.result.content),
         });
         if (read.result.truncated === true) {
           // This message itself did not fit: the next call starts after it.
@@ -664,6 +687,7 @@ export function registerCatalogTools(opts: McpToolContext): void {
                 truncated,
                 ...(nextOffset !== null ? { next_offset: nextOffset } : {}),
                 ...(outsidePrefix > 0 ? { outside_prefix: outsidePrefix } : {}),
+                ...responseTrustLabels(messages.map((m) => m.content)),
               },
               null,
               2,
@@ -860,6 +884,10 @@ export function registerCatalogTools(opts: McpToolContext): void {
         };
       }
       const { documents, total, truncated } = result.result;
+      const labeledDocuments = documents.map((d) => ({
+        ...d,
+        ...trustLabels(d.content),
+      }));
       emitQueryActivity({
         tool: "get_documents",
         summary: `${documents.length} of ${total} document${total === 1 ? "" : "s"} in ${col}${path_prefix ? " " + path_prefix : ""}${truncated ? " (truncated)" : ""}`,
@@ -878,7 +906,13 @@ export function registerCatalogTools(opts: McpToolContext): void {
           {
             type: "text",
             text: JSON.stringify(
-              { documents, count: documents.length, total, truncated },
+              {
+                documents: labeledDocuments,
+                count: documents.length,
+                total,
+                truncated,
+                ...responseTrustLabels(documents.map((d) => d.content)),
+              },
               null,
               2,
             ),
@@ -966,7 +1000,14 @@ export function registerCatalogTools(opts: McpToolContext): void {
       });
       return {
         content: [
-          { type: "text", text: JSON.stringify(result.result, null, 2) },
+          {
+            type: "text",
+            text: JSON.stringify(
+              { ...result.result, ...trustLabels(result.result.summary) },
+              null,
+              2,
+            ),
+          },
         ],
       };
     },
@@ -1044,7 +1085,10 @@ export function registerCatalogTools(opts: McpToolContext): void {
           : undefined;
       const summaries = entries.map((e) => {
         const group = groups?.ok ? groups.result.get(e.reference) : undefined;
-        return group ? { ...e, document_group: group } : e;
+        return {
+          ...(group ? { ...e, document_group: group } : e),
+          ...trustLabels(e.summary),
+        };
       });
       emitQueryActivity({
         tool: "get_summaries",
@@ -1063,7 +1107,12 @@ export function registerCatalogTools(opts: McpToolContext): void {
           {
             type: "text",
             text: JSON.stringify(
-              { summaries, count: summaries.length, total },
+              {
+                summaries,
+                count: summaries.length,
+                total,
+                ...responseTrustLabels(entries.map((e) => e.summary)),
+              },
               null,
               2,
             ),
