@@ -21,10 +21,12 @@
         "node": ">=26 <27"
     },
     "dependencies": {
-        "@atf/erasure-contract": "workspace:1.0.0",
-        "@atf/extract-contract": "workspace:2.3.0",
+        "@atf/canonical-json": "workspace:1.0.0",
+        "@atf/erasure-contract": "workspace:1.0.1",
+        "@atf/extract-contract": "workspace:2.4.0",
+        "@atf/mcp-2026": "workspace:1.0.0",
         "@atf/observability": "workspace:1.0.0",
-        "@atf/security-kit": "workspace:1.0.0",
+        "@atf/security-kit": "workspace:1.1.0",
         "@aws-sdk/client-bedrock-runtime": "3.1136.0",
         "@modelcontextprotocol/sdk": "1.31.0",
         "express": "5.2.1",
@@ -32,6 +34,7 @@
         "pg": "8.23.0",
         "pino": "10.3.1",
         "pino-http": "11.0.0",
+        "redis": "5.10.0",
         "sharp": "0.35.5",
         "uuid": "14.0.1",
         "zod": "4.4.3"

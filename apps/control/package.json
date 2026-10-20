@@ -22,7 +22,8 @@
     "node": ">=26 <27"
   },
   "dependencies": {
-    "@atf/security-kit": "workspace:1.0.0",
+    "@atf/canonical-json": "workspace:1.0.0",
+    "@atf/security-kit": "workspace:1.1.0",
     "@dagrejs/dagre": "3.1.1",
     "@swc/helpers": "0.5.23",
     "@tanstack/react-query": "5.101.4",

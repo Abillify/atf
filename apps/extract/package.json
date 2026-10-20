@@ -21,10 +21,11 @@
     "node": ">=26 <27"
   },
   "dependencies": {
-    "@atf/erasure-contract": "workspace:1.0.0",
-    "@atf/extract-contract": "workspace:2.3.0",
+    "@atf/canonical-json": "workspace:1.0.0",
+    "@atf/erasure-contract": "workspace:1.0.1",
+    "@atf/extract-contract": "workspace:2.4.0",
     "@atf/observability": "workspace:1.0.0",
-    "@atf/security-kit": "workspace:1.0.0",
+    "@atf/security-kit": "workspace:1.1.0",
     "bmp-js": "0.1.0",
     "express": "5.2.1",
     "fast-xml-parser": "5.11.1",
@@ -34,6 +35,7 @@
     "pg": "8.23.0",
     "pino": "10.3.1",
     "pino-http": "11.0.0",
+    "redis": "5.10.0",
     "sharp": "0.35.5",
     "zod": "4.4.3"
   },

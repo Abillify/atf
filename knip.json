@@ -13,6 +13,8 @@
   "ignoreBinaries": [
     "prlimit",
     "pdftotext",
+    "pdftoppm",
+    "pdfinfo",
     "openssl"
   ],
   "workspaces": {
@@ -34,6 +36,9 @@
     "apps/search": {
       "entry": [
         "scripts/*.ts"
+      ],
+      "ignoreDependencies": [
+        "redis"
       ]
     },
     "apps/extract": {
@@ -41,6 +46,9 @@
         "src/pipeline/isolate-entry.ts",
         "src/converter/server.ts",
         "scripts/*.ts"
+      ],
+      "ignoreDependencies": [
+        "redis"
       ]
     },
     "apps/gate": {
