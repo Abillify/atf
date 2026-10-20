@@ -18,7 +18,13 @@
  */
 
 import { createHash, createHmac } from "node:crypto";
+import { canonicalJsonValue } from "@atf/canonical-json";
 import type { Database } from "../db/database.js";
+import {
+  signEvidenceBytes,
+  verifyEvidenceBytes,
+  type Ed25519EvidenceKey,
+} from "./evidence-key.js";
 import type { Logger } from "./logger.js";
 
 export interface AuditEntry {
@@ -135,14 +141,42 @@ function matches(rec: AuditRecord, q?: AuditQuery): boolean {
  */
 export const AUDIT_CHAIN_GENESIS_HASH = "0".repeat(64);
 
+// The recursive key-sorting canonical structure (`undefined` members dropped,
+// arrays kept in order — JSON arrays are ordered data, and Postgres `jsonb`
+// preserves array order too) is `@atf/canonical-json`'s structure form, byte-
+// identical to the former local helper (proven by
+// `packages/canonical-json/test/differential.test.ts`) because these bytes
+// back the durable audit chain hash.
+const canonicalJson = canonicalJsonValue;
+
 /**
  * Deterministic, field-order-independent serialization of the fields that go
  * into a record's hash. Using `JSON.stringify` on a fixed key order (rather
  * than the raw object) means the hash does not depend on how the caller built
  * the object — only its actual field VALUES.
+ *
+ * `details` is canonicalized recursively (sorted keys at every depth): the
+ * durable backend stores it in a Postgres `jsonb` column, and `jsonb` does NOT
+ * preserve key order — on read-back the driver returns the keys in jsonb's own
+ * storage order, so a hash computed over the insertion-ordered object at write
+ * time would no longer match the same record re-serialized after a round-trip.
+ * That made {@link verifyAuditChain} report false `hash_mismatch` failures for
+ * every record with nested details against Postgres. Sorting at hash time makes
+ * write and read-back produce the same bytes.
+ *
+ * Compatibility: rows written BEFORE this canonicalization hashed `details` in
+ * insertion order. Where jsonb's storage order happened to equal that order
+ * (e.g. `{ to, from }` inserted shortest-key-first) they verified before the
+ * change and would not verify under the sorted form. {@link verifyAuditChain}
+ * therefore also accepts the legacy form (`details` hashed in as-read key
+ * order) and reports how many rows needed it (`legacyForm`). Rows whose
+ * insertion order differed from jsonb's order were false-positives before the
+ * change as well and stay unverifiable — they cannot be told apart from
+ * tampering. New writes always use the sorted form.
  */
 function canonicalizeForHash(
   rec: Pick<AuditRecord, "id" | "at" | "actor" | "role" | "action" | "target" | "outcome" | "details">,
+  form: "canonical" | "legacy" = "canonical",
 ): string {
   return JSON.stringify({
     id: rec.id,
@@ -152,7 +186,16 @@ function canonicalizeForHash(
     action: rec.action,
     target: rec.target ?? null,
     outcome: rec.outcome ?? "success",
-    details: rec.details ?? null,
+    // "legacy" is the pre-canonicalization form: `details` serialized in
+    // whatever key order the caller / the database driver handed over. It is
+    // only ever used to RECOGNIZE rows written before the fix (see
+    // verifyAuditChain); every new hash is the canonical form.
+    details:
+      rec.details == null
+        ? null
+        : form === "canonical"
+          ? canonicalJson(rec.details)
+          : rec.details,
   });
 }
 
@@ -164,6 +207,21 @@ export function computeAuditHash(
   return createHash("sha256")
     .update(prevHash)
     .update(canonicalizeForHash(rec))
+    .digest("hex");
+}
+
+/**
+ * The hash a record written BEFORE `details` was canonicalized would have been
+ * stored with: the same chain construction over the as-read key order. Used
+ * only by {@link verifyAuditChain} to keep valid pre-fix rows verifiable.
+ */
+function computeLegacyAuditHash(
+  prevHash: string,
+  rec: Pick<AuditRecord, "id" | "at" | "actor" | "role" | "action" | "target" | "outcome" | "details">,
+): string {
+  return createHash("sha256")
+    .update(prevHash)
+    .update(canonicalizeForHash(rec, "legacy"))
     .digest("hex");
 }
 
@@ -180,6 +238,13 @@ export interface AuditChainVerification {
     id: number;
     reason: "hash_mismatch" | "prev_hash_mismatch";
   };
+  /**
+   * Number of records that verified only under the pre-canonicalization hash
+   * form (`details` hashed in as-stored key order). Such rows were written
+   * before `details` was key-sorted for hashing; they are intact, but an
+   * auditor should know that the count is non-zero. Omitted when zero.
+   */
+  legacyForm?: number;
 }
 
 /**
@@ -201,17 +266,28 @@ export function verifyAuditChain(
   records: readonly AuditRecord[],
 ): AuditChainVerification {
   let expectedPrevHash: string | undefined;
+  let legacyForm = 0;
   for (const rec of records) {
-    const recomputed = computeAuditHash(rec.prevHash, rec);
-    if (recomputed !== rec.hash) {
-      return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "hash_mismatch" } };
+    if (computeAuditHash(rec.prevHash, rec) !== rec.hash) {
+      // Rows written before `details` was canonicalized carry the hash of the
+      // as-stored key order. Accept exactly that one alternative form (it is
+      // as tamper-evident for every VALUE as the canonical one) and count it;
+      // anything else is a genuine mismatch.
+      if (computeLegacyAuditHash(rec.prevHash, rec) !== rec.hash) {
+        return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "hash_mismatch" } };
+      }
+      legacyForm++;
     }
     if (expectedPrevHash !== undefined && rec.prevHash !== expectedPrevHash) {
       return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "prev_hash_mismatch" } };
     }
     expectedPrevHash = rec.hash;
   }
-  return { valid: true, checked: records.length };
+  return {
+    valid: true,
+    checked: records.length,
+    ...(legacyForm > 0 ? { legacyForm } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +299,25 @@ export interface AuditChainAnchor {
   uptoId: number;
   /** That record's chain hash (i.e. the tip of the chain at anchor time). */
   tipHash: string;
-  /** HMAC-SHA256 of `tipHash` under a secret the operator controls, base64url. */
+  /**
+   * Signature over `tipHash`, base64url. HMAC-SHA256 under the operator secret
+   * when {@link alg} is absent (legacy) or `"hmac-sha256"`; an Ed25519
+   * signature when {@link alg} is `"ed25519"` (ADR 0030 — independently
+   * verifiable via the published evidence JWKS, no shared secret needed).
+   */
   signature: string;
   /** ISO timestamp the anchor was produced. */
   anchoredAt: string;
+  /**
+   * Signing algorithm. Absent on anchors produced before asymmetric anchoring
+   * existed — treated as `"hmac-sha256"`.
+   */
+  alg?: "hmac-sha256" | "ed25519";
+  /**
+   * Key id (base64url SHA-256 thumbprint) of the Ed25519 evidence key that
+   * produced {@link signature}. Only set when {@link alg} is `"ed25519"`.
+   */
+  kid?: string;
 }
 
 /**
@@ -236,44 +327,97 @@ export interface AuditChainAnchor {
  * auditor detect a wholesale chain rewrite even if an attacker had database
  * write access long enough to recompute every hash consistently.
  *
- * The HMAC secret must be kept OUTSIDE the database the audit log lives in —
- * anchoring against a secret stored next to the data it protects provides no
+ * With an {@link Ed25519EvidenceKey} (ADR 0030) the anchor is signed with
+ * Ed25519 and stamped `alg: "ed25519"` + `kid`, so a third party can verify it
+ * offline against the published evidence JWKS — no shared secret. With a plain
+ * secret string the anchor is HMAC-SHA256 signed (legacy form, kept so
+ * existing anchors and deployments keep working); that secret must be kept
+ * OUTSIDE the database the audit log lives in, or anchoring provides no
  * additional guarantee over the hash chain alone.
  */
 export function signAuditAnchor(
   tip: Pick<AuditRecord, "id" | "hash">,
-  secret: string,
+  secretOrKey: string | Ed25519EvidenceKey,
 ): AuditChainAnchor {
-  const signature = createHmac("sha256", secret)
-    .update(tip.hash)
-    .digest("base64url");
+  if (typeof secretOrKey === "string") {
+    const signature = createHmac("sha256", secretOrKey)
+      .update(tip.hash)
+      .digest("base64url");
+    return {
+      uptoId: tip.id,
+      tipHash: tip.hash,
+      signature,
+      anchoredAt: new Date().toISOString(),
+    };
+  }
   return {
     uptoId: tip.id,
     tipHash: tip.hash,
-    signature,
+    signature: signEvidenceBytes(secretOrKey, tip.hash),
     anchoredAt: new Date().toISOString(),
+    alg: "ed25519",
+    kid: secretOrKey.kid,
   };
 }
 
 /**
  * Verifies a previously-produced anchor against the CURRENT chain: the record
  * at `anchor.uptoId` must still exist and its stored hash must still equal
- * `anchor.tipHash`, and the anchor's signature must still verify under the
- * secret. A mismatch means the chain was altered after the anchor was taken
- * (or the wrong secret/anchor was supplied).
+ * `anchor.tipHash`, and the anchor's signature must still verify. A mismatch
+ * means the chain was altered after the anchor was taken (or the wrong
+ * key/secret/anchor was supplied).
+ *
+ * Dual-algorithm (ADR 0030): an anchor with `alg: "ed25519"` verifies against
+ * the Ed25519 evidence public key (or key) — `secretOrKey` may be the raw
+ * 32-byte public key, making this callable by an independent auditor with no
+ * secret at all. A legacy anchor (no `alg` / `"hmac-sha256"`) verifies under
+ * the shared secret. An algorithm the supplied key material cannot check is
+ * reported as `signature_mismatch`.
  */
 export function verifyAuditAnchor(
   anchor: AuditChainAnchor,
   currentTipAtAnchorId: Pick<AuditRecord, "id" | "hash"> | undefined,
-  secret: string,
-): { valid: boolean; reason?: "record_not_found" | "hash_mismatch" | "signature_mismatch" } {
+  secretOrKey: string | Ed25519EvidenceKey | Uint8Array,
+): {
+  valid: boolean;
+  reason?: "record_not_found" | "hash_mismatch" | "signature_mismatch";
+} {
   if (currentTipAtAnchorId === undefined) {
     return { valid: false, reason: "record_not_found" };
   }
   if (currentTipAtAnchorId.hash !== anchor.tipHash) {
     return { valid: false, reason: "hash_mismatch" };
   }
-  const expectedSig = createHmac("sha256", secret)
+  const alg = anchor.alg ?? "hmac-sha256";
+  if (alg === "ed25519") {
+    const publicKey =
+      typeof secretOrKey === "string"
+        ? undefined
+        : secretOrKey instanceof Uint8Array
+          ? secretOrKey
+          : secretOrKey.publicKeyRaw;
+    if (publicKey === undefined) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    if (
+      anchor.kid !== undefined &&
+      typeof secretOrKey !== "string" &&
+      !(secretOrKey instanceof Uint8Array) &&
+      secretOrKey.kid !== anchor.kid
+    ) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    if (!verifyEvidenceBytes(publicKey, anchor.tipHash, anchor.signature)) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    return { valid: true };
+  }
+  // Legacy HMAC anchors need the shared secret; Ed25519 key material cannot
+  // check them.
+  if (typeof secretOrKey !== "string") {
+    return { valid: false, reason: "signature_mismatch" };
+  }
+  const expectedSig = createHmac("sha256", secretOrKey)
     .update(anchor.tipHash)
     .digest("base64url");
   if (expectedSig !== anchor.signature) {

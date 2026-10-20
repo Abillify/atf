@@ -19,7 +19,9 @@
  * Erasure responses are honest per store (Req 2.10): every result carries
  * `store`, `status` (`ok`/`failed`/`not_configured`) and the failure cause.
  * The confirmation text is only used when no store reports `failed`; partial
- * results answer HTTP 207 (`ERASURE_PARTIAL`), a total failure HTTP 502.
+ * results answer HTTP 207 (`ERASURE_PARTIAL`), a total failure HTTP 502, an
+ * operation another run still holds HTTP 202. A request that addressed no store
+ * at all is a failure, not a vacuous success.
  *
  * The forget body is `{ "tenantId"?: string, "userId"?: string }` — at least one
  * must be present (a blank subject would erase everything and is rejected 400).
@@ -153,13 +155,20 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
   /**
    * Map an aggregate erasure status to its honest HTTP code (Req 2.10):
-   * 200 when no store failed, 207 (`ERASURE_PARTIAL`) for a mixed outcome,
-   * 502 when every store failed.
+   * 200 when no store failed, 202 while the operation is still running (a
+   * replay or retry inside the lease of another run), 207 (`ERASURE_PARTIAL`)
+   * for a mixed outcome, 502 when every store failed.
    */
   const erasureHttpStatus = (
     status: ErasureOperationStatus,
-  ): 200 | 207 | 502 =>
-    status === "complete" ? 200 : status === "partial" ? 207 : 502;
+  ): 200 | 202 | 207 | 502 =>
+    status === "complete"
+      ? 200
+      : status === "in_progress"
+        ? 202
+        : status === "partial"
+          ? 207
+          : 502;
 
   /**
    * Turn a `RetentionService.forget` report into contract-shaped store
@@ -359,12 +368,15 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       outcome: operation.status === "complete" ? "success" : "error",
       details: { requestId, status: operation.status },
     });
-    return ctx.json({
-      requestId: operation.requestId,
-      status: operation.status,
-      erased: operation.erased,
-      results: operation.results,
-    });
+    return ctx.json(
+      {
+        requestId: operation.requestId,
+        status: operation.status,
+        erased: operation.erased,
+        results: operation.results,
+      },
+      operation.status === "in_progress" ? 202 : 200,
+    );
   });
 
   // ── GET /admin/compliance/dossier ────────────────────────────────────────
@@ -484,7 +496,8 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       return ctx.json({
         active: false,
         reason:
-          "Audit anchoring is not configured — set AUDIT_ANCHOR_SECRET to enable signed external checkpoints.",
+          "Audit anchoring is not configured — set EVIDENCE_SIGNING_KEY (Ed25519, " +
+          "third-party verifiable) or AUDIT_ANCHOR_SECRET to enable signed external checkpoints.",
       });
     }
     return ctx.json(await deps.auditAnchor.verifyLatest());
@@ -497,7 +510,8 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       return ctx.json(
         {
           error:
-            "Audit anchoring is not configured — set AUDIT_ANCHOR_SECRET to enable it.",
+            "Audit anchoring is not configured — set EVIDENCE_SIGNING_KEY (Ed25519) " +
+            "or AUDIT_ANCHOR_SECRET to enable it.",
         },
         400,
       );
@@ -751,9 +765,11 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     const message =
       status === "complete"
         ? "Your data has been erased across all applicable stores."
-        : status === "partial"
-          ? "Your data could only be erased partially — see the per-store results."
-          : "Your data could not be erased — see the per-store results.";
+        : status === "in_progress"
+          ? "Your erasure is still being processed — check again shortly."
+          : status === "partial"
+            ? "Your data could only be erased partially — see the per-store results."
+            : "Your data could not be erased — see the per-store results.";
 
     return ctx.json(
       {

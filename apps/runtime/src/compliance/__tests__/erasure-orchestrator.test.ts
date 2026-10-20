@@ -13,6 +13,7 @@ import type { ErasureRequest, ErasureStoreResult } from "@atf/erasure-contract";
 
 import {
   createErasureOrchestrator,
+  NO_STORES_ADDRESSED,
   RUNTIME_STORE_SERVICE,
   type ErasureOperationStatus,
 } from "../erasure-orchestrator.js";
@@ -352,6 +353,25 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
           });
           return [{ request_id: id }] as unknown as T[];
         }
+        if (text.includes("SET subject = NULL")) {
+          const row = rows.get(String(params?.[0]));
+          if (row !== undefined) row.subject = null;
+          return [];
+        }
+        if (text.includes("SET updated_at = now()")) {
+          // claimExpired: only an in_progress row older than the lease matches.
+          const row = rows.get(String(params?.[0]));
+          const leaseMs = Number(params?.[1]);
+          if (
+            row === undefined ||
+            row.status !== "in_progress" ||
+            Date.now() - (row.updated_at as Date).getTime() < leaseMs
+          ) {
+            return [];
+          }
+          row.updated_at = new Date();
+          return [row] as unknown as T[];
+        }
         if (text.startsWith("UPDATE erasure_requests")) {
           const row = rows.get(String(params?.[0]));
           if (row !== undefined) {
@@ -393,6 +413,131 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
     expect(secondTarget.calls).toBe(0);
   });
 
+  it("keeps the cleartext subject only while the operation is not complete (P1-R4)", async () => {
+    const db = fakeDb();
+    const failing = new FakeTarget("runtime.bad", { error: "down" });
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([failing]),
+      database: db,
+    });
+    const req = request({ subject: { email: "person@example.org", externalIds: [] } });
+    const op = await orch.execute(req);
+    expect(op.status).toBe("failed");
+    // Not complete: a retry still needs the identifiers.
+    expect(JSON.stringify([...db.rows.values()])).toContain("person@example.org");
+
+    const healthy = new FakeTarget("runtime.bad");
+    const orch2 = createErasureOrchestrator({
+      retention: new RetentionService([healthy]),
+      database: db,
+    });
+    const retried = await orch2.retry(req.requestId);
+    expect(retried?.status).toBe("complete");
+    // Complete: the cleartext identifier is gone from the stored row and from the result.
+    expect(JSON.stringify([...db.rows.values()])).not.toContain("person@example.org");
+    expect(retried?.subject).toBeUndefined();
+    // A replay of a finished operation still works without the subject.
+    const replay = await orch2.execute(req);
+    expect(replay.status).toBe("complete");
+  });
+
+  it("a signed receipt is issued from the subject before it is redacted", async () => {
+    const db = fakeDb();
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([new FakeTarget("a", { erased: 2 })]),
+      database: db,
+      receiptKey: { alg: "HS256", secret: "test-secret-0123456789" },
+    });
+    const op = await orch.execute(request({ subject: { email: "person@example.org", externalIds: [] } }));
+    const envelope = op.receipt as { payload: { subjectHashes: string[] } };
+    expect(envelope.payload.subjectHashes.length).toBe(1);
+    expect(JSON.stringify([...db.rows.values()])).not.toContain("person@example.org");
+  });
+
+  it("an operation stored as in_progress is not a finished one (P1-R4)", async () => {
+    const db = fakeDb();
+    const req = request();
+    // Simulate a crash after the insert: the row exists, nothing ran.
+    db.rows.set(req.requestId, {
+      request_id: req.requestId,
+      tenant_id: req.tenantId,
+      scope: req.scope,
+      subject: { userId: "u@x.de", externalIds: [] },
+      doc_references: null,
+      status: "in_progress",
+      results: [],
+      store_groups: [],
+      receipt: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const target = new FakeTarget("runtime.history", { erased: 3 });
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([target]),
+      database: db,
+      leaseMs: 60_000,
+    });
+    // Inside the lease: the live run is reported, nothing is executed twice.
+    const live = await orch.execute(req);
+    expect(live.status).toBe("in_progress");
+    expect(target.calls).toBe(0);
+    expect((await orch.retry(req.requestId))?.status).toBe("in_progress");
+    expect(target.calls).toBe(0);
+  });
+
+  it("takes over a zombie whose lease expired and runs it to completion (P1-R4)", async () => {
+    const db = fakeDb();
+    const req = request();
+    db.rows.set(req.requestId, {
+      request_id: req.requestId,
+      tenant_id: req.tenantId,
+      scope: req.scope,
+      subject: { userId: "u@x.de", externalIds: [] },
+      doc_references: null,
+      status: "in_progress",
+      results: [],
+      store_groups: [],
+      receipt: null,
+      created_at: new Date(Date.now() - 3_600_000),
+      updated_at: new Date(Date.now() - 3_600_000),
+    });
+    const target = new FakeTarget("runtime.history", { erased: 3 });
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([target]),
+      database: db,
+      leaseMs: 60_000,
+    });
+    const taken = await orch.execute(req);
+    expect(taken.status).toBe("complete");
+    expect(taken.erased).toBe(3);
+    expect(target.calls).toBe(1);
+    // Exactly one winner: the finished row is replayed, not run again.
+    const again = await orch.execute(req);
+    expect(again.status).toBe("complete");
+    expect(target.calls).toBe(1);
+  });
+
+  it("never erases the whole tenant for a subject operation that lost its subject", async () => {
+    const db = fakeDb();
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([new FakeTarget("runtime.bad", { error: "down" })]),
+      database: db,
+    });
+    const req = request();
+    await orch.execute(req);
+    const row = db.rows.get(req.requestId);
+    if (row === undefined) throw new Error("row missing");
+    row.subject = null;
+    const probe = new FakeTarget("runtime.bad");
+    const orch2 = createErasureOrchestrator({
+      retention: new RetentionService([probe]),
+      database: db,
+    });
+    const after = await orch2.retry(req.requestId);
+    expect(after?.status).toBe("failed");
+    expect(probe.calls).toBe(0);
+  });
+
   it("setReceipt stores the signed envelope", async () => {
     const db = fakeDb();
     const orch = createErasureOrchestrator({
@@ -408,7 +553,9 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
 
 describe("createErasureOrchestrator — aggregation honesty (Req 2.10 basis)", () => {
   const cases: { readonly results: ErasureStoreResult[]; readonly expected: ErasureOperationStatus }[] = [
-    { results: [], expected: "complete" },
+    // An operation that addressed no store is not a vacuous success: the
+    // orchestrator reports a synthetic failed store instead.
+    { results: [], expected: "failed" },
     {
       results: [
         { store: "a", status: "ok", erased: 1 },
@@ -467,4 +614,14 @@ describe("createErasureOrchestrator — aggregation honesty (Req 2.10 basis)", (
       expect(op.erased).toBe(results.reduce((n, r) => n + r.erased, 0));
     });
   }
+  it("names the reason when no store was addressed", async () => {
+    const orch = createErasureOrchestrator({ retention: new RetentionService([]) });
+    const op = await orch.execute(request());
+    expect(op.status).toBe("failed");
+    expect(op.results).toEqual([
+      expect.objectContaining({ store: NO_STORES_ADDRESSED, status: "failed", erased: 0 }),
+    ]);
+    expect(op.results[0]?.error).toContain("ERASURE_TARGETS");
+    expect(op.receipt).toBeUndefined();
+  });
 });

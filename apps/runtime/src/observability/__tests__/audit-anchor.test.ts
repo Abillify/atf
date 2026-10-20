@@ -7,7 +7,13 @@
 
 import { describe, it, expect } from "bun:test";
 import { createAuditAnchorService } from "../audit-anchor.js";
-import { InMemoryAuditLog } from "../audit-log.js";
+import { InMemoryAuditLog, verifyAuditAnchor } from "../audit-log.js";
+import { parseEvidenceSigningKey } from "../evidence-key.js";
+
+/** base64-encoded 32-byte Ed25519 seed for the evidence-key tests. */
+const SEED_B64 = Buffer.from(
+  Array.from({ length: 32 }, (_, i) => i + 1),
+).toString("base64");
 
 /** `createAuditAnchorService` for a secret known to enable the service. */
 function mustCreateAuditAnchorService(
@@ -85,5 +91,34 @@ describe("createAuditAnchorService", () => {
       throw new Error("expected both anchors to be defined");
     }
     expect(resign.signature).not.toBe(anchor.signature);
+  });
+
+  it("prefers the Ed25519 evidence key and produces offline-verifiable anchors", async () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const log = new InMemoryAuditLog();
+    log.record({ actor: "a", action: "x" });
+    // Key wins over a simultaneously configured legacy secret.
+    const svc = mustCreateAuditAnchorService(log, { key, secret: SECRET });
+    const anchor = await svc.anchorNow();
+    expect(anchor?.alg).toBe("ed25519");
+    expect(anchor?.kid).toBe(key.kid);
+    const status = await svc.verifyLatest();
+    expect(status.verified).toBe(true);
+    // Independent third party: raw public key only, no secret.
+    if (anchor === undefined) throw new Error("expected an anchor");
+    expect(
+      verifyAuditAnchor(
+        anchor,
+        { id: anchor.uptoId, hash: anchor.tipHash },
+        key.publicKeyRaw,
+      ).valid,
+    ).toBe(true);
+  });
+
+  it("returns undefined without key or secret", () => {
+    expect(
+      createAuditAnchorService(new InMemoryAuditLog(), {}),
+    ).toBeUndefined();
   });
 });

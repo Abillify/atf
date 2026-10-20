@@ -19,7 +19,18 @@
  *
  * Honesty rule (Req 2.10): the aggregate status is `complete` only when no
  * store reports `failed`; `not_configured` is a deliberate state and does not
- * fail the operation. The route layer maps the aggregate to HTTP 200/207/502.
+ * fail the operation. An operation that addressed no store at all is `failed`
+ * (a synthetic `runtime.no_stores` result says why), never vacuously
+ * `complete`. The route layer maps the aggregate to HTTP 200/202/207/502.
+ *
+ * Lifecycle: an operation is stored as `in_progress` before any store is
+ * touched, so a crash cannot leave a row that looks finished. The row's
+ * `updated_at` is its lease: a replay of the same `requestId` inside the lease
+ * returns the running operation, after the lease it takes the operation over
+ * and runs it again (stores are deletion-idempotent, remote ones replay by
+ * `requestId`). Once an operation is `complete` the cleartext subject is
+ * removed from the stored row — the signed receipt keeps only salted hashes;
+ * operations that are not complete keep it until a retry finishes them.
  *
  * No `any` at module boundaries.
  */
@@ -48,7 +59,11 @@ import {
 } from "./erasure-receipt.js";
 
 /** Aggregate outcome of an erasure operation. */
-export type ErasureOperationStatus = "complete" | "partial" | "failed";
+export type ErasureOperationStatus =
+  | "in_progress"
+  | "complete"
+  | "partial"
+  | "failed";
 
 /**
  * A persisted erasure operation: the request identity plus the merged
@@ -87,6 +102,11 @@ export interface ErasureOrchestratorOptions {
   fetchImpl?: typeof fetch;
   /** Per-call timeout in ms. Default 10 000. */
   timeoutMs?: number;
+  /**
+   * How long an `in_progress` operation counts as running before a replay or
+   * retry takes it over. Default 15 minutes.
+   */
+  leaseMs?: number;
   /** Total attempts per remote target (incl. the first). Default 3. */
   attempts?: number;
   /** First backoff step in ms between attempts. Default 200. */
@@ -119,6 +139,10 @@ export interface ErasureOrchestrator {
 
 /** Name of the pseudo-service the local retention targets report under. */
 export const RUNTIME_STORE_SERVICE = "runtime";
+/** Store name of the synthetic failure for an operation that addressed no store. */
+export const NO_STORES_ADDRESSED = `${RUNTIME_STORE_SERVICE}.no_stores`;
+/** Default lease of an `in_progress` operation. */
+const DEFAULT_LEASE_MS = 15 * 60_000;
 
 interface RowShape {
   request_id: string;
@@ -155,7 +179,13 @@ function rowToOperation(row: RowShape): ErasureOperation | null {
     ...(row.doc_references !== null && row.doc_references !== undefined
       ? { references: row.doc_references }
       : {}),
-    status: row.status === "complete" || row.status === "partial" || row.status === "failed" ? row.status : "partial",
+    status:
+      row.status === "complete" ||
+      row.status === "partial" ||
+      row.status === "failed" ||
+      row.status === "in_progress"
+        ? row.status
+        : "partial",
     results,
     erased: results.reduce((n, r) => n + r.erased, 0),
     storeGroups: Array.isArray(row.store_groups) ? row.store_groups : [],
@@ -209,6 +239,25 @@ function localUserIdentity(
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** The contract form of a stored subject (drops the runtime-only issuer). */
+function contractSubject(
+  subject: NonNullable<ErasureOperation["subject"]>,
+): ContractErasureSubject {
+  return {
+    ...(subject.userId !== undefined ? { userId: subject.userId } : {}),
+    ...(subject.email !== undefined ? { email: subject.email } : {}),
+    externalIds: subject.externalIds,
+  };
+}
+function noStoresAddressed(): ErasureStoreResult {
+  return {
+    store: NO_STORES_ADDRESSED,
+    status: "failed",
+    erased: 0,
+    error:
+      "No erasure store was addressed: no local store applies to this request and no remote target is configured (ERASURE_TARGETS).",
+  };
+}
 
 /**
  * Persistence abstraction so the orchestrator works with Postgres
@@ -219,6 +268,14 @@ interface OperationStore {
   update(op: ErasureOperation): Promise<void>;
   load(requestId: string): Promise<ErasureOperation | null>;
   loadByReceiptId(receiptId: string): Promise<ErasureOperation | null>;
+  /**
+   * Atomically take over an `in_progress` operation whose lease has expired
+   * (and renew the lease). Returns the claimed operation, or `null` when it is
+   * not in progress, still leased, or another caller claimed it first.
+   */
+  claimExpired(requestId: string, leaseMs: number): Promise<ErasureOperation | null>;
+  /** Remove the cleartext subject from a stored operation. */
+  redactSubject(requestId: string): Promise<void>;
 }
 
 class InMemoryOperationStore implements OperationStore {
@@ -234,6 +291,24 @@ class InMemoryOperationStore implements OperationStore {
   }
   async load(requestId: string): Promise<ErasureOperation | null> {
     return this.map.get(requestId) ?? null;
+  }
+  async claimExpired(
+    requestId: string,
+    leaseMs: number,
+  ): Promise<ErasureOperation | null> {
+    const op = this.map.get(requestId);
+    if (op === undefined || op.status !== "in_progress") return null;
+    if (Date.now() - Date.parse(op.updatedAt) < leaseMs) return null;
+    const claimed = { ...op, updatedAt: new Date().toISOString() };
+    this.map.set(requestId, claimed);
+    return claimed;
+  }
+  async redactSubject(requestId: string): Promise<void> {
+    const op = this.map.get(requestId);
+    if (op === undefined || op.subject === undefined) return;
+    const rest: ErasureOperation = { ...op };
+    delete rest.subject;
+    this.map.set(requestId, rest);
   }
   async loadByReceiptId(receiptId: string): Promise<ErasureOperation | null> {
     for (const op of this.map.values()) {
@@ -290,6 +365,28 @@ class PostgresOperationStore implements OperationStore {
     );
   }
 
+  async claimExpired(
+    requestId: string,
+    leaseMs: number,
+  ): Promise<ErasureOperation | null> {
+    // One statement: only the caller whose UPDATE matches the expired row wins.
+    const rows = await this.db.query<RowShape>(
+      `UPDATE erasure_requests
+          SET updated_at = now()
+        WHERE request_id = $1 AND status = 'in_progress'
+          AND updated_at < now() - ($2::bigint * interval '1 millisecond')
+        RETURNING request_id, tenant_id, scope, subject, doc_references, status,
+                  results, store_groups, receipt, created_at, updated_at`,
+      [requestId, Math.max(0, Math.floor(leaseMs))],
+    );
+    return rows.length > 0 ? rowToOperation(rows[0]) : null;
+  }
+  async redactSubject(requestId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE erasure_requests SET subject = NULL WHERE request_id = $1`,
+      [requestId],
+    );
+  }
   async load(requestId: string): Promise<ErasureOperation | null> {
     // Operator plane: erasure operations are cross-tenant admin data.
     return this.loadBy("request_id = $1", requestId, "requestId");
@@ -411,6 +508,7 @@ export function createErasureOrchestrator(
   const targets = options.targets ?? [];
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const leaseMs = Math.max(0, options.leaseMs ?? DEFAULT_LEASE_MS);
   const attempts = Math.max(1, options.attempts ?? 3);
   const backoffBaseMs = options.backoffBaseMs ?? 200;
   const envLookup = options.envLookup ?? ((name: string) => process.env[name]);
@@ -525,7 +623,7 @@ export function createErasureOrchestrator(
       ...(request.references !== undefined
         ? { references: request.references }
         : {}),
-      status: "partial",
+      status: "in_progress",
       results: [],
       erased: 0,
       storeGroups: [],
@@ -533,8 +631,35 @@ export function createErasureOrchestrator(
       updatedAt: now,
     };
     const conflict = await store.insert(operation);
-    if (conflict !== null) return conflict; // idempotent replay (Req 2.9)
-
+    // Idempotent replay (Req 2.9); an operation whose lease ran out is a
+    // zombie of a crashed run and is taken over instead of replayed as-is.
+    if (conflict !== null) return takeOverIfExpired(conflict);
+    return runOperation(operation, request);
+  };
+  /** The wire request of a persisted operation (the issuer never leaves the runtime). */
+  const requestOf = (op: ErasureOperation): ErasureRequest => ({
+    requestId: op.requestId,
+    tenantId: op.tenantId,
+    scope: op.scope,
+    ...(op.subject !== undefined ? { subject: contractSubject(op.subject) } : {}),
+    ...(op.references !== undefined ? { references: op.references } : {}),
+    dryRun: false,
+  });
+  const takeOverIfExpired = async (
+    op: ErasureOperation,
+  ): Promise<ErasureOperation> => {
+    if (op.status !== "in_progress") return op;
+    const claimed = await store.claimExpired(op.requestId, leaseMs);
+    if (claimed === null) return op; // still running, or another caller won
+    logger?.warn("erasure operation lease expired — taking it over", {
+      requestId: op.requestId,
+    });
+    return runOperation(claimed, requestOf(claimed));
+  };
+  const runOperation = async (
+    operation: ErasureOperation,
+    request: ErasureRequest,
+  ): Promise<ErasureOperation> => {
     const subject: ErasureSubject = {
       tenantId: request.tenantId,
       ...localUserIdentity(operation.subject),
@@ -562,7 +687,12 @@ export function createErasureOrchestrator(
       results = mergeResults(results, group.results);
       groups = mergeGroups(groups, group.service, group.results.map((r) => r.store));
     }
-
+    if (results.length === 0) {
+      // Nothing was addressed (no local target applied, no remote target
+      // configured): attesting `complete` would be a false erasure claim.
+      results = [noStoresAddressed()];
+      groups = mergeGroups(groups, RUNTIME_STORE_SERVICE, [NO_STORES_ADDRESSED]);
+    }
     const completed: ErasureOperation = {
       ...operation,
       status: aggregateStatus(results),
@@ -572,29 +702,36 @@ export function createErasureOrchestrator(
       updatedAt: new Date().toISOString(),
     };
     await store.update(completed);
-    return attachReceipt(completed);
+    return finish(completed);
   };
-
+  /** Receipt first (it hashes the subject), then drop the cleartext of a finished operation. */
+  const finish = async (op: ErasureOperation): Promise<ErasureOperation> => {
+    const withReceipt = await attachReceipt(op);
+    if (withReceipt.status !== "complete") return withReceipt;
+    await store.redactSubject(withReceipt.requestId);
+    const redacted: ErasureOperation = { ...withReceipt };
+    delete redacted.subject;
+    return redacted;
+  };
   const retry = async (requestId: string): Promise<ErasureOperation | null> => {
-    const existing = await store.load(requestId);
-    if (existing === null) return null;
+    const loaded = await store.load(requestId);
+    if (loaded === null) return null;
+    // A zombie (`in_progress` past its lease) is resumed; a live one is returned.
+    const existing = await takeOverIfExpired(loaded);
+    if (existing !== loaded || existing.status === "in_progress") return existing;
     const failedStores = existing.results
       .filter((r) => r.status === "failed")
       .map((r) => r.store);
     if (failedStores.length === 0) return existing;
-
+    // Without its subject a subject-scoped operation cannot be re-run: the
+    // local stores would read the missing user as "the whole tenant".
+    if (existing.scope === "subject" && existing.subject === undefined) return existing;
     const request: ErasureRequest = {
       // A fresh idempotency key: the remote stores replay completed requests,
       // so a retry must present itself as a new (identical) erasure. The
       // operations are deletion-idempotent, so re-running is safe.
+      ...requestOf(existing),
       requestId: randomUUID(),
-      tenantId: existing.tenantId,
-      scope: existing.scope,
-      ...(existing.subject !== undefined ? { subject: existing.subject } : {}),
-      ...(existing.references !== undefined
-        ? { references: existing.references }
-        : {}),
-      dryRun: false,
     };
 
     const failedLocal = failedStores.filter(
@@ -641,9 +778,8 @@ export function createErasureOrchestrator(
       updatedAt: new Date().toISOString(),
     };
     await store.update(updated);
-    return attachReceipt(updated);
+    return finish(updated);
   };
-
   const setReceipt = async (requestId: string, receipt: unknown): Promise<void> => {
     const existing = await store.load(requestId);
     if (existing === null) return;

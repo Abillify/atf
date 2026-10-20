@@ -101,6 +101,10 @@ export interface AuditIntegrityEvidence {
     uptoId: number;
     anchoredAt: string;
     verified: boolean;
+    /** Anchor signature algorithm; absent on pre-ADR-0030 (HMAC) anchors. */
+    alg?: "hmac-sha256" | "ed25519";
+    /** Key id of an Ed25519 anchor (see /.well-known/atf-evidence-jwks.json). */
+    kid?: string;
   };
   /**
    * Overall tamper-evidence assessment. `true` only when the chain is intact
@@ -399,6 +403,12 @@ export async function generateComplianceDossier(
             uptoId: anchorStatus.latest.uptoId,
             anchoredAt: anchorStatus.latest.anchoredAt,
             verified: anchorStatus.verified === true,
+            ...(anchorStatus.latest.alg !== undefined
+              ? { alg: anchorStatus.latest.alg }
+              : {}),
+            ...(anchorStatus.latest.kid !== undefined
+              ? { kid: anchorStatus.latest.kid }
+              : {}),
           },
         }
       : {}),
@@ -488,7 +498,12 @@ export function formatDossierAsMarkdown(dossier: ComplianceDossier): string {
   if (ai.externallyAnchored && ai.anchor !== undefined) {
     lines.push(
       `✓ Externally anchored — signed checkpoint up to record #${ai.anchor.uptoId} ` +
-        `(anchored ${ai.anchor.anchoredAt}) still verifies. Protects against a wholesale chain rebuild.`,
+        `(anchored ${ai.anchor.anchoredAt}) still verifies. Protects against a wholesale chain rebuild.` +
+        (ai.anchor.alg === "ed25519"
+          ? ` Signature: Ed25519 (kid ${ai.anchor.kid ?? "?"}) — independently ` +
+            `verifiable offline via /.well-known/atf-evidence-jwks.json.`
+          : ` Signature: HMAC-SHA256 — verifiable only with the shared secret; ` +
+            `set EVIDENCE_SIGNING_KEY for third-party verification.`),
     );
   } else if (ai.anchor !== undefined) {
     lines.push(
@@ -498,7 +513,8 @@ export function formatDossierAsMarkdown(dossier: ComplianceDossier): string {
   } else {
     lines.push(
       `ℹ No external anchor configured — integrity rests on the hash chain alone ` +
-        `(detects isolated edits; set AUDIT_ANCHOR_SECRET to also detect a full-DB rebuild).`,
+        `(detects isolated edits; set EVIDENCE_SIGNING_KEY or AUDIT_ANCHOR_SECRET to ` +
+        `also detect a full-DB rebuild).`,
     );
   }
   lines.push(

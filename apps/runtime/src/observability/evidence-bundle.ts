@@ -9,21 +9,24 @@
  * operator could hand-edit it before sharing it with an auditor, a customer,
  * or a regulator, and nothing about the artefact itself would reveal that.
  *
- * This module wraps an `ExplainCard` into a **signed** bundle using the SAME
- * HMAC-over-a-secret-held-outside-the-database primitive the audit-chain
- * anchoring service already uses (`audit-anchor.ts`, `signAuditAnchor` /
- * `verifyAuditAnchor`) — deliberately not a new cryptographic primitive, a new
- * key-management story, or a PKI. A bundle recipient (or the bundled
- * `verify-bundle` CLI command) with the shared secret can confirm the bundle's
- * content has not been altered since it was generated, entirely offline — no
- * call back to the issuing server, no trust in whoever is showing them the
- * file.
+ * This module wraps an `ExplainCard` into a **signed** bundle. Signing uses
+ * the shared Ed25519 evidence key (`EVIDENCE_SIGNING_KEY`, ADR 0030) when
+ * configured: the bundle is then stamped `algorithm: "ed25519"` + `kid` and a
+ * recipient — auditor, customer, regulator — verifies it offline against the
+ * published public key (`GET /.well-known/atf-evidence-jwks.json`) with **no
+ * shared secret**, which HMAC fundamentally cannot provide (handing a third
+ * party the HMAC secret to let them verify destroys the signature's meaning).
+ * When no asymmetric key is configured, the bundle falls back to the
+ * HMAC-over-a-secret form the audit-chain anchoring service historically used
+ * (`hmac-sha256`); such bundles remain verifiable by secret holders, and
+ * `verifyEvidenceBundle` checks both algorithms by the envelope's `algorithm`
+ * field.
  *
  * What is and is not proven:
  *   - Proven: the bundle's CONTENT (the card, plus the optional embedded audit
  *     anchor) is byte-for-byte what the signing party produced, at the time it
- *     was signed. This is integrity, the same guarantee `verifyAuditAnchor`
- *     gives the audit chain.
+ *     was signed. With `ed25519` this also binds the artefact to a specific
+ *     published key (non-repudiation), which HMAC cannot offer.
  *   - NOT proven: that the underlying execution history itself is accurate —
  *     the bundle can only attest to what the platform's stores reported at
  *     generation time. If the audit-anchor service is active, the bundle
@@ -34,9 +37,15 @@
  */
 
 import { createHash, createHmac } from "node:crypto";
+import { canonicalJson } from "@atf/canonical-json";
 import type { ExplainCard } from "./explain.js";
 import { renderExplainCardMarkdown } from "./explain.js";
 import type { AuditAnchorStatus } from "./audit-anchor.js";
+import {
+  signEvidenceBytes,
+  verifyEvidenceBytes,
+  type Ed25519EvidenceKey,
+} from "./evidence-key.js";
 
 // ---------------------------------------------------------------------------
 // Bundle shape
@@ -52,9 +61,10 @@ export interface EvidenceBundle {
   card: ExplainCard;
   /**
    * The audit-chain anchor status at generation time, when the anchoring
-   * service (`AUDIT_ANCHOR_SECRET`) is active. Embedding it means a reader
-   * gets the chain's own tamper-evidence bundled into the same signed
-   * artefact, rather than a second thing to separately fetch and trust.
+   * service (`EVIDENCE_SIGNING_KEY` or `AUDIT_ANCHOR_SECRET`) is active.
+   * Embedding it means a reader gets the chain's own tamper-evidence bundled
+   * into the same signed artefact, rather than a second thing to separately
+   * fetch and trust.
    */
   auditAnchor?: AuditAnchorStatus;
 }
@@ -63,9 +73,19 @@ export interface SignedEvidenceBundle {
   bundle: EvidenceBundle;
   /** SHA-256 hex digest of the bundle's canonical serialization. */
   contentHash: string;
-  /** HMAC-SHA256 of `contentHash`, base64url, under the signing secret. */
+  /**
+   * Signature over `contentHash`, base64url. HMAC-SHA256 under the signing
+   * secret when {@link algorithm} is `"hmac-sha256"`; an Ed25519 signature
+   * under the evidence key when it is `"ed25519"` (ADR 0030).
+   */
   signature: string;
-  algorithm: "hmac-sha256";
+  algorithm: "hmac-sha256" | "ed25519";
+  /**
+   * Key id (base64url SHA-256 thumbprint) of the Ed25519 evidence key that
+   * produced {@link signature}. Only set when {@link algorithm} is
+   * `"ed25519"`; a verifier resolves it against the published evidence JWKS.
+   */
+  kid?: string;
 }
 
 export type EvidenceVerification =
@@ -89,22 +109,14 @@ export type EvidenceVerification =
  * reorders how the card's fields are assembled. Sorting keys recursively makes
  * the serialization depend only on the VALUES, matching the same reasoning
  * `canonicalizeForHash` in `audit-log.ts` already applies to one audit record.
+ *
+ * The implementation is `@atf/canonical-json`'s default mode (stringify
+ * family, code-unit key order, `undefined` dropped) — byte-identical to the
+ * former local `sortKeysDeep` (proven by
+ * `packages/canonical-json/test/differential.test.ts`), because these bytes
+ * back the bundle's content hash and signature.
  */
-export function canonicalizeForBundleHash(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value));
-}
-
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value !== null && typeof value === "object") {
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
-    }
-    return sorted;
-  }
-  return value;
-}
+export const canonicalizeForBundleHash = canonicalJson;
 
 // ---------------------------------------------------------------------------
 // Build / sign / verify
@@ -126,34 +138,49 @@ export function buildEvidenceBundle(
 }
 
 /**
- * Signs a bundle: hashes its canonical form (SHA-256) and HMACs that hash
- * under `secret`. Mirrors `signAuditAnchor`'s shape exactly (`hmac-sha256`
- * algorithm, base64url signature) so a reader already familiar with the audit
- * anchor format has nothing new to learn.
+ * Signs a bundle: hashes its canonical form (SHA-256) and signs that hash.
+ * With an {@link Ed25519EvidenceKey} the signature is Ed25519 and the envelope
+ * carries `algorithm: "ed25519"` + `kid` (independently verifiable via the
+ * published JWKS, ADR 0030); with a plain secret it is HMAC-SHA256 (legacy
+ * form, kept for deployments without an asymmetric key). Both share the same
+ * `contentHash` computation, so the integrity guarantee is identical — only
+ * WHO can verify differs.
  */
 export function signEvidenceBundle(
   bundle: EvidenceBundle,
-  secret: string,
+  secretOrKey: string | Ed25519EvidenceKey,
 ): SignedEvidenceBundle {
   const contentHash = createHash("sha256")
     .update(canonicalizeForBundleHash(bundle))
     .digest("hex");
-  const signature = createHmac("sha256", secret)
-    .update(contentHash)
-    .digest("base64url");
-  return { bundle, contentHash, signature, algorithm: "hmac-sha256" };
+  if (typeof secretOrKey === "string") {
+    const signature = createHmac("sha256", secretOrKey)
+      .update(contentHash)
+      .digest("base64url");
+    return { bundle, contentHash, signature, algorithm: "hmac-sha256" };
+  }
+  return {
+    bundle,
+    contentHash,
+    signature: signEvidenceBytes(secretOrKey, contentHash),
+    algorithm: "ed25519",
+    kid: secretOrKey.kid,
+  };
 }
 
 /**
- * Verifies a signed bundle against `secret`, entirely offline: recomputes the
- * content hash from the embedded bundle and checks both the hash and the
- * signature. This is the exact function the `verify-bundle` CLI command
- * calls — it never needs network access, only the bundle file and the shared
- * secret.
+ * Verifies a signed bundle entirely offline: recomputes the content hash from
+ * the embedded bundle and checks both the hash and the signature according to
+ * the envelope's `algorithm`. This is the exact function the `verify-bundle`
+ * CLI command calls — it never needs network access. For `"ed25519"` bundles
+ * the verifier needs only the 32-byte public key (from the evidence JWKS); for
+ * legacy `"hmac-sha256"` bundles, the shared secret. Key material that cannot
+ * check the envelope's algorithm (secret for an Ed25519 bundle, public key for
+ * an HMAC bundle) fails as `signature_mismatch`.
  */
 export function verifyEvidenceBundle(
   signed: SignedEvidenceBundle,
-  secret: string,
+  secretOrKey: string | Ed25519EvidenceKey | Uint8Array,
 ): EvidenceVerification {
   const recomputedHash = createHash("sha256")
     .update(canonicalizeForBundleHash(signed.bundle))
@@ -161,7 +188,33 @@ export function verifyEvidenceBundle(
   if (recomputedHash !== signed.contentHash) {
     return { valid: false, reason: "content_hash_mismatch" };
   }
-  const expectedSignature = createHmac("sha256", secret)
+  if (signed.algorithm === "ed25519") {
+    const publicKey =
+      typeof secretOrKey === "string"
+        ? undefined
+        : secretOrKey instanceof Uint8Array
+          ? secretOrKey
+          : secretOrKey.publicKeyRaw;
+    if (publicKey === undefined) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    if (
+      signed.kid !== undefined &&
+      typeof secretOrKey !== "string" &&
+      !(secretOrKey instanceof Uint8Array) &&
+      secretOrKey.kid !== signed.kid
+    ) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    if (!verifyEvidenceBytes(publicKey, signed.contentHash, signed.signature)) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    return { valid: true };
+  }
+  if (typeof secretOrKey !== "string") {
+    return { valid: false, reason: "signature_mismatch" };
+  }
+  const expectedSignature = createHmac("sha256", secretOrKey)
     .update(signed.contentHash)
     .digest("base64url");
   if (expectedSignature !== signed.signature) {
@@ -181,6 +234,7 @@ export function verifyEvidenceBundle(
  */
 export function renderEvidenceBundleMarkdown(signed: SignedEvidenceBundle): string {
   const { bundle } = signed;
+  const asymmetric = signed.algorithm === "ed25519";
   const lines: string[] = [
     `# Verifiable Evidence Bundle — ${bundle.executionId}`,
     "",
@@ -192,18 +246,23 @@ export function renderEvidenceBundleMarkdown(signed: SignedEvidenceBundle): stri
     "## Verification",
     "",
     `- **Content hash (SHA-256):** \`${signed.contentHash}\``,
-    `- **Signature (HMAC-SHA256, base64url):** \`${signed.signature}\``,
+    asymmetric
+      ? `- **Signature (Ed25519, base64url, key \`${signed.kid ?? "unknown"}\`):** \`${signed.signature}\``
+      : `- **Signature (HMAC-SHA256, base64url):** \`${signed.signature}\``,
     "",
     "To verify this bundle has not been altered since it was signed, run:",
     "",
     "```",
-    "bun run scripts/cli.ts verify-bundle <bundle.json> --secret <the-signing-secret>",
+    asymmetric
+      ? "bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <jwks.json|https://…/.well-known/atf-evidence-jwks.json>"
+      : "bun run scripts/cli.ts verify-bundle <bundle.json> --secret <the-signing-secret>",
     "```",
     "",
     "The command recomputes the content hash from the embedded bundle and the",
     "signature from that hash, and reports whether both still match. It never",
-    "makes a network call — only the bundle file and the shared secret are",
-    "needed.",
+    asymmetric
+      ? "makes a request to the issuing server — only the bundle file and the\npublished public key (a JWKS file or URL) are needed, so anyone,\nincluding an independent auditor, can check this artefact."
+      : "makes a network call — only the bundle file and the shared secret are\nneeded. Note: verifying an HMAC bundle requires the operator's shared\nsigning secret; ask the operator for an Ed25519-signed bundle\n(EVIDENCE_SIGNING_KEY) if you need to verify independently.",
   ];
   if (bundle.auditAnchor !== undefined) {
     lines.push(

@@ -18,8 +18,14 @@ import {
   type EvidenceBundle,
 } from "../evidence-bundle.js";
 import type { ExplainCard } from "../explain.js";
+import { parseEvidenceSigningKey } from "../evidence-key.js";
 
 const SECRET = "a-shared-signing-secret-at-least-16-chars";
+
+/** base64-encoded 32-byte Ed25519 seed for the asymmetric tests. */
+const SEED_B64 = Buffer.from(
+  Array.from({ length: 32 }, (_, i) => i + 1),
+).toString("base64");
 
 function baseCard(over: Partial<ExplainCard> = {}): ExplainCard {
   return {
@@ -155,6 +161,73 @@ describe("signEvidenceBundle / verifyEvidenceBundle", () => {
     const reorderedSigned = { ...signed, bundle: reordered };
     expect(verifyEvidenceBundle(reorderedSigned, SECRET).valid).toBe(true);
   });
+
+  it("signs with the Ed25519 evidence key (algorithm + kid stamped)", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const bundle = buildEvidenceBundle(baseCard());
+    const signed = signEvidenceBundle(bundle, key);
+    expect(signed.algorithm).toBe("ed25519");
+    expect(signed.kid).toBe(key.kid);
+    expect(signed.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(verifyEvidenceBundle(signed, key).valid).toBe(true);
+  });
+
+  it("verifies an Ed25519 bundle with the PUBLIC key only — no secret", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), key);
+    // An independent auditor holds only the raw 32-byte public key.
+    expect(verifyEvidenceBundle(signed, key.publicKeyRaw).valid).toBe(true);
+  });
+
+  it("rejects an Ed25519 bundle under a foreign public key", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    const other = parseEvidenceSigningKey(
+      Buffer.alloc(32, 9).toString("base64"),
+    );
+    if (key === undefined || other === undefined)
+      throw new Error("expected keys");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), key);
+    expect(verifyEvidenceBundle(signed, other.publicKeyRaw).valid).toBe(false);
+  });
+
+  it("rejects an Ed25519 bundle verified with only an HMAC secret", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), key);
+    const result = verifyEvidenceBundle(signed, SECRET);
+    expect(result.valid).toBe(false);
+    if (result.valid) throw new Error("expected verification to fail");
+    expect(result.reason).toBe("signature_mismatch");
+  });
+
+  it("rejects a legacy HMAC bundle verified with Ed25519 key material", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), SECRET);
+    const result = verifyEvidenceBundle(signed, key);
+    expect(result.valid).toBe(false);
+    if (result.valid) throw new Error("expected verification to fail");
+    expect(result.reason).toBe("signature_mismatch");
+  });
+
+  it("detects tampering with an Ed25519-signed bundle's content", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), key);
+    const tampered = {
+      ...signed,
+      bundle: {
+        ...signed.bundle,
+        card: { ...signed.bundle.card, totalCost: 999 },
+      },
+    };
+    const result = verifyEvidenceBundle(tampered, key.publicKeyRaw);
+    expect(result.valid).toBe(false);
+    if (result.valid) throw new Error("expected verification to fail");
+    expect(result.reason).toBe("content_hash_mismatch");
+  });
 });
 
 describe("canonicalizeForBundleHash", () => {
@@ -181,6 +254,17 @@ describe("renderEvidenceBundleMarkdown", () => {
     expect(md).toContain(signed.contentHash);
     expect(md).toContain(signed.signature);
     expect(md).toContain("verify-bundle");
+  });
+
+  it("renders an Ed25519 bundle with the JWKS-based verify command", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const signed = signEvidenceBundle(buildEvidenceBundle(baseCard()), key);
+    const md = renderEvidenceBundleMarkdown(signed);
+    expect(md).toContain("Ed25519");
+    expect(md).toContain(key.kid);
+    expect(md).toContain("--jwks");
+    expect(md).toContain("atf-evidence-jwks.json");
   });
 
   it("mentions the embedded audit-anchor status when present", () => {

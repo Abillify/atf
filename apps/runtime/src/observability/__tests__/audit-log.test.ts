@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   InMemoryAuditLog,
   PostgresAuditLog,
@@ -17,7 +18,13 @@ import {
   verifyAuditAnchor,
   type AuditRecord,
 } from "../audit-log.js";
+import { parseEvidenceSigningKey } from "../evidence-key.js";
 import type { Database } from "../../db/database.js";
+
+/** base64-encoded 32-byte Ed25519 seed for the evidence-key anchor tests. */
+const SEED_B64 = Buffer.from(
+  Array.from({ length: 32 }, (_, i) => i + 1),
+).toString("base64");
 
 describe("InMemoryAuditLog", () => {
   it("records and lists newest-first", async () => {
@@ -417,6 +424,186 @@ describe("hash chain", () => {
     expect(differentPrev).not.toBe(h1);
   });
 
+  /**
+   * Regression: Postgres `jsonb` does NOT preserve object key order — on
+   * read-back the driver returns nested `details` keys in jsonb's own storage
+   * order. The chain hash must therefore be independent of key order at every
+   * depth, or verifyChain() reports false hash_mismatch failures against
+   * Postgres for every record with nested details.
+   */
+  it("computeAuditHash is independent of details key order (jsonb round-trip)", () => {
+    const detailsInsertionOrder = {
+      zulu: 1,
+      alpha: { delta: "d", bravo: { y: 2, x: 1 } },
+      mike: [3, { q: 1, p: 2 }],
+    };
+    // Same values, keys inserted in a different order — what jsonb read-back
+    // *may* hand back after Postgres has normalised its storage order.
+    const detailsReordered = {
+      mike: [3, { p: 2, q: 1 }],
+      bravo_placeholder: undefined,
+      alpha: { bravo: { x: 1, y: 2 }, delta: "d" },
+      zulu: 1,
+    } as Record<string, unknown>;
+    delete detailsReordered.bravo_placeholder;
+
+    const base = {
+      id: 7,
+      at: "2024-01-01T00:00:00.000Z",
+      actor: "alice",
+      role: undefined,
+      action: "flows.publish",
+      target: undefined,
+      outcome: "success" as const,
+    };
+    const h1 = computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, {
+      ...base,
+      details: detailsInsertionOrder,
+    });
+    const h2 = computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, {
+      ...base,
+      details: detailsReordered,
+    });
+    expect(h1).toBe(h2);
+
+    // Sensitivity preserved: a changed VALUE (not just order) still differs.
+    const h3 = computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, {
+      ...base,
+      details: { ...detailsInsertionOrder, zulu: 2 },
+    });
+    expect(h3).not.toBe(h1);
+  });
+
+  it("verifyChain passes when stored details come back with reordered keys", async () => {
+    // Simulate the Postgres flow: hash at write time with insertion order,
+    // then verify from rows whose details have jsonb-normalised key order.
+    const log = new InMemoryAuditLog();
+    log.record({
+      actor: "alice",
+      action: "flows.publish",
+      details: { zeta: 1, alpha: { y: { b: 2, a: 1 }, x: 0 }, mid: 5 },
+    });
+    log.record({ actor: "bob", action: "flows.delete" });
+
+    const ascending = (await log.list({ limit: 100 })).slice().reverse();
+    const first = ascending[0];
+    if (first === undefined || first.details === undefined) {
+      throw new Error("expected a first record with details");
+    }
+    // Rebuild the first record the way a jsonb read-back would deliver it.
+    const jsonbStyleDetails = JSON.parse(
+      '{"alpha":{"x":0,"y":{"a":1,"b":2}},"mid":5,"zeta":1}',
+    ) as Record<string, unknown>;
+    const asReadBack: AuditRecord[] = [
+      { ...first, details: jsonbStyleDetails },
+      ascending[1] as AuditRecord,
+    ];
+    const result = verifyAuditChain(asReadBack);
+    expect(result.valid).toBe(true);
+  });
+
+  describe("legacy hash form (rows written before details were canonicalized)", () => {
+    const base = {
+      id: 1,
+      at: "2024-01-01T00:00:00.000Z",
+      actor: "alice",
+      action: "flows.publish",
+      outcome: "success" as const,
+    };
+    /** The pre-fix construction, replicated independently of the module. */
+    const legacyHash = (
+      prev: string,
+      details: Record<string, unknown> | undefined,
+    ): string =>
+      createHash("sha256")
+        .update(prev)
+        .update(
+          JSON.stringify({
+            id: base.id,
+            at: base.at,
+            actor: base.actor,
+            role: null,
+            action: base.action,
+            target: null,
+            outcome: "success",
+            details: details ?? null,
+          }),
+        )
+        .digest("hex");
+    const record = (
+      details: Record<string, unknown> | undefined,
+      hash: string,
+    ): AuditRecord => ({
+      ...base,
+      ...(details !== undefined ? { details } : {}),
+      hash,
+      prevHash: AUDIT_CHAIN_GENESIS_HASH,
+    });
+
+    it("accepts a pre-fix row whose as-stored key order was not sorted, and counts it", () => {
+      // jsonb order (shorter key first) == insertion order, but not sorted.
+      const details = { to: "b", from: "a" };
+      const rec = record(details, legacyHash(AUDIT_CHAIN_GENESIS_HASH, details));
+      // Sanity: this row would NOT verify under the canonical form alone.
+      expect(computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, rec)).not.toBe(rec.hash);
+      const result = verifyAuditChain([rec]);
+      expect(result.valid).toBe(true);
+      expect(result.legacyForm).toBe(1);
+    });
+
+    it("a record without details is identical in both forms (no legacy count)", () => {
+      const rec = record(undefined, legacyHash(AUDIT_CHAIN_GENESIS_HASH, undefined));
+      const result = verifyAuditChain([rec]);
+      expect(result.valid).toBe(true);
+      expect(result.legacyForm).toBeUndefined();
+    });
+
+    it("rows hashed in canonical form are not counted as legacy", () => {
+      const details = { b: 1, a: 2 };
+      const rec = record(details, computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, { ...base, details }));
+      const result = verifyAuditChain([rec]);
+      expect(result.valid).toBe(true);
+      expect(result.legacyForm).toBeUndefined();
+    });
+
+    it("the legacy allowance does not accept a changed VALUE", () => {
+      const original = { to: "b", from: "a" };
+      const rec = record(
+        { to: "EVIL", from: "a" },
+        legacyHash(AUDIT_CHAIN_GENESIS_HASH, original),
+      );
+      const result = verifyAuditChain([rec]);
+      expect(result.valid).toBe(false);
+      expect(result.brokenAt).toEqual({ id: 1, reason: "hash_mismatch" });
+    });
+
+    it("a legacy row whose key order was reordered after hashing stays unverifiable", () => {
+      // Hashed as { zz, a } (insertion order, not sorted) but read back as
+      // { a, zz } (jsonb order): indistinguishable from tampering, and a
+      // false-positive before the fix as well. Documented, not papered over.
+      const rec = record(
+        { a: 2, zz: 1 },
+        legacyHash(AUDIT_CHAIN_GENESIS_HASH, { zz: 1, a: 2 }),
+      );
+      expect(verifyAuditChain([rec]).valid).toBe(false);
+    });
+
+    it("a prev_hash mismatch is still detected on legacy-form rows", () => {
+      const first = record(
+        { to: "b", from: "a" },
+        legacyHash(AUDIT_CHAIN_GENESIS_HASH, { to: "b", from: "a" }),
+      );
+      const second: AuditRecord = {
+        ...first,
+        id: 2,
+        prevHash: "f".repeat(64),
+        hash: "0".repeat(64),
+      };
+      const result = verifyAuditChain([first, second]);
+      expect(result.valid).toBe(false);
+    });
+  });
+
   it("PostgresAuditLog.verifyChain verifies the full chain via ASC query", async () => {
     const rows = [
       {
@@ -537,5 +724,68 @@ describe("external anchoring", () => {
     const result = verifyAuditAnchor(anchor, tip, "secret-b");
     expect(result.valid).toBe(false);
     expect(result.reason).toBe("signature_mismatch");
+  });
+
+  it("signs an anchor with the Ed25519 evidence key (alg + kid stamped)", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, key);
+    expect(anchor.alg).toBe("ed25519");
+    expect(anchor.kid).toBe(key.kid);
+    expect(verifyAuditAnchor(anchor, tip, key).valid).toBe(true);
+  });
+
+  it("verifies an Ed25519 anchor with the PUBLIC key only — no secret", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, key);
+    // An independent auditor holds only the raw 32-byte public key.
+    expect(verifyAuditAnchor(anchor, tip, key.publicKeyRaw).valid).toBe(true);
+  });
+
+  it("rejects an Ed25519 anchor under a foreign public key", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    const other = parseEvidenceSigningKey(
+      Buffer.alloc(32, 9).toString("base64"),
+    );
+    if (key === undefined || other === undefined)
+      throw new Error("expected keys");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, key);
+    expect(verifyAuditAnchor(anchor, tip, other.publicKeyRaw).valid).toBe(
+      false,
+    );
+  });
+
+  it("rejects an Ed25519 anchor verified with only an HMAC secret", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, key);
+    const result = verifyAuditAnchor(anchor, tip, "some-hmac-secret");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("signature_mismatch");
+  });
+
+  it("rejects a legacy HMAC anchor verified with Ed25519 key material", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, "legacy-hmac-secret");
+    const result = verifyAuditAnchor(anchor, tip, key);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("signature_mismatch");
+  });
+
+  it("detects a rewritten record under an Ed25519 anchor", () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const tip = { id: 7, hash: "tip-hash" };
+    const anchor = signAuditAnchor(tip, key);
+    const result = verifyAuditAnchor(anchor, { id: 7, hash: "rewritten" }, key);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("hash_mismatch");
   });
 });

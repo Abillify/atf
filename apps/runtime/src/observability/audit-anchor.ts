@@ -13,9 +13,13 @@
  * exactly this but were never wired to a scheduler (they only appeared in
  * tests). This service closes that gap:
  *
- *   - Periodically (and on demand) it signs the current chain tip with an
- *     operator-held HMAC secret (`AUDIT_ANCHOR_SECRET`) that lives in the
- *     environment/secret store, NOT in the audit database.
+ *   - Periodically (and on demand) it signs the current chain tip with the
+ *     shared Ed25519 evidence key (`EVIDENCE_SIGNING_KEY`, ADR 0030) so the
+ *     anchor is verifiable offline by auditors via the published evidence
+ *     JWKS — or, when no asymmetric key is configured, with the operator-held
+ *     HMAC secret (`AUDIT_ANCHOR_SECRET`) that lives in the
+ *     environment/secret store, NOT in the audit database (legacy form;
+ *     anchors produced this way stay verifiable for existing deployments).
  *   - It keeps the latest anchor in memory and, when `AUDIT_ANCHOR_FILE` is
  *     set, appends each anchor to an append-only JSONL file (intended to sit on
  *     separate storage / a log shipper — the "outside the DB" requirement).
@@ -26,8 +30,9 @@
  * `tamperEvident` claim reflects whether external anchoring is actually active
  * and still verifies — instead of being a hard-coded literal.
  *
- * Secret-gated: with no `AUDIT_ANCHOR_SECRET` configured the service is not
- * constructed and the dossier reports chain-only integrity honestly.
+ * Key-gated: with neither `EVIDENCE_SIGNING_KEY` nor `AUDIT_ANCHOR_SECRET`
+ * configured the service is not constructed and the dossier reports chain-only
+ * integrity honestly.
  *
  * No `any` at module boundaries.
  */
@@ -39,6 +44,7 @@ import {
   type AuditChainAnchor,
   type AuditLog,
 } from "./audit-log.js";
+import type { Ed25519EvidenceKey } from "./evidence-key.js";
 import type { Logger } from "./logger.js";
 
 export interface AuditAnchorStatus {
@@ -66,7 +72,11 @@ export interface AuditAnchorService {
 }
 
 export interface AuditAnchorServiceOptions {
-  secret: string;
+  /**
+   * Signing material: the shared Ed25519 evidence key (preferred, ADR 0030) or
+   * the legacy HMAC secret. Exactly one of the two must be provided.
+   */
+  key: Ed25519EvidenceKey | string;
   /** Interval between automatic anchors (ms). Default 6h. */
   intervalMs?: number;
   /** Optional append-only JSONL file to persist anchors OUTSIDE the DB. */
@@ -75,7 +85,7 @@ export interface AuditAnchorServiceOptions {
 }
 
 class AuditAnchorServiceImpl implements AuditAnchorService {
-  private readonly secret: string;
+  private readonly key: Ed25519EvidenceKey | string;
   private readonly intervalMs: number;
   private readonly filePath: string | undefined;
   private readonly logger: Logger | undefined;
@@ -88,7 +98,7 @@ class AuditAnchorServiceImpl implements AuditAnchorService {
     private readonly auditLog: AuditLog,
     opts: AuditAnchorServiceOptions,
   ) {
-    this.secret = opts.secret;
+    this.key = opts.key;
     this.intervalMs = opts.intervalMs ?? 6 * 60 * 60_000;
     this.filePath = opts.filePath;
     this.logger = opts.logger;
@@ -106,17 +116,24 @@ class AuditAnchorServiceImpl implements AuditAnchorService {
     try {
       const tip = await this.tip();
       if (tip === undefined) return undefined; // empty chain — nothing to anchor
-      const anchor = signAuditAnchor(tip, this.secret);
+      const anchor = signAuditAnchor(tip, this.key);
       this.latest = anchor;
       this.lastVerified = true;
       this.lastReason = undefined;
       if (this.filePath !== undefined) {
         try {
-          await appendFile(this.filePath, `${JSON.stringify(anchor)}\n`, "utf-8");
+          await appendFile(
+            this.filePath,
+            `${JSON.stringify(anchor)}\n`,
+            "utf-8",
+          );
         } catch (err) {
-          this.logger?.warn("Audit anchor file append failed (kept in memory)", {
-            error: err instanceof Error ? err.message : String(err),
-          });
+          this.logger?.warn(
+            "Audit anchor file append failed (kept in memory)",
+            {
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
         }
       }
       this.logger?.info("Audit chain anchored", {
@@ -150,7 +167,7 @@ class AuditAnchorServiceImpl implements AuditAnchorService {
       const result = verifyAuditAnchor(
         anchor,
         rec !== undefined ? { id: rec.id, hash: rec.hash } : undefined,
-        this.secret,
+        this.key,
       );
       this.lastVerified = result.valid;
       this.lastReason = result.reason;
@@ -172,7 +189,9 @@ class AuditAnchorServiceImpl implements AuditAnchorService {
     return {
       active: true,
       ...(this.latest !== undefined ? { latest: this.latest } : {}),
-      ...(this.lastVerified !== undefined ? { verified: this.lastVerified } : {}),
+      ...(this.lastVerified !== undefined
+        ? { verified: this.lastVerified }
+        : {}),
       ...(this.lastReason !== undefined ? { reason: this.lastReason } : {}),
     };
   }
@@ -196,18 +215,31 @@ class AuditAnchorServiceImpl implements AuditAnchorService {
 }
 
 /**
- * Builds an {@link AuditAnchorService}, or undefined when no anchor secret is
- * configured (chain-only integrity — the dossier reports this honestly).
+ * Builds an {@link AuditAnchorService}, or undefined when neither an Ed25519
+ * evidence key nor an anchor secret is configured (chain-only integrity — the
+ * dossier reports this honestly). The asymmetric key wins when both are
+ * present: anchors are then independently verifiable without a shared secret.
  */
 export function createAuditAnchorService(
   auditLog: AuditLog,
-  opts: { secret?: string; intervalMs?: number; filePath?: string; logger?: Logger },
+  opts: {
+    key?: Ed25519EvidenceKey;
+    secret?: string;
+    intervalMs?: number;
+    filePath?: string;
+    logger?: Logger;
+  },
 ): AuditAnchorService | undefined {
-  if (opts.secret === undefined || opts.secret.trim().length === 0) {
+  const key =
+    opts.key ??
+    (opts.secret !== undefined && opts.secret.trim().length > 0
+      ? opts.secret
+      : undefined);
+  if (key === undefined) {
     return undefined;
   }
   return new AuditAnchorServiceImpl(auditLog, {
-    secret: opts.secret,
+    key,
     ...(opts.intervalMs !== undefined ? { intervalMs: opts.intervalMs } : {}),
     ...(opts.filePath !== undefined ? { filePath: opts.filePath } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
