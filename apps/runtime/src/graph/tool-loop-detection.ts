@@ -46,6 +46,7 @@
  */
 
 import crypto from "node:crypto";
+import { canonicalJsonNull } from "@atf/canonical-json";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -278,18 +279,12 @@ export function hashToolArgs(args: unknown): string {
     .slice(0, 32);
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(",")}}`;
-}
+// `@atf/canonical-json` concat mode (code-unit order, `undefined` members
+// serialised as `null`) — byte-identical to the former local helper (proven
+// by `packages/canonical-json/test/differential.test.ts`). These hashes are
+// ephemeral (in-process loop detection), but keeping the bytes stable means
+// an in-flight detection window cannot be defeated by a deploy.
+const stableStringify = canonicalJsonNull;
 
 /** Hash of a tool result, used by the no-progress detector. */
 export function hashToolOutcome(outcome: unknown): string {

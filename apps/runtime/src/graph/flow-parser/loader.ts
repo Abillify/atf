@@ -18,7 +18,12 @@ import {
   parseFlowFileAsync,
   isFlowFileExtension,
 } from "../../util/parse-flow-file.js";
-import { logValidationError, validateFlowSource } from "./validate.js";
+import {
+  clearFlowLoadFailure,
+  logValidationError,
+  recordFlowLoadFailure,
+  validateFlowSource,
+} from "./validate.js";
 import {
   resolveFlowIncludes,
   resolveFlowSourceIncludes,
@@ -305,15 +310,21 @@ async function loadFlowFileAsync(
   fileName: string,
   registry: FlowRegistryImpl,
   fileOwner: Map<string, string>,
+  isCurrent?: () => boolean,
 ): Promise<void> {
   let raw: unknown;
 
   try {
     raw = await parseFlowFileAsync(filePath);
   } catch (err) {
+    // The file may have been deleted while this (watcher-triggered) read was in
+    // flight: that is not a load failure, and must not resurrect a ledger entry
+    // the delete just cleared.
+    if (isCurrent?.() === false) return;
     logValidationError(fileName, "Failed to read or parse flow file", err);
     return;
   }
+  if (isCurrent?.() === false) return;
 
   registerParsedFlow(raw, filePath, fileName, registry, fileOwner);
 }
@@ -377,10 +388,15 @@ function registerParsedFlow(
 
   if (existingOwner !== undefined && existingOwner !== fileName) {
     logConflict(flow.id, existingOwner, fileName);
+    recordFlowLoadFailure(
+      fileName,
+      `Duplicate flow ID '${flow.id}' — already defined by ${existingOwner}`,
+    );
     return;
   }
 
   registry.set(flow.id, flow);
+  clearFlowLoadFailure(fileName);
   if (source !== undefined) registry.setSource(flow.id, { definition: source, fileName });
   fileOwner.set(flow.id, fileName);
 }
@@ -404,9 +420,29 @@ class FlowParserServiceImpl implements FlowParserService {
     private readonly options: FlowParserOptions = {},
   ) {}
 
+  /**
+   * Forget everything a flow file contributed: its registered flow(s), the
+   * source record, the ownership entry and any recorded load failure.
+   */
+  private dropFlowFile(file: string): void {
+    for (const [flowId, owner] of [...this.fileOwner]) {
+      if (owner !== file) continue;
+      this.registry.delete(flowId);
+      this.fileOwner.delete(flowId);
+    }
+    this.fileIndex.delete(file);
+    clearFlowLoadFailure(file);
+  }
+
   private _reloadAllFlows(): void {
     for (const [fileName, filePath] of this.fileIndex) {
-      void loadFlowFileAsync(filePath, fileName, this.registry, this.fileOwner);
+      void loadFlowFileAsync(
+        filePath,
+        fileName,
+        this.registry,
+        this.fileOwner,
+        () => this.fileIndex.has(fileName),
+      );
     }
   }
 
@@ -535,6 +571,7 @@ class FlowParserServiceImpl implements FlowParserService {
         file,
         this.registry,
         this.fileOwner,
+        () => this.fileIndex.has(file),
       ).then(() => {
         this.options.onFlowChange?.();
       });
@@ -543,6 +580,25 @@ class FlowParserServiceImpl implements FlowParserService {
 
     this.watcher.on("add", handleFile);
     this.watcher.on("change", handleFile);
+    // A deleted flow file must stop being served: without this the flow stayed
+    // registered (and executable) until the next restart.
+    this.watcher.on("unlink", (filePath: string) => {
+      const file = path.basename(filePath);
+      const relToFlowsDir = path.relative(this.flowsDir, filePath);
+      const isIncludeFile =
+        !relToFlowsDir.startsWith("..") &&
+        (relToFlowsDir.startsWith(`prompts${path.sep}`) ||
+          relToFlowsDir.startsWith(`subflows${path.sep}`));
+      if (isIncludeFile) {
+        // A removed include can break the flows that use it: re-validate all.
+        this._reloadAllFlows();
+        this.options.onFlowChange?.();
+        return;
+      }
+      if (!this.fileIndex.has(file)) return;
+      this.dropFlowFile(file);
+      this.options.onFlowChange?.();
+    });
   }
 
   async stop(): Promise<void> {

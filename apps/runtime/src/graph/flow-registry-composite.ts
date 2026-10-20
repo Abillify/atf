@@ -124,6 +124,24 @@ export function createDbFlowSource(
 }
 
 /**
+ * Ids of file flows that a DB-published flow overrides (same id in both).
+ * These are the flows a `git push` cannot change at runtime — the online
+ * version wins — so every surface that reloads or publishes reports them
+ * instead of letting the override stay silent (ADR 0034).
+ */
+export function findShadowedFlowIds(
+  fileRegistry: Pick<FlowRegistry, "list">,
+  dbSource: Pick<DbFlowSource, "list">,
+): string[] {
+  const dbIds = new Set(dbSource.list().map((f) => f.id));
+  return fileRegistry
+    .list()
+    .map((f) => f.id)
+    .filter((id) => dbIds.has(id))
+    .sort();
+}
+
+/**
  * Builds a {@link FlowRegistry} that serves DB-published flows over file flows.
  * `get` prefers the DB; `list` merges with DB entries winning on id collision.
  */

@@ -19,7 +19,7 @@ import type { Citation } from "../../types/openai.js";
 import { getRuntime, lastUserQuery } from "../exec-runtime.js";
 import type { AgentState } from "../graph-engine.js";
 import type { RetrievedChunk } from "../vector-store.js";
-import { reportingValidator } from "../injection-findings.js";
+import { markTaintFromRetrieval, reportingValidator } from "../injection-findings.js";
 
 interface RetrievalNodeConfig {
   /** Vector collection to search (required for the node to do anything). */
@@ -238,6 +238,8 @@ export function createRetrievalNodeHandler(
       // Retrieved chunks are untrusted third-party text (indirect prompt
       // injection): scan them like tool output before the model sees them.
       const validator = reportingValidator(runtime, node.id);
+      // TAINT_MODE=on-untrusted-source: retrieved text taints the run on arrival.
+      markTaintFromRetrieval(runtime, node.id, `retrieval/${collection}`, chunks.length);
       const chunkTexts =
         validator !== undefined
           ? ((validator.validate(

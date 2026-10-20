@@ -1040,8 +1040,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
         this.appConfig.retrievalContextMode ??
         (this.appConfig.appEnv === "production" ? "spotlight" : "legacy"),
       ...((this.appConfig.taintWriteToolsRequireApproval ??
-        this.appConfig.appEnv === "production")
+        this.appConfig.appEnv === "production") ||
+      this.appConfig.taintMode === "on-untrusted-source"
         ? { taint: createExecutionTaint() }
+        : {}),
+      ...(this.appConfig.taintMode === "on-untrusted-source"
+        ? { taintMode: "on-untrusted-source" as const }
         : {}),
     };
 

@@ -19,6 +19,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { OperationalProfile } from "@atf/security-kit";
 import type { Logger } from "../observability/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -35,8 +36,8 @@ export interface PluginVerifierOptions {
   allowlist?: string[];
   /** Path to the plugins.manifest.json file. */
   manifestPath?: string;
-  /** Current APP_ENV value. */
-  appEnv?: "development" | "production";
+  /** Effective operational profile (ATF_PROFILE / APP_ENV). */
+  appEnv?: OperationalProfile;
   /** Logger for security events. */
   logger?: Logger;
 }
@@ -137,7 +138,7 @@ export function verifyPlugin(
   options: {
     allowlist?: string[];
     manifest?: PluginsManifest;
-    appEnv?: "development" | "production";
+    appEnv?: OperationalProfile;
   },
 ): PluginVerificationResult {
   const { allowlist, manifest, appEnv } = options;

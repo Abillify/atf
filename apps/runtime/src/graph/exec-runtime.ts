@@ -550,6 +550,12 @@ export interface ExecRuntime {
    */
   taint?: import("./execution-taint.js").ExecutionTaint;
   /**
+   * `on-untrusted-source`: content labelled untrusted taints the run when it
+   * arrives, not only after an injection finding (see `injection-findings.ts`).
+   * Absent = the default `on-finding` behaviour.
+   */
+  taintMode?: "on-untrusted-source";
+  /**
    * How retrieved chunks are handed to the model: `spotlight` wraps them in a
    * delimited untrusted-data block, `legacy` keeps the plain `[n] text` list.
    * Absent → `legacy`.

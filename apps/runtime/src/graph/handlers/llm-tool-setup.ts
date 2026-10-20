@@ -39,7 +39,11 @@ import {
 import { buildCostAttribution } from "../../observability/cost.js";
 import { buildAssetFetch } from "./llm-asset-fetch.js";
 import { buildLoopGuardedExecuteToolCall } from "./llm-tool-loop-guard.js";
-import { reportingValidator } from "../injection-findings.js";
+import {
+  markTaintFromSearchLabels,
+  markTaintFromUntrustedSource,
+  reportingValidator,
+} from "../injection-findings.js";
 import { taintGuardForNode } from "../execution-taint.js";
 
 /**
@@ -210,6 +214,17 @@ export async function setupLlmTools(params: {
           // Write tools need approval once the injection scan has flagged
           // content in this run (no-op for a clean run or read-only tools).
           ...(taintGuard !== undefined ? { taint: taintGuard } : {}),
+          // Search's own content-trust verdict (`injection_risk:
+          // "suspected"`) taints the run too — its signal list diverges
+          // from the runtime regex scan by design.
+          onSearchInjectionLabel: (
+            sourceRef: string,
+            toolContent: unknown,
+            resultMeta?: unknown,
+          ) => {
+            markTaintFromSearchLabels(runtime, node.id, sourceRef, toolContent);
+            markTaintFromUntrustedSource(runtime, node.id, sourceRef, toolContent, resultMeta);
+          },
           // Ref-handle indirection (config.refHandles): resolve the model's
           // short handles back to real references and mask references in
           // tool results, per node opt-in only.

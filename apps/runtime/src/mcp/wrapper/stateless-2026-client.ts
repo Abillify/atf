@@ -4,9 +4,13 @@
 import type { McpServerConfig } from "../../config/index.js";
 import type { RawTool } from "./schema.js";
 import { egressFetch } from "../../security/egress.js";
+import {
+  clientRequestMeta,
+  MCP_2026_PROTOCOL_VERSION,
+  statelessRequestBody,
+} from "@atf/mcp-2026";
 
-export const MCP_2026_PROTOCOL_VERSION = "2026-07-28";
-const PROTOCOL_META_KEY = "io.modelcontextprotocol/protocolVersion";
+export { MCP_2026_PROTOCOL_VERSION };
 
 type JsonObject = Record<string, unknown>;
 interface RpcResponse { result?: JsonObject; error?: { code?: number; message?: string; data?: unknown } }
@@ -248,6 +252,7 @@ export class Stateless2026Client {
     isError?: boolean;
     resultType?: "complete" | "input_required" | "task";
     structuredContent?: unknown;
+    _meta?: Record<string, unknown>;
     inputRequests?: unknown;
     task?: McpTaskHandle;
   }> {
@@ -314,9 +319,11 @@ export class Stateless2026Client {
       ...(result.structuredContent !== undefined
         ? { structuredContent: result.structuredContent }
         : {}),
+      ...(asObject(result._meta) !== undefined
+        ? { _meta: asObject(result._meta) as Record<string, unknown> }
+        : {}),
     };
   }
-
   async resolveApproval(
     input: { name: string; arguments?: JsonObject; _meta?: JsonObject },
     requestState: string,
@@ -430,29 +437,18 @@ export class Stateless2026Client {
     if (name !== undefined) headers["Mcp-Name"] = name;
     if (requestState !== undefined) headers["Mcp-Request-State"] = requestState;
     const requestMeta = asObject(params._meta);
-    const traceparent = requestMeta?.["traceparent"];
-    if (typeof traceparent === "string") headers.traceparent = traceparent;
-    const transactionId =
-      requestMeta?.["transaction/id"] ??
-      requestMeta?.["transaction/invocationId"];
-    if (typeof transactionId === "string")
-      headers["Mcp-Transaction-Id"] = transactionId;
-    const deadline =
-      requestMeta?.["transaction/deadlineAt"] ??
-      requestMeta?.["io.modelcontextprotocol/deadline"];
-    if (typeof deadline === "number" || typeof deadline === "string") {
-      headers["Mcp-Deadline"] = String(deadline);
-    }
-    const body = {
-      jsonrpc: "2.0",
-      id: ++this.requestId,
+    const meta = clientRequestMeta(requestMeta);
+    if (meta.traceparent !== undefined) headers.traceparent = meta.traceparent;
+    if (meta.transactionId !== undefined)
+      headers["Mcp-Transaction-Id"] = meta.transactionId;
+    if (meta.deadline !== undefined)
+      headers["Mcp-Deadline"] = String(meta.deadline);
+    const body = statelessRequestBody(
+      ++this.requestId,
       method,
       params,
-      _meta: {
-        ...requestMeta,
-        [PROTOCOL_META_KEY]: MCP_2026_PROTOCOL_VERSION,
-      },
-    };
+      requestMeta ?? {},
+    );
     const response = await this.fetchFn(this.config.url, {
       method: "POST",
       headers,

@@ -128,6 +128,21 @@ export interface RagChunk {
   charEnd?: number;
   chunkId?: string;
   /**
+   * Injection verdict from the Search service's content-trust scan
+   * (`injection_risk` on the hit, or the response envelope applied to every
+   * hit). `"suspected"` means Search saw instruction-override signals in the
+   * stored text — the runtime taints the run from this label even when its own
+   * tool-output scan misses the pattern (the two signal lists diverge).
+   * Undefined when the source carried no label (legacy hits, non-Search tools).
+   */
+  injectionRisk?: "none" | "suspected";
+  /**
+   * Trust classification from Search (`content_trust`); currently always
+   * `"untrusted"` when present. Informational — carried through for trace
+   * rendering, not scanned again.
+   */
+  contentTrust?: string;
+  /**
    * Full chunk metadata from the vector store (e.g. points, status, project,
    * board). Carried through reranking and document-dedup so downstream
    * consumers (context rendering, citations) never lose it. When several
@@ -987,6 +1002,17 @@ function parseRagAssets(raw: unknown): RagAsset[] | undefined {
 }
 
 /**
+ * Normalise a Search content-trust `injection_risk` label. Only the two values
+ * the Search service emits are accepted; anything else (missing, a typo, a
+ * future value the runtime does not know) yields undefined so the chunk keeps
+ * no label rather than a wrong one. Fail-safe: an unknown label never clears a
+ * taint — the runtime's own scan still runs on the text.
+ */
+function parseInjectionRiskLabel(value: unknown): "none" | "suspected" | undefined {
+  return value === "none" || value === "suspected" ? value : undefined;
+}
+
+/**
  * Parses the chunks out of a vectorsearch tool result. Handles the MCP
  * text-content wrapper (`[{type:"text", text:"<json>"}]`), a raw JSON string,
  * or an already-parsed `{ results: [...] }` object. Returns [] for anything
@@ -1021,11 +1047,19 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
   }
   const results = (parsed as { results: unknown[] }).results;
   if (!Array.isArray(results)) return [];
+  // Response-level trust labels from Search (`aggregateTrustLabels`): when the
+  // envelope carries a label, it applies to every hit that has no own label.
+  const envelopeRisk = parseInjectionRiskLabel(
+    (parsed as Record<string, unknown>).injection_risk,
+  );
+  const envelopeTrust =
+    typeof (parsed as Record<string, unknown>).content_trust === "string"
+      ? ((parsed as Record<string, unknown>).content_trust as string)
+      : undefined;
   const chunks: RagChunk[] = [];
   for (let i = 0; i < results.length; i++) {
     const item = results[i] as Record<string, unknown>;
-    const meta =
-      (item.metadata as Record<string, unknown> | undefined) ?? {};
+    const meta = (item.metadata as Record<string, unknown> | undefined) ?? {};
     const evidence =
       item.evidence !== null &&
       typeof item.evidence === "object" &&
@@ -1036,9 +1070,7 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       (typeof item.title === "string" && item.title) ||
       (typeof meta.title === "string" && meta.title) ||
       (typeof meta.name === "string" && meta.name) ||
-      (typeof item.id === "string"
-        ? `Dokument ${item.id}`
-        : `Quelle ${i + 1}`);
+      (typeof item.id === "string" ? `Dokument ${item.id}` : `Quelle ${i + 1}`);
     const url =
       (typeof item.link === "string" && item.link) ||
       (typeof item.url === "string" && item.url) ||
@@ -1062,13 +1094,14 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
     // chunk reference, then metadata. Used for cross-turn seen-doc tracking.
     const baseRef =
       (typeof item.base_ref === "string" && (item.base_ref as string)) ||
-      (typeof item.reference === "string" &&
-        (item.reference as string)) ||
+      (typeof item.reference === "string" && (item.reference as string)) ||
       (typeof meta.base_ref === "string" && (meta.base_ref as string)) ||
       undefined;
     const stringField = (name: string): string | undefined => {
       const value = item[name] ?? meta[name];
-      return typeof value === "string" && value.trim() !== "" ? value : undefined;
+      return typeof value === "string" && value.trim() !== ""
+        ? value
+        : undefined;
     };
     const numberField = (name: string): number | undefined => {
       const value = item[name] ?? meta[name];
@@ -1098,13 +1131,15 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
             .filter((value): value is string => typeof value === "string")
             .join(" > ") || undefined
         : undefined);
-    const charStart = numberField("char_start") ??
+    const charStart =
+      numberField("char_start") ??
       (typeof evidence.char_start === "number" &&
       Number.isFinite(evidence.char_start) &&
       evidence.char_start >= 0
         ? Math.floor(evidence.char_start)
         : undefined);
-    const charEnd = numberField("char_end") ??
+    const charEnd =
+      numberField("char_end") ??
       (typeof evidence.char_end === "number" &&
       Number.isFinite(evidence.char_end) &&
       evidence.char_end >= 0
@@ -1129,7 +1164,8 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       rawPageEnd >= 0
         ? Math.floor(rawPageEnd)
         : undefined;
-    const modality = evidence.modality === "image" ? "image" as const : undefined;
+    const modality =
+      evidence.modality === "image" ? ("image" as const) : undefined;
     const figureId =
       typeof evidence.figure_id === "string" && evidence.figure_id.trim() !== ""
         ? evidence.figure_id
@@ -1142,8 +1178,10 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
     const bbox =
       Array.isArray(rawBbox) &&
       rawBbox.length === 4 &&
-      rawBbox.every((value) => typeof value === "number" && Number.isFinite(value))
-        ? rawBbox as [number, number, number, number]
+      rawBbox.every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      )
+        ? (rawBbox as [number, number, number, number])
         : undefined;
     const assetUrl =
       typeof item.asset_url === "string" && item.asset_url.trim() !== ""
@@ -1186,6 +1224,13 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
         : undefined);
     const assets = parseRagAssets(item.assets);
     const resolvedPage = page ?? pageStart;
+    // Per-hit trust label from Search, falling back to the response envelope.
+    const injectionRisk =
+      parseInjectionRiskLabel(item.injection_risk) ?? envelopeRisk;
+    const contentTrust =
+      typeof item.content_trust === "string"
+        ? item.content_trust
+        : envelopeTrust;
     chunks.push({
       id: typeof item.id === "string" ? (item.id as string) : String(i),
       title: String(title),
@@ -1216,6 +1261,8 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       ...(charStart !== undefined ? { charStart } : {}),
       ...(charEnd !== undefined ? { charEnd } : {}),
       ...(chunkId !== undefined ? { chunkId } : {}),
+      ...(injectionRisk !== undefined ? { injectionRisk } : {}),
+      ...(contentTrust !== undefined ? { contentTrust } : {}),
       ...(meta !== null &&
       typeof meta === "object" &&
       Object.keys(meta).length > 0

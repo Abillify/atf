@@ -9,6 +9,7 @@ import { describe, test, expect } from "bun:test";
 import {
   createCompositeRegistry,
   createDbFlowSource,
+  findShadowedFlowIds,
 } from "../flow-registry-composite.js";
 import { InMemoryFlowStore } from "../flow-store.js";
 import type { FlowRegistry } from "../flow-parser.js";
@@ -87,5 +88,40 @@ describe("createCompositeRegistry", () => {
     await store.publish("new");
     await src.refresh();
     expect(reg.get("new")?.id).toBe("new");
+  });
+});
+
+describe("findShadowedFlowIds", () => {
+  test("returns the sorted intersection of file and DB flow ids", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("z-shared", def("z-shared"));
+    await store.publish("z-shared");
+    await store.saveDraft("a-shared", def("a-shared"));
+    await store.publish("a-shared");
+    const src = createDbFlowSource(store);
+    await src.refresh();
+
+    const ids = findShadowedFlowIds(
+      fileRegistry(def("a-shared"), def("b-file-only"), def("z-shared")),
+      src,
+    );
+    expect(ids).toEqual(["a-shared", "z-shared"]);
+  });
+
+  test("empty when no file flow has a DB twin", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("db-only", def("db-only"));
+    await store.publish("db-only");
+    const src = createDbFlowSource(store);
+    await src.refresh();
+
+    expect(findShadowedFlowIds(fileRegistry(def("file-only")), src)).toEqual(
+      [],
+    );
+  });
+
+  test("empty when the DB has no published flows", () => {
+    const src = createDbFlowSource(new InMemoryFlowStore());
+    expect(findShadowedFlowIds(fileRegistry(def("a")), src)).toEqual([]);
   });
 });

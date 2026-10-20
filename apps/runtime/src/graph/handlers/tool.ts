@@ -49,7 +49,11 @@ import {
   groundToolResult,
   parseToolContextConfig,
 } from "../tool-context.js";
-import { reportingValidator } from "../injection-findings.js";
+import {
+  markTaintFromSearchLabels,
+  markTaintFromUntrustedSource,
+  reportingValidator,
+} from "../injection-findings.js";
 
 const DEFAULT_PAGE_SIZE = 200;
 const DEFAULT_MAX_PAGES = 50;
@@ -268,17 +272,21 @@ export function createToolNodeHandler(
             const approvalGate = runtime.approvalGate;
             const policyApproval =
               approvalGate !== undefined
-                ? policyRequiresToolApproval(runtime.compliancePolicy, toolRef, {
-                    ...(runtime.flowId !== undefined
-                      ? { flowId: runtime.flowId }
-                      : {}),
-                    ...(runtime.ctx.role !== undefined
-                      ? { role: runtime.ctx.role }
-                      : {}),
-                    ...(runtime.ctx.clientId !== undefined
-                      ? { tenantId: runtime.ctx.clientId }
-                      : {}),
-                  })
+                ? policyRequiresToolApproval(
+                    runtime.compliancePolicy,
+                    toolRef,
+                    {
+                      ...(runtime.flowId !== undefined
+                        ? { flowId: runtime.flowId }
+                        : {}),
+                      ...(runtime.ctx.role !== undefined
+                        ? { role: runtime.ctx.role }
+                        : {}),
+                      ...(runtime.ctx.clientId !== undefined
+                        ? { tenantId: runtime.ctx.clientId }
+                        : {}),
+                    },
+                  )
                 : undefined;
             const needsApproval =
               runtime.authorizationEnabled !== false &&
@@ -417,7 +425,10 @@ export function createToolNodeHandler(
           // Token-exchange peers authenticate the EXCHANGED subject, not the
           // caller's login `sub`; the envelope must bind the same identity.
           const targetUserId = transactionEnabled
-            ? await runtime.mcpWrapper.targetSubject?.(serverName, runtime.ctx.ssoToken)
+            ? await runtime.mcpWrapper.targetSubject?.(
+                serverName,
+                runtime.ctx.ssoToken,
+              )
             : undefined;
           const transactionInvocation = transactionEnabled
             ? await getTransactionOrchestrator()?.begin(
@@ -428,8 +439,11 @@ export function createToolNodeHandler(
                 {
                   payload: callArgs,
                   bindSession:
-                    runtime.mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
-                  ...(targetUserId !== undefined ? { userId: targetUserId } : {}),
+                    runtime.mcpWrapper.forwardsCallerSession?.(serverName) ??
+                    true,
+                  ...(targetUserId !== undefined
+                    ? { userId: targetUserId }
+                    : {}),
                 },
               )
             : undefined;
@@ -455,7 +469,10 @@ export function createToolNodeHandler(
                   },
             );
           } catch (error) {
-            await transactionInvocation?.complete(thrownToolOutcome(bareName), error);
+            await transactionInvocation?.complete(
+              thrownToolOutcome(bareName),
+              error,
+            );
             throw error;
           }
           await transactionInvocation?.complete(
@@ -471,11 +488,7 @@ export function createToolNodeHandler(
               type: "tool_error",
               details: { node_id: node.id, tool: toolRef },
             });
-            await runtime.onToolError?.(
-              toolCallId,
-              errorMessage,
-              execTimeSec,
-            );
+            await runtime.onToolError?.(toolCallId, errorMessage, execTimeSec);
             break;
           }
 
@@ -488,6 +501,13 @@ export function createToolNodeHandler(
             runtime.ctx,
             runtime.signal,
           );
+          // The Search service scans stored text itself and labels its
+          // responses; a `suspected` label taints the run even when the
+          // runtime's own regex scan below misses the payload.
+          markTaintFromSearchLabels(runtime, node.id, toolRef, groundedContent);
+          // TAINT_MODE=on-untrusted-source: a Search `content_trust` label or the
+          // Gate's `_meta` label taints the run when the content arrives.
+          markTaintFromUntrustedSource(runtime, node.id, toolRef, groundedContent, result._meta);
           const validator = reportingValidator(runtime, node.id);
           const safeContent =
             validator !== undefined

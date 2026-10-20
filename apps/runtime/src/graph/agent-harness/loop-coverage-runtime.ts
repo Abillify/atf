@@ -13,6 +13,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { canonicalJsonLocaleDrops } from "@atf/canonical-json";
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import type { ExecRuntime } from "../graph-engine.js";
 import {
@@ -158,30 +159,18 @@ export function coverageToolKind(
   return undefined;
 }
 
-function canonicalCoverageSearchArgs(
-  args: Record<string, unknown>,
-): string {
-  const canonicalize = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map((item) => canonicalize(item));
-    if (value !== null && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([entryKey, entryValue]) => [
-            entryKey,
-            canonicalize(entryValue),
-          ]),
-      );
-    }
-    return value;
-  };
+function canonicalCoverageSearchArgs(args: Record<string, unknown>): string {
   const normalizedArgs = {
     ...args,
     ...(typeof args.query === "string"
       ? { query: normalizedSearchQuery(args.query) }
       : {}),
   };
-  return JSON.stringify(canonicalize(normalizedArgs));
+  // `@atf/canonical-json` locale/stringify mode (`localeCompare` key order,
+  // `undefined` members dropped) — byte-identical to the former local
+  // canonicalize + JSON.stringify (proven by
+  // `packages/canonical-json/test/differential.test.ts`).
+  return canonicalJsonLocaleDrops(normalizedArgs);
 }
 
 /**

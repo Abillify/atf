@@ -395,6 +395,17 @@ export async function buildAiTools(
      * Absent → no taint enforcement.
      */
     taint?: TaintGuard;
+    /**
+     * Called with every successful tool result BEFORE the output validator
+     * redacts it, so a Search `injection_risk: "suspected"` label taints the
+     * run (see `injection-findings.ts` → `markTaintFromSearchLabels`).
+     * Absent → Search labels are ignored in the agent loop.
+     */
+    onSearchInjectionLabel?: (
+      sourceRef: string,
+      content: unknown,
+      resultMeta?: unknown,
+    ) => void;
   },
 ): Promise<{
   tools: ToolSet;
@@ -442,10 +453,9 @@ export async function buildAiTools(
     if (Array.isArray(value)) return value.map(substituteTemplates);
     if (value !== null && typeof value === "object") {
       return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
-          key,
-          substituteTemplates(nested),
-        ]),
+        Object.entries(value as Record<string, unknown>).map(
+          ([key, nested]) => [key, substituteTemplates(nested)],
+        ),
       );
     }
     return value;
@@ -474,10 +484,9 @@ export async function buildAiTools(
       // so the caller can tell the model the tool is unavailable and record the
       // cause for operators. Wrapper errors carry no token material.
       unavailable.push(toolRef);
-      unavailableReasons[toolRef] = (err instanceof Error ? err.message : String(err)).slice(
-        0,
-        300,
-      );
+      unavailableReasons[toolRef] = (
+        err instanceof Error ? err.message : String(err)
+      ).slice(0, 300);
       continue;
     }
 
@@ -518,7 +527,9 @@ export async function buildAiTools(
         // audit record, and egress scrubbing all see (and log) the final,
         // enforced values — never the model's un-overridden originals.
         let args =
-          forcedArgs !== undefined ? { ...modelArgs, ...forcedArgs } : modelArgs;
+          forcedArgs !== undefined
+            ? { ...modelArgs, ...forcedArgs }
+            : modelArgs;
         // Ref-handle indirection (config.refHandles): the model quotes short
         // handles (K3NQ) where a long document reference belongs, because
         // small models cannot copy verbatim paths reliably (trace 55c5b138).
@@ -635,362 +646,455 @@ export async function buildAiTools(
           outboundArgs,
         );
         const executePrepared = async (): Promise<unknown> => {
-        const contractConfig = toolContext?.evidenceContract;
-        const evidenceBound =
-          contractConfig !== undefined &&
-          toolContext !== undefined &&
-          toolRef !== `${toolContext.server}/${toolContext.tool}` &&
-          matchesToolContext(contractConfig.match, toolRef);
-        const evidenceContract =
-          evidenceBound && contractConfig !== undefined
-            ? (() => {
-              const contract = createEvidenceActionContract(
-                bareName,
-                outboundArgs,
-                contextualized.evidence,
-              );
-              if (contract === undefined && contractConfig.required) {
-                throw new Error(
-                  `Verified evidence is required before '${toolRef}' can run.`,
-                );
-              }
-              return contract === undefined
-                ? undefined
-                : serializeEvidenceActionContract(contract);
-            })()
-          : undefined;
-        const wirePreparation =
-          evidenceContract !== undefined && mcpWrapper.prepareEvidenceActionContract !== undefined
-            ? await mcpWrapper.prepareEvidenceActionContract(
-                serverName,
-                bareName,
-                outboundArgs,
-                ctx,
-                evidenceContract,
-              )
+          const contractConfig = toolContext?.evidenceContract;
+          const evidenceBound =
+            contractConfig !== undefined &&
+            toolContext !== undefined &&
+            toolRef !== `${toolContext.server}/${toolContext.tool}` &&
+            matchesToolContext(contractConfig.match, toolRef);
+          const evidenceContract =
+            evidenceBound && contractConfig !== undefined
+              ? (() => {
+                  const contract = createEvidenceActionContract(
+                    bareName,
+                    outboundArgs,
+                    contextualized.evidence,
+                  );
+                  if (contract === undefined && contractConfig.required) {
+                    throw new Error(
+                      `Verified evidence is required before '${toolRef}' can run.`,
+                    );
+                  }
+                  return contract === undefined
+                    ? undefined
+                    : serializeEvidenceActionContract(contract);
+                })()
+              : undefined;
+          const wirePreparation =
+            evidenceContract !== undefined &&
+            mcpWrapper.prepareEvidenceActionContract !== undefined
+              ? await mcpWrapper.prepareEvidenceActionContract(
+                  serverName,
+                  bareName,
+                  outboundArgs,
+                  ctx,
+                  evidenceContract,
+                )
+              : undefined;
+          const wireEvidenceContract =
+            wirePreparation?.evidenceContract ?? evidenceContract;
+          const wireArgs = wirePreparation?.args ?? outboundArgs;
+          const invocationId: string =
+            toolOptions.toolCallId ?? crypto.randomUUID();
+          const transactionEnabled = await shouldIssueTransaction(
+            mcpWrapper,
+            serverName,
+            process.env,
+            // Negotiate on the same session the call will use (forwardAuthToken).
+            { authToken: ctx.ssoToken },
+          );
+          // Token-exchange peers authenticate the EXCHANGED subject, not the
+          // caller's login `sub`; the envelope must bind the same identity.
+          const targetUserId = transactionEnabled
+            ? await mcpWrapper.targetSubject?.(serverName, ctx.ssoToken)
             : undefined;
-        const wireEvidenceContract = wirePreparation?.evidenceContract ?? evidenceContract;
-        const wireArgs = wirePreparation?.args ?? outboundArgs;
-        const invocationId: string = toolOptions.toolCallId ?? crypto.randomUUID();
-        const transactionEnabled = await shouldIssueTransaction(
-          mcpWrapper,
-          serverName,
-          process.env,
-          // Negotiate on the same session the call will use (forwardAuthToken).
-          { authToken: ctx.ssoToken },
-        );
-        // Token-exchange peers authenticate the EXCHANGED subject, not the
-        // caller's login `sub`; the envelope must bind the same identity.
-        const targetUserId = transactionEnabled
-          ? await mcpWrapper.targetSubject?.(serverName, ctx.ssoToken)
-          : undefined;
-        const transactionInvocation = transactionEnabled
-          ? await getTransactionOrchestrator()?.begin(
-              ctx,
-              serverName,
-              toolRef,
-              invocationId,
-              {
-                payload: {
-                  action: wireArgs,
+          const transactionInvocation = transactionEnabled
+            ? await getTransactionOrchestrator()?.begin(
+                ctx,
+                serverName,
+                toolRef,
+                invocationId,
+                {
+                  payload: {
+                    action: wireArgs,
+                    ...(wireEvidenceContract !== undefined
+                      ? {
+                          actionContractHash:
+                            wireEvidenceContract.actionContractHash,
+                          evidenceContractHash:
+                            wireEvidenceContract.actionContractHash,
+                        }
+                      : {}),
+                  },
                   ...(wireEvidenceContract !== undefined
                     ? {
-                        actionContractHash: wireEvidenceContract.actionContractHash,
-                        evidenceContractHash: wireEvidenceContract.actionContractHash,
+                        actionContractHash:
+                          wireEvidenceContract.actionContractHash,
+                        evidenceContractHash:
+                          wireEvidenceContract.actionContractHash,
                       }
                     : {}),
+                  bindSession:
+                    mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
+                  ...(targetUserId !== undefined
+                    ? { userId: targetUserId }
+                    : {}),
                 },
-                ...(wireEvidenceContract !== undefined
-                  ? {
-                      actionContractHash: wireEvidenceContract.actionContractHash,
-                      evidenceContractHash: wireEvidenceContract.actionContractHash,
-                    }
-                  : {}),
-                bindSession: mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
-                ...(targetUserId !== undefined ? { userId: targetUserId } : {}),
-              },
-            )
-          : undefined;
-        const journal = opts?.journal;
-        // Providers only guarantee tool call ids to be unique inside one
-        // response, while the journal is keyed per conversation and a
-        // conversation spans many executions. Scoping the durable id to this
-        // execution keeps at-most-once protection where it belongs and stops a
-        // reused id (short numeric ids are common) from colliding with a
-        // settled row of an earlier turn.
-        const journalCallId = journal === undefined ? invocationId : `${journal.executionId}:${invocationId}`;
-        // Bookkeeping that runs *after* the external call must never discard the
-        // real outcome: the side effect already happened, so a lost race on the
-        // journal row is recorded, not raised.
-        const settleJournal = async (settle: () => Promise<unknown>): Promise<void> => {
-          try {
-            await settle();
-          } catch (error) {
-            if (!(error instanceof ToolJournalConflictError)) throw error;
-          }
-        };
-        // This commit is intentionally immediately before the external call. If it
-        // fails, do not perform a side effect we could not recover or audit.
-        await journal?.journal.beforeTool({
-          scope: journal.scope,
-          conversationId: journal.conversationId,
-          executionId: journal.executionId,
-          toolCallId: journalCallId,
-          tool: toolRef,
-          args: wireArgs,
-          operationId: journalCallId,
-        });
-        // `running` is distinct from `pending`: a crash between the durable intent
-        // and transport dispatch remains recoverable as pending; once dispatched a
-        // lease makes competing workers fail closed until recovery marks it unknown.
-        const started = await journal?.journal.startTool?.({
-          scope: journal.scope,
-          conversationId: journal.conversationId,
-          toolCallId: journalCallId,
-          workerId: ctx.executionId,
-        });
-        // A lost race or a recovered lease is a fail-closed outcome: executing
-        // anyway would turn a durable at-most-once intent into a duplicate side
-        // effect. Non-durable journals return undefined and retain legacy flow.
-        if (started === false) {
-          return {
-            isError: true,
-            error: "tool_lease_unavailable",
-            message: "This tool operation is already owned by another worker or is being recovered.",
+              )
+            : undefined;
+          const journal = opts?.journal;
+          // Providers only guarantee tool call ids to be unique inside one
+          // response, while the journal is keyed per conversation and a
+          // conversation spans many executions. Scoping the durable id to this
+          // execution keeps at-most-once protection where it belongs and stops a
+          // reused id (short numeric ids are common) from colliding with a
+          // settled row of an earlier turn.
+          const journalCallId =
+            journal === undefined
+              ? invocationId
+              : `${journal.executionId}:${invocationId}`;
+          // Bookkeeping that runs *after* the external call must never discard the
+          // real outcome: the side effect already happened, so a lost race on the
+          // journal row is recorded, not raised.
+          const settleJournal = async (
+            settle: () => Promise<unknown>,
+          ): Promise<void> => {
+            try {
+              await settle();
+            } catch (error) {
+              if (!(error instanceof ToolJournalConflictError)) throw error;
+            }
           };
-        }
-        let result: Awaited<ReturnType<typeof mcpWrapper.callTool>>;
-        try {
-          result = await mcpWrapper.callTool(
-            serverName,
-            bareName,
-            wireArgs,
-            ctx,
-            opts?.signal !== undefined
-              ? {
-                  signal: opts.signal,
-                  invocationId,
-                  transaction: transactionInvocation?.transaction,
-                  ...(wireEvidenceContract !== undefined ? { evidenceContract: wireEvidenceContract } : {}),
-                  ...(wirePreparation !== undefined
-                    ? { preparedEvidenceCallId: wirePreparation.preparedCallId }
-                    : {}),
-                }
-              : {
-                  invocationId,
-                  transaction: transactionInvocation?.transaction,
-                  ...(wireEvidenceContract !== undefined ? { evidenceContract: wireEvidenceContract } : {}),
-                  ...(wirePreparation !== undefined
-                    ? { preparedEvidenceCallId: wirePreparation.preparedCallId }
-                    : {}),
-                },
-          );
-
-          // MCP-2026 server-driven approvals are deliberately handled only
-          // after the original call. Aiperator does not make a preceding local
-          // policy decision and never substitutes for the server's opaque
-          // requestState decision.
-          while (result.resultType === "input_required") {
-            await settleJournal(async () => journal?.journal.markAwaitingApproval?.({
-              scope: journal.scope,
-              conversationId: journal.conversationId,
-              toolCallId: journalCallId,
-            }));
-            const request = result.inputRequests?.find((item) => item.type === "approval");
-            if (request === undefined || result.resolveApproval === undefined) {
-              await transactionInvocation?.complete("failed", result.content);
-              return {
-                isError: true,
-                error: "approval_denied",
-                message: "The MCP server requested approval, but no supported approval continuation was available.",
-              };
-            }
-            if (approval === undefined) {
-              await result.resolveApproval(request, { decision: "denied" });
-              await transactionInvocation?.complete("failed", "approval gate unavailable");
-              return {
-                isError: true,
-                error: "approval_denied",
-                message: "The MCP server requested human approval, but no approval UI is configured.",
-              };
-            }
-            const expiresAtMs = request.expiresAt === undefined ? Number.NaN : Date.parse(request.expiresAt);
-            const timeoutMs = Number.isFinite(expiresAtMs)
-              ? Math.max(1, Math.min(approval.gate.timeoutMs, expiresAtMs - Date.now()))
-              : undefined;
-            const decision = await approval.gate.request(
-              {
-                executionId: ctx.executionId,
-                nodeId: node.id,
-                tool: toolRef,
-                args: outboundArgs,
-                title: request.title,
-                message: request.message,
-                ...(request.fields !== undefined ? { fields: request.fields } : {}),
-                ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
-                ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-                ...(ctx.clientId !== undefined ? { tenantId: ctx.clientId } : {}),
-                ...((ctx.userName ?? ctx.userEmail ?? ctx.userId) !== undefined
-                  ? { requestedBy: ctx.userName ?? ctx.userEmail ?? ctx.userId }
-                  : {}),
-              },
-              approval.notify,
-            );
-            approval.onDecision?.(toolRef, decision.approved);
-            let resumed: Awaited<ReturnType<NonNullable<typeof result.resolveApproval>>>;
-            if (decision.approved) {
-              resumed = await result.resolveApproval(request, {
-                decision: "approved",
-                ...(decision.by !== undefined ? { approver: decision.by } : {}),
-              });
-            } else {
-              // Denial is fail-closed locally. Notify the server best-effort,
-              // but never turn a human denial/timeout into an opaque transport
-              // exception for the model.
-              try {
-                await result.resolveApproval(request, {
-                  decision: "denied",
-                  ...(decision.by !== undefined ? { approver: decision.by } : {}),
-                });
-              } catch {
-                // The action is already denied and must not be retried.
-              }
-              await transactionInvocation?.complete("failed", decision.reason);
-              await settleJournal(async () => journal?.journal.cancelTool?.({
-                scope: journal.scope,
-                conversationId: journal.conversationId,
-                toolCallId: journalCallId,
-                reason: decision.reason ?? "The requested action was not approved by a human reviewer.",
-              }));
-              return {
-                isError: true,
-                error: "approval_denied",
-                message:
-                  decision.reason ??
-                  "The requested action was not approved by a human reviewer.",
-                ...(decision.timedOut === true ? { timedOut: true } : {}),
-              };
-            }
-            // Approval clears the old lease while a human is deciding. Acquire a
-            // new one before continuing the opaque server-side invocation.
-            const resumedJournal = await journal?.journal.resumeApprovedTool?.({
-              scope: journal.scope,
-              conversationId: journal.conversationId,
-              toolCallId: journalCallId,
-            });
-            if (resumedJournal === false) {
-              await transactionInvocation?.complete("failed", "approved journal continuation was no longer claimable");
-              return {
-                isError: true,
-                error: "tool_lease_unavailable",
-                message: "The approved tool operation is no longer claimable for continuation.",
-              };
-            }
-            const resumedLease = await journal?.journal.startTool?.({
-              scope: journal.scope,
-              conversationId: journal.conversationId,
-              toolCallId: journalCallId,
-              workerId: ctx.executionId,
-            });
-            if (resumedLease === false) {
-              await transactionInvocation?.complete("failed", "approved journal continuation lease was unavailable");
-              return {
-                isError: true,
-                error: "tool_lease_unavailable",
-                message: "The approved tool operation could not acquire a continuation lease.",
-              };
-            }
-            if (resumed === undefined) {
-              await transactionInvocation?.complete("failed", "approved continuation returned no result");
-              return {
-                isError: true,
-                error: "approval_denied",
-                message: "The approved MCP action could not be resumed.",
-              };
-            }
-            result = resumed;
-          }
-        } catch (error) {
-          await transactionInvocation?.complete(thrownToolOutcome(bareName), error);
-          await settleJournal(async () => journal?.journal.completeTool({
+          // This commit is intentionally immediately before the external call. If it
+          // fails, do not perform a side effect we could not recover or audit.
+          await journal?.journal.beforeTool({
+            scope: journal.scope,
+            conversationId: journal.conversationId,
+            executionId: journal.executionId,
+            toolCallId: journalCallId,
+            tool: toolRef,
+            args: wireArgs,
+            operationId: journalCallId,
+          });
+          // `running` is distinct from `pending`: a crash between the durable intent
+          // and transport dispatch remains recoverable as pending; once dispatched a
+          // lease makes competing workers fail closed until recovery marks it unknown.
+          const started = await journal?.journal.startTool?.({
             scope: journal.scope,
             conversationId: journal.conversationId,
             toolCallId: journalCallId,
-            succeeded: false,
-            error,
-          }));
-          throw error;
-        }
-        await transactionInvocation?.complete(
-          result.isError === true ? "failed" : "committed",
-          result.isError === true ? result.content : undefined,
-        );
-        await settleJournal(async () => journal?.journal.completeTool({
-          scope: journal.scope,
-          conversationId: journal.conversationId,
-          toolCallId: journalCallId,
-          succeeded: result.isError !== true,
-          result: result.content,
-          ...(result.isError === true ? { error: result.content } : {}),
-        }));
-
-        // Preserve MCP's error envelope for the model and trace pipeline. Returning
-        // only `result.content` used to discard `isError`, so failed calls appeared
-        // as `result: null, is_error: false` and synthetic tool nodes completed OK.
-        let content: unknown = result.isError === true || result.retry !== undefined
-          ? {
-              ...(result.isError === true ? { isError: true } : {}),
-              content: result.content,
-              ...(result.retry !== undefined ? { retry: result.retry } : {}),
-              ...(result.structuredContent !== undefined
-                ? { structuredContent: result.structuredContent }
-                : {}),
-            }
-          : result.content;
-        content = await groundToolResult(
-          mcpWrapper,
-          toolContext,
-          toolRef,
-          outboundArgs,
-          content,
-          ctx,
-          opts?.signal,
-        );
-        if (toolOutputValidator?.enabled) {
-          content = toolOutputValidator.validate(content, toolRef).content;
-        }
-
-        // Self-search citations: if this is a vectorsearch payload and a
-        // citation sink is wired, register the retrieved documents (assigning a
-        // global [n], deduped against earlier grounding) and annotate the
-        // result the model reads with those numbers so it can cite them inline.
-        // A no-op for non-vectorsearch tools (parse yields no documents).
-        if (citations !== undefined) {
-          content = await annotateVectorSearchCitations(content, citations, {
-            toolRef,
-            args: outboundArgs,
+            workerId: ctx.executionId,
           });
-        }
+          // A lost race or a recovered lease is a fail-closed outcome: executing
+          // anyway would turn a durable at-most-once intent into a duplicate side
+          // effect. Non-durable journals return undefined and retain legacy flow.
+          if (started === false) {
+            return {
+              isError: true,
+              error: "tool_lease_unavailable",
+              message:
+                "This tool operation is already owned by another worker or is being recovered.",
+            };
+          }
+          let result: Awaited<ReturnType<typeof mcpWrapper.callTool>>;
+          try {
+            result = await mcpWrapper.callTool(
+              serverName,
+              bareName,
+              wireArgs,
+              ctx,
+              opts?.signal !== undefined
+                ? {
+                    signal: opts.signal,
+                    invocationId,
+                    transaction: transactionInvocation?.transaction,
+                    ...(wireEvidenceContract !== undefined
+                      ? { evidenceContract: wireEvidenceContract }
+                      : {}),
+                    ...(wirePreparation !== undefined
+                      ? {
+                          preparedEvidenceCallId:
+                            wirePreparation.preparedCallId,
+                        }
+                      : {}),
+                  }
+                : {
+                    invocationId,
+                    transaction: transactionInvocation?.transaction,
+                    ...(wireEvidenceContract !== undefined
+                      ? { evidenceContract: wireEvidenceContract }
+                      : {}),
+                    ...(wirePreparation !== undefined
+                      ? {
+                          preparedEvidenceCallId:
+                            wirePreparation.preparedCallId,
+                        }
+                      : {}),
+                  },
+            );
 
-        // Ref-handle masking (config.refHandles) — deliberately LAST, after
-        // citation registration above: the CitationRegistry and the client's
-        // `sources` must receive the REAL references, and only the copy the
-        // MODEL reads gets the short handles. Registering from the payload
-        // first makes every document identity in the result (reference/ref/
-        // base_ref, incl. inside MCP text-part JSON) resolvable before the
-        // substitution. The user never sees a handle: the SSE layer maps them
-        // back to real references on the way out.
-        if (opts?.refHandles !== undefined) {
-          opts.refHandles.registerFromPayload(content);
-          content = opts.refHandles.maskContent(content);
-        } else {
-          // Non-masking node in a run that masks elsewhere: remember the real
-          // references it saw, so a masking node that later quotes one of
-          // them (via findings/state) is not rejected as unregistered.
-          opts?.refObserver?.observeFromPayload(content);
-        }
+            // MCP-2026 server-driven approvals are deliberately handled only
+            // after the original call. Aiperator does not make a preceding local
+            // policy decision and never substitutes for the server's opaque
+            // requestState decision.
+            while (result.resultType === "input_required") {
+              await settleJournal(async () =>
+                journal?.journal.markAwaitingApproval?.({
+                  scope: journal.scope,
+                  conversationId: journal.conversationId,
+                  toolCallId: journalCallId,
+                }),
+              );
+              const request = result.inputRequests?.find(
+                (item) => item.type === "approval",
+              );
+              if (
+                request === undefined ||
+                result.resolveApproval === undefined
+              ) {
+                await transactionInvocation?.complete("failed", result.content);
+                return {
+                  isError: true,
+                  error: "approval_denied",
+                  message:
+                    "The MCP server requested approval, but no supported approval continuation was available.",
+                };
+              }
+              if (approval === undefined) {
+                await result.resolveApproval(request, { decision: "denied" });
+                await transactionInvocation?.complete(
+                  "failed",
+                  "approval gate unavailable",
+                );
+                return {
+                  isError: true,
+                  error: "approval_denied",
+                  message:
+                    "The MCP server requested human approval, but no approval UI is configured.",
+                };
+              }
+              const expiresAtMs =
+                request.expiresAt === undefined
+                  ? Number.NaN
+                  : Date.parse(request.expiresAt);
+              const timeoutMs = Number.isFinite(expiresAtMs)
+                ? Math.max(
+                    1,
+                    Math.min(approval.gate.timeoutMs, expiresAtMs - Date.now()),
+                  )
+                : undefined;
+              const decision = await approval.gate.request(
+                {
+                  executionId: ctx.executionId,
+                  nodeId: node.id,
+                  tool: toolRef,
+                  args: outboundArgs,
+                  title: request.title,
+                  message: request.message,
+                  ...(request.fields !== undefined
+                    ? { fields: request.fields }
+                    : {}),
+                  ...(request.expiresAt !== undefined
+                    ? { expiresAt: request.expiresAt }
+                    : {}),
+                  ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+                  ...(ctx.clientId !== undefined
+                    ? { tenantId: ctx.clientId }
+                    : {}),
+                  ...((ctx.userName ?? ctx.userEmail ?? ctx.userId) !==
+                  undefined
+                    ? {
+                        requestedBy:
+                          ctx.userName ?? ctx.userEmail ?? ctx.userId,
+                      }
+                    : {}),
+                },
+                approval.notify,
+              );
+              approval.onDecision?.(toolRef, decision.approved);
+              let resumed: Awaited<
+                ReturnType<NonNullable<typeof result.resolveApproval>>
+              >;
+              if (decision.approved) {
+                resumed = await result.resolveApproval(request, {
+                  decision: "approved",
+                  ...(decision.by !== undefined
+                    ? { approver: decision.by }
+                    : {}),
+                });
+              } else {
+                // Denial is fail-closed locally. Notify the server best-effort,
+                // but never turn a human denial/timeout into an opaque transport
+                // exception for the model.
+                try {
+                  await result.resolveApproval(request, {
+                    decision: "denied",
+                    ...(decision.by !== undefined
+                      ? { approver: decision.by }
+                      : {}),
+                  });
+                } catch {
+                  // The action is already denied and must not be retried.
+                }
+                await transactionInvocation?.complete(
+                  "failed",
+                  decision.reason,
+                );
+                await settleJournal(async () =>
+                  journal?.journal.cancelTool?.({
+                    scope: journal.scope,
+                    conversationId: journal.conversationId,
+                    toolCallId: journalCallId,
+                    reason:
+                      decision.reason ??
+                      "The requested action was not approved by a human reviewer.",
+                  }),
+                );
+                return {
+                  isError: true,
+                  error: "approval_denied",
+                  message:
+                    decision.reason ??
+                    "The requested action was not approved by a human reviewer.",
+                  ...(decision.timedOut === true ? { timedOut: true } : {}),
+                };
+              }
+              // Approval clears the old lease while a human is deciding. Acquire a
+              // new one before continuing the opaque server-side invocation.
+              const resumedJournal =
+                await journal?.journal.resumeApprovedTool?.({
+                  scope: journal.scope,
+                  conversationId: journal.conversationId,
+                  toolCallId: journalCallId,
+                });
+              if (resumedJournal === false) {
+                await transactionInvocation?.complete(
+                  "failed",
+                  "approved journal continuation was no longer claimable",
+                );
+                return {
+                  isError: true,
+                  error: "tool_lease_unavailable",
+                  message:
+                    "The approved tool operation is no longer claimable for continuation.",
+                };
+              }
+              const resumedLease = await journal?.journal.startTool?.({
+                scope: journal.scope,
+                conversationId: journal.conversationId,
+                toolCallId: journalCallId,
+                workerId: ctx.executionId,
+              });
+              if (resumedLease === false) {
+                await transactionInvocation?.complete(
+                  "failed",
+                  "approved journal continuation lease was unavailable",
+                );
+                return {
+                  isError: true,
+                  error: "tool_lease_unavailable",
+                  message:
+                    "The approved tool operation could not acquire a continuation lease.",
+                };
+              }
+              if (resumed === undefined) {
+                await transactionInvocation?.complete(
+                  "failed",
+                  "approved continuation returned no result",
+                );
+                return {
+                  isError: true,
+                  error: "approval_denied",
+                  message: "The approved MCP action could not be resumed.",
+                };
+              }
+              result = resumed;
+            }
+          } catch (error) {
+            await transactionInvocation?.complete(
+              thrownToolOutcome(bareName),
+              error,
+            );
+            await settleJournal(async () =>
+              journal?.journal.completeTool({
+                scope: journal.scope,
+                conversationId: journal.conversationId,
+                toolCallId: journalCallId,
+                succeeded: false,
+                error,
+              }),
+            );
+            throw error;
+          }
+          await transactionInvocation?.complete(
+            result.isError === true ? "failed" : "committed",
+            result.isError === true ? result.content : undefined,
+          );
+          await settleJournal(async () =>
+            journal?.journal.completeTool({
+              scope: journal.scope,
+              conversationId: journal.conversationId,
+              toolCallId: journalCallId,
+              succeeded: result.isError !== true,
+              result: result.content,
+              ...(result.isError === true ? { error: result.content } : {}),
+            }),
+          );
 
-        return content;
+          // Preserve MCP's error envelope for the model and trace pipeline. Returning
+          // only `result.content` used to discard `isError`, so failed calls appeared
+          // as `result: null, is_error: false` and synthetic tool nodes completed OK.
+          let content: unknown =
+            result.isError === true || result.retry !== undefined
+              ? {
+                  ...(result.isError === true ? { isError: true } : {}),
+                  content: result.content,
+                  ...(result.retry !== undefined
+                    ? { retry: result.retry }
+                    : {}),
+                  ...(result.structuredContent !== undefined
+                    ? { structuredContent: result.structuredContent }
+                    : {}),
+                }
+              : result.content;
+          content = await groundToolResult(
+            mcpWrapper,
+            toolContext,
+            toolRef,
+            outboundArgs,
+            content,
+            ctx,
+            opts?.signal,
+          );
+          // Search labels its stored text itself; a `suspected` label taints the
+          // run even when the runtime's own regex scan misses the payload.
+          // Scanned before redaction so the label is still inside the payload.
+          opts?.onSearchInjectionLabel?.(toolRef, content, result._meta);
+          if (toolOutputValidator?.enabled) {
+            content = toolOutputValidator.validate(content, toolRef).content;
+          }
+
+          // Self-search citations: if this is a vectorsearch payload and a
+          // citation sink is wired, register the retrieved documents (assigning a
+          // global [n], deduped against earlier grounding) and annotate the
+          // result the model reads with those numbers so it can cite them inline.
+          // A no-op for non-vectorsearch tools (parse yields no documents).
+          if (citations !== undefined) {
+            content = await annotateVectorSearchCitations(content, citations, {
+              toolRef,
+              args: outboundArgs,
+            });
+          }
+
+          // Ref-handle masking (config.refHandles) — deliberately LAST, after
+          // citation registration above: the CitationRegistry and the client's
+          // `sources` must receive the REAL references, and only the copy the
+          // MODEL reads gets the short handles. Registering from the payload
+          // first makes every document identity in the result (reference/ref/
+          // base_ref, incl. inside MCP text-part JSON) resolvable before the
+          // substitution. The user never sees a handle: the SSE layer maps them
+          // back to real references on the way out.
+          if (opts?.refHandles !== undefined) {
+            opts.refHandles.registerFromPayload(content);
+            content = opts.refHandles.maskContent(content);
+          } else {
+            // Non-masking node in a run that masks elsewhere: remember the real
+            // references it saw, so a masking node that later quotes one of
+            // them (via findings/state) is not rejected as unregistered.
+            opts?.refObserver?.observeFromPayload(content);
+          }
+
+          return content;
         };
         return opts?.executeToolCall !== undefined
           ? opts.executeToolCall(

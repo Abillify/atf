@@ -83,6 +83,42 @@ export function describeSchemaIssues(
 }
 
 // ---------------------------------------------------------------------------
+// Load-failure ledger
+// ---------------------------------------------------------------------------
+/**
+ * Flow files that currently fail to load, by file name. A failed load used to
+ * leave one line on stderr and nothing else: readiness stayed green and no
+ * metric moved, so a deploy that shipped a broken flow looked healthy while
+ * the previous (or no) version kept serving. The ledger is what `/health/ready`
+ * and the `aiperator_flow_load_failures` gauge read. An entry is removed when
+ * the same file loads successfully again or is deleted.
+ */
+const flowLoadFailures = new Map<string, { reason: string; since: string }>();
+/** Record (or refresh) the failure of one flow file. */
+export function recordFlowLoadFailure(fileName: string, reason: string): void {
+	const known = flowLoadFailures.get(fileName);
+	flowLoadFailures.set(fileName, {
+		reason,
+		since: known?.since ?? new Date().toISOString(),
+	});
+}
+/** Forget a file's failure: it loaded fine, or it no longer exists. */
+export function clearFlowLoadFailure(fileName: string): void {
+	flowLoadFailures.delete(fileName);
+}
+/** The files that currently fail to load, with the reason and first-seen time. */
+export function getFlowLoadFailures(): Array<{
+	file: string;
+	reason: string;
+	since: string;
+}> {
+	return [...flowLoadFailures.entries()].map(([file, v]) => ({ file, ...v }));
+}
+/** Test hook: start from an empty ledger. */
+export function resetFlowLoadFailures(): void {
+	flowLoadFailures.clear();
+}
+// ---------------------------------------------------------------------------
 // Structured Error Logger
 // ---------------------------------------------------------------------------
 
@@ -95,6 +131,7 @@ export function logValidationError(
 	reason: string,
 	details?: unknown,
 ): void {
+	recordFlowLoadFailure(fileName, reason);
 	const entry: Record<string, unknown> = {
 		level: "error",
 		component: "flow-parser",

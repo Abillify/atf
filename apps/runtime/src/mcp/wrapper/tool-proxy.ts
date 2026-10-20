@@ -51,6 +51,8 @@ export interface ToolResult {
   /** Additive MCP 2026 fields; legacy callers may ignore them. */
   resultType?: "complete" | "input_required" | "task";
   structuredContent?: unknown;
+  /** MCP result `_meta` as the server sent it (e.g. the Gate's content-trust label). */
+  _meta?: Record<string, unknown>;
   task?: import("./stateless-2026-client.js").McpTaskHandle;
   inputRequests?: McpApprovalInputRequest[];
   /**

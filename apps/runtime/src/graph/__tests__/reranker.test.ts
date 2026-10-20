@@ -157,6 +157,76 @@ describe("parseVectorSearchResults", () => {
     expect(c.caption).toBeUndefined();
     expect(c.assets).toBeUndefined();
   });
+
+  test("carries no trust labels for an unlabelled payload (keys absent)", () => {
+    const out = parseVectorSearchResults(
+      mcpContent([{ id: "1", title: "A", content: "x", score: 0.5 }]),
+    );
+    const c = at(out, 0);
+    expect("injectionRisk" in c).toBe(false);
+    expect("contentTrust" in c).toBe(false);
+  });
+
+  test("parses a per-hit injection_risk / content_trust label from Search", () => {
+    const out = parseVectorSearchResults(
+      mcpContent([
+        {
+          id: "1",
+          title: "A",
+          content: "x",
+          score: 0.5,
+          injection_risk: "suspected",
+          content_trust: "untrusted",
+        },
+      ]),
+    );
+    expect(at(out, 0).injectionRisk).toBe("suspected");
+    expect(at(out, 0).contentTrust).toBe("untrusted");
+  });
+
+  test("an envelope label applies to hits without their own label", () => {
+    const payload = JSON.stringify({
+      results: [
+        { id: "1", title: "A", content: "x", score: 0.5 },
+        { id: "2", title: "B", content: "y", score: 0.4 },
+      ],
+      count: 2,
+      injection_risk: "suspected",
+      content_trust: "untrusted",
+    });
+    const out = parseVectorSearchResults([{ type: "text", text: payload }]);
+    expect(at(out, 0).injectionRisk).toBe("suspected");
+    expect(at(out, 1).injectionRisk).toBe("suspected");
+    expect(at(out, 0).contentTrust).toBe("untrusted");
+  });
+
+  test("a per-hit label overrides the envelope label", () => {
+    const payload = JSON.stringify({
+      results: [
+        {
+          id: "1",
+          title: "A",
+          content: "x",
+          score: 0.5,
+          injection_risk: "none",
+        },
+      ],
+      injection_risk: "suspected",
+    });
+    const out = parseVectorSearchResults([{ type: "text", text: payload }]);
+    expect(at(out, 0).injectionRisk).toBe("none");
+  });
+
+  test("an unknown injection_risk value yields no label, never a wrong one", () => {
+    const payload = JSON.stringify({
+      results: [{ id: "1", title: "A", content: "x", score: 0.5 }],
+      injection_risk: "maybe",
+    });
+    const out = parseVectorSearchResults([{ type: "text", text: payload }]);
+    const c = at(out, 0);
+    expect("injectionRisk" in c).toBe(false);
+    expect("contentTrust" in c).toBe(false);
+  });
 });
 
 describe("selectRerankedChunks", () => {

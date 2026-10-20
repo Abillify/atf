@@ -1851,6 +1851,40 @@ describe("token-client eviction", () => {
   });
 });
 
+describe("Stateless2026Client result _meta (content-trust label)", () => {
+  test("a complete result carries the server's _meta through to the caller", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      const result =
+        body.method === "server/discover"
+          ? {}
+          : {
+              resultType: "complete",
+              content: [{ type: "text", text: "rows" }],
+              _meta: { "io.atf/content-trust": { content_trust: "untrusted", source: "database" } },
+            };
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      const client = new Stateless2026Client(
+        mkConfig({ name: "native", profile: "2026-07-28", forwardAuthToken: true }),
+        "bearer",
+        globalThis.fetch,
+      );
+      await client.connect();
+      const result = await client.callTool({ name: "orders", arguments: {} });
+      expect(result._meta).toEqual({
+        "io.atf/content-trust": { content_trust: "untrusted", source: "database" },
+      });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
 describe("Stateless2026Client approvals", () => {
   test("resolves approval and repeats the exact call with only the approval token added", async () => {
     const requests: Array<{ method: string; params: Record<string, unknown>; headers: Headers }> =

@@ -2275,6 +2275,7 @@ export class McpWrapper implements McpWrapperService {
       ...(value.structuredContent !== undefined
         ? { structuredContent: value.structuredContent }
         : {}),
+      ...(value._meta !== undefined ? { _meta: value._meta } : {}),
       ...(value.task !== undefined ? { task: value.task } : {}),
       ...(parseApprovalInputRequests(value.inputRequests).length > 0
         ? { inputRequests: parseApprovalInputRequests(value.inputRequests) }
@@ -2301,6 +2302,12 @@ export class McpWrapper implements McpWrapperService {
         : {}),
       ...("structuredContent" in result
         ? { structuredContent: result.structuredContent }
+        : {}),
+      ...("_meta" in result &&
+      result._meta !== null &&
+      typeof result._meta === "object" &&
+      !Array.isArray(result._meta)
+        ? { _meta: result._meta as Record<string, unknown> }
         : {}),
       ...(approvalRequests.length > 0
         ? { inputRequests: approvalRequests }
