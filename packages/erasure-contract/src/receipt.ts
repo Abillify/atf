@@ -52,21 +52,12 @@ export type ErasureReceiptPayload = z.infer<typeof ErasureReceiptPayloadSchema>;
  * which matches byte order for the ASCII-only key set of this contract),
  * no insignificant whitespace, `undefined` members omitted. Arrays keep their
  * order. The result is the exact byte source for signing and verification.
+ *
+ * The implementation lives in `@atf/canonical-json` (mode
+ * {@link canonicalJson} — stringify family, code-unit order, `undefined`
+ * dropped); this re-export keeps the public API of the contract package
+ * stable. Byte-identity with the previous local implementation is proven by
+ * `packages/canonical-json/test/differential.test.ts`, because these bytes
+ * back signed erasure receipts.
  */
-export function canonicalizeJson(value: unknown): string {
-	return JSON.stringify(canonicalize(value));
-}
-
-function canonicalize(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map((item) => canonicalize(item) ?? null);
-	if (value !== null && typeof value === "object") {
-		const out: Record<string, unknown> = {};
-		for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-			const item = (value as Record<string, unknown>)[key];
-			if (item === undefined) continue;
-			out[key] = canonicalize(item);
-		}
-		return out;
-	}
-	return value;
-}
+export { canonicalJson as canonicalizeJson } from "@atf/canonical-json";

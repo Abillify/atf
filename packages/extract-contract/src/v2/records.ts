@@ -493,6 +493,13 @@ export const documentBeginRecordSchema = z.object({
   pipeline: pipelineDescriptorSchema,
   /** Total page count when known up front; omit for a streaming producer. */
   pageCount: z.int().min(0).optional(),
+  /**
+   * First page of the stream when the job processes a window of the source
+   * (contract 2.4, `pages: "5-"`). Omitted = 1. `pageCount` stays the LAST page
+   * of the stream, so the stream covers `[firstPage ?? 1, pageCount]` and page
+   * numbers are the source's own.
+   */
+  firstPage: z.int().min(1).optional(),
   /** The document's version, explicit or detected (contract 2.1). */
   version: documentVersionSchema.optional(),
   /** Threading headers when the document is an e-mail (contract 2.1). */
@@ -536,7 +543,17 @@ export type PageRecord = z.infer<typeof pageRecordSchema>;
 export const documentEndRecordSchema = z.object({
   type: z.literal("document.end"),
   reference: z.string().min(1),
+  /**
+   * Last page of the stream, in the source's own numbering — the same value
+   * `document.begin.pageCount` announces (see `document.begin.firstPage`).
+   */
   pageCount: z.int().min(0),
+  /**
+   * First page of the stream (contract 2.4); omitted = 1. Repeated here so a
+   * consumer building the document-level unit from this record alone knows
+   * the page range the document covers.
+   */
+  firstPage: z.int().min(1).optional(),
   outline: z.array(outlineNodeSchema).default([]),
   identifiers: z.array(identifierEntrySchema).default([]),
   summaries: z.array(summaryNodeSchema).default([]),

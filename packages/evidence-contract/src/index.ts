@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { createHash } from "node:crypto";
+import { canonicalJsonLocale } from "@atf/canonical-json";
 import { z } from "zod";
 
 export const EVIDENCE_ACTION_CONTRACT_VERSION = "1.0.0" as const;
@@ -54,16 +55,18 @@ export interface EvidenceActionContractMeta {
   evidencePackHash: string;
 }
 
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
+/**
+ * Canonical JSON for action contracts. The bytes are FROZEN: they feed
+ * `actionContractHash` values that are issued, transmitted between Gate /
+ * Runtime / Search, verified against previously recorded digests, and stored
+ * in audit events. The implementation lives in `@atf/canonical-json` as the
+ * `canonicalJsonLocale` mode (concat serializer, `localeCompare` key order,
+ * `undefined` members serialised as `null`) — deliberately NOT the default
+ * mode, because both the comparator and the serializer are observable in
+ * already-issued hashes. Byte-identity is proven by
+ * `packages/canonical-json/test/differential.test.ts`.
+ */
+export const canonicalJson = canonicalJsonLocale;
 
 export function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");

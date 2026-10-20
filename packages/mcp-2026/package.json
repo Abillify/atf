@@ -1,0 +1,25 @@
+{
+	"name": "@atf/mcp-2026",
+	"version": "1.0.0",
+	"private": true,
+	"description": "The shared Model Context Protocol 2026-07-28 stateless-HTTP core of the monorepo: protocol constant, header names, JSON-RPC error codes, request validation, pagination and result envelope — byte-compatible across the gate server, the search server and the runtime client",
+	"author": "Abillify Technology GmbH <info@abillify.me>",
+	"license": "Elastic-2.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"engines": {
+		"bun": ">=1.4.0 <2",
+		"node": ">=26 <27"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"build": "bun build ./src/index.ts --outdir ./dist --target bun"
+	},
+	"devDependencies": {
+		"@types/bun": "1.4.0",
+		"typescript": "7.0.2"
+	}
+}

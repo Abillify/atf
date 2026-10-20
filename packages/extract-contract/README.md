@@ -6,11 +6,21 @@ consumer (`@atf/search`, runtime flows).
 
 The package ships **two majors**:
 
-- **v2** (`atf-extract/2.0.0`) — the default export. An NDJSON stream of
+- **v2** (`atf-extract/2.4.0`) — the default export. An NDJSON stream of
   zod-validated records (`document.begin`, `page`, `document.end`) with a typed
   block model, structured figure transcriptions, multi-kind asset references,
   the ingest/job API types, an NDJSON codec, `validateRecord`, and a
-  `renderMarkdown` view. Import from `@atf/extract-contract`.
+  `renderMarkdown` view. Import from `@atf/extract-contract`. Minor versions are
+  additive: 2.1 adds `version`, `email` and `parentReference` to `document.begin`
+  and the document-key / version-ordering rules (`documentKeyOf`,
+  `compareDocumentVersions`); 2.2 adds the caller's document attributes (`title`,
+  `tags`, `metadata`, `link`, `sourceLabel`) to the job request and
+  `document.begin`, plus the `whoami` and `deleteDocument` response types and the
+  `NOT_FOUND`/`FORBIDDEN` error shapes; 2.3 adds `continues`, `continuationOf` and
+  `continuationText` to paragraph and list blocks; 2.4 makes `pages` on the job request
+  a contiguous window (`"N"`, `"A-B"`, `"A-"`, `"-B"`, source page numbers) and adds
+  the optional `firstPage` to `document.begin` and `document.end` (`pageCount` is then the
+  stream's last page).
 - **v1** (`atf-extract/1.1.0`) — the legacy Markdown marker grammar, kept for
   existing corpora. Import from `@atf/extract-contract/v1`. Everything below the
   "The grammar" heading documents v1.
@@ -170,9 +180,11 @@ assetId = sha256(reference.normalize("NFC") + "\n" + figureId.normalize("NFC"))
 ```
 
 Derived from identity, not from image bytes, which makes the upload idempotent
-and order-independent: `PUT /document-assets/:assetId` may run before or after
-`POST /ingest`, and re-rendering a figure at a higher DPI overwrites the same row
-instead of orphaning the old one. NFC normalisation matters because a filename
+and order-independent: an asset upload may run before or after the document that
+references it (v1 used `PUT /document-assets/:assetId`, removed in 0.18.0; v2
+uploads assets through the job pipeline and reads them at `GET /v2/assets/{id}`),
+and re-rendering a figure at a higher DPI overwrites the same row instead of
+orphaning the old one. NFC normalisation matters because a filename
 with a composed vs. decomposed umlaut would otherwise hash differently depending
 on the filesystem that produced it.
 

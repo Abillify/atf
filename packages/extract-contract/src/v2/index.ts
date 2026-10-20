@@ -179,3 +179,12 @@ export {
   renderPage,
   type RenderMarkdownOptions,
 } from "./render.js";
+export {
+  PAGE_SELECTION_HINT,
+  pageSelectionSchema,
+  parsePageSelection,
+  resolvePageWindow,
+  selectionFromConfig,
+  type PageSelection,
+  type PageWindow,
+} from "./page-selection.js";

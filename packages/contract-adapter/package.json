@@ -13,7 +13,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun"
   },
   "dependencies": {
-    "@atf/evidence-contract": "workspace:1.1.0",
+    "@atf/evidence-contract": "workspace:1.1.1",
     "@atf/identity-contract": "workspace:1.2.0",
     "@atf/schema-compatibility": "workspace:1.0.0",
     "@atf/transaction-contract": "workspace:1.1.0"

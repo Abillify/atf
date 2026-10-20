@@ -1,6 +1,6 @@
 {
     "name": "@atf/extract-contract",
-    "version": "2.3.0",
+    "version": "2.4.0",
     "private": true,
     "description": "Canonical document-extraction output contract: v2 NDJSON record stream (typed block model, figure transcriptions, asset references, ingest/job API types, codec, validator, Markdown view) with the v1 marker grammar available under the /v1 subpath",
     "author": "Abillify Technology GmbH <info@abillify.me>",

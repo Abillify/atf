@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { pageSelectionSchema } from "./page-selection.js";
 import { documentVersionSchema } from "./records.js";
 
 // --- Revision (Search staging) ---------------------------------------------
@@ -185,7 +186,11 @@ export const jobRequestSchema = z.object({
     .string()
     .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, "collection must start with a letter and contain only letters, digits and underscores")
     .optional(),
-  pages: z.string().optional(),
+  /**
+   * A contiguous window of the source (contract 2.4): "N", "A-B", "A-" or "-B"
+   * in source page numbers. Before 2.4 the value was accepted and ignored.
+   */
+  pages: pageSelectionSchema.optional(),
   tokenBudget: z.int().min(0).optional(),
   priority: z.int().optional(),
   visibility: visibilitySchema.optional(),
