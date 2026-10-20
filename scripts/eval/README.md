@@ -62,6 +62,65 @@ JSON map of question id → `{ table?, text?, process? }`. Without it the metric
 report as pending (0, with the expected-item counts still shown), the same way
 the retrieval baseline ships as a pending skeleton.
 
+## Extraction quality: CER, Heading-F1, TEDS (`extract-quality.ts`)
+
+The retrieval metrics above tell you whether the right page comes back. This
+harness scores the extraction itself, with the measures the document-parsing
+literature uses, so a change of vision model, render DPI or prompt (the largest
+cost and quality levers, see `docs/OPERATIONS-TCO.md`) can be judged by a number:
+
+| Metric | Definition |
+| --- | --- |
+| **CER** | character error rate of the running text: Levenshtein distance over Unicode code points (NFC, whitespace collapsed) divided by the reference length. Pooled over all pages (total edits / total characters). Lower is better; it can exceed 100 % |
+| **Heading-F1** | precision, recall and F1 of the headings, matched as a multiset on the normalised text; the *with level* variant also needs the level to agree |
+| **TEDS** | tree-edit-distance similarity of a table (Zhong et al., ECCV 2020): `1 - TED / max(nodes)` on the tree table → row → cell. A cell carries its `colspan`/`rowspan` and text; a text mismatch costs the normalised edit distance, a span mismatch 1. **TEDS (structure)** ignores the cell text |
+
+```bash
+# The shipped synthetic set against its sample output (a self-check of the scorer):
+bun run eval:extract-quality
+
+# Your own set against what Extract produced for it, gating a model or prompt change:
+bun run eval:extract-quality -- --set internal/quality-set --produced reports/produced \
+  --out reports/extract-quality --label vlm-b --max-cer 0.03 --min-heading-f1 0.9 --min-teds 0.85
+```
+
+A **quality set** is a directory with a `manifest.json` (`version`, `kind`
+`synthetic` | `public` | `customer`, `cases[]`) and one `<id>.expected.json` per
+case: `pages[]`, each with the running `text` (headings, paragraphs, list items,
+no table cells), the `headings` (`level`, `text`) and the `tables`
+(`headerRows`, `rows`; a cell is a string or the contract's
+`{ text, colspan, rowspan, header }`). Every part is optional; a case scores what
+it annotates. The format is validated with messages that name the file and field.
+
+What Extract produced is a v2 record stream per case, `<produced>/<id>.ndjson`
+(only the `page` records are read). Capture it from a finished job's outbox:
+
+```sh
+psql "$EXTRACT_DATABASE_URL" -At -c \
+  "SELECT payload->'record' FROM extract.emit_outbox WHERE job_id = '<job>' ORDER BY page_from" \
+  > reports/produced/<id>.ndjson
+```
+
+The outbox holds the enriched page records until the retention sweeper removes
+the finished job (`JOB_RETENTION_DAYS`), so capture before that. A case with no
+`.ndjson` counts every annotated page as missing; without `--produced` and
+without a `producedDir` in the manifest the report reads *pending* instead of
+printing numbers that would look like a measurement.
+
+**Customer sets stay out of the repository.** The only set that ships is
+`quality-set/synthetic` (invented German requirements, interface and operations
+text; its `produced-sample/` carries deliberate defects: a wrong heading level,
+a merged heading, an OCR slip, a split header cell, a missing page). It exists to
+pin the scorer, not to say anything about the pipeline's quality. Keep real
+documents, annotations and outputs under `internal/` or outside the tree;
+`bun run verify:public` guards the public tree. The report states the set's
+`kind`, so a customer report is never mistaken for the shipped one.
+
+The metrics are pure functions in `extract-quality-metrics.ts`
+(`extract-quality.test.ts`); the figure labels, BPMN graph and table-cell
+accuracy of `extraction-metrics.ts` remain the measures for figures and
+diagrams.
+
 ## German morphology set
 
 `golden-set/de-morphology.v1.json` re-asks 36 answerable golden-set questions (plus the abstain variants below) with other
@@ -350,6 +409,6 @@ bun run eval:retrieval -- --collection <name> \
 ## Tests and types
 
 ```bash
-bun run eval:test          # unit tests for metrics, fixture loader, groundedness set
+bun run eval:test          # unit tests for metrics, fixture loader, groundedness set, extraction quality
 bun run eval:typecheck     # tsc --noEmit for the harness
 ```

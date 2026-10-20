@@ -1,0 +1,37 @@
+{
+  "id": "anforderungen",
+  "pages": [
+    {
+      "page": 1,
+      "text": "1 Einleitung\nDieses Dokument beschreibt die Anforderungen an die Lagerverwaltung eines mittelständischen Handelsunternehmens.\n1.1 Geltungsbereich\nDie Anforderungen gelten für alle Standorte und für sämtliche Wareneingänge.",
+      "headings": [
+        {
+          "level": 1,
+          "text": "1 Einleitung"
+        },
+        {
+          "level": 2,
+          "text": "1.1 Geltungsbereich"
+        }
+      ]
+    },
+    {
+      "page": 2,
+      "text": "2 Funktionale Anforderungen\nDas System muss Chargen und Seriennummern verwalten.\n2.1 Wareneingang\nJeder Wareneingang wird gegen die Bestellung geprüft und gebucht.\n2.2 Nicht-funktionale Anforderungen\nAntwortzeiten über 2 Sekunden sind nicht zulässig.",
+      "headings": [
+        {
+          "level": 1,
+          "text": "2 Funktionale Anforderungen"
+        },
+        {
+          "level": 2,
+          "text": "2.1 Wareneingang"
+        },
+        {
+          "level": 2,
+          "text": "2.2 Nicht-funktionale Anforderungen"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "id": "schnittstellen",
+  "pages": [
+    {
+      "page": 1,
+      "text": "3 Schnittstellen\nDie folgende Tabelle listet die Schnittstellen zum ERP-System.",
+      "headings": [
+        {
+          "level": 1,
+          "text": "3 Schnittstellen"
+        }
+      ],
+      "tables": [
+        {
+          "headerRows": [
+            [
+              {
+                "text": "Schnittstelle",
+                "rowspan": 2,
+                "header": true
+              },
+              {
+                "text": "Eigenschaften",
+                "colspan": 2,
+                "header": true
+              }
+            ],
+            [
+              {
+                "text": "Format",
+                "header": true
+              },
+              {
+                "text": "Takt",
+                "header": true
+              }
+            ]
+          ],
+          "rows": [
+            [
+              "Bestellungen",
+              "XML",
+              "stündlich"
+            ],
+            [
+              "Lieferavis",
+              "EDIFACT",
+              "täglich"
+            ],
+            [
+              "Artikelstamm",
+              "CSV",
+              "wöchentlich"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

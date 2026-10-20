@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "kind": "synthetic",
+  "description": "Invented German requirements, interface and operations text; no real documents. Sample output carries deliberate defects to exercise the scorer.",
+  "producedDir": "produced-sample",
+  "cases": [
+    {
+      "id": "anforderungen",
+      "title": "Lagerverwaltung: Überschriften und Fließtext"
+    },
+    {
+      "id": "schnittstellen",
+      "title": "ERP-Schnittstellen: Tabelle mit verbundenen Zellen"
+    },
+    {
+      "id": "betriebshandbuch",
+      "title": "Betriebshandbuch: Liste, Überschriftenebenen und Tabelle"
+    }
+  ]
+}

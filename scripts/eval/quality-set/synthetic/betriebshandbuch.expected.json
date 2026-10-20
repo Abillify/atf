@@ -1,0 +1,49 @@
+{
+  "id": "betriebshandbuch",
+  "pages": [
+    {
+      "page": 1,
+      "text": "Betriebshandbuch\n1 Start und Stopp\nDer Dienst wird in dieser Reihenfolge gestartet:\nDatenbank starten\nApplikationsserver starten\nProxy starten",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Betriebshandbuch"
+        },
+        {
+          "level": 2,
+          "text": "1 Start und Stopp"
+        }
+      ]
+    },
+    {
+      "page": 2,
+      "text": "2 Sicherung\nDie Sicherung läuft täglich um 02:00 Uhr.",
+      "headings": [
+        {
+          "level": 2,
+          "text": "2 Sicherung"
+        }
+      ],
+      "tables": [
+        {
+          "headerRows": [
+            [
+              "Datenbestand",
+              "Aufbewahrung"
+            ]
+          ],
+          "rows": [
+            [
+              "Datenbank",
+              "30 Tage"
+            ],
+            [
+              "Dokumente",
+              "90 Tage"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}
