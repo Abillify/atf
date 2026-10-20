@@ -131,7 +131,10 @@ export {
 } from "./rate-limit/middleware.ts";
 export {
   createRedisRateLimitBackend,
+  createLazyRedisRateLimitBackend,
   GCRA_LUA,
+  type LazyRedisBackendOptions,
+  type LazyRedisRateLimitBackend,
   type RedisBackendOptions,
   type RedisEvalClient,
 } from "./rate-limit/redis.ts";
@@ -153,6 +156,15 @@ export {
   type ReportSink,
   type ReportOutcome,
 } from "./prod-gate/reporter.ts";
+export {
+  OPERATIONAL_PROFILES,
+  OPERATIONAL_PROFILE_ENV_VAR,
+  UnknownOperationalProfileError,
+  normalizeOperationalProfile,
+  resolveOperationalProfile,
+  type OperationalProfile,
+  type ResolvedOperationalProfile,
+} from "./prod-gate/profile.ts";
 
 export {
   TokenExchanger,

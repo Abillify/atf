@@ -9,13 +9,20 @@
  * two replicas racing on the same key cannot both consume the same cell.
  *
  * The client is a minimal structural interface (`eval`), satisfied by the
- * `redis` package client; no dependency on a specific client version.
+ * `redis` package client (v4/v5 options-object form:
+ * `eval(script, { keys, arguments })`); no dependency on a specific client
+ * version. The legacy v3 positional form `eval(script, numKeys, keys, args)`
+ * is NOT compatible with redis v4+ — there it is parsed as an options object,
+ * the keys/args are silently dropped and the script runs with zero keys.
  */
 
 import type { GcraConfig, RateLimitBackend, RateLimitResult } from "./gcra.ts";
 
 export interface RedisEvalClient {
-  eval(script: string, numKeys: number, keys: string[], args: (string | number)[]): Promise<unknown>;
+  eval(
+    script: string,
+    options: { keys: string[]; arguments: (string | number)[] },
+  ): Promise<unknown>;
 }
 
 export interface RedisBackendOptions {
@@ -79,12 +86,10 @@ export function createRedisRateLimitBackend(
     const fillUs = config.limit * emissionUs;
     const nowUs = Date.now() * 1000;
     try {
-      const raw = (await client.eval(GCRA_LUA, 1, [`${keyPrefix}:${key}`], [
-        emissionUs,
-        fillUs,
-        cost,
-        nowUs,
-      ])) as (number | string)[];
+      const raw = (await client.eval(GCRA_LUA, {
+        keys: [`${keyPrefix}:${key}`],
+        arguments: [emissionUs, fillUs, cost, nowUs],
+      })) as (number | string)[];
       const allowed = Number(raw[0]) === 1;
       return {
         allowed,
@@ -103,4 +108,102 @@ export function createRedisRateLimitBackend(
   };
 
   return { take };
+}
+
+/** Structural shape of the `redis` package pieces the lazy backend uses (v4/v5 API). */
+interface RedisClientLike {
+  eval(
+    script: string,
+    options: { keys: string[]; arguments: (string | number)[] },
+  ): Promise<unknown>;
+  connect(): Promise<unknown>;
+  on?(event: string, listener: (err: Error) => void): void;
+  quit?(): Promise<unknown>;
+}
+
+interface RedisModuleLike {
+  createClient(options: { url: string }): RedisClientLike;
+}
+
+export interface LazyRedisBackendOptions {
+  /** Connection URL, e.g. `redis://:pw@host:6379/0`. */
+  redisUrl: string;
+  /** Key prefix to avoid collisions with other users of the same Redis (default "rl"). */
+  keyPrefix?: string;
+  /** Fail open (allow) or closed (deny) when Redis errors (default "closed"). */
+  failMode?: "open" | "closed";
+  /** Error hook for logging/metrics. */
+  onError?: (err: unknown) => void;
+  /** Called once after the client connects successfully. */
+  onConnect?: () => void;
+}
+
+export interface LazyRedisRateLimitBackend extends RateLimitBackend {
+  /** Quit the Redis client if it was ever connected. Idempotent. */
+  close(): Promise<void>;
+}
+
+/**
+ * Redis GCRA backend that connects lazily: the `redis` package is loaded and
+ * the client connects on the first `take()` (cached promise), so building an
+ * HTTP server stays synchronous and startup does not hard-depend on Redis
+ * availability. A failed connect is not cached — the next request retries.
+ *
+ * The `redis` package is imported dynamically by name so the kit itself keeps
+ * no dependency on it; services that set a Redis URL must install it
+ * (`bun add redis` / it ships in their image).
+ */
+export function createLazyRedisRateLimitBackend(
+  options: LazyRedisBackendOptions,
+): LazyRedisRateLimitBackend {
+  const keyPrefix = options.keyPrefix ?? "rl";
+  const failMode = options.failMode ?? "closed";
+  let connecting: Promise<{ backend: RateLimitBackend; client: RedisClientLike }> | null =
+    null;
+
+  const connect = () => {
+    if (!connecting) {
+      connecting = (async () => {
+        const redisName = "redis";
+        let redisMod: RedisModuleLike;
+        try {
+          redisMod = (await import(redisName)) as unknown as RedisModuleLike;
+        } catch {
+          throw new Error(
+            `A Redis rate limit backend is configured but the "${redisName}" package is not installed. Install it with: bun add redis`,
+          );
+        }
+        const client = redisMod.createClient({ url: options.redisUrl });
+        client.on?.("error", (err) => options.onError?.(err));
+        await client.connect();
+        options.onConnect?.();
+        return {
+          backend: createRedisRateLimitBackend(client, {
+            keyPrefix,
+            failMode,
+            onError: options.onError,
+          }),
+          client,
+        };
+      })();
+      // Do not cache a failed connect — the next request retries.
+      connecting.catch(() => {
+        connecting = null;
+      });
+    }
+    return connecting;
+  };
+
+  return {
+    take: async (key, config, cost) => {
+      const { backend } = await connect();
+      return backend.take(key, config, cost);
+    },
+    close: async () => {
+      const pending = connecting;
+      if (!pending) return;
+      const settled = await pending.catch(() => null);
+      if (settled) await settled.client.quit?.();
+    },
+  };
 }

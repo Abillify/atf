@@ -158,4 +158,78 @@ describe("createRateLimitMiddleware", () => {
     limiter.close();
     expect(run(limiter.middleware, fakeReq({ ip: "10.0.0.1" })).passed).toBe(true);
   });
+
+  test("injected async backend: shared budget, promise-returning middleware", async () => {
+    const { createMemoryRateLimitBackend } =
+      await import("../src/rate-limit/memory.ts");
+    // A backend without takeSync (like the Redis one) forces the async path.
+    const memory = createMemoryRateLimitBackend();
+    const backend = { take: memory.take };
+    const { middleware } = createRateLimitMiddleware({
+      max: 2,
+      windowMs: 60_000,
+      backend,
+    });
+    const req = fakeReq({ ip: "10.0.0.1" });
+    for (let i = 0; i < 2; i += 1) {
+      const res = fakeRes();
+      let passed = false;
+      const ret = middleware(req, res, () => {
+        passed = true;
+      });
+      expect(ret).toBeInstanceOf(Promise);
+      await ret;
+      expect(passed).toBe(true);
+    }
+    const res = fakeRes();
+    let passed = false;
+    await middleware(req, res, () => {
+      passed = true;
+    });
+    expect(passed).toBe(false);
+    expect(res.statusCode).toBe(429);
+    expect(Number(res.headers["Retry-After"])).toBeGreaterThanOrEqual(1);
+  });
+
+  test("async backend failure fails open and reports via onBackendError", async () => {
+    const errors: unknown[] = [];
+    const backend = {
+      take: async () => {
+        throw new Error("redis down");
+      },
+    };
+    const { middleware } = createRateLimitMiddleware({
+      max: 1,
+      windowMs: 60_000,
+      backend,
+      onBackendError: (err) => {
+        errors.push(err);
+      },
+    });
+    const res = fakeRes();
+    let passed = false;
+    await middleware(fakeReq({ ip: "10.0.0.1" }), res, () => {
+      passed = true;
+    });
+    expect(passed).toBe(true);
+    expect(res.statusCode).toBeUndefined();
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).message).toBe("redis down");
+  });
+
+  test("injected backend with takeSync keeps the synchronous fast path", async () => {
+    const { createMemoryRateLimitBackend } =
+      await import("../src/rate-limit/memory.ts");
+    const backend = createMemoryRateLimitBackend();
+    const { middleware } = createRateLimitMiddleware({
+      max: 1,
+      windowMs: 60_000,
+      backend,
+    });
+    const first = run(middleware, fakeReq({ ip: "10.0.0.1" }));
+    expect(first.passed).toBe(true);
+    const second = run(middleware, fakeReq({ ip: "10.0.0.1" }));
+    expect(second.passed).toBe(false);
+    expect(second.res.statusCode).toBe(429);
+  });
 });

@@ -147,30 +147,61 @@ describe("redis backend (faithful script interpreter)", () => {
     return {
       eval: async (
         _script: string,
-        _numKeys: number,
-        keys: string[],
-        args: (string | number)[],
+        options: { keys: string[]; arguments: (string | number)[] },
       ): Promise<unknown> => {
-        const key = keys[0] ?? "";
-        const emission = Number(args[0]);
-        const fill = Number(args[1]);
-        const cost = Number(args[2]);
-        const now = Number(args[3]);
+        const key = options.keys[0] ?? "";
+        const emission = Number(options.arguments[0]);
+        const fill = Number(options.arguments[1]);
+        const cost = Number(options.arguments[2]);
+        const now = Number(options.arguments[3]);
         let tat = store.has(key) ? (store.get(key) as number) : now;
         if (tat < now) tat = now;
         const newTat = tat + cost * emission;
         const delay = newTat - now;
         if (delay > fill) {
           store.set(key, tat);
-          return [0, 0, Math.ceil((newTat - fill - now) / 1000), Math.ceil((tat - now) / 1000), tat];
+          return [
+            0,
+            0,
+            Math.ceil((newTat - fill - now) / 1000),
+            Math.ceil((tat - now) / 1000),
+            tat,
+          ];
         }
         store.set(key, newTat);
         const limit = Math.floor(fill / emission);
-        const remaining = Math.max(0, Math.min(limit - 1, Math.floor((fill - delay) / emission)));
+        const remaining = Math.max(
+          0,
+          Math.min(limit - 1, Math.floor((fill - delay) / emission)),
+        );
         return [1, remaining, 0, Math.ceil((newTat - now) / 1000), newTat];
       },
     };
   }
+
+  // Regression: redis v4+/v5 parses eval(script, numKeys, keys, args) as an
+  // options object and silently drops the keys/args (the script then runs
+  // with ZERO keys). Assert the backend uses the options-object form.
+  test("calls eval with the redis v4+/v5 options-object form", async () => {
+    const calls: { script: string; options: unknown }[] = [];
+    const client = {
+      eval: async (script: string, options: unknown): Promise<unknown> => {
+        calls.push({ script, options });
+        return [1, 5, 0, 1000, 0];
+      },
+    };
+    const backend = createRedisRateLimitBackend(client, { keyPrefix: "gate" });
+    await backend.take("tenant-1", CONFIG, 1);
+    expect(calls).toHaveLength(1);
+    const opts = calls[0]?.options as
+      | { keys?: unknown[]; arguments?: unknown[] }
+      | undefined;
+    expect(opts).toBeDefined();
+    expect(Array.isArray(opts?.keys)).toBe(true);
+    expect(opts?.keys).toEqual(["gate:tenant-1"]);
+    expect(Array.isArray(opts?.arguments)).toBe(true);
+    expect(opts?.arguments?.length).toBe(4);
+  });
 
   test("passes GCRA decisions through and prefixes keys", async () => {
     const client = fakeRedis();
