@@ -21,8 +21,10 @@
  *       · `#[[file:…]]` prompt includes in any `systemPrompt` (nodes and
  *         overrides, in sub-flows too; prompt files may nest up to 5 levels)
  *       · `model-shortcuts.*` when any node uses `llm.shortcut`
- *       · the shared configuration files `guardrails`, `dispatch` and
- *         `tool-authz`, which apply to every flow.
+ *       · `constants.*` when the flow (or a sub-flow) references `const.<name>`
+ *       · the shared configuration files `guardrails`, `dispatch`,
+ *         `tool-authz`, `compliance-policy`, `access`, `canary` and
+ *         `experiments`, which apply to every flow.
  *
  * Bump size (documented rule, reported as a warning, not a failure): a change
  * to the step graph (node ids/types or edges) is a flow-contract change and
@@ -178,8 +180,19 @@ const PROMPT_INCLUDE = /#\[\[file:([^\]]+)\]\]/g;
 const MAX_SUBFLOW_DEPTH = 3;
 const MAX_PROMPT_DEPTH = 5;
 /** Shared configuration read for every flow (docs/FLOWS.md). */
-const SHARED_CONFIG = ["guardrails", "dispatch", "tool-authz"];
+const SHARED_CONFIG = [
+  "guardrails",
+  "dispatch",
+  "tool-authz",
+  "compliance-policy",
+  "access",
+  "canary",
+  "experiments",
+];
 const MODEL_SHORTCUTS = "model-shortcuts";
+/** Variables resolve `{{const.<name>}}` / `const.<name>` against `constants.*`. */
+const FLOW_CONSTANTS = "constants";
+const CONSTANT_REFERENCE = /\bconst\.[A-Za-z_]/;
 
 function parseDocument(path: string, text: string): Record<string, unknown> | undefined {
   try {
@@ -239,7 +252,7 @@ export function resolveFlowDependencies(
 ): Set<string> {
   const deps = new Set<string>();
   let shortcuts = false;
-
+  let constants = false;
   const visitPrompt = (rel: string, depth: number): void => {
     const file = normalizeRel(rel);
     if (deps.has(file) || depth > MAX_PROMPT_DEPTH) return;
@@ -251,6 +264,7 @@ export function resolveFlowDependencies(
 
   const visitDoc = (doc: Record<string, unknown>, depth: number, seen: Set<string>): void => {
     if (usesShortcut(doc.nodes)) shortcuts = true;
+    if (CONSTANT_REFERENCE.test(JSON.stringify(doc))) constants = true;
     for (const prompt of systemPrompts(doc)) {
       for (const m of prompt.matchAll(PROMPT_INCLUDE)) visitPrompt(m[1] as string, 1);
     }
@@ -275,6 +289,7 @@ export function resolveFlowDependencies(
 
   const sharedNames = new Set(SHARED_CONFIG);
   if (shortcuts) sharedNames.add(MODEL_SHORTCUTS);
+  if (constants) sharedNames.add(FLOW_CONSTANTS);
   for (const file of flowFiles) {
     const rel = normalizeRel(file);
     if (!rel.includes("/") && sharedNames.has(basename(rel, extname(rel)))) deps.add(rel);

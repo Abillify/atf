@@ -75,7 +75,19 @@ describe("resolveFlowDependencies", () => {
   const read = (rel: string) => files[rel];
   const entry = (extra: string) =>
     `id: main\nname: Main\nmetadata:\n  version: 1.0.0\n  $include:\n    subflows: [subflows/guard.yaml]\nnodes:\n  - id: a\n    type: llm\n${extra}edges: []\n`;
-  const flowFiles = ["main.yaml", "model-shortcuts.yaml", "guardrails.yaml", "dispatch.yaml", "tool-authz.yaml", "access.yaml"];
+  const flowFiles = [
+    "main.yaml",
+    "model-shortcuts.yaml",
+    "guardrails.yaml",
+    "dispatch.yaml",
+    "tool-authz.yaml",
+    "access.yaml",
+    "compliance-policy.yaml",
+    "canary.yaml",
+    "experiments.yaml",
+    "constants.yaml",
+    "mcp.yaml",
+  ];
 
   test("follows sub-flows, nested sub-flows and nested prompts transitively", () => {
     const deps = resolveFlowDependencies("main.yaml", entry(""), read, flowFiles);
@@ -93,7 +105,30 @@ describe("resolveFlowDependencies", () => {
     const deps = resolveFlowDependencies("main.yaml", entry(""), read, flowFiles);
     expect(deps.has("model-shortcuts.yaml")).toBe(true);
     for (const shared of ["guardrails.yaml", "dispatch.yaml", "tool-authz.yaml"]) expect(deps.has(shared)).toBe(true);
-    expect(deps.has("access.yaml")).toBe(false);
+    // Reserved MCP config is not applied to every flow.
+    expect(deps.has("mcp.yaml")).toBe(false);
+  });
+
+  test("compliance-policy, access, canary and experiments are shared dependencies of every flow (P1-P8)", () => {
+    const plain = "id: p\nname: P\nnodes:\n  - id: a\n    type: llm\nedges: []\n";
+    const deps = resolveFlowDependencies("p.yaml", plain, read, flowFiles);
+    for (const shared of ["compliance-policy.yaml", "access.yaml", "canary.yaml", "experiments.yaml"]) {
+      expect(deps.has(shared)).toBe(true);
+    }
+  });
+
+  test("constants.* is a dependency only for flows (or sub-flows) that reference const.<name>", () => {
+    const plain = "id: p\nname: P\nnodes:\n  - id: a\n    type: llm\nedges: []\n";
+    expect(resolveFlowDependencies("p.yaml", plain, read, flowFiles).has("constants.yaml")).toBe(false);
+    const direct =
+      "id: p\nname: P\nvariables:\n  max: \"{{const.max_tokens}}\"\nnodes:\n  - id: a\n    type: llm\nedges: []\n";
+    expect(resolveFlowDependencies("p.yaml", direct, read, flowFiles).has("constants.yaml")).toBe(true);
+    const viaSubflow = {
+      "subflows/c.yaml": "nodes:\n  - id: c\n    type: llm\n    maxTokens: \"{{const.max_tokens}}\"\n",
+    };
+    const parent = "id: p\nname: P\nmetadata:\n  $include:\n    subflows: [subflows/c.yaml]\nnodes:\n  - id: a\n    type: llm\nedges: []\n";
+    const deps = resolveFlowDependencies("p.yaml", parent, (rel) => viaSubflow[rel as keyof typeof viaSubflow], flowFiles);
+    expect(deps.has("constants.yaml")).toBe(true);
   });
 
   test("a flow without shortcuts does not depend on model-shortcuts", () => {
