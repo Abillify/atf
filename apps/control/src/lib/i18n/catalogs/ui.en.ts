@@ -10,53 +10,69 @@
 
 export const uiEn = {
   "approvals.loadingApprovals": "Loading approvals",
-  "approvalsPanel.anOperatorDecidesThisRequest": "An operator decides this request.",
+  "approvalsPanel.anOperatorDecidesThisRequest":
+    "An operator decides this request.",
   "approvalsPanel.approve": "Approve",
   "approvalsPanel.awaitingApproval": "awaiting approval",
   "approvalsPanel.deny": "Deny",
-  "approvalsPanel.flaggedConsequentialToolsWillAppear": "Flagged consequential tools will appear here for review.",
+  "approvalsPanel.flaggedConsequentialToolsWillAppear":
+    "Flagged consequential tools will appear here for review.",
   "approvalsPanel.loading": "Loading…",
-  "approvalsPanel.noToolCallsAreAwaiting": "No tool calls are awaiting approval.",
+  "approvalsPanel.noToolCallsAreAwaiting":
+    "No tool calls are awaiting approval.",
   "approvalsPanel.pendingApprovals": "Pending approvals",
   "approvalsPanel.tenant": "· tenant",
-  "assistantDetailView.anOperatorCanRejectNot": "An operator can reject, not apply: approving new behaviour into someone's assistant is that person's decision.",
+  "assistantDetailView.anOperatorCanRejectNot":
+    "An operator can reject, not apply: approving new behaviour into someone's assistant is that person's decision.",
   "assistantDetailView.autonomy": "Autonomy:",
   "assistantDetailView.capturedAutonomously": "captured autonomously",
-  "assistantDetailView.delegatedCredentialsLength": "Delegated credentials ({length})",
+  "assistantDetailView.delegatedCredentialsLength":
+    "Delegated credentials ({length})",
   "assistantDetailView.directivesTheUserS": "Directives (the user's)",
   "assistantDetailView.empty": "Empty.",
   "assistantDetailView.identityTheAssistantS": "Identity (the assistant's)",
-  "assistantDetailView.learnedProceduresLength": "Learned procedures ({length})",
+  "assistantDetailView.learnedProceduresLength":
+    "Learned procedures ({length})",
   "assistantDetailView.loadingAssistant": "Loading assistant…",
   "assistantDetailView.none": "None.",
-  "assistantDetailView.noneBackgroundTurnsRunWithout": "None. Background turns run without the user's authority.",
+  "assistantDetailView.noneBackgroundTurnsRunWithout":
+    "None. Background turns run without the user's authority.",
   "assistantDetailView.nothingAwaitingReview": "Nothing awaiting review.",
-  "assistantDetailView.proposalQueueLengthPendingLength2": "Proposal queue — {length} pending, {length2} quarantined",
+  "assistantDetailView.proposalQueueLengthPendingLength2":
+    "Proposal queue — {length} pending, {length2} quarantined",
   "assistantDetailView.reactivate": "Reactivate",
   "assistantDetailView.reject": "Reject",
   "assistantDetailView.revoke": "Revoke",
   "assistantDetailView.revokeDelegation": "Revoke delegation?",
-  "assistantDetailView.revokeDelegationForIssuerIssuer": "Revoke delegation for issuer {issuer}",
-  "assistantDetailView.summariesOnlyNoPlaneReturns": "Summaries only — no plane returns the refresh token, operator included.",
+  "assistantDetailView.revokeDelegationForIssuerIssuer":
+    "Revoke delegation for issuer {issuer}",
+  "assistantDetailView.summariesOnlyNoPlaneReturns":
+    "Summaries only — no plane returns the refresh token, operator included.",
   "assistantDetailView.suspend": "Suspend",
-  "assistantDetailView.theAssistantLosesItsIssuer": "The assistant loses its {issuer} delegation at once; the user has to consent again to restore it.",
+  "assistantDetailView.theAssistantLosesItsIssuer":
+    "The assistant loses its {issuer} delegation at once; the user has to consent again to restore it.",
   "assistants.assistants": "Assistants",
-  "assistants.everyUserSPersonalAssistant": "Every user's personal assistant: its identity, its learned procedures, the credentials delegated to it, and the operator constraints it must obey.",
+  "assistants.everyUserSPersonalAssistant":
+    "Every user's personal assistant: its identity, its learned procedures, the credentials delegated to it, and the operator constraints it must obey.",
   "assistants.loadingAssistants": "Loading assistants",
   "assistantsEstatePanel.assistant": "Assistant",
   "assistantsEstatePanel.assistants": "Assistants",
   "assistantsEstatePanel.autonomy": "Autonomy",
-  "assistantsEstatePanel.failedToLoadAssistantsMessage": "Failed to load assistants: {message}",
-  "assistantsEstatePanel.filterAssistantsByUserId": "Filter assistants by user id",
+  "assistantsEstatePanel.failedToLoadAssistantsMessage":
+    "Failed to load assistants: {message}",
+  "assistantsEstatePanel.filterAssistantsByUserId":
+    "Filter assistants by user id",
   "assistantsEstatePanel.filterByUserId": "Filter by user id…",
   "assistantsEstatePanel.flowSet": "flow — set",
   "assistantsEstatePanel.ifThatHasNotHappened": "if that has not happened yet.",
   "assistantsEstatePanel.lastActive": "Last active",
   "assistantsEstatePanel.loadingAssistants": "Loading assistants…",
   "assistantsEstatePanel.next": "Next",
-  "assistantsEstatePanel.noAssistantsTheyAreProvisioned": "No assistants. They are provisioned on a user's first turn against the",
+  "assistantsEstatePanel.noAssistantsTheyAreProvisioned":
+    "No assistants. They are provisioned on a user's first turn against the",
   "assistantsEstatePanel.pending": "Pending",
-  "assistantsEstatePanel.pickARowToSee": "Pick a row to see its soul, learned procedures, proposal queue and delegated credentials — and to set the operator constraints that override both the assistant and its user.",
+  "assistantsEstatePanel.pickARowToSee":
+    "Pick a row to see its soul, learned procedures, proposal queue and delegated credentials — and to set the operator constraints that override both the assistant and its user.",
   "assistantsEstatePanel.previous": "Previous",
   "assistantsEstatePanel.selectAnAssistant": "Select an assistant",
   "assistantsEstatePanel.skills": "Skills",
@@ -64,26 +80,33 @@ export const uiEn = {
   "assistantsPanel.estate": "Estate",
   "assistantsPanel.revocationConsole": "Revocation Console",
   "assistantsPanel.skillRegistry": "Skill Registry",
-  "auth.authenticateToAccessTheOperator": "Authenticate to access the operator dashboard.",
+  "auth.authenticateToAccessTheOperator":
+    "Authenticate to access the operator dashboard.",
   "auth.continueWithToken": "Continue with token",
   "auth.eyJhbGc": "eyJhbGc…",
   "auth.operatorToken": "Operator token",
   "auth.signInToAiperator": "Sign in to Aiperator",
   "auth.signInWithSSO": "Sign in with SSO",
-  "autopilot.closedFeedbackLoopRedTeam": "Closed feedback loop: Red-Team bypass detected → Optimizer generates hardened prompt variants → best variant auto-promoted → Canary rollout with automatic rollback on regression.",
-  "autopilot.continuousSafetyQualityAutopilot": "Continuous Safety & Quality Autopilot",
+  "autopilot.closedFeedbackLoopRedTeam":
+    "Closed feedback loop: Red-Team bypass detected → Optimizer generates hardened prompt variants → best variant auto-promoted → Canary rollout with automatic rollback on regression.",
+  "autopilot.continuousSafetyQualityAutopilot":
+    "Continuous Safety & Quality Autopilot",
   "autopilot.loading": "Loading…",
   "autopilot.loadingAutopilot": "Loading autopilot",
   "autopilotPanel.autoPromoteEnabled": "Auto-promote enabled",
   "autopilotPanel.autopilot": "🔄 Autopilot",
   "autopilotPanel.canary": "canary ↗",
   "autopilotPanel.chosenInTheStudioS": "Chosen in the Studio's flow picker",
-  "autopilotPanel.driftGuardMaxMaxAutoPromotionsPerWindowAuto": "drift-guard: max {maxAutoPromotionsPerWindow} auto-promotion(s) /",
-  "autopilotPanel.flowForManualAutopilotTrigger": "Flow for manual autopilot trigger",
-  "autopilotPanel.flowIDForManualAutopilot": "Flow ID for manual autopilot trigger",
+  "autopilotPanel.driftGuardMaxMaxAutoPromotionsPerWindowAuto":
+    "drift-guard: max {maxAutoPromotionsPerWindow} auto-promotion(s) /",
+  "autopilotPanel.flowForManualAutopilotTrigger":
+    "Flow for manual autopilot trigger",
+  "autopilotPanel.flowIDForManualAutopilot":
+    "Flow ID for manual autopilot trigger",
   "autopilotPanel.humanApprovalRequired": "Human approval required",
   "autopilotPanel.loading": "Loading…",
-  "autopilotPanel.noAutopilotRunsYetTrigger": "No autopilot runs yet. Trigger one manually or enable RED_TEAM_ENABLED to start the automated loop.",
+  "autopilotPanel.noAutopilotRunsYetTrigger":
+    "No autopilot runs yet. Trigger one manually or enable RED_TEAM_ENABLED to start the automated loop.",
   "autopilotPanel.noFlowSelected": "no flow selected",
   "autopilotPanel.notAvailable": "Not available:",
   "autopilotPanel.refreshAutopilotRuns": "Refresh autopilot runs",
@@ -107,13 +130,15 @@ export const uiEn = {
   "boundaryPanel.flow": "Flow",
   "boundaryPanel.flowVersion": "Flow version",
   "boundaryPanel.inputValues": "Input values",
-  "boundaryPanel.itsLastAssistantMessageIs": "Its last assistant message is the answer.",
+  "boundaryPanel.itsLastAssistantMessageIs":
+    "Its last assistant message is the answer.",
   "boundaryPanel.loadingTheRunSRequest": "Loading the run's request…",
   "boundaryPanel.messageSInTheRequest": "message(s) in the request",
   "boundaryPanel.messageValueRole": "Message {value} ({role})",
   "boundaryPanel.metadata": "Metadata",
   "boundaryPanel.noMessage": "(no message)",
-  "boundaryPanel.noNodeEndsTheRun": "No node ends the run — check the flow for loops.",
+  "boundaryPanel.noNodeEndsTheRun":
+    "No node ends the run — check the flow for loops.",
   "boundaryPanel.noOutgoingEdge": "— no outgoing edge",
   "boundaryPanel.pinARecordedRequestTo": "Pin a recorded request to see",
   "boundaryPanel.pinned": "Pinned",
@@ -131,41 +156,57 @@ export const uiEn = {
   "boundaryPanel.startRunInput": "▶ Start — run input",
   "boundaryPanel.started": "Started",
   "boundaryPanel.status": "Status",
-  "boundaryPanel.switchToPinnedRunAbove": "— switch to “Pinned run” above to see its input.",
+  "boundaryPanel.switchToPinnedRunAbove":
+    "— switch to “Pinned run” above to see its input.",
   "boundaryPanel.templateAndConditionValues": "Template and condition values",
-  "boundaryPanel.theFirstNodeOfThe": "— the first node of the flow. Drag from Start to another node to make that the entry.",
+  "boundaryPanel.theFirstNodeOfThe":
+    "— the first node of the flow. Drag from Start to another node to make that the entry.",
   "boundaryPanel.theFlowHasNoNodes": "The flow has no nodes yet.",
-  "boundaryPanel.theRecordedInputValuesAre": "— the recorded input values are shown below.",
-  "boundaryPanel.theRequestCarriedNoMessages": "The request carried no messages.",
+  "boundaryPanel.theRecordedInputValuesAre":
+    "— the recorded input values are shown below.",
+  "boundaryPanel.theRequestCarriedNoMessages":
+    "The request carried no messages.",
   "boundaryPanel.theRunCanEndAfter": "The run can end after:",
-  "boundaryPanel.theRunSFullTrace": "The run's full trace is not available ({message}). Traces are kept for the last 200 executions only",
-  "boundaryPanel.thisPinHasNoRecorded": "This pin has no recorded answer (pinned before answers were kept, or the run returned none) — pin it again to fetch it.",
+  "boundaryPanel.theRunSFullTrace":
+    "The run's full trace is not available ({message}). Traces are kept for the last 200 executions only",
+  "boundaryPanel.thisPinHasNoRecorded":
+    "This pin has no recorded answer (pinned before answers were kept, or the run returned none) — pin it again to fetch it.",
   "boundaryPanel.tokenClaims": "Token claims (",
   "boundaryPanel.tokenClaims2": "Token claims",
   "boundaryPanel.tokenClaimsJwtClaims": "Token claims (jwt_claims)",
   "boundaryPanel.traceTokenClaims": "Trace token claims",
   "boundaryPanel.whatItBroughtIntoThe": "what it brought into the flow",
   "boundaryPanel.whatTheFlowAnswered": "what the flow answered",
-  "boundaryPanel.whatTheValueRunBrought": "What the {value} run brought into the flow.",
-  "boundaryPanel.whenNoneOfItsEdge": "— when none of its edge conditions matches",
-  "boundaryPanel.whereAChatRequestEnters": "Where a chat request enters the flow. Not a node of the flow — drawn so the entry is visible.",
-  "boundaryPanel.whereTheFlowHandsIts": "Where the flow hands its answer back to the caller. Not a node of the flow.",
-  "builderHelp.anEmptyConditionMeansAlways": "An empty condition means: always follow this edge.",
+  "boundaryPanel.whatTheValueRunBrought":
+    "What the {value} run brought into the flow.",
+  "boundaryPanel.whenNoneOfItsEdge":
+    "— when none of its edge conditions matches",
+  "boundaryPanel.whereAChatRequestEnters":
+    "Where a chat request enters the flow. Not a node of the flow — drawn so the entry is visible.",
+  "boundaryPanel.whereTheFlowHandsIts":
+    "Where the flow hands its answer back to the caller. Not a node of the flow.",
+  "builderHelp.anEmptyConditionMeansAlways":
+    "An empty condition means: always follow this edge.",
   "builderHelp.and": ", and",
   "builderHelp.andParentheses": "and parentheses.",
   "builderHelp.combineWith": ". Combine with",
-  "builderHelp.evaluatedOnceWhenTheFlow": "Evaluated once when the flow loads — it cannot read run-time values such as",
+  "builderHelp.evaluatedOnceWhenTheFlow":
+    "Evaluated once when the flow loads — it cannot read run-time values such as",
   "builderHelp.examples": "Examples",
-  "builderHelp.flowVariablesAndConstantsAre": "Flow variables and constants are replaced textually when the flow loads — quote text:",
+  "builderHelp.flowVariablesAndConstantsAre":
+    "Flow variables and constants are replaced textually when the flow loads — quote text:",
   "builderHelp.howCalculationsWork": "How calculations work",
   "builderHelp.howConditionsWork": "How conditions work",
-  "builderHelp.ifTheWholeFieldIs": "If the whole field is one calculation, the result keeps its type (a number stays a number).",
+  "builderHelp.ifTheWholeFieldIs":
+    "If the whole field is one calculation, the result keeps its type (a number stays a number).",
   "builderHelp.insert": "Insert",
   "builderHelp.insertThisSample": "Insert this example",
-  "builderHelp.insideItWriteReferencesWithout": "Inside it, write references without braces:",
+  "builderHelp.insideItWriteReferencesWithout":
+    "Inside it, write references without braces:",
   "builderHelp.isACaseInsensitiveRegex": "is a case-insensitive regex match;",
   "builderHelp.joinsTextComparisons": "joins text), comparisons,",
-  "builderHelp.namesReadTheRunState": "Names read the run state: classification fields, node results, user and request data, run state (see the tree).",
+  "builderHelp.namesReadTheRunState":
+    "Names read the run state: classification fields, node results, user and request data, run state (see the tree).",
   "builderHelp.operators": "Operators:",
   "builderHelp.textInSingleQuotes": "Text in single quotes:",
   "builderHelp.textInSingleQuotes2": "; text in single quotes.",
@@ -178,7 +219,8 @@ export const uiEn = {
   "canaryPanel.errorRate": "Error rate",
   "canaryPanel.loading": "Loading…",
   "canaryPanel.meanScore": "Mean score",
-  "canaryPanel.noCanaryDeploymentsConfigured": "No canary deployments configured.",
+  "canaryPanel.noCanaryDeploymentsConfigured":
+    "No canary deployments configured.",
   "canaryPanel.rolledBack": "rolled back",
   "canaryPanel.samples": "Samples",
   "canaryPanel.stable": "Stable",
@@ -191,14 +233,17 @@ export const uiEn = {
   "compliance.action2": "Action",
   "compliance.actor": "Actor",
   "compliance.advisory": "(advisory)",
-  "compliance.allDataHeldForWho": "All data held for {who} is erased in every store. This cannot be undone.",
+  "compliance.allDataHeldForWho":
+    "All data held for {who} is erased in every store. This cannot be undone.",
   "compliance.anchoredUpToAuditEntry": "Anchored up to audit entry",
   "compliance.anchoring": "Anchoring…",
   "compliance.approvals": "Approvals",
-  "compliance.auditAnchoringIsNotConfigured": "Audit anchoring is not configured (set AUDIT_ANCHOR_SECRET).",
+  "compliance.auditAnchoringIsNotConfigured":
+    "Audit anchoring is not configured (set AUDIT_ANCHOR_SECRET).",
   "compliance.auditChainAnchor": "Audit Chain Anchor",
   "compliance.auditReportLast24H": "Audit Report (last 24 h)",
-  "compliance.authenticatedUsersCanAccessOr": "Authenticated users can access or erase their own data via the API. These endpoints authenticate via the user's own JWT (not the operator token).",
+  "compliance.authenticatedUsersCanAccessOr":
+    "Authenticated users can access or erase their own data via the API. These endpoints authenticate via the user's own JWT (not the operator token).",
   "compliance.chainINVALID": "chain INVALID",
   "compliance.chainValid": "chain valid",
   "compliance.check": "↻ Check",
@@ -208,17 +253,20 @@ export const uiEn = {
   "compliance.dataClass": "Data class",
   "compliance.dataRetentionRTBF": "Data Retention & RTBF",
   "compliance.decision": "Decision:",
-  "compliance.declarativeDataResidencyModelApproval": "Declarative data-residency, model, approval and retention policies. Last 24 hours.",
+  "compliance.declarativeDataResidencyModelApproval":
+    "Declarative data-residency, model, approval and retention policies. Last 24 hours.",
   "compliance.denied": "Denied",
   "compliance.erase": "Erase",
-  "compliance.eraseAllDataForA": "Erase all data for a subject. Requires at least one of tenantId / userId.",
+  "compliance.eraseAllDataForA":
+    "Erase all data for a subject. Requires at least one of tenantId / userId.",
   "compliance.eraseSubjectData": "Erase subject data",
   "compliance.eraseThisSubject": "Erase this subject?",
   "compliance.erasedRecordSErasedFor": "{erased} record(s) erased for",
   "compliance.erasing": "Erasing…",
   "compliance.evaluate": "Evaluate",
   "compliance.evaluating": "Evaluating…",
-  "compliance.everyRecordOlderThanIts": "Every record older than its configured retention window is deleted permanently.",
+  "compliance.everyRecordOlderThanIts":
+    "Every record older than its configured retention window is deleted permanently.",
   "compliance.exportCSV": "↓ Export CSV",
   "compliance.exporting": "Exporting…",
   "compliance.lastAnchorValue": "Last anchor: {value}",
@@ -226,17 +274,21 @@ export const uiEn = {
   "compliance.loadingComplianceDossier": "Loading compliance dossier",
   "compliance.loadingPolicy": "Loading policy…",
   "compliance.model": "Model",
-  "compliance.noCompliancePolicyYamlFound": "No compliance-policy.yaml found. Create one in FLOWS_DIR to enable enforcement.",
+  "compliance.noCompliancePolicyYamlFound":
+    "No compliance-policy.yaml found. Create one in FLOWS_DIR to enable enforcement.",
   "compliance.noPolicyLoaded": "No policy loaded.",
   "compliance.noPolicyLoadedDefaultAllow": "(no policy loaded — default allow)",
-  "compliance.noPolicyWasLoadedThe": "No policy was loaded; the simulator used the compatibility allow result.",
+  "compliance.noPolicyWasLoadedThe":
+    "No policy was loaded; the simulator used the compatibility allow result.",
   "compliance.policyActiveVVersion": "✓ Policy active (v{version})",
   "compliance.policyAsCodeCompliance": "Policy-as-Code Compliance",
   "compliance.policyDryRunEvaluate": "Policy Dry-Run Evaluate",
   "compliance.policySummary": "Policy Summary",
-  "compliance.provideAtLeastATenantId": "Provide at least a tenantId or userId.",
+  "compliance.provideAtLeastATenantId":
+    "Provide at least a tenantId or userId.",
   "compliance.providerModel": "Provider / Model",
-  "compliance.purgeDataOlderThanIts": "Purge data older than its configured retention window across all targets.",
+  "compliance.purgeDataOlderThanIts":
+    "Purge data older than its configured retention window across all targets.",
   "compliance.refresh": "↻ Refresh",
   "compliance.requests": "Requests",
   "compliance.requiredApproval": "Required approval",
@@ -246,44 +298,55 @@ export const uiEn = {
   "compliance.runSweep": "Run sweep",
   "compliance.runSweepNow": "Run sweep now",
   "compliance.runningSweep": "Running sweep…",
-  "compliance.selfServiceDataAccessDSAR": "Self-Service Data Access (DSAR — Art. 15 / Art. 17 GDPR)",
-  "compliance.sweepCompletePurgedRecordS": "Sweep complete — {purged} record(s) purged",
+  "compliance.selfServiceDataAccessDSAR":
+    "Self-Service Data Access (DSAR — Art. 15 / Art. 17 GDPR)",
+  "compliance.sweepCompletePurgedRecordS":
+    "Sweep complete — {purged} record(s) purged",
   "compliance.target": "Target",
   "compliance.tenantID": "Tenant ID",
   "compliance.tenants": "Tenants",
-  "compliance.testARequestContextAgainst": "Test a request context against the loaded policy without executing anything.",
-  "compliance.theOperatorRTBFFormAbove": "The operator RTBF form above (Erase subject data) covers admin-initiated erasures.",
+  "compliance.testARequestContextAgainst":
+    "Test a request context against the loaded policy without executing anything.",
+  "compliance.theOperatorRTBFFormAbove":
+    "The operator RTBF form above (Erase subject data) covers admin-initiated erasures.",
   "compliance.time": "Time",
   "compliance.toEnableEnforcement": "to enable enforcement.",
   "compliance.userSampleCom": "user@example.com",
   "compliance.userIDEmail": "User ID / email",
-  "compliance.v1MeDataEraseAll": "/v1/me/data — erase all data for the calling identity (right-to-be-forgotten)",
-  "compliance.v1MeDataExportA": "/v1/me/data — export a summary of all data held for the calling identity",
+  "compliance.v1MeDataEraseAll":
+    "/v1/me/data — erase all data for the calling identity (right-to-be-forgotten)",
+  "compliance.v1MeDataExportA":
+    "/v1/me/data — export a summary of all data held for the calling identity",
   "compliance.violations": "Violations",
   "configForm.addEnter": "Add… (Enter)",
   "configForm.addNodeIdEnter": "Add node id… (Enter)",
-  "configForm.addToolOrPatternServer": "Add tool or pattern (server/*)… (Enter)",
+  "configForm.addToolOrPatternServer":
+    "Add tool or pattern (server/*)… (Enter)",
   "configForm.advancedLength": "Advanced ({length})",
   "configForm.defaultDef": "Default: {def}.",
   "configForm.defaultDef2": "— default ({def}) —",
   "configForm.defaultValue": "— default ({value}) —",
-  "configForm.errorHandlingApprovalProgress": "Error handling, approval & progress",
+  "configForm.errorHandlingApprovalProgress":
+    "Error handling, approval & progress",
   "configForm.insertSample": "Insert example",
   "configForm.modelConfig": "Model config",
   "configForm.modelShortcut": "Model shortcut",
   "configForm.none": "— none —",
   "configForm.notAnInteger": "/ not an integer",
-  "configForm.notDocumentedForThisNode": "Not documented for this node type — the runtime ignores them unless a plugin reads them. Kept as they are.",
+  "configForm.notDocumentedForThisNode":
+    "Not documented for this node type — the runtime ignores them unless a plugin reads them. Kept as they are.",
   "configForm.notSet": "— not set —",
   "configForm.otherKeysLength": "Other keys ({length})",
   "configForm.outsideTheAllowedRange": "Outside the allowed range",
-  "configForm.providerModelParametersAsJSON": "provider/model/parameters as JSON",
+  "configForm.providerModelParametersAsJSON":
+    "provider/model/parameters as JSON",
   "configForm.rangeRange": "Range: {range}.",
   "configForm.removeIt": "Remove {it}",
   "configForm.removeThisKeyUseThe": "Remove this key (use the default)",
   "configForm.shortcutEGFastPool": "shortcut, e.g. fast-pool",
   "configForm.theRuntimeMayRejectOr": "— the runtime may reject or ignore it.",
-  "configForm.thisNodeTypeHasNo": "This node type has no type-specific settings.",
+  "configForm.thisNodeTypeHasNo":
+    "This node type has no type-specific settings.",
   "configForm.valueNotOnCanvas": "{value} (not on canvas)",
   "configForm.valueUnknown": "{value} (unknown)",
   "confirmDialog.cancel": "Cancel",
@@ -291,14 +354,20 @@ export const uiEn = {
   "constraintsEditor.deniedToolIdsOnePer": "Denied tool ids, one per line",
   "constraintsEditor.deniedTools": "Denied tools",
   "constraintsEditor.field.compliance": "Compliance",
-  "constraintsEditor.field.complianceHint": "Compliance or legal framing the assistant must respect.",
+  "constraintsEditor.field.complianceHint":
+    "Compliance or legal framing the assistant must respect.",
   "constraintsEditor.field.rules": "Rules",
-  "constraintsEditor.field.rulesHint": "Non-negotiable rules, e.g. \"never send external email\".",
+  "constraintsEditor.field.rulesHint":
+    'Non-negotiable rules, e.g. "never send external email".',
   "constraintsEditor.fieldConstraint": "{label} constraint",
-  "constraintsEditor.oneToolIdPerLine": "One tool id per line. Enforced by the authorization layer, not by prompt text — the assistant is told why a tool is missing so it stops retrying it.",
-  "constraintsEditor.operatorConstraintsTheyRenderLast": "Operator constraints. They render last in the assistant's prompt and are never dropped to make room, so they win over both the assistant's own identity and its user's directives.",
-  "constraintsEditor.reasonForTheConstraintChange": "Reason for the constraint change",
-  "constraintsEditor.reasonRecordedInTheSoul": "Reason (recorded in the soul history)",
+  "constraintsEditor.oneToolIdPerLine":
+    "One tool id per line. Enforced by the authorization layer, not by prompt text — the assistant is told why a tool is missing so it stops retrying it.",
+  "constraintsEditor.operatorConstraintsTheyRenderLast":
+    "Operator constraints. They render last in the assistant's prompt and are never dropped to make room, so they win over both the assistant's own identity and its user's directives.",
+  "constraintsEditor.reasonForTheConstraintChange":
+    "Reason for the constraint change",
+  "constraintsEditor.reasonRecordedInTheSoul":
+    "Reason (recorded in the soul history)",
   "constraintsEditor.saveConstraints": "Save constraints",
   "constraintsEditor.saving": "Saving…",
   "cost.finOpsForecast": "FinOps Forecast",
@@ -314,10 +383,12 @@ export const uiEn = {
   "costPanel.layer": "Layer",
   "costPanel.misses": "Misses",
   "costPanel.noCostRecordedYet": "No cost recorded yet.",
-  "costPanel.noFlowAttributedSpendRecorded": "No flow-attributed spend recorded.",
+  "costPanel.noFlowAttributedSpendRecorded":
+    "No flow-attributed spend recorded.",
   "costPanel.noTenantSpendRecorded": "No tenant spend recorded.",
   "costPanel.noTokenUsageYet": "No token usage yet.",
-  "costPanel.noUserAttributedSpendRecorded": "No user-attributed spend recorded.",
+  "costPanel.noUserAttributedSpendRecorded":
+    "No user-attributed spend recorded.",
   "costPanel.perTenantSpend24h": "Per-tenant spend (24h)",
   "costPanel.responseCacheAnalytics": "Response cache analytics",
   "costPanel.semanticNearDup": "Semantic (near-dup)",
@@ -332,16 +403,20 @@ export const uiEn = {
   "costPanel.user": "User",
   "customNodes.answerOut": "· answer out",
   "customNodes.calledAsAToolBy": "Called as a tool by another node",
-  "customNodes.callsOtherNodesAsTools": "Calls other nodes as tools (defined in this node's settings)",
+  "customNodes.callsOtherNodesAsTools":
+    "Calls other nodes as tools (defined in this node's settings)",
   "customNodes.end": "End",
   "customNodes.requestIn": "· request in",
   "customNodes.start": "Start",
   "customNodes.staticArguments": "static arguments",
-  "customNodes.subFlowPathClickTo": "Sub-flow {path} — click to select the whole group. Its nodes are saved to this file and merged into the flow via metadata.$include.",
+  "customNodes.subFlowPathClickTo":
+    "Sub-flow {path} — click to select the whole group. Its nodes are saved to this file and merged into the flow via metadata.$include.",
   "customNodes.toolsLength": "Tools ({length})",
   "customNodes.toolsThisNodeOffersIts": "Tools this node offers its model",
-  "customNodes.whereARequestEntersThe": "Where a request enters the flow. Click for the pinned request's input; drag from here to a node to make it the entry.",
-  "customNodes.whereTheFlowReturnsIts": "Where the flow returns its answer. Click for the pinned request's answer and the nodes the run can end after.",
+  "customNodes.whereARequestEntersThe":
+    "Where a request enters the flow. Click for the pinned request's input; drag from here to a node to make it the entry.",
+  "customNodes.whereTheFlowReturnsIts":
+    "Where the flow returns its answer. Click for the pinned request's answer and the nodes the run can end after.",
   "dialog.closeDialog": "Close dialog",
   "dossierPanel.action": "Action",
   "dossierPanel.actor": "Actor",
@@ -350,42 +425,56 @@ export const uiEn = {
   "dossierPanel.casesCases": "( {cases} cases):",
   "dossierPanel.complianceDossier": "📋 Compliance Dossier",
   "dossierPanel.corpus": "Corpus",
-  "dossierPanel.dLPEffectivenessMeasuredPIIRecall": "DLP Effectiveness (measured PII recall)",
+  "dossierPanel.dLPEffectivenessMeasuredPIIRecall":
+    "DLP Effectiveness (measured PII recall)",
   "dossierPanel.downloadMarkdown": "↓ Download Markdown",
   "dossierPanel.downloading": "Downloading…",
   "dossierPanel.erased": "Erased",
-  "dossierPanel.evidentiaryDocumentForAnAuditor": "Evidentiary document for an auditor — audit-chain integrity, RTBF proof, retention posture, eval and security-posture evidence.",
+  "dossierPanel.evidentiaryDocumentForAnAuditor":
+    "Evidentiary document for an auditor — audit-chain integrity, RTBF proof, retention posture, eval and security-posture evidence.",
   "dossierPanel.generatedValueWindow": "Generated {value} — window",
   "dossierPanel.loading": "Loading…",
   "dossierPanel.modelQualityEvalEvidence": "Model Quality (Eval Evidence)",
-  "dossierPanel.noEvalRunsRecordedPOST": "No eval runs recorded. POST a report to /admin/eval/runs (e.g. from CI) to add evidence here.",
+  "dossierPanel.noEvalRunsRecordedPOST":
+    "No eval runs recorded. POST a report to /admin/eval/runs (e.g. from CI) to add evidence here.",
   "dossierPanel.noWindow": "no window",
   "dossierPanel.passedTotalPassedValue": "{passed}/{total} passed ({value}%)",
   "dossierPanel.precision": ", precision",
   "dossierPanel.rTBFCapable": "RTBF-capable",
-  "dossierPanel.redTeamSecurityPostureEngine": "Red-team / security posture engine not enabled.",
+  "dossierPanel.redTeamSecurityPostureEngine":
+    "Red-team / security posture engine not enabled.",
   "dossierPanel.refresh": "↻ Refresh",
   "dossierPanel.retentionPosture": "Retention Posture",
   "dossierPanel.rightToBeForgottenEvidence": "Right-to-be-Forgotten Evidence",
   "dossierPanel.securityPosture": "Security Posture",
-  "dossierPanel.tAMPERDETECTEDBrokenAtRecord": "✗ TAMPER DETECTED — broken at record # {id} ( {reason})",
+  "dossierPanel.tAMPERDETECTEDBrokenAtRecord":
+    "✗ TAMPER DETECTED — broken at record # {id} ( {reason})",
   "dossierPanel.time": "Time",
-  "dossierPanel.totalOperationsErasureOperationS": "{totalOperations} erasure operation(s),",
-  "dossierPanel.totalRecordsErasedRecordSErasedIn": "{totalRecordsErased} record(s) erased in window.",
-  "dossierPanel.valueFalseNegativesMissEs": "{value}% ( {falseNegatives} miss(es))",
-  "dossierPanel.verifiedCheckedRecordSChecked": "✓ Verified — {checked} record(s) checked, hash chain intact from genesis.",
-  "edgeDetailsPanel.beimLetztenRunUBer": "In the last run across this edge ({source} → {target}).",
-  "edgeDetailsPanel.classificationRouteRETOURE": "classification.route == 'RETOURE'",
-  "edgeDetailsPanel.conditionRoutingExpression": "Condition (routing expression)",
+  "dossierPanel.totalOperationsErasureOperationS":
+    "{totalOperations} erasure operation(s),",
+  "dossierPanel.totalRecordsErasedRecordSErasedIn":
+    "{totalRecordsErased} record(s) erased in window.",
+  "dossierPanel.valueFalseNegativesMissEs":
+    "{value}% ( {falseNegatives} miss(es))",
+  "dossierPanel.verifiedCheckedRecordSChecked":
+    "✓ Verified — {checked} record(s) checked, hash chain intact from genesis.",
+  "edgeDetailsPanel.beimLetztenRunUBer":
+    "In the last run across this edge ({source} → {target}).",
+  "edgeDetailsPanel.classificationRouteRETOURE":
+    "classification.route == 'RETOURE'",
+  "edgeDetailsPanel.conditionRoutingExpression":
+    "Condition (routing expression)",
   "edgeDetailsPanel.deleteEdge": "Delete edge",
   "edgeDetailsPanel.edge": "Edge",
   "edgeDetailsPanel.edgeCondition": "Edge condition",
   "edgeDetailsPanel.edgeLabel": "Edge label",
   "edgeDetailsPanel.emptyUnconditionalEdge": "Empty = unconditional edge.",
-  "edgeDetailsPanel.impliziterStartEndeUBergang": "Implicit start/end transition — not part of the flow definition and cannot be edited.",
+  "edgeDetailsPanel.impliziterStartEndeUBergang":
+    "Implicit start/end transition — not part of the flow definition and cannot be edited.",
   "edgeDetailsPanel.label": "Label",
   "edgeDetailsPanel.weitergegebeneDaten": "Data passed on",
-  "error.anUnexpectedErrorOccurredWhile": "An unexpected error occurred while rendering this page.",
+  "error.anUnexpectedErrorOccurredWhile":
+    "An unexpected error occurred while rendering this page.",
   "error.errorIDDigest": "Error ID: {digest}",
   "error.requestIDRequestId": "Request ID: {requestId}",
   "error.somethingWentWrong": "Something went wrong",
@@ -409,7 +498,8 @@ export const uiEn = {
   "eval.flow": "Flow",
   "eval.loadingEvalCases": "Loading eval cases",
   "eval.loadingEvalCases2": "Loading eval cases…",
-  "eval.noEvalCasesFoundSave": "No eval cases found. Save a Playground run as an eval case from Studio to build a regression dataset.",
+  "eval.noEvalCasesFoundSave":
+    "No eval cases found. Save a Playground run as an eval case from Studio to build a regression dataset.",
   "eval.prompt": "Prompt",
   "eval.runs": "Runs",
   "evalRunsPanel.asynchronousMatrixRuns": "Asynchronous matrix runs",
@@ -420,22 +510,28 @@ export const uiEn = {
   "evalRunsPanel.costValue": "Cost: {value}",
   "evalRunsPanel.dataset": "Dataset",
   "evalRunsPanel.evaluateANewFlowMatrix": "Evaluate a new flow matrix",
-  "evalRunsPanel.everyTaskIsExecutedAgainst": "Every task is executed against every selected flow. Runs continue asynchronously; for each result the execution ID, flow version and the full bounded debug trace are archived.",
+  "evalRunsPanel.everyTaskIsExecutedAgainst":
+    "Every task is executed against every selected flow. Runs continue asynchronously; for each result the execution ID, flow version and the full bounded debug trace are archived.",
   "evalRunsPanel.executionExecutionId": "Execution: {executionId}",
   "evalRunsPanel.failedCasesLength": "Failed cases ({length})",
-  "evalRunsPanel.failedToLoadDetailsMessage": "Failed to load details: {message}",
+  "evalRunsPanel.failedToLoadDetailsMessage":
+    "Failed to load details: {message}",
   "evalRunsPanel.failedToLoadEvalRuns": "Failed to load eval runs: {message}",
-  "evalRunsPanel.failedToLoadMatrixRuns": "Failed to load matrix runs: {message}",
+  "evalRunsPanel.failedToLoadMatrixRuns":
+    "Failed to load matrix runs: {message}",
   "evalRunsPanel.failedToLoadTraceMessage": "Failed to load trace: {message}",
   "evalRunsPanel.flowRunning": "Flow running…",
   "evalRunsPanel.latency": "Latency:",
-  "evalRunsPanel.lengthTasksLength2FlowsValue": "{length} tasks × {length2} flows · {value}",
+  "evalRunsPanel.lengthTasksLength2FlowsValue":
+    "{length} tasks × {length2} flows · {value}",
   "evalRunsPanel.loadingDetails": "Loading details…",
   "evalRunsPanel.loadingEvalRuns": "Loading eval runs…",
   "evalRunsPanel.loadingTrace": "Loading trace…",
   "evalRunsPanel.name": "Name",
-  "evalRunsPanel.noEvalRunsRecordedYet": "No eval runs recorded yet. Record one with",
-  "evalRunsPanel.noMatrixEvaluationStartedYet": "No matrix evaluation started yet.",
+  "evalRunsPanel.noEvalRunsRecordedYet":
+    "No eval runs recorded yet. Record one with",
+  "evalRunsPanel.noMatrixEvaluationStartedYet":
+    "No matrix evaluation started yet.",
   "evalRunsPanel.noTraceArchived": "No trace archived",
   "evalRunsPanel.notStartedYet": "Not started yet",
   "evalRunsPanel.openTrace": "Open trace",
@@ -444,16 +540,19 @@ export const uiEn = {
   "evalRunsPanel.recorded": "Recorded",
   "evalRunsPanel.recordedEvalRuns": "Recorded Eval Runs",
   "evalRunsPanel.response": "Response",
-  "evalRunsPanel.resultsFromReplayingAnEval": "Results from replaying an eval dataset against a flow (",
+  "evalRunsPanel.resultsFromReplayingAnEval":
+    "Results from replaying an eval dataset against a flow (",
   "evalRunsPanel.score": "Score:",
   "evalRunsPanel.seeTheEvalRegressionCI": "(see the eval:regression CI job).",
   "evalRunsPanel.selectFlows": "Select flows",
   "evalRunsPanel.source": "Source",
   "evalRunsPanel.startMatrixLengthFlows": "Start matrix ({length} flows)",
   "evalRunsPanel.taskId": "Task · {id}",
-  "evalRunsPanel.tasksAndPerfectAnswersJSON": "Tasks and perfect answers (JSON)",
+  "evalRunsPanel.tasksAndPerfectAnswersJSON":
+    "Tasks and perfect answers (JSON)",
   "evalRunsPanel.totalCost": "Total cost",
-  "evalRunsPanel.typicallyCIClickARow": ", typically CI). Click a row to see failed cases.",
+  "evalRunsPanel.typicallyCIClickARow":
+    ", typically CI). Click a row to see failed cases.",
   "executionHistory.cost": "Cost",
   "executionHistory.execution": "Execution",
   "executionHistory.executionHistory": "Execution history",
@@ -464,7 +563,8 @@ export const uiEn = {
   "executionHistory.status": "Status",
   "executionPicker.anonymous": "Anonymous",
   "executionPicker.clearHistory": "Clear history",
-  "executionPicker.deleteAllStoredRequestsFrom": "Delete all stored requests from the history",
+  "executionPicker.deleteAllStoredRequestsFrom":
+    "Delete all stored requests from the history",
   "executionPicker.estimatedCost": "Estimated cost",
   "executionPicker.flowFlowId": "Flow: {flowId}",
   "executionPicker.live": "Live",
@@ -472,8 +572,10 @@ export const uiEn = {
   "executionPicker.noRequestsYet": "No requests yet.",
   "executionPicker.requests": "Requests",
   "executionPicker.user": "User",
-  "explainCard.callCountCallSInputTokensOutputTokens": "{callCount} call(s) · {inputTokens}/{outputTokens} tok · {value}",
-  "explainCard.checkedSentencesSentenceSChecked": "{checked_sentences} sentence(s) checked",
+  "explainCard.callCountCallSInputTokensOutputTokens":
+    "{callCount} call(s) · {inputTokens}/{outputTokens} tok · {value}",
+  "explainCard.checkedSentencesSentenceSChecked":
+    "{checked_sentences} sentence(s) checked",
   "explainCard.cost": "Cost",
   "explainCard.decisionProvenanceCard": "Decision-Provenance Card",
   "explainCard.didNotSatisfy": "did not satisfy",
@@ -481,42 +583,55 @@ export const uiEn = {
   "explainCard.downloadMarkdown": "Download Markdown",
   "explainCard.downloading": "Downloading…",
   "explainCard.executionPath": "Execution path",
-  "explainCard.failedToLoadExplainabilityCard": "Failed to load explainability card: {message}",
+  "explainCard.failedToLoadExplainabilityCard":
+    "Failed to load explainability card: {message}",
   "explainCard.fallbackUsed": "fallback used",
-  "explainCard.groundednessLowestScoringNode": "Groundedness (lowest-scoring node)",
+  "explainCard.groundednessLowestScoringNode":
+    "Groundedness (lowest-scoring node)",
   "explainCard.latency": "Latency",
   "explainCard.loadingExplainabilityCard": "Loading explainability card…",
   "explainCard.models": "Models",
   "explainCard.modelsUsed": "Models used",
-  "explainCard.noExplainabilityCardAvailableFor": "No explainability card available for this execution.",
-  "explainCard.noOperatorActionsRecordedAgainst": "No operator actions recorded against this execution.",
+  "explainCard.noExplainabilityCardAvailableFor":
+    "No explainability card available for this execution.",
+  "explainCard.noOperatorActionsRecordedAgainst":
+    "No operator actions recorded against this execution.",
   "explainCard.noPricedLLMCallsRecorded": "No priced LLM calls recorded.",
-  "explainCard.objectiveDrivenRoutingSelected": "objective-driven routing: selected",
+  "explainCard.objectiveDrivenRoutingSelected":
+    "objective-driven routing: selected",
   "explainCard.objectiveSatisfied": "objective satisfied",
   "explainCard.operatorActions": "Operator actions",
   "explainCard.pIIVaultActions": "PII vault actions",
-  "explainCard.qualityValueValue2Samples": " · quality {value}% ({value2} samples)",
+  "explainCard.qualityValueValue2Samples":
+    " · quality {value}% ({value2} samples)",
   "explainCard.routedTo": "routed to",
   "explainCard.sentenceSupportValue": "“{sentence}” (support {value}%)",
-  "explainCard.signedMachineVerifiableJSONArtefact": "Signed, machine-verifiable JSON artefact (verify offline with: bun run scripts/cli.ts verify-bundle)",
+  "explainCard.signedMachineVerifiableJSONArtefact":
+    "Signed, machine-verifiable JSON artefact (verify offline with: bun run scripts/cli.ts verify-bundle --jwks <url|file> [--kid] or --secret <secret>)",
   "explainCard.steps": "Steps",
   "explainCard.tool": "(tool)",
-  "explainCard.totalTokenizedPIISpanSTokenized": "{totalTokenized} PII span(s) tokenized before reaching any LLM provider.",
+  "explainCard.totalTokenizedPIISpanSTokenized":
+    "{totalTokenized} PII span(s) tokenized before reaching any LLM provider.",
   "explainCard.unknownFlow": "(unknown flow)",
   "explainCard.userPrompt": "User prompt",
   "expressionCopilot.accept": "Accept",
   "expressionCopilot.ask": "Ask",
   "expressionCopilot.askTheExpressionCopilot": "Ask the expression copilot",
   "expressionCopilot.copilotProposal": "Copilot proposal",
-  "expressionCopilot.describeTheConditionEG": "Describe the condition, e.g. “route is RETOURE or the user asks about parking”",
-  "expressionCopilot.describeWhatToWriteOr": "Describe what to write or change, e.g. “half of the worker budget, rounded”",
+  "expressionCopilot.describeTheConditionEG":
+    "Describe the condition, e.g. “route is RETOURE or the user asks about parking”",
+  "expressionCopilot.describeWhatToWriteOr":
+    "Describe what to write or change, e.g. “half of the worker budget, rounded”",
   "expressionCopilot.discard": "Discard",
   "expressionCopilot.noChangeProposed": "No change proposed.",
   "expressionCopilot.refersTo": "Refers to:",
-  "expressionCopilot.sendTheCursorSelectionSo": "Send the cursor / selection so “here” or “this part” refer to it",
-  "expressionCopilot.theFieldChangedSinceYou": "The field changed since you asked — Accept replaces it with the proposal.",
+  "expressionCopilot.sendTheCursorSelectionSo":
+    "Send the cursor / selection so “here” or “this part” refer to it",
+  "expressionCopilot.theFieldChangedSinceYou":
+    "The field changed since you asked — Accept replaces it with the proposal.",
   "expressionCopilot.thinking": "Thinking…",
-  "finOpsPanel.aDailySpendHistoryRequires": "A daily spend history requires a durable (Postgres-backed) cost store. Configure",
+  "finOpsPanel.aDailySpendHistoryRequires":
+    "A daily spend history requires a durable (Postgres-backed) cost store. Configure",
   "finOpsPanel.budgetBurnRateForecast": "Budget burn-rate forecast",
   "finOpsPanel.burnRate": "Burn rate",
   "finOpsPanel.cO2ESGAccounting": "CO2 / ESG accounting",
@@ -525,11 +640,14 @@ export const uiEn = {
   "finOpsPanel.currentSpend": "Current spend",
   "finOpsPanel.estEmissions": "Est. emissions",
   "finOpsPanel.estEnergy": "Est. energy",
-  "finOpsPanel.estimatesOnlyDerivedFromPublished": "Estimates only — derived from published per-token energy studies and a configurable grid carbon intensity (",
+  "finOpsPanel.estimatesOnlyDerivedFromPublished":
+    "Estimates only — derived from published per-token energy studies and a configurable grid carbon intensity (",
   "finOpsPanel.failedToLoadCO2Report": "Failed to load CO2 report: {message}",
-  "finOpsPanel.failedToLoadForecastMessage": "Failed to load forecast: {message}",
+  "finOpsPanel.failedToLoadForecastMessage":
+    "Failed to load forecast: {message}",
   "finOpsPanel.forecast": "Forecast",
-  "finOpsPanel.gridCarbonIntensityKgCO2eKWh": "{gridCarbonIntensity} kg CO2e/kWh",
+  "finOpsPanel.gridCarbonIntensityKgCO2eKWh":
+    "{gridCarbonIntensity} kg CO2e/kWh",
   "finOpsPanel.gridIntensity": "Grid intensity",
   "finOpsPanel.kWh": "kWh",
   "finOpsPanel.kgCO2e": "kg CO2e",
@@ -537,7 +655,8 @@ export const uiEn = {
   "finOpsPanel.loadingForecast": "Loading forecast…",
   "finOpsPanel.model": "Model",
   "finOpsPanel.noTokenUsageRecordedYet": "No token usage recorded yet.",
-  "finOpsPanel.notMeasuredInfrastructureTelemetry": "), not measured infrastructure telemetry.",
+  "finOpsPanel.notMeasuredInfrastructureTelemetry":
+    "), not measured infrastructure telemetry.",
   "finOpsPanel.tenantId": "Tenant id…",
   "finOpsPanel.tenantId2": "Tenant id",
   "finOpsPanel.toEnableThisForecast": "to enable this forecast.",
@@ -550,10 +669,14 @@ export const uiEn = {
   "flowCanvas.fit": "Fit",
   "flowCanvas.fitTheWholeFlowInto": "Fit the whole flow into view",
   "flowCanvas.map": "Map",
-  "flowCanvas.overviewMapDragToPan": "Overview map — drag to pan, scroll to zoom",
-  "flowCanvas.reArrangeAllNodesTop": "Re-arrange all nodes top-down by their connections (undo with Cmd/Ctrl+Z)",
-  "flowCanvas.showHideTheOverviewMap": "Show/hide the overview map (bottom right)",
-  "flowCanvas.showToolConnectionsNodesOne": "Show tool connections — nodes one node calls (parallel children, harness workers and verifier), defined in its settings. They dock right → left and are dashed; the run's flow runs top → bottom.",
+  "flowCanvas.overviewMapDragToPan":
+    "Overview map — drag to pan, scroll to zoom",
+  "flowCanvas.reArrangeAllNodesTop":
+    "Re-arrange all nodes top-down by their connections (undo with Cmd/Ctrl+Z)",
+  "flowCanvas.showHideTheOverviewMap":
+    "Show/hide the overview map (bottom right)",
+  "flowCanvas.showToolConnectionsNodesOne":
+    "Show tool connections — nodes one node calls (parallel children, harness workers and verifier), defined in its settings. They dock right → left and are dashed; the run's flow runs top → bottom.",
   "flowCanvas.tidyUp": "Tidy up",
   "flowCanvas.toolLinks": "Tool links",
   "flowCanvas.zoomIn": "Zoom in",
@@ -563,17 +686,21 @@ export const uiEn = {
   "flowCopilotPanel.collapseCopilot": "Collapse copilot",
   "flowCopilotPanel.copilot": "✨ Copilot",
   "flowCopilotPanel.copilotInstruction": "Copilot instruction",
-  "flowCopilotPanel.describeAnEditEG": "Describe an edit… e.g. \"add a guardrail node before the LLM node\"",
+  "flowCopilotPanel.describeAnEditEG":
+    'Describe an edit… e.g. "add a guardrail node before the LLM node"',
   "flowCopilotPanel.expandCopilot": "Expand copilot",
-  "flowCopilotPanel.previewShownOnCanvasAccept": "Preview shown on canvas — accept to apply, or keep editing.",
+  "flowCopilotPanel.previewShownOnCanvasAccept":
+    "Preview shown on canvas — accept to apply, or keep editing.",
   "flowCopilotPanel.refersTo": "Refers to:",
   "flowCopilotPanel.reject": "Reject",
-  "flowCopilotPanel.sendTheSelectionSoThis": "Send the selection so “this node”, “here” or “the selected text” refer to it",
+  "flowCopilotPanel.sendTheSelectionSoThis":
+    "Send the selection so “this node”, “here” or “the selected text” refer to it",
   "flowCopilotPanel.thinking": "Thinking…",
   "flowDiff.loadingFlowDiff": "Loading flow diff",
   "flowDiffPanel.changeOfPath": "Change of {path}",
   "flowDiffPanel.loadingDiff": "Loading diff…",
-  "flowDiffPanel.noChangesBetweenFromLabelAnd": "✓ No changes between {fromLabel} and {toLabel}.",
+  "flowDiffPanel.noChangesBetweenFromLabelAnd":
+    "✓ No changes between {fromLabel} and {toLabel}.",
   "flowDiffPanel.noDiffAvailable": "No diff available.",
   "flowDiffPanel.refreshDiff": "Refresh diff",
   "flowDiffPanel.showTheDetails": "Show the details",
@@ -592,45 +719,59 @@ export const uiEn = {
   "flowDiffTab.noNodesRemoved": "No nodes removed.",
   "flowDiffTab.nodes": "Nodes",
   "flowDiffTab.showDiff": "Show Diff",
-  "flowDiffTab.twoFlowsToCompareWith": "Two flows to compare. With “Draft” checked, each dropdown also lists the drafts under its flow.",
+  "flowDiffTab.twoFlowsToCompareWith":
+    "Two flows to compare. With “Draft” checked, each dropdown also lists the drafts under its flow.",
   "flowDiffTab.vergleichsquelleVon": "Compare source (from)",
   "flowDiffTab.vergleichszielNach": "Compare target (to)",
   "flowDiffTab.von": "From",
   "flowEndpointPicker.ariaLabelSearchFlows": "{ariaLabel}: search flows",
   "flowEndpointPicker.loading": "loading…",
   "flowEndpointPicker.noFlowMatchesQuery": "No flow matches “{query}”.",
-  "flowEndpointPicker.searchLengthFlowsByName": "Search {length} flows by name or id…",
+  "flowEndpointPicker.searchLengthFlowsByName":
+    "Search {length} flows by name or id…",
   "flowMultiSelect.auswahlLoSchen": "Clear selection",
   "flowMultiSelect.keineFlowsVerfuGbar": "No flows available",
   "flowMultiSelect.labelSearchFlows": "{label}: search flows",
   "flowMultiSelect.noFlowMatchesQuery": "No flow matches “{query}”.",
   "flowMultiSelect.searchByNameOrId": "Search by name or id…",
   "flowNodePalette.addLabelNode": "Add {label} node",
-  "flowNodePalette.descriptionDragOntoTheCanvas": "{description} — drag onto the canvas or double-click to add",
-  "flowNodePalette.labelDescriptionDragOrDouble": "{label} — {description} (drag or double-click)",
+  "flowNodePalette.descriptionDragOntoTheCanvas":
+    "{description} — drag onto the canvas or double-click to add",
+  "flowNodePalette.labelDescriptionDragOrDouble":
+    "{label} — {description} (drag or double-click)",
   "flowNodePalette.noMatches": "No matches.",
   "flowNodePalette.node.LLM": "LLM",
-  "flowNodePalette.node.LLMDescription": "Streaming model call with an optional tool loop",
+  "flowNodePalette.node.LLMDescription":
+    "Streaming model call with an optional tool loop",
   "flowNodePalette.node.agentHarness": "Agent harness",
-  "flowNodePalette.node.agentHarnessDescription": "Planner/worker loop with budgets, verification and delegation",
+  "flowNodePalette.node.agentHarnessDescription":
+    "Planner/worker loop with budgets, verification and delegation",
   "flowNodePalette.node.assistantContext": "Assistant context",
-  "flowNodePalette.node.assistantContextDescription": "Loads a per-user assistant's context into the run",
+  "flowNodePalette.node.assistantContextDescription":
+    "Loads a per-user assistant's context into the run",
   "flowNodePalette.node.assistantLearn": "Assistant learn",
-  "flowNodePalette.node.assistantLearnDescription": "Writes learnings back to the per-user assistant",
+  "flowNodePalette.node.assistantLearnDescription":
+    "Writes learnings back to the per-user assistant",
   "flowNodePalette.node.classifier": "Classifier",
-  "flowNodePalette.node.classifierDescription": "Structured output; writes state.classification",
+  "flowNodePalette.node.classifierDescription":
+    "Structured output; writes state.classification",
   "flowNodePalette.node.memory": "Memory",
-  "flowNodePalette.node.memoryDescription": "Recalls long-term memories for personalisation",
+  "flowNodePalette.node.memoryDescription":
+    "Recalls long-term memories for personalisation",
   "flowNodePalette.node.parallel": "Parallel",
-  "flowNodePalette.node.parallelDescription": "Fan-out to concurrently executed child nodes",
+  "flowNodePalette.node.parallelDescription":
+    "Fan-out to concurrently executed child nodes",
   "flowNodePalette.node.retrieval": "Retrieval",
-  "flowNodePalette.node.retrievalDescription": "RAG — embeds the query and fetches grounding context",
+  "flowNodePalette.node.retrievalDescription":
+    "RAG — embeds the query and fetches grounding context",
   "flowNodePalette.node.router": "Router",
-  "flowNodePalette.node.routerDescription": "Routing-only — evaluates outgoing edge conditions",
+  "flowNodePalette.node.routerDescription":
+    "Routing-only — evaluates outgoing edge conditions",
   "flowNodePalette.node.tool": "Tool",
   "flowNodePalette.node.toolDescription": "Deterministic MCP tool invocation",
   "flowNodePalette.node.transform": "Transform",
-  "flowNodePalette.node.transformDescription": "Deterministic derive/extract rules on the flow state",
+  "flowNodePalette.node.transformDescription":
+    "Deterministic derive/extract rules on the flow state",
   "flowNodePalette.searchNodePalette": "Search node palette",
   "flowNodePalette.searchNodes": "Search nodes…",
   "flowPicker.loading": "loading…",
@@ -638,23 +779,28 @@ export const uiEn = {
   "flowPicker.searchFlows": "Search flows",
   "flowPicker.searchLengthFlowsByName": "Search {length} flows by name or id…",
   "flowRunDrawer.attachImage": "Attach image",
-  "flowRunDrawer.attachImageSToThe": "Attach image(s) to the prompt — or drop them here",
+  "flowRunDrawer.attachImageSToThe":
+    "Attach image(s) to the prompt — or drop them here",
   "flowRunDrawer.attachImagesToTheTest": "Attach images to the test prompt",
   "flowRunDrawer.cancel": "Cancel",
   "flowRunDrawer.clearResultAndCanvasTrace": "Clear result and canvas trace",
-  "flowRunDrawer.deleteThisEvalCaseFrom": "Delete this eval case from the dataset again",
+  "flowRunDrawer.deleteThisEvalCaseFrom":
+    "Delete this eval case from the dataset again",
   "flowRunDrawer.dropImagesToAttach": "Drop images to attach…",
   "flowRunDrawer.evalCaseRemoved": "Eval case removed.",
   "flowRunDrawer.expectedAnswer": "Expected answer",
-  "flowRunDrawer.expectedAnswerReferenceForThe": "Expected answer (reference for the eval)",
-  "flowRunDrawer.noTraceDataReceivedMonitoring": "No trace data received (monitoring stream unavailable?)",
+  "flowRunDrawer.expectedAnswerReferenceForThe":
+    "Expected answer (reference for the eval)",
+  "flowRunDrawer.noTraceDataReceivedMonitoring":
+    "No trace data received (monitoring stream unavailable?)",
   "flowRunDrawer.nodesNodeSTraced": "{nodes} node(s) traced",
   "flowRunDrawer.notPinnedMessage": "Not pinned: {message}",
   "flowRunDrawer.openedFromTheLiveGraph": "opened from the Live Graph",
   "flowRunDrawer.pinAsSampleData": "📌 Pin as sample data",
   "flowRunDrawer.pinnedAsSampleData": "📌 Pinned as sample data",
   "flowRunDrawer.pinning": "Pinning…",
-  "flowRunDrawer.preFilledWithThisRun": "Pre-filled with this run's answer — correct it to what the flow SHOULD answer. Evals compare future runs against it.",
+  "flowRunDrawer.preFilledWithThisRun":
+    "Pre-filled with this run's answer — correct it to what the flow SHOULD answer. Evals compare future runs against it.",
   "flowRunDrawer.ranAsFlowId": " (ran as {flowId})",
   "flowRunDrawer.remove": "Remove",
   "flowRunDrawer.removeName": "Remove {name}",
@@ -669,23 +815,31 @@ export const uiEn = {
   "flowRunDrawer.saving": "Saving…",
   "flowRunDrawer.stillRunningTracingLive": "— still running, tracing live…",
   "flowRunDrawer.stop": "Stop",
-  "flowRunDrawer.storeThisPromptWithA": "Store this prompt with a reference answer in the eval dataset",
+  "flowRunDrawer.storeThisPromptWithA":
+    "Store this prompt with a reference answer in the eval dataset",
   "flowRunDrawer.testPrompt": "Test prompt",
-  "flowRunDrawer.testPromptImagesCanBe": "Test prompt… (images can be dropped here)",
+  "flowRunDrawer.testPromptImagesCanBe":
+    "Test prompt… (images can be dropped here)",
   "flowRunDrawer.thinking": "Thinking",
-  "flowRunDrawer.thisRuntimeCanTRun": "This runtime can't run the canvas directly — ran the LIVE version instead.",
-  "flowRunDrawer.thisRuntimeCanTTest": "This runtime can't test unsaved canvases, and the flow isn't live yet — save it first.",
-  "flowRunDrawer.useThisRunSNode": "Use this run's node results, query and user context as preview values in the expression builder (ƒx)",
+  "flowRunDrawer.thisRuntimeCanTRun":
+    "This runtime can't run the canvas directly — ran the LIVE version instead.",
+  "flowRunDrawer.thisRuntimeCanTTest":
+    "This runtime can't test unsaved canvases, and the flow isn't live yet — save it first.",
+  "flowRunDrawer.useThisRunSNode":
+    "Use this run's node results, query and user context as preview values in the expression builder (ƒx)",
   "flowRunDrawer.whatToRun": "What to run",
   "flowSettingsPanel.description": "Description",
   "flowSettingsPanel.flowDescription": "Flow description",
   "flowSettingsPanel.flowId": "Flow id",
   "flowSettingsPanel.flowSettings": "Flow settings",
-  "flowSettingsPanel.lowercaseLettersDigitsAndDashes": "Lowercase letters, digits and dashes.",
+  "flowSettingsPanel.lowercaseLettersDigitsAndDashes":
+    "Lowercase letters, digits and dashes.",
   "flowSettingsPanel.name": "Name",
-  "flowSettingsPanel.nothingSelectedSelectANode": "Nothing selected — select a node or edge on the canvas to edit it.",
+  "flowSettingsPanel.nothingSelectedSelectANode":
+    "Nothing selected — select a node or edge on the canvas to edit it.",
   "flowSettingsPanel.otherFlowFields": "Other flow fields",
-  "flowSettingsPanel.pricingDataClassesRecoveryEverythingNot": "pricing, dataClasses, recovery, … — everything not edited above.",
+  "flowSettingsPanel.pricingDataClassesRecoveryEverythingNot":
+    "pricing, dataClasses, recovery, … — everything not edited above.",
   "flowVersionBar.cancel": "Cancel",
   "flowVersionBar.compare": "Compare",
   "flowVersionBar.draftLiveVersion": "Draft ↔ live version",
@@ -698,22 +852,28 @@ export const uiEn = {
   "flows.registry": "Registry",
   "flowsTab.actions": "Actions",
   "flowsTab.averageCostPerRunIn": "Average cost per run in the last {range}",
-  "flowsTab.averageRunDurationInThe": "Average run duration in the last {range}",
+  "flowsTab.averageRunDurationInThe":
+    "Average run duration in the last {range}",
   "flowsTab.avgCost": "Avg cost",
   "flowsTab.avgRuntime": "Avg runtime",
   "flowsTab.delete": "Delete",
   "flowsTab.deleteFlow": "Delete flow",
-  "flowsTab.deleteFlowIdThisRemoves": "Delete flow \"{id}\"? This removes its draft, published version and history.",
-  "flowsTab.downloadTheFlowDefinitionAs": "Download the flow definition as JSON",
+  "flowsTab.deleteFlowIdThisRemoves":
+    'Delete flow "{id}"? This removes its draft, published version and history.',
+  "flowsTab.downloadTheFlowDefinitionAs":
+    "Download the flow definition as JSON",
   "flowsTab.edit": "Edit",
   "flowsTab.executionsInTheLastRange": "Executions in the last {range}",
   "flowsTab.export": "Export",
   "flowsTab.fLOWEDITORENABLEDTrue": "FLOW_EDITOR_ENABLED=true",
   "flowsTab.flow": "Flow",
-  "flowsTab.flowIdExistsReplaceIts": "Flow \"{id}\" exists. Replace its draft with the imported flow?",
+  "flowsTab.flowIdExistsReplaceIts":
+    'Flow "{id}" exists. Replace its draft with the imported flow?',
   "flowsTab.flows": "Flows",
-  "flowsTab.flowsDescribeHowRequestsAre": "Flows describe how requests are routed through nodes and edges. Create one in Studio or import a flow JSON file.",
-  "flowsTab.forDurabilityToAuthorFlows": "for durability) to author flows online.",
+  "flowsTab.flowsDescribeHowRequestsAre":
+    "Flows describe how requests are routed through nodes and edges. Create one in Studio or import a flow JSON file.",
+  "flowsTab.forDurabilityToAuthorFlows":
+    "for durability) to author flows online.",
   "flowsTab.import": "Import",
   "flowsTab.importFlowJSON": "Import flow JSON",
   "flowsTab.inspect": "Inspect",
@@ -721,7 +881,8 @@ export const uiEn = {
   "flowsTab.newFlow": "+ New flow",
   "flowsTab.noFlowsYet": "No flows yet.",
   "flowsTab.nodes": "Nodes",
-  "flowsTab.onlineEditingIsDisabledFlows": "Online editing is disabled — flows are inspected read-only and validated in Studio. Set",
+  "flowsTab.onlineEditingIsDisabledFlows":
+    "Online editing is disabled — flows are inspected read-only and validated in Studio. Set",
   "flowsTab.overridesFile": "(overrides file)",
   "flowsTab.refresh": "Refresh",
   "flowsTab.replace": "Replace",
@@ -734,7 +895,8 @@ export const uiEn = {
   "flowsTab.totalCostInTheLast": "Total cost in the last {range}",
   "flowsTab.ver": "Ver.",
   "flowsTab.with": "(with",
-  "form-controls.invalidJSONNotAppliedValue": "Invalid JSON — not applied ({value})",
+  "form-controls.invalidJSONNotAppliedValue":
+    "Invalid JSON — not applied ({value})",
   "form-controls.mustNotBeEmpty": "Must not be empty.",
   "formulaEditorDialog.apply": "Apply",
   "formulaEditorDialog.atRunTimePreview": "At run time (preview)",
@@ -744,9 +906,11 @@ export const uiEn = {
   "formulaEditorDialog.conditionExpression": "condition expression",
   "formulaEditorDialog.dismissEditor": "Dismiss editor",
   "formulaEditorDialog.empty": "(empty)",
-  "formulaEditorDialog.flowVariablesAndDateTime": "(flow variables and date/time are filled automatically)",
+  "formulaEditorDialog.flowVariablesAndDateTime":
+    "(flow variables and date/time are filled automatically)",
   "formulaEditorDialog.noValue": "(no value)",
-  "formulaEditorDialog.numbersTrueFalseNullAnd": "Numbers, true/false, null and JSON are typed; anything else is text.",
+  "formulaEditorDialog.numbersTrueFalseNullAnd":
+    "Numbers, true/false, null and JSON are typed; anything else is text.",
   "formulaEditorDialog.operators": "Operators",
   "formulaEditorDialog.preview": "Preview",
   "formulaEditorDialog.result": "Result",
@@ -754,18 +918,25 @@ export const uiEn = {
   "formulaEditorDialog.sampleValues": "Sample values",
   "formulaEditorDialog.textWithPlaceholders": "text with placeholders",
   "formulaEditorDialog.theFormulaReadsNoRun": "The formula reads no run values",
-  "formulaEditorDialog.valuePlaceholdersCalculations": "value · placeholders & calculations",
+  "formulaEditorDialog.valuePlaceholdersCalculations":
+    "value · placeholders & calculations",
   "formulaEditorDialog.whenTheFlowLoads": "When the flow loads",
-  "formulaEditorDialog.withoutAValueRendersEmpty": "Without a value (renders empty): {value}",
+  "formulaEditorDialog.withoutAValueRendersEmpty":
+    "Without a value (renders empty): {value}",
   "formulaInputs.checkTest": "(check & test)",
   "formulaInputs.insertAVariableIntoLabel": "Insert a variable into {label}",
   "formulaInputs.openEditor": "Open editor",
-  "formulaInputs.openTheConditionEditorVariables": "Open the condition editor (variables, operators, live test)",
-  "formulaInputs.openTheEditorVariablesPreview": "Open the editor (variables, preview)",
-  "formulaInputs.openTheExpressionBuilderFor": "Open the expression builder for {label}",
-  "formulaInputs.openTheFormulaEditorFor": "Open the formula editor for {ariaLabel}",
+  "formulaInputs.openTheConditionEditorVariables":
+    "Open the condition editor (variables, operators, live test)",
+  "formulaInputs.openTheEditorVariablesPreview":
+    "Open the editor (variables, preview)",
+  "formulaInputs.openTheExpressionBuilderFor":
+    "Open the expression builder for {label}",
+  "formulaInputs.openTheFormulaEditorFor":
+    "Open the formula editor for {ariaLabel}",
   "formulaInputs.preview": "(preview)",
-  "global-error.anUnexpectedErrorOccurredWhile": "An unexpected error occurred while loading the application.",
+  "global-error.anUnexpectedErrorOccurredWhile":
+    "An unexpected error occurred while loading the application.",
   "global-error.errorIDDigest": "Error ID: {digest}",
   "global-error.somethingWentWrong": "Something went wrong",
   "global-error.tryAgain": "Try again",
@@ -780,8 +951,10 @@ export const uiEn = {
   "graph.noExecutionEventsYet": "No execution events yet.",
   "graph.openInStudio": "Open in Studio",
   "graph.openStudio": "Open Studio",
-  "graph.openThisRequestInThe": "Open this request in the Studio's Run & Trace, as if it had been started there — trace it on the canvas and pin it as sample data",
-  "graph.sendAChatRequestTo": "Send a chat request to watch it flow through the graph node by node — or set up a provider first if none is configured yet.",
+  "graph.openThisRequestInThe":
+    "Open this request in the Studio's Run & Trace, as if it had been started there — trace it on the canvas and pin it as sample data",
+  "graph.sendAChatRequestTo":
+    "Send a chat request to watch it flow through the graph node by node — or set up a provider first if none is configured yet.",
   "graphLegend.nodeType": "Node type",
   "graphLegend.status": "Status",
   "graphLegend.type.classifier": "Classifier",
@@ -793,28 +966,34 @@ export const uiEn = {
   "graphLegend.type.retrievalRag": "Retrieval / RAG",
   "graphLegend.type.router": "Router",
   "graphLegend.type.tool": "Tool",
-  "graphVisualizer.chronologicalWaterfallTimeline": "Chronological waterfall timeline",
+  "graphVisualizer.chronologicalWaterfallTimeline":
+    "Chronological waterfall timeline",
   "graphVisualizer.flow": "⬇ Flow",
   "graphVisualizer.noExecutionEventsYet": "No execution events yet.",
   "graphVisualizer.timeline": "⏱ Timeline",
-  "graphVisualizer.topDownFlowLayoutIntuitive": "Top-down flow layout (intuitive)",
+  "graphVisualizer.topDownFlowLayoutIntuitive":
+    "Top-down flow layout (intuitive)",
   "guardrails.allFlows": "* (all flows)",
   "guardrails.disabled": "(disabled)",
-  "guardrails.failedToLoadGuardrailsMessage": "Failed to load guardrails: {message}",
+  "guardrails.failedToLoadGuardrailsMessage":
+    "Failed to load guardrails: {message}",
   "guardrails.guardrailPolicy": "Guardrail Policy",
   "guardrails.loadingGuardrailPolicies": "Loading guardrail policies",
   "guardrails.loadingPolicy": "Loading policy…",
-  "guardrails.noGuardrailsYamlFoundCreate": "No guardrails.yaml found. Create one in FLOWS_DIR to configure per-flow input/output/egress guardrail overrides.",
+  "guardrails.noGuardrailsYamlFoundCreate":
+    "No guardrails.yaml found. Create one in FLOWS_DIR to configure per-flow input/output/egress guardrail overrides.",
   "guardrails.policyLoadedButHasNo": "Policy loaded but has no rules.",
   "guardrails.redactsPII": "redacts PII",
   "headersTable.header": "Header",
   "headersTable.value": "Value",
   "history.loadingExecutionHistory": "Loading execution history",
   "jobs.loadingJobs": "Loading jobs",
-  "jobsPanel.aJobWhoseExecutingReplica": "), a job whose executing replica crashed is automatically retried up to a bounded number of attempts — visible below as",
+  "jobsPanel.aJobWhoseExecutingReplica":
+    "), a job whose executing replica crashed is automatically retried up to a bounded number of attempts — visible below as",
   "jobsPanel.asyncJobStatus": "Async job status",
   "jobsPanel.attempt": "Attempt",
-  "jobsPanel.byTheIdItWas": ") by the id it was returned with. When the Durable Agent Runtime is enabled (",
+  "jobsPanel.byTheIdItWas":
+    ") by the id it was returned with. When the Durable Agent Runtime is enabled (",
   "jobsPanel.created": "Created",
   "jobsPanel.empty": "(empty)",
   "jobsPanel.enterAJobIdTo": "Enter a job id to check its status.",
@@ -824,12 +1003,15 @@ export const uiEn = {
   "jobsPanel.lookingUpJobId": "Looking up {jobId}…",
   "jobsPanel.modelFlow": "Model / flow",
   "jobsPanel.orHeader": "or header",
-  "jobsPanel.recoveredAttemptAttemptMaxAttempts": "recovered — attempt {attempt}/{max_attempts}",
+  "jobsPanel.recoveredAttemptAttemptMaxAttempts":
+    "recovered — attempt {attempt}/{max_attempts}",
   "jobsPanel.result": "Result",
-  "jobsPanel.thisJobSurvivedACrash": "This job survived a crash and was retried",
+  "jobsPanel.thisJobSurvivedACrash":
+    "This job survived a crash and was retried",
   "jobsPanel.updated": "Updated",
   "limits.loadingLimits": "Loading limits",
-  "limitsPanel.aScopeTypeLimitNeedsA": "A {scopeType} limit needs a {scopeType2} id.",
+  "limitsPanel.aScopeTypeLimitNeedsA":
+    "A {scopeType} limit needs a {scopeType2} id.",
   "limitsPanel.addUpdateALimit": "Add / update a limit",
   "limitsPanel.all": "All",
   "limitsPanel.all2": "(all)",
@@ -843,7 +1025,8 @@ export const uiEn = {
   "limitsPanel.delete": "Delete",
   "limitsPanel.deleteTokenLimit": "Delete token limit?",
   "limitsPanel.edit": "Edit",
-  "limitsPanel.enforcedAtRequestAdmissionA": "Enforced at request admission: a request is rejected once a matching limit is exhausted for its window (soft cap — an in-flight request may slightly exceed it).",
+  "limitsPanel.enforcedAtRequestAdmissionA":
+    "Enforced at request admission: a request is rejected once a matching limit is exhausted for its window (soft cap — an in-flight request may slightly exceed it).",
   "limitsPanel.enterAPositiveTokenLimit": "Enter a positive token limit.",
   "limitsPanel.flow": "Flow",
   "limitsPanel.flowId": "Flow id",
@@ -852,7 +1035,8 @@ export const uiEn = {
   "limitsPanel.hourly": "Hourly",
   "limitsPanel.limitTokens": "Limit (tokens)",
   "limitsPanel.model": "Model",
-  "limitsPanel.noLimitsConfiguredYetAdd": "No limits configured yet. Add one below.",
+  "limitsPanel.noLimitsConfiguredYetAdd":
+    "No limits configured yet. Add one below.",
   "limitsPanel.noUsageRecordedInThis": "No usage recorded in this range.",
   "limitsPanel.perDay": "Per day",
   "limitsPanel.perFlow": "Per flow",
@@ -864,7 +1048,8 @@ export const uiEn = {
   "limitsPanel.saveLimit": "Save limit",
   "limitsPanel.saving": "Saving…",
   "limitsPanel.scope": "Scope",
-  "limitsPanel.theLimitStopsApplyingImmediately": "The limit stops applying immediately.",
+  "limitsPanel.theLimitStopsApplyingImmediately":
+    "The limit stops applying immediately.",
   "limitsPanel.to": "To",
   "limitsPanel.tokenUsageOverTime": "Token usage over time",
   "limitsPanel.usedLimit": "Used / Limit",
@@ -881,7 +1066,8 @@ export const uiEn = {
   "mcp.noMCPServersRegistered": "No MCP servers registered.",
   "mcp.noToolsRegistered": "No tools registered.",
   "mcp.tools": "Tools",
-  "memory.allLongTermMemoriesOf": "All long-term memories of {userId} in this session are deleted. This cannot be undone.",
+  "memory.allLongTermMemoriesOf":
+    "All long-term memories of {userId} in this session are deleted. This cannot be undone.",
   "memory.andAConfigured": "and a configured",
   "memory.clear": "Clear",
   "memory.clearSessionForUserId": "Clear session for {userId}",
@@ -890,7 +1076,8 @@ export const uiEn = {
   "memory.loadingEntries": "Loading entries…",
   "memory.loadingMemorySessions": "Loading memory sessions",
   "memory.loadingSessions": "Loading sessions…",
-  "memory.longTermMemoryIsNot": "Long-term memory is not enabled on this backend. Start the runtime with",
+  "memory.longTermMemoryIsNot":
+    "Long-term memory is not enabled on this backend. Start the runtime with",
   "memory.memorySessions": "Memory Sessions",
   "memory.noEntries": "No entries.",
   "memory.noMemorySessionsFound": "No memory sessions found.",
@@ -913,9 +1100,11 @@ export const uiEn = {
   "metricsSidebar.nodeStatus": "Node Status",
   "metricsSidebar.openFullscreen": "Open fullscreen",
   "metricsSidebar.requestTimeseries": "Request Timeseries",
-  "metricsSidebar.requestTimeseriesFullscreen": "Request timeseries (fullscreen)",
+  "metricsSidebar.requestTimeseriesFullscreen":
+    "Request timeseries (fullscreen)",
   "metricsSidebar.totalNodes": "Total Nodes",
-  "modelSourceFields.aNameFromFlowsModel": "A name from flows/model-shortcuts.yaml or {{vars.…}}. It sets provider, model and the preset's parameters; parameters below override the preset's.",
+  "modelSourceFields.aNameFromFlowsModel":
+    "A name from flows/model-shortcuts.yaml or {{vars.…}}. It sets provider, model and the preset's parameters; parameters below override the preset's.",
   "modelSourceFields.eGFastPoolOr": "e.g. fast-pool or {{vars.model_main}}",
   "modelSourceFields.model": "Model",
   "modelSourceFields.modelShortcut": "Model shortcut",
@@ -923,25 +1112,29 @@ export const uiEn = {
   "modelSourceFields.provider": "Provider",
   "modelSourceFields.remove": "Remove",
   "modelSourceFields.shortcut": "Shortcut",
-  "modelSourceFields.thisNodeAlsoSetsProvider": "This node also sets provider/model ({value}), which the shortcut overwrites.",
+  "modelSourceFields.thisNodeAlsoSetsProvider":
+    "This node also sets provider/model ({value}), which the shortcut overwrites.",
   "models.capabilities": "Capabilities",
   "models.close": "✕ Close",
   "models.created": "Created",
   "models.displayName": "Display name",
-  "models.everyLoadedFlowIsExposed": "Every loaded flow is exposed as an OpenAI-compatible model. Use the model ID in",
+  "models.everyLoadedFlowIsExposed":
+    "Every loaded flow is exposed as an OpenAI-compatible model. Use the model ID in",
   "models.lengthOfLength2ModelS": "{length} of {length2} model(s)",
   "models.loading": "Loading…",
   "models.loadingModels": "Loading models",
-  "models.matchingSearch": " matching \"{search}\"",
+  "models.matchingSearch": ' matching "{search}"',
   "models.modelCatalog": "Model Catalog",
   "models.modelDetail": "Model detail —",
-  "models.noModelsFoundLoadA": "No models found. Load a flow YAML to register a model.",
+  "models.noModelsFoundLoadA":
+    "No models found. Load a flow YAML to register a model.",
   "models.noModelsMatchYourSearch": "No models match your search.",
   "models.ownedBy": "Owned by",
   "models.rawJSON": "Raw JSON",
   "models.refresh": "↻ Refresh",
   "models.searchByIdOrName": "Search by id or name…",
-  "models.supportsReasoningThinkingBlocks": "Supports reasoning/thinking blocks",
+  "models.supportsReasoningThinkingBlocks":
+    "Supports reasoning/thinking blocks",
   "models.useThisModelInAPI": "Use this model in API calls:",
   "nodeClassifierSection.classKey": "Class key",
   "nodeClassifierSection.classifier": "Classifier",
@@ -957,8 +1150,10 @@ export const uiEn = {
   "nodeDetailRenderers.inputClassifierPrompt": "Input (Classifier Prompt)",
   "nodeDetailRenderers.inputQueryArgs": "Input (Query / Args)",
   "nodeDetailRenderers.inputSourcesQuery": "Input (Sources & Query)",
-  "nodeDetailRenderers.noIODataCaptured": "No I/O data captured for this node. The parallel node collects results from child nodes and passes the assembled context downstream.",
-  "nodeDetailRenderers.noIODataCaptured2": "No I/O data captured for this node.",
+  "nodeDetailRenderers.noIODataCaptured":
+    "No I/O data captured for this node. The parallel node collects results from child nodes and passes the assembled context downstream.",
+  "nodeDetailRenderers.noIODataCaptured2":
+    "No I/O data captured for this node.",
   "nodeDetailRenderers.noMatchEnd": "— (no match → end)",
   "nodeDetailRenderers.noRequestDataAvailable": "No request data available.",
   "nodeDetailRenderers.output": "Output",
@@ -975,45 +1170,57 @@ export const uiEn = {
   "nodeDetailRenderers.toolCall": "Tool Call",
   "nodeIdHeading.node": "Node",
   "nodeIdHeading.nodeId": "Node id",
-  "nodeIdHeading.renameThisNodeEdgesAnd": "Rename this node — edges and references in other nodes are updated too",
-  "nodeModelSection.chatTemplateKwargsExtraBodyVisionInput": "chatTemplateKwargs, extraBody, visionInput, …",
+  "nodeIdHeading.renameThisNodeEdgesAnd":
+    "Rename this node — edges and references in other nodes are updated too",
+  "nodeModelSection.chatTemplateKwargsExtraBodyVisionInput":
+    "chatTemplateKwargs, extraBody, visionInput, …",
   "nodeModelSection.contextLength": "Context length",
   "nodeModelSection.maxTokens": "Max tokens",
   "nodeModelSection.model": "Model",
   "nodeModelSection.modelPool": "Model pool",
   "nodeModelSection.otherModelParameters": "Other model parameters",
   "nodeModelSection.reasoningEffort": "Reasoning effort",
-  "nodeModelSection.strategyCandidatesProviderModelFirst": "{ strategy, candidates: [{ provider, model }, …] } — first candidate should match the model above.",
+  "nodeModelSection.strategyCandidatesProviderModelFirst":
+    "{ strategy, candidates: [{ provider, model }, …] } — first candidate should match the model above.",
   "nodeModelSection.temperature": "Temperature",
   "nodeParallelSection.childNodeIdsOnePer": "Child node ids (one per line)",
   "nodeParallelSection.children": "Children",
   "nodeParallelSection.lengthChildRen": "{length} child(ren)",
   "nodeParallelSection.parallelChildren": "Parallel children",
-  "nodeParallelSection.plainIdsOrNodeId": "Plain ids or { \"node\": id, \"condition\": expr }.",
+  "nodeParallelSection.plainIdsOrNodeId":
+    'Plain ids or { "node": id, "condition": expr }.',
   "nodePropertyPanel.addToolEnter": "Add tool… (Enter)",
   "nodePropertyPanel.deleteNode": "Delete node",
-  "nodePropertyPanel.editsApplyWhileTheJSON": "Edits apply while the JSON is valid. The id cannot be changed here.",
+  "nodePropertyPanel.editsApplyWhileTheJSON":
+    "Edits apply while the JSON is valid. The id cannot be changed here.",
   "nodePropertyPanel.form": "Form",
   "nodePropertyPanel.jSONAllFields": "JSON (all fields)",
   "nodePropertyPanel.label": "Label",
   "nodePropertyPanel.mCPTools": "MCP tools",
-  "nodePropertyPanel.noSettingsCatalogForType": "No settings catalog for type \"{type}\" (plugin type?) — edit as JSON.",
+  "nodePropertyPanel.noSettingsCatalogForType":
+    'No settings catalog for type "{type}" (plugin type?) — edit as JSON.',
   "nodePropertyPanel.nodeConfig": "Node config",
   "nodePropertyPanel.nodeDefinition": "Node definition",
   "nodePropertyPanel.overrides": "Overrides",
   "nodePropertyPanel.priority": "Priority",
-  "nodePropertyPanel.queuePriorityHigherRunsFirst": "Queue priority; higher runs first.",
+  "nodePropertyPanel.queuePriorityHigherRunsFirst":
+    "Queue priority; higher runs first.",
   "nodePropertyPanel.savedIn": "Saved in",
-  "nodePropertyPanel.selectANodeOrEdge": "Select a node or edge to edit, or add a node from the toolbar.",
+  "nodePropertyPanel.selectANodeOrEdge":
+    "Select a node or edge to edit, or add a node from the toolbar.",
   "nodePropertyPanel.settingsValue": "Settings{value}",
-  "nodePropertyPanel.suggestionsLengthToolsOfConnected": "Suggestions: {length} tools of connected MCP servers. Patterns like server/* are allowed.",
+  "nodePropertyPanel.suggestionsLengthToolsOfConnected":
+    "Suggestions: {length} tools of connected MCP servers. Patterns like server/* are allowed.",
   "nodePropertyPanel.systemPrompt": "System prompt",
   "nodePropertyPanel.systemPromptId": "System prompt — {id}",
-  "nodePropertyPanel.theFileThisNodeIs": "The file this node is written to on save — the flow file or a sub-flow (use “New subflow” in the palette to create one)",
+  "nodePropertyPanel.theFileThisNodeIs":
+    "The file this node is written to on save — the flow file or a sub-flow (use “New subflow” in the palette to create one)",
   "nodePropertyPanel.thisFlowSFile": "this flow's file",
-  "nodePropertyPanel.toolIdsLikeVectorsearchSearch": "Tool ids like vectorsearch/search; patterns like server/* are allowed.",
+  "nodePropertyPanel.toolIdsLikeVectorsearchSearch":
+    "Tool ids like vectorsearch/search; patterns like server/* are allowed.",
   "nodePropertyPanel.toolsValue": "Tools ({value})",
-  "nodePropertyPanel.typeSpecificSettingsAsJSON": "Type-specific settings as JSON (the settings catalog is loading or unavailable).",
+  "nodePropertyPanel.typeSpecificSettingsAsJSON":
+    "Type-specific settings as JSON (the settings catalog is loading or unavailable).",
   "nodeRenderer.running": "⏳ running…",
   "nodeTypeDocs.availableOnEveryNode": "Available on every node",
   "nodeTypeDocs.default": "Default:",
@@ -1030,29 +1237,34 @@ export const uiEn = {
   "nodeTypeDocs.whenToUse": "When to use",
   "not-found.backToDashboard": "Back to dashboard",
   "not-found.pageNotFound": "Page not found",
-  "not-found.thePageYouAreLooking": "The page you are looking for does not exist or has been moved.",
+  "not-found.thePageYouAreLooking":
+    "The page you are looking for does not exist or has been moved.",
   "operatorToolbar.clear": "Clear",
   "operatorToolbar.clearTheExpression": "Clear the expression",
   "optimizePanel.areConsidered": "are considered.",
-  "optimizePanel.cheaperModelsForThisFlow": "Cheaper models for this flow's nodes that keep quality within the threshold. Only nodes that declare",
+  "optimizePanel.cheaperModelsForThisFlow":
+    "Cheaper models for this flow's nodes that keep quality within the threshold. Only nodes that declare",
   "optimizePanel.checkAgain": "Check again",
   "optimizePanel.checkRoutingRecommendations": "Check routing recommendations",
   "optimizePanel.checking": "Checking…",
   "optimizePanel.createFlow": "Create flow",
   "optimizePanel.node": "Node",
   "optimizePanel.optimize": "Optimize",
-  "optimizePanel.selectAFlowToSee": "Select a flow to see routing recommendations.",
+  "optimizePanel.selectAFlowToSee":
+    "Select a flow to see routing recommendations.",
   "optimizePanel.trialItAsACanary": "Trial it as a canary",
   "optimizePanel.valueCost": "−{value}% cost",
   "optimizePanel.valueQuality": "−{value}% quality",
   "optimizePanel.whatToCheck": "What to check",
-  "optimizePanel.withTheSuggestedModelThen": "with the suggested model, then add to",
+  "optimizePanel.withTheSuggestedModelThen":
+    "with the suggested model, then add to",
   "optimizer.loadingOptimizer": "Loading optimizer",
   "optimizerPanel.autoPromoteWinner": "Auto-promote winner",
   "optimizerPanel.baseline": "Baseline",
   "optimizerPanel.baselineSystemPrompt": "Baseline system prompt",
   "optimizerPanel.collapse": "Collapse",
-  "optimizerPanel.eGImproveFactualPrecision": "e.g. Improve factual precision for German legal text",
+  "optimizerPanel.eGImproveFactualPrecision":
+    "e.g. Improve factual precision for German legal text",
   "optimizerPanel.empty": "(empty)",
   "optimizerPanel.evaluating": "Evaluating…",
   "optimizerPanel.expand": "Expand",
@@ -1060,11 +1272,13 @@ export const uiEn = {
   "optimizerPanel.flowToOptimize": "Flow to optimize",
   "optimizerPanel.loading": "Loading…",
   "optimizerPanel.minSamples": "Min samples",
-  "optimizerPanel.noOptimizationRunsYetFor": "No optimization runs yet for this flow. Trigger one above.",
+  "optimizerPanel.noOptimizationRunsYetFor":
+    "No optimization runs yet for this flow. Trigger one above.",
   "optimizerPanel.noVariantsProduced": "No variants produced.",
   "optimizerPanel.optimizationGoalOptional": "Optimization goal (optional)",
   "optimizerPanel.passValue": "Pass {value}",
-  "optimizerPanel.perCaseEvaluationLengthCases": "Per-case evaluation ({length} cases) — baseline vs variant",
+  "optimizerPanel.perCaseEvaluationLengthCases":
+    "Per-case evaluation ({length} cases) — baseline vs variant",
   "optimizerPanel.promote": "Promote",
   "optimizerPanel.prompt": "Prompt:",
   "optimizerPanel.requires": "Requires",
@@ -1073,17 +1287,20 @@ export const uiEn = {
   "optimizerPanel.score": "Score",
   "optimizerPanel.scoreValue": "Score {value}",
   "optimizerPanel.selectAFlow": "— select a flow —",
-  "optimizerPanel.selectAFlowToView": "Select a flow to view and run optimizations.",
+  "optimizerPanel.selectAFlowToView":
+    "Select a flow to view and run optimizations.",
   "optimizerPanel.selfOptimizingFlows": "Self-optimizing flows",
   "optimizerPanel.starting": "Starting…",
   "optimizerPanel.systemPrompt": "System prompt",
   "optimizerPanel.variant": "Variant",
   "optimizerPanel.variants": "Variants",
   "persistedHistory.aktionen": "Actions",
-  "persistedHistory.analyseThisRunWithAn": "Analyse this run with an LLM post-mortem",
+  "persistedHistory.analyseThisRunWithAn":
+    "Analyse this run with an LLM post-mortem",
   "persistedHistory.cost": "Cost",
   "persistedHistory.downloadDebugTraceAsJSON": "Download debug trace as JSON",
-  "persistedHistory.downloadTheFullDebugTrace": "Download the full debug trace as JSON — all prompts, LLM responses, tool calls with results, RAG chunks and tool selection",
+  "persistedHistory.downloadTheFullDebugTrace":
+    "Download the full debug trace as JSON — all prompts, LLM responses, tool calls with results, RAG chunks and tool selection",
   "persistedHistory.execution": "Execution",
   "persistedHistory.executionHistory": "Execution history",
   "persistedHistory.flow": "Flow",
@@ -1094,36 +1311,46 @@ export const uiEn = {
   "persistedHistory.noExecutionsRecordedYet": "No executions recorded yet.",
   "persistedHistory.nodes": "Nodes",
   "persistedHistory.openInLiveGraph": "Open in Live Graph",
-  "persistedHistory.openInLiveGraphShows": "Open in Live Graph — shows system prompt, tool calls and response per node",
+  "persistedHistory.openInLiveGraphShows":
+    "Open in Live Graph — shows system prompt, tool calls and response per node",
   "persistedHistory.openInTraceViewer": "Open in Trace Viewer",
-  "persistedHistory.openInTraceViewerStep": "Open in Trace Viewer — step replay, waterfall and the Decision-Provenance explainability card",
+  "persistedHistory.openInTraceViewerStep":
+    "Open in Trace Viewer — step replay, waterfall and the Decision-Provenance explainability card",
   "persistedHistory.previous": "Previous",
   "persistedHistory.refresh": "Refresh",
   "persistedHistory.replayThisRun": "Replay this run",
-  "persistedHistory.replayThisRunTimeTravel": "Replay this run — time-travel the flow with its original inputs",
-  "persistedHistory.runAnLLMPostMortem": "Run an LLM post-mortem of this run — root cause, findings and improvement suggestions from its debug trace",
+  "persistedHistory.replayThisRunTimeTravel":
+    "Replay this run — time-travel the flow with its original inputs",
+  "persistedHistory.runAnLLMPostMortem":
+    "Run an LLM post-mortem of this run — root cause, findings and improvement suggestions from its debug trace",
   "persistedHistory.runtime": "Runtime",
   "persistedHistory.sortByLabel": "Sort by {label}",
   "persistedHistory.started": "Started",
   "persistedHistory.status": "Status",
   "persistedHistory.user": "User",
-  "piiVault.detectedPIIEmailsPhoneNumbers": "Detected PII (emails, phone numbers, IBANs, tax/social-insurance IDs, credit cards, secrets) in outbound prompts is replaced with an encrypted placeholder before any LLM provider sees it, and transparently restored in the streamed response — the model and provider never receive the real value.",
+  "piiVault.detectedPIIEmailsPhoneNumbers":
+    "Detected PII (emails, phone numbers, IBANs, tax/social-insurance IDs, credit cards, secrets) in outbound prompts is replaced with an encrypted placeholder before any LLM provider sees it, and transparently restored in the streamed response — the model and provider never receive the real value.",
   "piiVault.loading": "Loading…",
   "piiVault.loadingPIIVaultStatus": "Loading PII vault status",
   "piiVault.pIITokenizationVault": "PII Tokenization Vault",
   "piiVaultPanel.active": "✓ Active",
-  "piiVaultPanel.detectedPIIIsReplacedWith": "Detected PII is replaced with an encrypted placeholder before any LLM provider sees the prompt, and transparently restored in the streamed response.",
+  "piiVaultPanel.detectedPIIIsReplacedWith":
+    "Detected PII is replaced with an encrypted placeholder before any LLM provider sees the prompt, and transparently restored in the streamed response.",
   "piiVaultPanel.disabledSet": "Disabled. Set",
   "piiVaultPanel.durableEncrypted": "durable, encrypted",
   "piiVaultPanel.forDurableEncryptedStorage": "for durable, encrypted storage.",
   "piiVaultPanel.inMemoryPerReplica": "in-memory, per-replica",
   "piiVaultPanel.loading": "Loading…",
-  "piiVaultPanel.noDatabaseConfiguredVaultMappings": "⚠ No database configured — vault mappings are per-replica and lost on restart. Set",
+  "piiVaultPanel.noDatabaseConfiguredVaultMappings":
+    "⚠ No database configured — vault mappings are per-replica and lost on restart. Set",
   "piiVaultPanel.pIITokenizationVault": "🔒 PII Tokenization Vault",
   "piiVaultPanel.refreshPIIVaultStatus": "Refresh PII vault status",
-  "piiVaultPanel.toTokenizePIIInOutbound": ") to tokenize PII in outbound prompts before any LLM sees it.",
-  "policyReplayPanel.candidateCompliancePolicyJSONOptional": "Candidate compliance policy (JSON, optional)",
-  "policyReplayPanel.candidateToolAuthzPolicyJSON": "Candidate tool-authz policy (JSON, optional)",
+  "piiVaultPanel.toTokenizePIIInOutbound":
+    ") to tokenize PII in outbound prompts before any LLM sees it.",
+  "policyReplayPanel.candidateCompliancePolicyJSONOptional":
+    "Candidate compliance policy (JSON, optional)",
+  "policyReplayPanel.candidateToolAuthzPolicyJSON":
+    "Candidate tool-authz policy (JSON, optional)",
   "policyReplayPanel.changed": "Changed:",
   "policyReplayPanel.evaluated": "Evaluated:",
   "policyReplayPanel.execution": "Execution",
@@ -1131,49 +1358,64 @@ export const uiEn = {
   "policyReplayPanel.maxExecutions": "Max executions",
   "policyReplayPanel.newlyAllowed": "Newly allowed:",
   "policyReplayPanel.newlyDenied": "Newly denied:",
-  "policyReplayPanel.noExecutionChangedItsOutcome": "No execution changed its outcome under the candidate policies.",
+  "policyReplayPanel.noExecutionChangedItsOutcome":
+    "No execution changed its outcome under the candidate policies.",
   "policyReplayPanel.noFlips": "no flips",
-  "policyReplayPanel.noStoredExecutionsMatchedThe": "No stored executions matched the replay window.",
+  "policyReplayPanel.noStoredExecutionsMatchedThe":
+    "No stored executions matched the replay window.",
   "policyReplayPanel.onlyChangedExecutions": "Only changed executions",
   "policyReplayPanel.outcome": "Outcome",
   "policyReplayPanel.policyReplaySimulator": "Policy Replay Simulator",
-  "policyReplayPanel.replayStoredExecutionsAgainstCandidate": "Replay stored executions against candidate policies without executing anything — the current live policies are the baseline of the diff.",
+  "policyReplayPanel.replayStoredExecutionsAgainstCandidate":
+    "Replay stored executions against candidate policies without executing anything — the current live policies are the baseline of the diff.",
   "policyReplayPanel.replaying": "Replaying…",
-  "policyReplayPanel.rulesIdDenyWriteTools": "{ \"rules\": [ { \"id\": \"deny-write\", \"tools\": [\"*\"], \"action\": \"deny\" } ] }",
+  "policyReplayPanel.rulesIdDenyWriteTools":
+    '{ "rules": [ { "id": "deny-write", "tools": ["*"], "action": "deny" } ] }',
   "policyReplayPanel.runReplay": "Run replay",
   "policyReplayPanel.started": "Started",
   "policyReplayPanel.toolCallFlips": "Tool-call flips:",
   "policyReplayPanel.toolCalls": "Tool calls",
   "promptFileEditor.areEditable": "are editable.",
   "promptFileEditor.cancel": "Cancel",
-  "promptFileEditor.cannotBeEditedHereOnly": "cannot be edited here: only Markdown files under",
+  "promptFileEditor.cannotBeEditedHereOnly":
+    "cannot be edited here: only Markdown files under",
   "promptFileEditor.copyIntoFlow": "Copy into flow",
-  "promptFileEditor.discardsLocalEditsAndReloads": "Discards local edits and reloads the file from disk",
-  "promptFileEditor.fLOWSDIRIsNotWritable": "FLOWS_DIR is not writable on this runtime",
-  "promptFileEditor.lineCountLinesLengthChars": "{lineCount} lines · {length} chars",
+  "promptFileEditor.discardsLocalEditsAndReloads":
+    "Discards local edits and reloads the file from disk",
+  "promptFileEditor.fLOWSDIRIsNotWritable":
+    "FLOWS_DIR is not writable on this runtime",
+  "promptFileEditor.lineCountLinesLengthChars":
+    "{lineCount} lines · {length} chars",
   "promptFileEditor.loading": "loading…",
-  "promptFileEditor.movesThePromptTextInto": "Moves the prompt text into this flow and removes the include — the file on disk stays as it is",
+  "promptFileEditor.movesThePromptTextInto":
+    "Moves the prompt text into this flow and removes the include — the file on disk stays as it is",
   "promptFileEditor.newPromptFilePathFor": "New prompt file path for {path}",
-  "promptFileEditor.notInTheFlowSaving": ", not in the flow. Saving the file changes every flow that includes it;",
+  "promptFileEditor.notInTheFlowSaving":
+    ", not in the flow. Saving the file changes every flow that includes it;",
   "promptFileEditor.promptFilePath": "Prompt file {path}",
   "promptFileEditor.reload": "Reload",
   "promptFileEditor.retry": "Retry",
   "promptFileEditor.saveAs": "Save as…",
   "promptFileEditor.saveAs2": "Save as",
-  "promptFileEditor.saveAsAndCopyInto": "“Save as…” and “Copy into flow” apply the edit to this flow only.",
+  "promptFileEditor.saveAsAndCopyInto":
+    "“Save as…” and “Copy into flow” apply the edit to this flow only.",
   "promptFileEditor.savePromptFile": "Save prompt file",
   "promptFileEditor.saving": "saving…",
   "promptFileEditor.thePromptTextLivesIn": "The prompt text lives in",
-  "promptFileEditor.theRuntimeSFlowDirectory": "The runtime's flow directory is mounted read-only",
+  "promptFileEditor.theRuntimeSFlowDirectory":
+    "The runtime's flow directory is mounted read-only",
   "promptFileEditor.theseFiles": "these files",
   "promptFileEditor.thisFile": "this file",
   "promptFileEditor.unsavedChanges": "unsaved changes",
-  "promptFileEditor.writesACopyUnderA": "Writes a copy under a new name and points only this flow at it — other flows keep the old file",
-  "promptFileEditor.writesThisPromptFileEvery": "Writes this prompt file — every flow including it is affected",
+  "promptFileEditor.writesACopyUnderA":
+    "Writes a copy under a new name and points only this flow at it — other flows keep the old file",
+  "promptFileEditor.writesThisPromptFileEvery":
+    "Writes this prompt file — every flow including it is affected",
   "providerTesting.loadingProviderTests": "Loading provider tests",
   "providerTestingPanel.capability": "Capability",
   "providerTestingPanel.capabilityAutoTest": "Capability auto-test",
-  "providerTestingPanel.couldNotListModelsMessage": "Could not list models ({message}). Enter the model id manually below.",
+  "providerTestingPanel.couldNotListModelsMessage":
+    "Could not list models ({message}). Enter the model id manually below.",
   "providerTestingPanel.declared": "Declared",
   "providerTestingPanel.details": "Details",
   "providerTestingPanel.failures": "Failures",
@@ -1185,11 +1427,13 @@ export const uiEn = {
   "providerTestingPanel.latencyP95": "Latency p95",
   "providerTestingPanel.loadingModels": "Loading models…",
   "providerTestingPanel.model": "Model",
-  "providerTestingPanel.noModelsListedEnterManually": "No models listed — enter manually",
+  "providerTestingPanel.noModelsListedEnterManually":
+    "No models listed — enter manually",
   "providerTestingPanel.observed": "Observed",
   "providerTestingPanel.orTypeAModelId": "Or type a model id manually",
   "providerTestingPanel.performanceTest": "Performance test",
-  "providerTestingPanel.probesReasoningToolCallingAnd": "Probes reasoning, tool-calling and vision against the live model and compares the result with the declared capabilities.",
+  "providerTestingPanel.probesReasoningToolCallingAnd":
+    "Probes reasoning, tool-calling and vision against the live model and compares the result with the declared capabilities.",
   "providerTestingPanel.prompt": "Prompt",
   "providerTestingPanel.promptTest": "Prompt test",
   "providerTestingPanel.provider": "Provider",
@@ -1206,19 +1450,24 @@ export const uiEn = {
   "providerTestingPanel.selectAProvider": "Select a provider…",
   "providerTestingPanel.selection": "Selection",
   "providerTestingPanel.systemPromptOptional": "System prompt (optional)",
-  "providerTestingPanel.testsRunLiveAgainstThe": "Tests run live against the selected provider and incur real cost.",
+  "providerTestingPanel.testsRunLiveAgainstThe":
+    "Tests run live against the selected provider and incur real cost.",
   "providerTestingPanel.throughput": "Throughput",
   "providerTestingPanel.toolCalls": "Tool calls:",
   "providerTestingPanel.totalCost": "Total cost",
-  "providerTestingPanel.typeAPromptToRun": "Type a prompt to run against the model…",
+  "providerTestingPanel.typeAPromptToRun":
+    "Type a prompt to run against the model…",
   "providers.activeExecutions": "Active executions",
-  "providers.addAProviderKeySo": "Add a provider key so ATF can call model APIs. Keys are stored server-side and shown masked here.",
+  "providers.addAProviderKeySo":
+    "Add a provider key so ATF can call model APIs. Keys are stored server-side and shown masked here.",
   "providers.calls": "Calls",
   "providers.capabilities": "Capabilities",
   "providers.configuredPools": "Configured pools",
   "providers.errors": "Errors",
-  "providers.failedToLoadProviderKeys": "Failed to load provider keys: {message}",
-  "providers.failedToLoadProviderMonitoring": "Failed to load provider monitoring: {message}",
+  "providers.failedToLoadProviderKeys":
+    "Failed to load provider keys: {message}",
+  "providers.failedToLoadProviderMonitoring":
+    "Failed to load provider monitoring: {message}",
   "providers.failures": "Failures",
   "providers.globalQueueDepth": "Global queue depth",
   "providers.key": "Key",
@@ -1226,9 +1475,11 @@ export const uiEn = {
   "providers.loadingProviderKeys2": "Loading provider keys…",
   "providers.monitoring": "Monitoring",
   "providers.noCallsYet": "no calls yet",
-  "providers.noModelShortcutPoolsAre": "No model-shortcut pools are configured.",
+  "providers.noModelShortcutPoolsAre":
+    "No model-shortcut pools are configured.",
   "providers.noProviderKeysConfigured": "No provider keys configured.",
-  "providers.noProvidersConfiguredOrObserved": "No providers configured or observed yet.",
+  "providers.noProvidersConfiguredOrObserved":
+    "No providers configured or observed yet.",
   "providers.notConfigured": "(not configured)",
   "providers.pool": "Pool",
   "providers.provider": "Provider",
@@ -1241,16 +1492,21 @@ export const uiEn = {
   "providers.testBench": "Test bench",
   "providers.tokens": "Tokens",
   "providers.unknownProtocol": "unknown protocol",
-  "receiptsPanel.downloadThisReceiptJSONWith": "Download this receipt (JSON with COSE bytes)",
+  "receiptsPanel.downloadThisReceiptJSONWith":
+    "Download this receipt (JSON with COSE bytes)",
   "receiptsPanel.export": "Export",
   "receiptsPanel.exportAll": "Export all",
   "receiptsPanel.inclusionInvalid": "inclusion invalid",
   "receiptsPanel.inclusionUnverified": "⚠ inclusion unverified",
-  "receiptsPanel.leafLeafIndexTreeTreeSizeHead": "leaf {leafIndex} · tree {treeSize} · head",
+  "receiptsPanel.leafLeafIndexTreeTreeSizeHead":
+    "leaf {leafIndex} · tree {treeSize} · head",
   "receiptsPanel.loadingReceipts": "Loading receipts…",
-  "receiptsPanel.noDecisionReceiptsForThis": "No decision receipts for this execution.",
-  "receiptsPanel.receiptsAreIssuedWhenDECISION": "Receipts are issued when DECISION_RECEIPTS_ENABLED is on.",
-  "receiptsPanel.receiptsAreNotAvailableFor": "Receipts are not available for this deployment",
+  "receiptsPanel.noDecisionReceiptsForThis":
+    "No decision receipts for this execution.",
+  "receiptsPanel.receiptsAreIssuedWhenDECISION":
+    "Receipts are issued when DECISION_RECEIPTS_ENABLED is on.",
+  "receiptsPanel.receiptsAreNotAvailableFor":
+    "Receipts are not available for this deployment",
   "receiptsPanel.signatureInclusionValid": "✓ signature + inclusion valid",
   "receiptsPanel.signatureInvalid": "✕ signature invalid",
   "receiptsPanel.signatureInvalid2": "signature invalid",
@@ -1259,7 +1515,8 @@ export const uiEn = {
   "receiptsPanel.signed2": "signed ✕",
   "receiptsPanel.toolCalls": "tool calls",
   "receiptsPanel.verify": "Verify",
-  "receiptsPanel.verifySignatureAndMerkleInclusion": "Verify signature and Merkle inclusion in the browser",
+  "receiptsPanel.verifySignatureAndMerkleInclusion":
+    "Verify signature and Merkle inclusion in the browser",
   "receiptsPanel.verifying": "verifying…",
   "replayResultCard.close": "Close",
   "replayResultCard.original": "Original",
@@ -1268,49 +1525,64 @@ export const uiEn = {
   "replayResultCard.replayOf": "Replay of",
   "replayResultCard.replayed": "Replayed",
   "replayResultCard.replayingExecution": "Replaying execution…",
-  "resizeHandle.labelDragOrFocusAnd": "{label} — drag, or focus and use ←/→ (double-click resets)",
+  "resizeHandle.labelDragOrFocusAnd":
+    "{label} — drag, or focus and use ←/→ (double-click resets)",
   "resultViews.checking": "Checking…",
-  "resultViews.emptyTheEdgeIsUnconditional": "Empty — the edge is unconditional (always taken).",
+  "resultViews.emptyTheEdgeIsUnconditional":
+    "Empty — the edge is unconditional (always taken).",
   "resultViews.evaluating": "Evaluating…",
-  "resultViews.falseWouldNotMatchWith": "false — would not match with these values",
+  "resultViews.falseWouldNotMatchWith":
+    "false — would not match with these values",
   "resultViews.liveCheckUnavailableError": "Live check unavailable ({error}).",
   "resultViews.syntaxErrorError": "Syntax error: {error}",
   "resultViews.trueWouldMatchWithThese": "true — would match with these values",
   "resultViews.typeType": "Type: {type}",
   "revocationConsole.assistant": "Assistant",
-  "revocationConsole.assistantIdOfUserIdLosesIts": "{assistantId} of {userId} loses its {issuer} delegation at once; the user has to consent again to restore it.",
-  "revocationConsole.everyDelegatedOIDCGrantAcross": "Every delegated OIDC grant across every tenant and user, in one place. Revoking here does two things at once: the stored grant can no longer mint a new access token, and any token already minted from it and still cached is dropped too — so a revoked assistant stops acting immediately rather than at that cached token's own expiry.",
-  "revocationConsole.failedToLoadDelegationsMessage": "Failed to load delegations: {message}",
+  "revocationConsole.assistantIdOfUserIdLosesIts":
+    "{assistantId} of {userId} loses its {issuer} delegation at once; the user has to consent again to restore it.",
+  "revocationConsole.everyDelegatedOIDCGrantAcross":
+    "Every delegated OIDC grant across every tenant and user, in one place. Revoking here does two things at once: the stored grant can no longer mint a new access token, and any token already minted from it and still cached is dropped too — so a revoked assistant stops acting immediately rather than at that cached token's own expiry.",
+  "revocationConsole.failedToLoadDelegationsMessage":
+    "Failed to load delegations: {message}",
   "revocationConsole.filterByUserId": "Filter by user id…",
-  "revocationConsole.filterDelegationsByUserId": "Filter delegations by user id",
+  "revocationConsole.filterDelegationsByUserId":
+    "Filter delegations by user id",
   "revocationConsole.granted": "Granted",
   "revocationConsole.issuer": "Issuer",
   "revocationConsole.loadingDelegations": "Loading delegations…",
   "revocationConsole.next": "Next",
-  "revocationConsole.noDelegationGrantsMatchThis": "No delegation grants match this filter.",
+  "revocationConsole.noDelegationGrantsMatchThis":
+    "No delegation grants match this filter.",
   "revocationConsole.previous": "Previous",
   "revocationConsole.revoke": "Revoke",
   "revocationConsole.revokeDelegation": "Revoke delegation?",
-  "revocationConsole.revokeDelegationForUserIdAssistantId": "Revoke delegation for {userId} / {assistantId} / {issuer}",
+  "revocationConsole.revokeDelegationForUserIdAssistantId":
+    "Revoke delegation for {userId} / {assistantId} / {issuer}",
   "revocationConsole.state": "State",
   "revocationConsole.user": "User",
   "roPAPanel.downloadMarkdown": "↓ Download Markdown",
   "roPAPanel.downloading": "Downloading…",
-  "roPAPanel.flowsFlowSWithDataClassesWith": "{flows} flow(s), {withDataClasses} with declared data classes,",
+  "roPAPanel.flowsFlowSWithDataClassesWith":
+    "{flows} flow(s), {withDataClasses} with declared data classes,",
   "roPAPanel.loading": "Loading…",
   "roPAPanel.noDataClassesDeclared": "no data classes declared",
-  "roPAPanel.perFlowDataLineageDeclared": "Per-flow data lineage: declared data classes → processing providers → residency assessment against the policy.",
+  "roPAPanel.perFlowDataLineageDeclared":
+    "Per-flow data lineage: declared data classes → processing providers → residency assessment against the policy.",
   "roPAPanel.processors": "Processors:",
   "roPAPanel.providers": ". Providers:",
-  "roPAPanel.recordOfProcessingActivitiesArt": "🗺️ Record of Processing Activities (Art. 30)",
+  "roPAPanel.recordOfProcessingActivitiesArt":
+    "🗺️ Record of Processing Activities (Art. 30)",
   "roPAPanel.refresh": "↻ Refresh",
-  "roPAPanel.violationsResidencyViolationS": "{violations} residency violation(s)",
+  "roPAPanel.violationsResidencyViolationS":
+    "{violations} residency violation(s)",
   "runPicker.noRunsYetRunThe": "No runs yet — run the flow in Run & Trace.",
   "runPicker.noneSampleValues": "— none (example values) —",
   "runPicker.pinnedRun": "Pinned run",
-  "runPicker.reloadTheListOfRuns": "Reload the list of runs (run the flow in Run & Trace to add one)",
+  "runPicker.reloadTheListOfRuns":
+    "Reload the list of runs (run the flow in Run & Trace to add one)",
   "runPicker.sampleData": "📌 Sample data",
-  "runPicker.valuesOfARecordedRun": "Values of a recorded run fill the previews and the tree",
+  "runPicker.valuesOfARecordedRun":
+    "Values of a recorded run fill the previews and the tree",
   "security.loadingSecurityPosture": "Loading security posture",
   "securityPanel.aISecurityPosture": "AI Security Posture",
   "securityPanel.and": "), and",
@@ -1318,25 +1590,33 @@ export const uiEn = {
   "securityPanel.close": "Close",
   "securityPanel.constraintsValue": "· constraints {value}",
   "securityPanel.createPolicy": "Create policy",
-  "securityPanel.currentInputGuardrailThreshold": "Current input-guardrail threshold:",
+  "securityPanel.currentInputGuardrailThreshold":
+    "Current input-guardrail threshold:",
   "securityPanel.editPolicy": "Edit policy",
-  "securityPanel.editThePolicyJSONEach": "Edit the policy JSON. Each rule needs",
-  "securityPanel.everyPublishedFlowIsCallable": "Every published flow is callable as an MCP tool at:",
+  "securityPanel.editThePolicyJSONEach":
+    "Edit the policy JSON. Each rule needs",
+  "securityPanel.everyPublishedFlowIsCallable":
+    "Every published flow is callable as an MCP tool at:",
   "securityPanel.exact": "(exact",
   "securityPanel.exposedFlowTools": "Exposed flow tools",
   "securityPanel.flowToRedTeam": "Flow to red-team",
-  "securityPanel.forAutomaticRunsTheAttack": "for automatic runs. The attack library, tool-authorization policy, and MCP views below remain available.",
+  "securityPanel.forAutomaticRunsTheAttack":
+    "for automatic runs. The attack library, tool-authorization policy, and MCP views below remain available.",
   "securityPanel.judgeValue": " · judge {value}",
-  "securityPanel.lowerStricterAutoTunedWhen": "(lower = stricter; auto-tuned when RED_TEAM_AUTO_TUNE is on)",
-  "securityPanel.machineEnforcedRulesGatingTool": "Machine-enforced rules gating tool calls by tenant, role, and argument constraints. First matching rule wins; hot-reloaded on save.",
+  "securityPanel.lowerStricterAutoTunedWhen":
+    "(lower = stricter; auto-tuned when RED_TEAM_AUTO_TUNE is on)",
+  "securityPanel.machineEnforcedRulesGatingTool":
+    "Machine-enforced rules gating tool calls by tenant, role, and argument constraints. First matching rule wins; hot-reloaded on save.",
   "securityPanel.matchValue": "· match {value}",
   "securityPanel.noRedTeamRunsYet": "No red-team runs yet.",
-  "securityPanel.noToolAuthorizationPolicyIs": "No tool-authorization policy is active. Add",
+  "securityPanel.noToolAuthorizationPolicyIs":
+    "No tool-authorization policy is active. Add",
   "securityPanel.optional": "). Optional:",
   "securityPanel.orClickCreatePolicyAbove": ", or click “Create policy” above.",
   "securityPanel.orGlob": "or glob",
   "securityPanel.recentRuns": "Recent runs",
-  "securityPanel.ruleCountRuleSDefaultAction": "{ruleCount} rule(s) · default action:",
+  "securityPanel.ruleCountRuleSDefaultAction":
+    "{ruleCount} rule(s) · default action:",
   "securityPanel.runDetail": "Run detail ·",
   "securityPanel.runRedTeam": "Run Red-Team",
   "securityPanel.runningAttacks": "Running attacks…",
@@ -1345,19 +1625,25 @@ export const uiEn = {
   "securityPanel.securitySections": "Security sections",
   "securityPanel.selectAFlow": "Select a flow…",
   "securityPanel.theRedTeamEngineIs": "The red-team engine is disabled. Set",
-  "securityPanel.theseAreTheAdversarialPayloads": "These are the adversarial payloads the red-team harness fires at your flows.",
-  "securityPanel.toGateToolCallsBy": "to gate tool calls by tenant, role, and argument constraints (hot-reloaded)",
-  "securityPanel.toRunAdversarialTestsOr": "to run adversarial tests, or configure",
-  "securityPanel.transportTransportAuthenticateWithThe": "Transport: {transport}. Authenticate with the same Bearer token as /v1/chat.",
+  "securityPanel.theseAreTheAdversarialPayloads":
+    "These are the adversarial payloads the red-team harness fires at your flows.",
+  "securityPanel.toGateToolCallsBy":
+    "to gate tool calls by tenant, role, and argument constraints (hot-reloaded)",
+  "securityPanel.toRunAdversarialTestsOr":
+    "to run adversarial tests, or configure",
+  "securityPanel.transportTransportAuthenticateWithThe":
+    "Transport: {transport}. Authenticate with the same Bearer token as /v1/chat.",
   "securityPanel.valueSeverityValue2": "{value} · severity {value2}",
-  "shadow.aBQualityMonitoringEach": "A/B quality monitoring — a sample of production requests is silently replayed against a shadow flow (without side effects) and the responses are scored side-by-side.",
+  "shadow.aBQualityMonitoringEach":
+    "A/B quality monitoring — a sample of production requests is silently replayed against a shadow flow (without side effects) and the responses are scored side-by-side.",
   "shadow.avgScore": "Avg Δ score",
   "shadow.configuredPairs": "Configured Pairs",
   "shadow.hideStats": "Hide stats",
   "shadow.improvements": "Improvements",
   "shadow.loading": "Loading…",
   "shadow.loadingShadowTests": "Loading shadow tests",
-  "shadow.noComparisonRecordsYetShadow": "No comparison records yet. Shadow comparisons appear here as production requests are replayed.",
+  "shadow.noComparisonRecordsYetShadow":
+    "No comparison records yet. Shadow comparisons appear here as production requests are replayed.",
   "shadow.prodScore": "Prod score",
   "shadow.production": "Production",
   "shadow.productionFlow": "Production flow",
@@ -1371,31 +1657,40 @@ export const uiEn = {
   "shadow.shadow": "Shadow",
   "shadow.shadowFlow": "Shadow flow",
   "shadow.shadowMode": "Shadow Mode",
-  "shadow.shadowRunnerActiveConfiguredFlow": "✓ Shadow runner active — {configured} flow pair(s) configured.",
-  "shadow.shadowRunnerIsNotActive": "Shadow runner is not active on this deployment. Set SHADOW_ENABLED=true and configure shadow-flow pairs in your flow YAML to enable.",
+  "shadow.shadowRunnerActiveConfiguredFlow":
+    "✓ Shadow runner active — {configured} flow pair(s) configured.",
+  "shadow.shadowRunnerIsNotActive":
+    "Shadow runner is not active on this deployment. Set SHADOW_ENABLED=true and configure shadow-flow pairs in your flow YAML to enable.",
   "shadow.shadowScore": "Shadow score",
   "shadow.stats": "Stats",
   "shadow.status": "Status",
   "shadow.time": "Time",
   "shadow.totalComparisons": "Total comparisons",
-  "shared.itIsSetHereBut": ". It is set here but has no effect — clear it unless you are about to change the node type.",
+  "shared.itIsSetHereBut":
+    ". It is set here but has no effect — clear it unless you are about to change the node type.",
   "shared.lengthItems": "[…{length} items]",
   "shared.nodeDoesNotRead": "node does not read",
   "skeleton.loading": "Loading…",
   "skillRegistryConsole.deprecate": "Deprecate",
-  "skillRegistryConsole.enterATenantIdTo": "Enter a tenant id to browse its skill catalog.",
-  "skillRegistryConsole.failedToLoadTheCatalog": "Failed to load the catalog: {message}",
+  "skillRegistryConsole.enterATenantIdTo":
+    "Enter a tenant id to browse its skill catalog.",
+  "skillRegistryConsole.failedToLoadTheCatalog":
+    "Failed to load the catalog: {message}",
   "skillRegistryConsole.loadingCatalog": "Loading catalog…",
   "skillRegistryConsole.next": "Next",
-  "skillRegistryConsole.noCatalogEntriesMatchThis": "No catalog entries match this filter.",
+  "skillRegistryConsole.noCatalogEntriesMatchThis":
+    "No catalog entries match this filter.",
   "skillRegistryConsole.previous": "Previous",
-  "skillRegistryConsole.publishedByPublishedByFromSourceUserId": "published by {publishedBy} · from {sourceUserId}/ {sourceAssistantId}",
+  "skillRegistryConsole.publishedByPublishedByFromSourceUserId":
+    "published by {publishedBy} · from {sourceUserId}/ {sourceAssistantId}",
   "skillRegistryConsole.tenantId": "Tenant id…",
   "skillRegistryConsole.tenantIdToBrowse": "Tenant id to browse",
-  "skillRegistryConsole.theTenantWideCatalogOf": "The tenant-wide catalog of learned skills a user published from their own assistant for reuse by others. Installing a catalog entry never writes a live skill directly — it creates an ordinary proposal in the installing assistant's own queue, re-scanned and subject to that assistant's own consent path exactly like a self-learned proposal.",
+  "skillRegistryConsole.theTenantWideCatalogOf":
+    "The tenant-wide catalog of learned skills a user published from their own assistant for reuse by others. Installing a catalog entry never writes a live skill directly — it creates an ordinary proposal in the installing assistant's own queue, re-scanned and subject to that assistant's own consent path exactly like a self-learned proposal.",
   "sloPanel.costQualitySLOs": "🎯 Cost / Quality SLOs",
   "sloPanel.costSamplesSamples": "({costSamples} samples)",
-  "sloPanel.declaredPerFlowObjectivesMin": "Declared per-flow objectives (min quality / max cost per request) and their live attainment. Declare targets in",
+  "sloPanel.declaredPerFlowObjectivesMin":
+    "Declared per-flow objectives (min quality / max cost per request) and their live attainment. Declare targets in",
   "sloPanel.loading": "Loading…",
   "sloPanel.noSLOsDeclaredCreate": "No SLOs declared. Create",
   "sloPanel.qualitySamplesSamples": "({qualitySamples} samples)",
@@ -1406,7 +1701,8 @@ export const uiEn = {
   "smartValue.totalMatchesTotalMatches": "Total matches: {totalMatches}",
   "statsBar.active": "Active",
   "statsBar.approvals": "Approvals",
-  "statsBar.approvalsApprovedOkApprovalsDeniedDenied": "{approvalsApproved} ok / {approvalsDenied} denied",
+  "statsBar.approvalsApprovedOkApprovalsDeniedDenied":
+    "{approvalsApproved} ok / {approvalsDenied} denied",
   "statsBar.avgNode": "Avg node",
   "statsBar.errorRate": "Error rate",
   "statsBar.estCost": "Est. cost",
@@ -1425,11 +1721,13 @@ export const uiEn = {
   "studio.exitFocus": "Exit focus",
   "studio.flow": "Flow",
   "studio.focusCanvas": "Focus canvas",
-  "studio.focusModeHideTheSidebar": "Focus mode — hide the sidebar so the canvas gets the full width",
+  "studio.focusModeHideTheSidebar":
+    "Focus mode — hide the sidebar so the canvas gets the full width",
   "studio.hide": "Hide",
   "studio.hideNodeDocumentation": "Hide node documentation",
   "studio.hideTheDocumentationForThis": "Hide the documentation for this node",
-  "studio.hideTheSidebarToGive": "Hide the sidebar to give the canvas more room",
+  "studio.hideTheSidebarToGive":
+    "Hide the sidebar to give the canvas more room",
   "studio.leaveFocusModeBringThe": "Leave focus mode — bring the sidebar back",
   "studio.loading": "Loading…",
   "studio.loadingBuilder": "Loading builder…",
@@ -1438,7 +1736,8 @@ export const uiEn = {
   "studio.newFlow": "— new flow —",
   "studio.nodeDocumentation": "Node documentation",
   "studio.nodes": "Nodes",
-  "studio.nodesSubflowsOptimizeDiffAutopilot": "Nodes · Subflows · Optimize · Diff · Autopilot · Docs",
+  "studio.nodesSubflowsOptimizeDiffAutopilot":
+    "Nodes · Subflows · Optimize · Diff · Autopilot · Docs",
   "studio.optimize": "Optimize",
   "studio.properties": "Properties",
   "studio.resizeTheDocumentationPanel": "Resize the documentation panel",
@@ -1447,12 +1746,14 @@ export const uiEn = {
   "studio.selectFlowToEditIn": "Select flow to edit in Builder",
   "studio.show": "Show",
   "studio.showSidebar": "Show sidebar",
-  "studio.showTheSidebarNodesSubflows": "Show the sidebar (Nodes, Subflows, Optimize, Diff, Autopilot, Docs)",
+  "studio.showTheSidebarNodesSubflows":
+    "Show the sidebar (Nodes, Subflows, Optimize, Diff, Autopilot, Docs)",
   "studio.showTitleNodeDocumentation": "Show {title} node documentation",
   "studio.sidebar": "Sidebar",
   "studio.studio": "Studio",
   "studio.subflows": "Subflows",
-  "studio.theBuilderHasUnsavedChanges": "The builder has unsaved changes. Switch flows and discard them?",
+  "studio.theBuilderHasUnsavedChanges":
+    "The builder has unsaved changes. Switch flows and discard them?",
   "studio.unsavedChanges": "Unsaved changes",
   "studio.youNeedThe": "You need the",
   "studioBuilder.dismissStatus": "Dismiss status",
@@ -1465,21 +1766,28 @@ export const uiEn = {
   "studioInspector.nodeProperties": "Node properties",
   "studioInspector.resizeThePropertiesPanel": "Resize the properties panel",
   "studioInspector.writesToSubflows": "Writes to subflows/",
-  "studioInspector.yamlOnNextSaveNodes": ".yaml on next save. Nodes stay on this canvas.",
+  "studioInspector.yamlOnNextSaveNodes":
+    ".yaml on next save. Nodes stay on this canvas.",
   "studioProblemsPanel.fixWithCopilot": "Fix with Copilot",
-  "studioProblemsPanel.toolReferenceSOnSize": "tool reference(s) on {size} MCP server(s) this runtime isn't connected to — not checkable here, not an error in the flow.",
+  "studioProblemsPanel.toolReferenceSOnSize":
+    "tool reference(s) on {size} MCP server(s) this runtime isn't connected to — not checkable here, not an error in the flow.",
   "studioToolbar.activeDraft": "Active draft",
-  "studioToolbar.chooseWhichDraftToEdit": "Choose which draft to edit, or view the live revision.",
+  "studioToolbar.chooseWhichDraftToEdit":
+    "Choose which draft to edit, or view the live revision.",
   "studioToolbar.copilot": "Copilot",
   "studioToolbar.deleteDraft": "Delete draft",
-  "studioToolbar.deleteDraftActiveDraftIdTheLive": "Delete draft '{activeDraftId}' (the live flow is not affected)",
+  "studioToolbar.deleteDraftActiveDraftIdTheLive":
+    "Delete draft '{activeDraftId}' (the live flow is not affected)",
   "studioToolbar.discard": "Discard",
   "studioToolbar.draft": "← Draft",
   "studioToolbar.draftDefault": "draft · default",
   "studioToolbar.draftValue": "draft · {value}",
-  "studioToolbar.editingACopyOfThe": "Editing a copy of the live version. Save draft to stage changes.",
-  "studioToolbar.editingTheUnpublishedDraftThe": "Editing the unpublished draft. The live flow is unchanged.",
-  "studioToolbar.fixTheValidationErrorsFirst": "Fix the validation errors first.",
+  "studioToolbar.editingACopyOfThe":
+    "Editing a copy of the live version. Save draft to stage changes.",
+  "studioToolbar.editingTheUnpublishedDraftThe":
+    "Editing the unpublished draft. The live flow is unchanged.",
+  "studioToolbar.fixTheValidationErrorsFirst":
+    "Fix the validation errors first.",
   "studioToolbar.flowSettings": "Flow settings",
   "studioToolbar.hideTheCopilotPanel": "Hide the Copilot panel",
   "studioToolbar.hideTheFlowSettingsPanel": "Hide the flow settings panel",
@@ -1487,81 +1795,108 @@ export const uiEn = {
   "studioToolbar.history": "History",
   "studioToolbar.liveFile": "live · file",
   "studioToolbar.liveVVersion": "live · v{version}",
-  "studioToolbar.loadedFromFLOWSDIRSave": "Loaded from FLOWS_DIR. Save draft creates an online draft; nothing goes live until you publish.",
+  "studioToolbar.loadedFromFLOWSDIRSave":
+    "Loaded from FLOWS_DIR. Save draft creates an online draft; nothing goes live until you publish.",
   "studioToolbar.newDraft": "＋ new draft…",
   "studioToolbar.notStoredAnywhereYet": "Not stored anywhere yet.",
   "studioToolbar.panels": "Panels",
   "studioToolbar.publish": "Publish",
   "studioToolbar.redo": "Redo",
-  "studioToolbar.redoTheLastUndoneChange": "Redo the last undone change (Cmd/Ctrl+Shift+Z)",
-  "studioToolbar.reloadTheStoredVersionAnd": "Reload the stored version and drop canvas changes",
+  "studioToolbar.redoTheLastUndoneChange":
+    "Redo the last undone change (Cmd/Ctrl+Shift+Z)",
+  "studioToolbar.reloadTheStoredVersionAnd":
+    "Reload the stored version and drop canvas changes",
   "studioToolbar.runTrace": "Run & Trace",
   "studioToolbar.saveDraft": "Save draft",
-  "studioToolbar.saveTheDraftAndMake": "Save the draft and make it the live version.",
+  "studioToolbar.saveTheDraftAndMake":
+    "Save the draft and make it the live version.",
   "studioToolbar.saving": "Saving…",
   "studioToolbar.showTheCopilotPanel": "Show the Copilot panel",
-  "studioToolbar.showTheFlowSettingsId": "Show the flow settings (id, name, description, variables)",
+  "studioToolbar.showTheFlowSettingsId":
+    "Show the flow settings (id, name, description, variables)",
   "studioToolbar.showTheRunTracePanel": "Show the Run & Trace panel",
   "studioToolbar.sizeMCPServerSNot": "{size} MCP server(s) not connected",
-  "studioToolbar.storeTheCanvasAsAn": "Store the canvas as an unpublished draft. Nothing goes live.",
+  "studioToolbar.storeTheCanvasAsAn":
+    "Store the canvas as an unpublished draft. Nothing goes live.",
   "studioToolbar.switchBackToTheActive": "Switch back to the active draft",
-  "studioToolbar.theCanvasHasChangesThat": "The canvas has changes that are not stored anywhere yet.",
-  "studioToolbar.toolsOnMCPServersThis": "Tools on MCP servers this runtime isn't connected to: {value}. They can't be checked here; they will work where those servers are connected.",
+  "studioToolbar.theCanvasHasChangesThat":
+    "The canvas has changes that are not stored anywhere yet.",
+  "studioToolbar.toolsOnMCPServersThis":
+    "Tools on MCP servers this runtime isn't connected to: {value}. They can't be checked here; they will work where those servers are connected.",
   "studioToolbar.totalErrorsErrorS": "{totalErrors} error(s)",
   "studioToolbar.totalWarningsWarningS": "{totalWarnings} warning(s)",
   "studioToolbar.undo": "Undo",
   "studioToolbar.undoTheLastChangeCmd": "Undo the last change (Cmd/Ctrl+Z)",
   "studioToolbar.unsaved": "● unsaved",
   "studioToolbar.viewLive": "View live",
-  "studioToolbar.viewTheLiveRevisionRead": "View the live revision (read the version serving traffic)",
-  "studioToolbar.viewingTheFileRevisionThat": "Viewing the file revision that serves traffic. Switch back to Draft to edit.",
-  "studioToolbar.viewingTheLivePublishedRevision": "Viewing the live (published) revision. Switch back to Draft to edit; 'Save draft' here stages this content into the active draft.",
-  "studioToolbar.writeStraightIntoTheFlow": "Write straight into the flow file in FLOWS_DIR — live immediately, no draft.",
+  "studioToolbar.viewTheLiveRevisionRead":
+    "View the live revision (read the version serving traffic)",
+  "studioToolbar.viewingTheFileRevisionThat":
+    "Viewing the file revision that serves traffic. Switch back to Draft to edit.",
+  "studioToolbar.viewingTheLivePublishedRevision":
+    "Viewing the live (published) revision. Switch back to Draft to edit; 'Save draft' here stages this content into the active draft.",
+  "studioToolbar.writeStraightIntoTheFlow":
+    "Write straight into the flow file in FLOWS_DIR — live immediately, no draft.",
   "studioToolbar.writeToFile": "Write to file",
-  "subflowGroupPanel.actionsBelowApplyToThis": ". Actions below apply to this sub-flow only.",
-  "subflowGroupPanel.discardThisSubFlowS": "Discard this sub-flow's unsaved changes and reload it from its file",
+  "subflowGroupPanel.actionsBelowApplyToThis":
+    ". Actions below apply to this sub-flow only.",
+  "subflowGroupPanel.discardThisSubFlowS":
+    "Discard this sub-flow's unsaved changes and reload it from its file",
   "subflowGroupPanel.redo": "Redo",
-  "subflowGroupPanel.redoTheLastUndoneEdit": "Redo the last undone edit in this sub-flow",
+  "subflowGroupPanel.redoTheLastUndoneEdit":
+    "Redo the last undone edit in this sub-flow",
   "subflowGroupPanel.removeFromThisFlow": "Remove from this flow",
-  "subflowGroupPanel.removeThisSubFlowFrom": "Remove this sub-flow from the current flow. Its file is kept; only the include is dropped on save.",
+  "subflowGroupPanel.removeThisSubFlowFrom":
+    "Remove this sub-flow from the current flow. Its file is kept; only the include is dropped on save.",
   "subflowGroupPanel.resetToSaved": "Reset to saved",
   "subflowGroupPanel.saveThisSubFlow": "Save this sub-flow",
-  "subflowGroupPanel.subFlowGroupNodeCountNode": "Sub-flow group · {nodeCount} node",
+  "subflowGroupPanel.subFlowGroupNodeCountNode":
+    "Sub-flow group · {nodeCount} node",
   "subflowGroupPanel.undo": "Undo",
   "subflowGroupPanel.undoTheLastEditIn": "Undo the last edit in this sub-flow",
-  "subflowGroupPanel.unsavedChangesInThisSub": "Unsaved changes in this sub-flow",
-  "subflowGroupPanel.writeThisSubFlowTo": "Write this sub-flow to its own file (subflows/…), independent of the parent flow",
+  "subflowGroupPanel.unsavedChangesInThisSub":
+    "Unsaved changes in this sub-flow",
+  "subflowGroupPanel.writeThisSubFlowTo":
+    "Write this sub-flow to its own file (subflows/…), independent of the parent flow",
   "subflowPalette.alreadyOnTheCanvas": "Already on the canvas.",
   "subflowPalette.create": "Create",
   "subflowPalette.edgeCountEdgeS": " · {edgeCount} edge(s)",
   "subflowPalette.include": "Include",
   "subflowPalette.includeASubFlow": "Include a sub-flow",
   "subflowPalette.including": "Including…",
-  "subflowPalette.itsNodesAndEdgesAre": "Its nodes and edges are placed on the canvas in their own box and stay in their file; saving adds the file to this flow's metadata.$include.",
+  "subflowPalette.itsNodesAndEdgesAre":
+    "Its nodes and edges are placed on the canvas in their own box and stay in their file; saving adds the file to this flow's metadata.$include.",
   "subflowPalette.lengthNodeS": "{length} node(s):",
   "subflowPalette.lengthNodeSValue": "{length} node(s): {value}",
   "subflowPalette.loading": "Loading…",
   "subflowPalette.nameEGRetrieval": "name, e.g. retrieval",
   "subflowPalette.newSubFlowName": "New sub-flow name",
   "subflowPalette.newSubflow": "New subflow",
-  "subflowPalette.noFilesInSubflowsYet": "No files in subflows/ yet — create one with “New subflow”.",
+  "subflowPalette.noFilesInSubflowsYet":
+    "No files in subflows/ yet — create one with “New subflow”.",
   "subflowPalette.noMatch": "No match.",
   "subflowPalette.onCanvas": "On canvas",
-  "subflowPalette.pathDragOntoTheCanvas": "{path} — drag onto the canvas, or double-click to include",
+  "subflowPalette.pathDragOntoTheCanvas":
+    "{path} — drag onto the canvas, or double-click to include",
   "subflowPalette.reloadTheSubFlowList": "Reload the sub-flow list",
-  "subflowPalette.searchByFileNameDescription": "Search by file, name, description or node id…",
+  "subflowPalette.searchByFileNameDescription":
+    "Search by file, name, description or node id…",
   "subflowPalette.searchSubFlows": "Search sub-flows",
-  "subflowPalette.startsWithOneNodeDrop": "starts with one node; drop more nodes onto its box. Select nodes first to move them in.",
+  "subflowPalette.startsWithOneNodeDrop":
+    "starts with one node; drop more nodes onto its box. Select nodes first to move them in.",
   "subflowPalette.subflows": "Subflows",
   "subflowPalette.subflowsNameYaml": "subflows/<name>.yaml",
-  "subflowPalette.theSelectedCountSelectedNodeS": "the {selectedCount} selected node(s) move into it.",
+  "subflowPalette.theSelectedCountSelectedNodeS":
+    "the {selectedCount} selected node(s) move into it.",
   "subflowPalette.usedByValue": " · used by {value}",
   "tenants.aCMECorp": "ACME Corp",
   "tenants.aPIKeys": "API Keys",
   "tenants.actions": "Actions",
-  "tenants.administratorAccessRequiredToView": "Administrator access required to view tenant management.",
+  "tenants.administratorAccessRequiredToView":
+    "Administrator access required to view tenant management.",
   "tenants.bYOKKeys": "BYOK Keys",
-  "tenants.bringYourOwnKeyBYOK": "Bring-Your-Own-Key (BYOK): override the platform's shared provider credentials with per-tenant keys. Keys are stored encrypted server-side and never returned after setting.",
+  "tenants.bringYourOwnKeyBYOK":
+    "Bring-Your-Own-Key (BYOK): override the platform's shared provider credentials with per-tenant keys. Keys are stored encrypted server-side and never returned after setting.",
   "tenants.cancel": "Cancel",
   "tenants.confirmDelete": "Confirm delete",
   "tenants.cost": "Cost",
@@ -1569,12 +1904,14 @@ export const uiEn = {
   "tenants.createTenant": "Create tenant",
   "tenants.created": "Created",
   "tenants.dailyBudget": "Daily budget ($)",
-  "tenants.deleteName": "Delete \"{name}\"?",
+  "tenants.deleteName": 'Delete "{name}"?',
   "tenants.deleteTenant": "Delete tenant",
   "tenants.dismiss": "Dismiss",
   "tenants.edit": "Edit",
-  "tenants.everyClientUsingNameIs": "Every client using \"{name}\" is rejected immediately. This cannot be undone.",
-  "tenants.keyCreatedCopyItNow": "Key created — copy it now, it won't be shown again.",
+  "tenants.everyClientUsingNameIs":
+    'Every client using "{name}" is rejected immediately. This cannot be undone.',
+  "tenants.keyCreatedCopyItNow":
+    "Key created — copy it now, it won't be shown again.",
   "tenants.keyName": "Key name",
   "tenants.last30Days": "(last 30 days)",
   "tenants.lastUsed": "Last used",
@@ -1608,12 +1945,14 @@ export const uiEn = {
   "tenants.setKeyFor": "Set key for",
   "tenants.status": "Status",
   "tenants.tenantAdministration": "Tenant Administration",
-  "tenants.thisTenantSRequestsTo": "This tenant's requests to the provider fall back to the deployment key, or fail when keys are mandatory.",
+  "tenants.thisTenantSRequestsTo":
+    "This tenant's requests to the provider fall back to the deployment key, or fail when keys are mandatory.",
   "tenants.tokens": "Tokens",
   "tenants.usage": "Usage",
   "toast.dismissNotification": "Dismiss notification",
   "toast.notifications": "Notifications",
-  "tokenSettings.authenticateWithYourIdentityProvider": "Authenticate with your identity provider (OIDC). The issued token is verified against the provider's JWKS.",
+  "tokenSettings.authenticateWithYourIdentityProvider":
+    "Authenticate with your identity provider (OIDC). The issued token is verified against the provider's JWKS.",
   "tokenSettings.clear": "Clear",
   "tokenSettings.eyJhbGc": "eyJhbGc…",
   "tokenSettings.mONITORINGAUTHTrue": "MONITORING_AUTH=true",
@@ -1632,28 +1971,34 @@ export const uiEn = {
   "tokenSettings.storedInThisBrowserOnly": ". Stored in this browser only.",
   "tokenSettings.token": "Token",
   "toolArgsList.areResolvedAgainstTheRun": "are resolved against the run.",
-  "toolArgsList.argumentsForToolsNotIn": "Arguments for tools not in the list (no effect): {value} — edit them under Settings → Forced tool arguments.",
+  "toolArgsList.argumentsForToolsNotIn":
+    "Arguments for tools not in the list (no effect): {value} — edit them under Settings → Forced tool arguments.",
   "toolArgsList.classificationField": "{{classification.<field>}}",
   "toolArgsList.emptyNothingFixed": "— empty: nothing fixed.",
-  "toolArgsList.fixedPerToolAndMerged": "Fixed per tool and merged over what the model supplies — the model still fills the rest.",
+  "toolArgsList.fixedPerToolAndMerged":
+    "Fixed per tool and merged over what the model supplies — the model still fills the rest.",
   "toolArgsList.modelDecidesAll": "model decides all",
   "toolArgsList.noArguments": "no arguments",
   "toolArgsList.query": "{{query}}",
   "toolArgsList.staticArguments": "Static arguments",
   "toolArgsList.staticArgumentsForRef": "Static arguments for {ref}",
   "toolArgsList.templatesLike": "Templates like",
-  "toolArgsList.theCompleteArgumentsOfEach": "The complete arguments of each call (no model involved).",
+  "toolArgsList.theCompleteArgumentsOfEach":
+    "The complete arguments of each call (no model involved).",
   "toolArgsList.toolsWithoutAnEntryGet": "Tools without an entry get",
-  "traceAnalysisPanel.analysingTraceLLMPostMortem": "Analysing trace… (LLM post-mortem — this can take a few seconds)",
+  "traceAnalysisPanel.analysingTraceLLMPostMortem":
+    "Analysing trace… (LLM post-mortem — this can take a few seconds)",
   "traceAnalysisPanel.cost": "Cost",
   "traceAnalysisPanel.costliestNode": "Costliest node",
   "traceAnalysisPanel.createVariant": "Create variant",
   "traceAnalysisPanel.diagnostics": "Diagnostics",
   "traceAnalysisPanel.dismiss": "Dismiss",
   "traceAnalysisPanel.errors": "Errors",
-  "traceAnalysisPanel.evaluateThisSuggestionAsAn": "Evaluate this suggestion as an optimizer variant against real production cases, then promote it if it wins",
+  "traceAnalysisPanel.evaluateThisSuggestionAsAn":
+    "Evaluate this suggestion as an optimizer variant against real production cases, then promote it if it wins",
   "traceAnalysisPanel.evidenceEvidence": "Evidence: {evidence}",
-  "traceAnalysisPanel.expectedImpactExpectedImpact": "Expected impact: {expectedImpact}",
+  "traceAnalysisPanel.expectedImpactExpectedImpact":
+    "Expected impact: {expectedImpact}",
   "traceAnalysisPanel.findingsLength": "Findings ({length})",
   "traceAnalysisPanel.groundednessFails": "Groundedness fails",
   "traceAnalysisPanel.latency": "Latency",
@@ -1663,7 +2008,8 @@ export const uiEn = {
   "traceAnalysisPanel.slowestNode": "Slowest node",
   "traceAnalysisPanel.starting": "Starting…",
   "traceAnalysisPanel.suggestionsLength": "Suggestions ({length})",
-  "traceAnalysisPanel.theOptimizerCanBuildA": "The optimizer can build a variant from this suggestion directly",
+  "traceAnalysisPanel.theOptimizerCanBuildA":
+    "The optimizer can build a variant from this suggestion directly",
   "traceAnalysisPanel.tokens": "Tokens",
   "traceAnalysisPanel.toolCalls": "Tool calls",
   "traceAnalysisPanel.traceAnalysis": "Trace analysis",
@@ -1673,7 +2019,8 @@ export const uiEn = {
   "traces.autoClosed": "⏱ auto-closed",
   "traces.awaitingApproval": "⏳ awaiting approval",
   "traces.denied": "✕ denied",
-  "traces.ensureTRACINGENABLEDTrueAnd": "Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is configured.",
+  "traces.ensureTRACINGENABLEDTrueAnd":
+    "Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is configured.",
   "traces.enterAnExecutionIDTo": "Enter an execution ID to inspect its trace.",
   "traces.error": "Error",
   "traces.execution": "Execution:",
@@ -1682,7 +2029,8 @@ export const uiEn = {
   "traces.executionTraceViewer": "Execution Trace Viewer",
   "traces.explain": "Explain",
   "traces.failedToLoadEventsMessage": "Failed to load events: {message}",
-  "traces.findExecutionIDsInThe": "Find execution IDs in the History tab or the Live Graph view.",
+  "traces.findExecutionIDsInThe":
+    "Find execution IDs in the History tab or the Live Graph view.",
   "traces.load": "Load",
   "traces.loadingTrace": "Loading trace…",
   "traces.loadingTraces": "Loading traces",
@@ -1711,16 +2059,18 @@ export const uiEn = {
   "triggers.accepted": "✓ Accepted",
   "triggers.authentication": "Authentication:",
   "triggers.closeTest": "Close test",
-  "triggers.eventTest": "{\"event\": \"test\"}",
+  "triggers.eventTest": '{"event": "test"}',
   "triggers.fireSync": "Fire (sync)",
   "triggers.firing": "Firing…",
   "triggers.flowsWithA": "Flows with a",
   "triggers.loading": "Loading…",
   "triggers.loadingTriggers": "Loading triggers",
-  "triggers.noWebhookTriggerFlowsFound": "No webhook-trigger flows found. Add a",
+  "triggers.noWebhookTriggerFlowsFound":
+    "No webhook-trigger flows found. Add a",
   "triggers.nodeInWebhookModePOST": "node in webhook mode. POST to",
   "triggers.nodeWith": "node with",
-  "triggers.onlyWorksForFlowsWithout": "Only works for flows without a webhookSecret. Runs synchronously and returns the response.",
+  "triggers.onlyWorksForFlowsWithout":
+    "Only works for flows without a webhookSecret. Runs synchronously and returns the response.",
   "triggers.payloadJSONOrPlainText": "Payload (JSON or plain text)",
   "triggers.refresh": "↻ Refresh",
   "triggers.tenant": "Tenant:",
@@ -1728,9 +2078,11 @@ export const uiEn = {
   "triggers.testFire2": "Test fire",
   "triggers.toAFlowYAMLTo": "to a flow YAML to register it here.",
   "triggers.toFireThem": "to fire them.",
-  "triggers.webhookRequestsUseHMACSHA256": "Webhook requests use HMAC-SHA256 signatures, not JWT. Send",
+  "triggers.webhookRequestsUseHMACSHA256":
+    "Webhook requests use HMAC-SHA256 signatures, not JWT. Send",
   "triggers.webhookTriggers": "Webhook Triggers",
-  "triggers.withTheSharedSecretConfigured": "with the shared secret configured per flow. Flows without a secret accept unsigned requests.",
+  "triggers.withTheSharedSecretConfigured":
+    "with the shared secret configured per flow. Flows without a secret accept unsigned requests.",
   "userSelectFilter.alleBenutzer": "All users",
   "userSelectFilter.keinUserPasstZuQuery": "No user matches “{query}”.",
   "userSelectFilter.keineUsersVerfuGbar": "No users available",
@@ -1739,12 +2091,14 @@ export const uiEn = {
   "variableBrowser.noMatch": "No match.",
   "variableBrowser.nothingToInsertHere": "Nothing to insert here.",
   "variableBrowser.searchVariables": "Search variables",
-  "variableBrowser.searchVariablesFieldsFunctions": "Search variables, fields, functions…",
+  "variableBrowser.searchVariablesFieldsFunctions":
+    "Search variables, fields, functions…",
   "variableBrowser.valueInThePinnedRun": "Value in the pinned run",
   "variablesEditor.addVariable": "Add variable",
   "variablesEditor.cancel": "Cancel",
   "variablesEditor.concreteModelId": "concrete model id",
-  "variablesEditor.concreteModelIdsForLlm": "Concrete model ids (for llm.model); replaces the whole value.",
+  "variablesEditor.concreteModelIdsForLlm":
+    "Concrete model ids (for llm.model); replaces the whole value.",
   "variablesEditor.copyReferenceToName": "Copy reference to {name}",
   "variablesEditor.copyVarsName": "Copy {{vars.{name}}}",
   "variablesEditor.deleteAnyway": "Delete anyway",
@@ -1755,11 +2109,15 @@ export const uiEn = {
   "variablesEditor.models": "Models",
   "variablesEditor.noVariablesYet": "No variables yet.",
   "variablesEditor.notUsedYet": "not used yet",
-  "variablesEditor.referencedFromNodesEdgesAs": "Referenced from nodes/edges as",
-  "variablesEditor.renamingUpdatesThoseReferences": ". Renaming updates those references.",
+  "variablesEditor.referencedFromNodesEdgesAs":
+    "Referenced from nodes/edges as",
+  "variablesEditor.renamingUpdatesThoseReferences":
+    ". Renaming updates those references.",
   "variablesEditor.replacesTheWholeValue": "Replaces the whole value.",
-  "variablesEditor.stillUsedUsedReferencesWould": "Still used {used}× — references would stay unresolved.",
-  "variablesEditor.switchBetweenTheTableAnd": "Switch between the table and the raw JSON",
+  "variablesEditor.stillUsedUsedReferencesWould":
+    "Still used {used}× — references would stay unresolved.",
+  "variablesEditor.switchBetweenTheTableAnd":
+    "Switch between the table and the raw JSON",
   "variablesEditor.table": "Table",
   "variablesEditor.typeOfName": "Type of {name}",
   "variablesEditor.usedUsed": "used {used}×",
@@ -1768,22 +2126,33 @@ export const uiEn = {
   "variablesEditor.variableNameName": "Variable name {name}",
   "variablesEditor.variables": "Variables",
   "variablesEditor.varsName": "{{vars.<name>}}",
-  "variablesTable.clickAReferenceToCopy": "Click a reference to copy it. Use in prompts as",
+  "variablesTable.clickAReferenceToCopy":
+    "Click a reference to copy it. Use in prompts as",
   "variablesTable.contextUserName": "{{context.userName}}",
-  "variablesTable.copyText": "Copy \"{text}\"",
-  "variablesTable.identityRoutingUseAsContext": "Identity & routing — use as context.*",
-  "variablesTable.jWTClaimValuesDecodedDiagnostic": "JWT claim values — decoded diagnostic data",
+  "variablesTable.copyText": 'Copy "{text}"',
+  "variablesTable.identityRoutingUseAsContext":
+    "Identity & routing — use as context.*",
+  "variablesTable.jWTClaimValuesDecodedDiagnostic":
+    "JWT claim values — decoded diagnostic data",
   "variablesTable.jWTClaimsUseAsClaims": "JWT claims — use as claims.*",
-  "variablesTable.oAuthScopesDiagnosticValuesFrom": "OAuth scopes — diagnostic values from the verified JWT",
+  "variablesTable.oAuthScopesDiagnosticValuesFrom":
+    "OAuth scopes — diagnostic values from the verified JWT",
   "variablesTable.orInConditionsDirectly": "or in conditions directly.",
   "variablesTable.requestParamsUseAsParams": "Request params — use as params.*",
-  "authPage.errorCallbackFailed": "Sign-in failed unexpectedly. Please try again.",
-  "authPage.errorForbidden": "Your identity provider account has no operator role assigned.",
-  "authPage.errorMissingCode": "The identity provider did not return an authorization code.",
-  "authPage.errorNoIdToken": "The identity provider did not return an ID token.",
-  "authPage.errorStateExpired": "The sign-in attempt expired. Please try again.",
-  "authPage.errorStateMismatch": "The sign-in attempt could not be verified. Please try again.",
-  "authPage.errorTokenExchangeFailed": "Could not exchange the authorization code for a session.",
+  "authPage.errorCallbackFailed":
+    "Sign-in failed unexpectedly. Please try again.",
+  "authPage.errorForbidden":
+    "Your identity provider account has no operator role assigned.",
+  "authPage.errorMissingCode":
+    "The identity provider did not return an authorization code.",
+  "authPage.errorNoIdToken":
+    "The identity provider did not return an ID token.",
+  "authPage.errorStateExpired":
+    "The sign-in attempt expired. Please try again.",
+  "authPage.errorStateMismatch":
+    "The sign-in attempt could not be verified. Please try again.",
+  "authPage.errorTokenExchangeFailed":
+    "Could not exchange the authorization code for a session.",
   "authPage.errorUnknown": "Sign-in failed ({code}).",
   "autopilotPanel.notSignedIn": "Not signed in.",
   "compliancePage.modelFormat": "Model must use provider/model format.",
@@ -1795,14 +2164,20 @@ export const uiEn = {
   "monitoringEvents.sseError": "SSE connection error",
   "monitoringEvents.wsError": "WebSocket connection error",
   "optimizePanel.canvasNotLoaded": "The canvas has not loaded yet.",
-  "policyReplayPanel.complianceNotJson": "Candidate compliance policy is not valid JSON.",
-  "policyReplayPanel.toolAuthzNotJson": "Candidate tool-authz policy is not valid JSON.",
+  "policyReplayPanel.complianceNotJson":
+    "Candidate compliance policy is not valid JSON.",
+  "policyReplayPanel.toolAuthzNotJson":
+    "Candidate tool-authz policy is not valid JSON.",
   "studioPage.notAuthenticated": "Not authenticated",
   "traceAnalysis.noResult": "Analysis returned no result.",
   "useCanWrite.requiresRole": "Requires the {role} role",
-  "optimizePanel.runtimeCannotCheckCanvas": "This runtime can't check the canvas yet — update/restart the runtime, or check the Live flows instead.",
-  "monitoringEvents.ticketUnavailable": "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
-  "approvalsPanel.decisionFailed": "The decision could not be saved. Please try again.",
-  "approvalsPanel.decisionForbidden": "Your role is not allowed to decide approvals.",
+  "optimizePanel.runtimeCannotCheckCanvas":
+    "This runtime can't check the canvas yet — update/restart the runtime, or check the Live flows instead.",
+  "monitoringEvents.ticketUnavailable":
+    "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
+  "approvalsPanel.decisionFailed":
+    "The decision could not be saved. Please try again.",
+  "approvalsPanel.decisionForbidden":
+    "Your role is not allowed to decide approvals.",
   "controlApi.forbidden": "Your role does not permit this action.",
 } as const;

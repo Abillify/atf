@@ -340,16 +340,18 @@ export function useCanvasGraph({
       const hasError = (validationState?.errors.length ?? 0) > 0;
       const hasWarning =
         !hasError && (validationState?.warnings.length ?? 0) > 0;
+      // Design tokens are HSL triplets (globals.css) — bare var() is invalid
+      // as a stroke color (computes to `none`), so every token goes in hsl().
       const color = hasError
-        ? "var(--edge-error)"
+        ? "hsl(var(--edge-error))"
         : hasWarning
-          ? "var(--edge-active)"
+          ? "hsl(var(--edge-active))"
           : diffState?.status === "added"
-            ? "var(--edge-added)"
+            ? "hsl(var(--edge-added))"
             : diffState?.status === "changed"
-              ? "var(--edge-active)"
+              ? "hsl(var(--edge-active))"
               : diffState?.status === "removed"
-                ? "var(--edge-removed)"
+                ? "hsl(var(--edge-removed))"
                 : undefined;
       if (color === undefined) {
         if (!runActive) return [e];
@@ -475,7 +477,7 @@ export function useCanvasGraph({
                       selectable: false,
                       deletable: false,
                       focusable: false,
-                      style: boundaryStyle(used, "var(--edge-idle)"),
+                      style: boundaryStyle(used, "hsl(var(--edge-idle))"),
                       data: {},
                     },
                   ]),
@@ -501,7 +503,7 @@ export function useCanvasGraph({
         style: used
           ? { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 }
           : {
-              stroke: "var(--edge-tool)",
+              stroke: "hsl(var(--edge-tool))",
               strokeDasharray: "3 3",
               strokeWidth: 1.5,
               ...(runActive ? { opacity: 0.35 } : {}),
@@ -516,7 +518,7 @@ export function useCanvasGraph({
         ...e,
         type: "labeled",
         style: {
-          stroke: added ? "var(--edge-added)" : "var(--edge-removed)",
+          stroke: added ? "hsl(var(--edge-added))" : "hsl(var(--edge-removed))",
           strokeWidth: 2,
           strokeDasharray: "4 3",
         },

@@ -30,12 +30,7 @@ import {
 } from "react";
 import { de } from "./catalogs/de";
 import { en, type MessageKey } from "./catalogs/en";
-import {
-  createFormatters,
-  getActiveLocale,
-  setActiveLocale,
-  type Formatters,
-} from "./format";
+import { createFormatters, setActiveLocale, type Formatters } from "./format";
 import {
   DEFAULT_LOCALE,
   parseLocale,
@@ -43,23 +38,16 @@ import {
   writeLocaleCookie,
   type Locale,
 } from "./locales";
+import { interpolate, type MessageParams } from "./translate";
+
+// Re-exported so existing imports from this module keep working. The
+// definitions live in ./translate (a server-safe module without
+// "use client"): server components must never import code from this file,
+// or Next replaces it with a throwing client reference.
+export { interpolate, translate } from "./translate";
+export type { MessageParams } from "./translate";
 
 const CATALOGS: Record<Locale, Record<MessageKey, string>> = { en, de };
-
-/** Values for `{name}` placeholders in a message. */
-export type MessageParams = Record<string, string | number | boolean | null | undefined>;
-
-/**
- * Fills `{name}` placeholders. A missing value leaves the placeholder visible
- * rather than rendering "undefined", so a wrong call site is noticed.
- */
-export function interpolate(message: string, params?: MessageParams): string {
-  if (params === undefined) return message;
-  return message.replace(/\{(\w+)\}/g, (match, name: string) => {
-    const value = params[name];
-    return value === undefined || value === null ? match : String(value);
-  });
-}
 
 export interface LocaleContextValue {
   /** Active UI language. */
@@ -142,16 +130,6 @@ export function LocaleProvider({
       <Fragment key={locale}>{children}</Fragment>
     </LocaleContext.Provider>
   );
-}
-
-/**
- * Translates a key in the active locale without the hook — the counterpart of
- * the global formatting helpers in ./format for components that render
- * outside a provider in tests. A language switch remounts the tree under the
- * provider (see `key={locale}` above), so callers pick up the new language.
- */
-export function translate(key: MessageKey, params?: MessageParams): string {
-  return interpolate(CATALOGS[getActiveLocale()][key] ?? en[key] ?? key, params);
 }
 
 /** Access to the language, `t()` and formatters. Throws without a provider. */

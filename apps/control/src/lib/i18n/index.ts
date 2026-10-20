@@ -4,10 +4,17 @@
 /**
  * i18n barrel (Req 9.7, Task 13.6): provider/hook, locale registry,
  * format helpers and catalog types.
+ *
+ * `translate`/`interpolate` come from ./translate — NOT through the
+ * "use client" LocaleProvider: server components (loading boundaries,
+ * not-found, control-api) import them from here, and a client-module
+ * re-export would turn them into throwing client references.
  */
 
-export { LocaleProvider, interpolate, translate, useI18n } from "./LocaleProvider";
-export type { LocaleContextValue, LocaleProviderProps, MessageParams } from "./LocaleProvider";
+export { LocaleProvider, useI18n } from "./LocaleProvider";
+export type { LocaleContextValue, LocaleProviderProps } from "./LocaleProvider";
+export { interpolate, translate } from "./translate";
+export type { MessageParams } from "./translate";
 export {
   DEFAULT_LOCALE,
   LOCALES,

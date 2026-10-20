@@ -25,6 +25,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
+import { canonicalJsonNull } from "@atf/canonical-json";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { json, request } from "../../../lib/control-api";
@@ -248,14 +249,13 @@ interface NodeApproval {
   pending?: PendingApproval;
 }
 
-/** Deterministic JSON stringify (keys sorted) for stable args comparison. */
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
+/**
+ * Deterministic JSON stringify (keys sorted) for stable args comparison.
+ * `@atf/canonical-json` concat mode (code-unit order, `undefined` as `null`)
+ * — byte-identical to the former local helper; UI-only, but sharing the
+ * package keeps the display consistent with the hashes the server computes.
+ */
+const stableStringify = canonicalJsonNull;
 
 function parseArgs(argsJson: string): unknown {
   try {

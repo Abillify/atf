@@ -319,8 +319,10 @@ function ChannelEdgeImpl({
     targetY: ty,
     targetPosition,
   })[0];
+  // Fallback stroke: the token is an HSL triplet (globals.css) and must be
+  // wrapped in hsl() to be a valid stroke color.
   const stroke =
-    typeof data?.color === "string" ? data.color : "var(--edge-used)";
+    typeof data?.color === "string" ? data.color : "hsl(var(--edge-used))";
   const title = typeof data?.title === "string" ? data.title : undefined;
   return (
     <>

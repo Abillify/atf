@@ -188,6 +188,12 @@ export interface FlowDetail {
   draft: FlowDefinition | null;
   /** All named drafts (default first), with definitions. */
   drafts?: FlowDraftInfo[];
+  /** Online flows: true when a same-id file flow exists and this published
+   *  version overrides it — git changes to that file are not live (ADR 0034). */
+  shadowsFile?: boolean;
+  /** Online flows with a same-id file twin: the file's current definition,
+   *  i.e. the baseline the online version overrides. */
+  fileDefinition?: FlowDefinition;
   /** File flows: the authoring form (shortcuts/vars/prompt includes kept). */
   sourceDefinition?: FlowDefinition;
   /** File flows: the file the flow was loaded from. */

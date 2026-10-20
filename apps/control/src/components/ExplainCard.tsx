@@ -203,16 +203,20 @@ export function ExplainCard({
   // Downloads the signed Verifiable Evidence Bundle (JSON) — the artefact
   // `scripts/cli.ts verify-bundle` checks offline. Unlike the plain Markdown
   // export above, this is a machine-verifiable file: it embeds a content
-  // hash + HMAC signature so a recipient can prove it was not altered after
-  // the platform generated it, without trusting whoever hands it to them.
-  // 404 here means EVIDENCE_BUNDLE_SECRET (or AUDIT_ANCHOR_SECRET) is not
-  // configured on the server — surfaced as a best-effort no-op, same as the
-  // Markdown download above.
+  // hash + signature (Ed25519 when EVIDENCE_SIGNING_KEY is configured —
+  // third parties verify via /.well-known/atf-evidence-jwks.json; otherwise
+  // legacy HMAC-SHA256) so a recipient can prove it was not altered after the
+  // platform generated it, without trusting whoever hands it to them.
+  // 404 here means neither EVIDENCE_SIGNING_KEY nor EVIDENCE_BUNDLE_SECRET
+  // (or AUDIT_ANCHOR_SECRET) is configured on the server — surfaced as a
+  // best-effort no-op, same as the Markdown download above.
   const handleDownloadBundle = async (): Promise<void> => {
     setDownloadingBundle(true);
     try {
       const res = await authFetch(
-        backendUrl(`/monitoring/explain/${encodeURIComponent(executionId)}/bundle`),
+        backendUrl(
+          `/monitoring/explain/${encodeURIComponent(executionId)}/bundle`,
+        ),
         token ?? undefined,
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -236,7 +240,10 @@ export function ExplainCard({
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true">
+      <div
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+        aria-busy="true"
+      >
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
         {translate("explainCard.loadingExplainabilityCard")}
       </div>
@@ -245,8 +252,13 @@ export function ExplainCard({
 
   if (error) {
     return (
-      <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
-        {translate("explainCard.failedToLoadExplainabilityCard", { message: error.message })}
+      <div
+        role="alert"
+        className="rounded-md bg-danger-soft p-3 text-sm text-danger"
+      >
+        {translate("explainCard.failedToLoadExplainabilityCard", {
+          message: error.message,
+        })}
       </div>
     );
   }
@@ -269,8 +281,7 @@ export function ExplainCard({
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {card.flowId ?? translate("explainCard.unknownFlow")} ·{" "}
-            {card.userName ?? "anonymous"} ·{" "}
-            {formatDateTime(card.startedAt)}
+            {card.userName ?? "anonymous"} · {formatDateTime(card.startedAt)}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -281,7 +292,9 @@ export function ExplainCard({
             onClick={() => void handleDownload()}
             disabled={downloading}
           >
-            {downloading ? translate("explainCard.downloading") : translate("explainCard.downloadMarkdown")}
+            {downloading
+              ? translate("explainCard.downloading")
+              : translate("explainCard.downloadMarkdown")}
           </Button>
           <Button
             variant="outline"
@@ -290,7 +303,9 @@ export function ExplainCard({
             disabled={downloadingBundle}
             title={translate("explainCard.signedMachineVerifiableJSONArtefact")}
           >
-            {downloadingBundle ? translate("explainCard.downloading") : translate("explainCard.downloadEvidenceBundle")}
+            {downloadingBundle
+              ? translate("explainCard.downloading")
+              : translate("explainCard.downloadEvidenceBundle")}
           </Button>
         </div>
       </div>
@@ -298,24 +313,36 @@ export function ExplainCard({
       {/* Summary stats */}
       <dl className="grid grid-cols-2 gap-4 rounded-lg border border-border bg-card p-4 sm:grid-cols-4">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.latency")}</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {translate("explainCard.latency")}
+          </dt>
           <dd className="text-lg font-semibold text-foreground">
             {card.totalLatencyMs !== null ? `${card.totalLatencyMs} ms` : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.cost")}</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {translate("explainCard.cost")}
+          </dt>
           <dd className="text-lg font-semibold text-foreground">
             {card.totalCost !== null ? formatCost(card.totalCost) : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.steps")}</dt>
-          <dd className="text-lg font-semibold text-foreground">{card.steps.length}</dd>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {translate("explainCard.steps")}
+          </dt>
+          <dd className="text-lg font-semibold text-foreground">
+            {card.steps.length}
+          </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.models")}</dt>
-          <dd className="text-lg font-semibold text-foreground">{card.modelsUsed.length}</dd>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {translate("explainCard.models")}
+          </dt>
+          <dd className="text-lg font-semibold text-foreground">
+            {card.modelsUsed.length}
+          </dd>
         </div>
       </dl>
 
@@ -341,12 +368,16 @@ export function ExplainCard({
               className="rounded-md border border-border bg-muted p-2 text-xs"
             >
               <div className="flex items-center gap-2">
-                <Badge variant={statusVariant(step.status)}>{step.status}</Badge>
+                <Badge variant={statusVariant(step.status)}>
+                  {step.status}
+                </Badge>
                 <span className="font-medium text-foreground">
                   {step.label ?? step.nodeId}
                 </span>
                 {step.kind === "tool" && (
-                  <span className="text-muted-foreground">{translate("explainCard.tool")}</span>
+                  <span className="text-muted-foreground">
+                    {translate("explainCard.tool")}
+                  </span>
                 )}
                 {step.model !== undefined && (
                   <span className="ml-auto font-mono text-muted-foreground">
@@ -356,7 +387,8 @@ export function ExplainCard({
               </div>
               {step.routing !== undefined && (
                 <p className="mt-1 text-muted-foreground">
-                  {translate("explainCard.routedTo")} <code>{step.routing.target}</code>
+                  {translate("explainCard.routedTo")}{" "}
+                  <code>{step.routing.target}</code>
                   {step.routing.matched_condition !== undefined &&
                     ` (${step.routing.matched_condition})`}
                 </p>
@@ -370,8 +402,8 @@ export function ExplainCard({
               )}
               {step.groundedness !== undefined && (
                 <p className="mt-1 text-muted-foreground">
-                  groundedness: {(step.groundedness.score * 100).toFixed(0)}%
-                  ({step.groundedness.passed ? "passed" : "failed"})
+                  groundedness: {(step.groundedness.score * 100).toFixed(0)}% (
+                  {step.groundedness.passed ? "passed" : "failed"})
                 </p>
               )}
               {step.objectiveSolver !== undefined && (
@@ -400,9 +432,14 @@ export function ExplainCard({
                           {a.estimatedCostUsd !== undefined &&
                             ` · ${formatCost(a.estimatedCostUsd)}`}
                           {a.observedQuality !== undefined &&
-                            translate("explainCard.qualityValueValue2Samples", { value: (a.observedQuality * 100).toFixed(0), value2: a.qualitySamples ?? 0 })}
+                            translate("explainCard.qualityValueValue2Samples", {
+                              value: (a.observedQuality * 100).toFixed(0),
+                              value2: a.qualitySamples ?? 0,
+                            })}
                           {" — "}
-                          {a.satisfied ? "satisfied" : translate("explainCard.didNotSatisfy")}
+                          {a.satisfied
+                            ? "satisfied"
+                            : translate("explainCard.didNotSatisfy")}
                         </li>
                       ))}
                     </ul>
@@ -423,14 +460,24 @@ export function ExplainCard({
           {translate("explainCard.modelsUsed")}
         </h3>
         {card.modelsUsed.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{translate("explainCard.noPricedLLMCallsRecorded")}</p>
+          <p className="text-sm text-muted-foreground">
+            {translate("explainCard.noPricedLLMCallsRecorded")}
+          </p>
         ) : (
           <ul className="flex flex-col gap-1 text-sm">
             {card.modelsUsed.map((m) => (
               <li key={m.model} className="flex items-center justify-between">
                 <span className="font-mono text-foreground">{m.model}</span>
                 <span className="text-muted-foreground">
-                  {translate("explainCard.callCountCallSInputTokensOutputTokens", { callCount: m.callCount, inputTokens: m.inputTokens, outputTokens: m.outputTokens, value: formatCost(m.cost) })}
+                  {translate(
+                    "explainCard.callCountCallSInputTokensOutputTokens",
+                    {
+                      callCount: m.callCount,
+                      inputTokens: m.inputTokens,
+                      outputTokens: m.outputTokens,
+                      value: formatCost(m.cost),
+                    },
+                  )}
                 </span>
               </li>
             ))}
@@ -448,14 +495,19 @@ export function ExplainCard({
             <code>{card.groundedness.nodeId}</code> —{" "}
             {(card.groundedness.score * 100).toFixed(0)}% (
             {card.groundedness.passed ? "passed" : "failed"}),{" "}
-            {translate("explainCard.checkedSentencesSentenceSChecked", { checked_sentences: card.groundedness.checked_sentences })}
+            {translate("explainCard.checkedSentencesSentenceSChecked", {
+              checked_sentences: card.groundedness.checked_sentences,
+            })}
           </p>
           {card.groundedness.unsupported.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
               {card.groundedness.unsupported.slice(0, 5).map((u, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: sentences are not unique; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                 <li key={i}>
-                  {translate("explainCard.sentenceSupportValue", { sentence: u.sentence, value: (u.support * 100).toFixed(0) })}
+                  {translate("explainCard.sentenceSupportValue", {
+                    sentence: u.sentence,
+                    value: (u.support * 100).toFixed(0),
+                  })}
                 </li>
               ))}
             </ul>
@@ -470,7 +522,9 @@ export function ExplainCard({
             {translate("explainCard.pIIVaultActions")}
           </h3>
           <p className="text-sm text-foreground">
-            {translate("explainCard.totalTokenizedPIISpanSTokenized", { totalTokenized: card.piiActions.totalTokenized })}
+            {translate("explainCard.totalTokenizedPIISpanSTokenized", {
+              totalTokenized: card.piiActions.totalTokenized,
+            })}
           </p>
           <ul className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
             {Object.entries(card.piiActions.byType).map(([type, count]) => (
@@ -495,8 +549,9 @@ export function ExplainCard({
           <ul className="flex flex-col gap-1 text-sm">
             {card.auditEntries.map((a) => (
               <li key={a.id} className="text-muted-foreground">
-                {formatDateTime(a.at)} — <b className="text-foreground">{a.actor}</b>{" "}
-                {a.action} ({a.outcome ?? "success"})
+                {formatDateTime(a.at)} —{" "}
+                <b className="text-foreground">{a.actor}</b> {a.action} (
+                {a.outcome ?? "success"})
               </li>
             ))}
           </ul>

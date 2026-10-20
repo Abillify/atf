@@ -39,11 +39,13 @@ export const pairKey = (source: string, target: string): string =>
   `${source}\u0000${target}`;
 
 /** One color per payload kind — the parallel lines must stay distinguishable. */
+// The tokens are HSL triplets (globals.css) — they must be wrapped in hsl()
+// to be valid stroke/fill colors.
 export const CHANNEL_COLORS: Record<EdgeFlowItemKind, string> = {
-  text: "var(--edge-used)",
-  image: "var(--edge-active)",
-  tool: "var(--edge-parallel)",
-  data: "var(--info-solid)",
+  text: "hsl(var(--edge-used))",
+  image: "hsl(var(--edge-active))",
+  tool: "hsl(var(--edge-parallel))",
+  data: "hsl(var(--info-solid))",
 };
 
 /** German kind names for the property panel's data list. */

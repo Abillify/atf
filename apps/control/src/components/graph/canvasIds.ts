@@ -24,8 +24,10 @@ export const isOverlayEdgeId = (id: string): boolean =>
   id.startsWith(BOUNDARY_EDGE_PREFIX) ||
   id.startsWith(TOOL_RAIL_EDGE_PREFIX) ||
   isChannelEdgeId(id);
-/** Stroke of an edge the traced run went along (design token, see globals.css). */
-export const USED_EDGE_STROKE = "var(--edge-used)";
+/** Stroke of an edge the traced run went along (design token, see globals.css).
+ * The token is an HSL triplet, so it must be wrapped in hsl() to be a valid
+ * `stroke` value — a bare var() computes to `none` (invisible edges). */
+export const USED_EDGE_STROKE = "hsl(var(--edge-used))";
 
 /** Canvas-only label shortening; the full text stays in the edge's data and
  * is shown/edited in the properties panel. */
@@ -37,8 +39,9 @@ export function shortLabel(label: unknown): string | undefined {
 
 /** Reference links are drawn dashed and muted so they read as "wired via a
  * node setting", not as a routing edge you can select or delete. */
-export const REFERENCE_STYLE: Record<ReferenceKind, { stroke: string; dash: string }> = {
-  parallel: { stroke: "var(--edge-parallel)", dash: "6 4" },
-  verifies: { stroke: "var(--edge-verifies)", dash: "2 4" },
-  delegates: { stroke: "var(--edge-delegates)", dash: "5 4" },
-};
+export const REFERENCE_STYLE: Record<ReferenceKind, { stroke: string; dash: string }> =
+  {
+    parallel: { stroke: "hsl(var(--edge-parallel))", dash: "6 4" },
+    verifies: { stroke: "hsl(var(--edge-verifies))", dash: "2 4" },
+    delegates: { stroke: "hsl(var(--edge-delegates))", dash: "5 4" },
+  };

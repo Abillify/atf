@@ -682,19 +682,22 @@ export function GraphVisualizer({
 
       const order = execOrder.get(key);
 
+      // The design tokens are HSL triplets (`215 20% 65%`), not colors: a
+      // bare `var(--edge-*)` is invalid for `stroke`/marker `color` (it
+      // computes to `none` → invisible edges), so wrap every token in hsl().
       const baseStroke = e.boundary
-        ? "var(--edge-boundary)"
+        ? "hsl(var(--edge-boundary))"
         : e.tool
-          ? "var(--edge-tool)"
+          ? "hsl(var(--edge-tool))"
           : e.parallel
-            ? "var(--edge-parallel-light)"
-            : "var(--edge-idle)";
+            ? "hsl(var(--edge-parallel-light))"
+            : "hsl(var(--edge-idle))";
 
       const stroke = isActive
-        ? "var(--edge-active)"
+        ? "hsl(var(--edge-active))"
         : isTraversed
           ? baseStroke
-          : "var(--edge-idle-soft)";
+          : "hsl(var(--edge-idle-soft))";
       const strokeWidth = isActive
         ? 2.5
         : isTraversed
@@ -779,7 +782,7 @@ export function GraphVisualizer({
           elementsSelectable
           deleteKeyCode={null}
         >
-          <Background gap={20} color="var(--canvas-dots)" />
+          <Background gap={20} color="hsl(var(--canvas-dots))" />
           {viewMode === "timeline" && <TimeRuler meta={layoutMeta} />}
           <Controls showInteractive={false} />
           <MiniMap
