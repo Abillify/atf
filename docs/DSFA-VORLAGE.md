@@ -6,7 +6,7 @@
 A working aid for the controller. ATF provides the technical building
 blocks; the legal assessment is the responsibility of the controller and the
 data protection officer. This template is adapted to the ATF architecture
-(0.16) — the notes it ships (`→ ATF:`) are not legal advice; they show which
+(0.16; the storage locations were updated for 0.18.1) — the notes it ships (`→ ATF:`) are not legal advice; they show which
 controls the platform contributes.
 
 ## 1. Description of the processing
@@ -18,8 +18,8 @@ controls the platform contributes.
 | Categories of data subjects | | End users, persons named in documents |
 | Data categories | | Chat content, documents, metadata, audit log |
 | Special categories (Art. 9)? | | Document content may contain Art. 9 data → check the PII-vault mode |
-| Storage locations / recipients | | Postgres, outstore, LLM providers (attach the list!) |
-| Retention periods | | TTLs: vault, sessions, audit — configurable |
+| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!) |
+| Retention periods | | TTLs: vault, sessions, audit — configurable. Extract keeps finished jobs (with the stored model response of every page) until `JOB_RETENTION_DAYS` (default: forever), abandoned uploads for `UPLOAD_SESSION_MAX_AGE_HOURS` (72), the derived-PDF cache by size and age; source bytes until the document is deleted or erased |
 
 → ATF: the processing overview comes from the record of processing
 activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
@@ -29,7 +29,8 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 - [ ] Data processing agreements documented for hosting, LLM providers and embedding providers
 - [ ] Adequacy decision or SCC + TIA per provider
 - [ ] Provider egress restricted to the approved list
-      → ATF: the egress allowlist technically enforces what was agreed contractually
+      → ATF: `EGRESS_ALLOWED_HOSTS` technically enforces what was agreed contractually — only
+        when it is set; empty means every public host (the production gate warns)
 - [ ] BYOK: the tenant's key ownership documented
 
 ## 3. Principles check (Art. 5)

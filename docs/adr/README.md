@@ -39,6 +39,12 @@ New ADRs get the next free number; never reuse a number. Status values:
 | 0027 | [Per-request CSP nonces for the operator plane](0027-csp-nonce-operator-plane.md)                         | Accepted  |
 | 0028 | [Converter isolation behind a Unix-socket sidecar](0028-converter-isolation-sidecar.md)                   | Accepted  |
 | 0029 | [Verifiable execution receipts (COSE_Sign1 + Merkle log)](0029-verifiable-execution-receipts.md)         | Accepted  |
+| 0030 | [Asymmetric evidence chain: one Ed25519 key for independent verification](0030-asymmetric-evidence-chain-ed25519.md) | Accepted  |
+| 0031 | [Shared rate-limit backends and an explicit REPLICAS knob](0031-shared-rate-limit-backends-replicas.md) | Accepted  |
+| 0032 | [Propagating Search content-trust labels into execution taint](0032-search-content-trust-labels-execution-taint.md) | Accepted  |
+| 0033 | [Extract throughput: continuous page refill, parallel job lanes, derived-PDF cache](0033-extract-throughput-continuous-refill-job-lanes-derived-pdf-cache.md) | Accepted  |
+| 0034 | [Online (DB) flows shadow same-id file flows — visibly, precedence unchanged](0034-online-db-flows-shadow-file-flows-visibly.md) | Accepted  |
+| 0035 | [Asymmetric transaction tokens and one audience per service](0035-asymmetric-transaction-tokens-audience-per-service.md) | Accepted  |
 
 ## Conventions
 

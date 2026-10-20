@@ -4,7 +4,10 @@ Date: 2026-08-02
 
 ## Status
 
-Accepted
+Accepted — the HMAC-only signing and the rejection of asymmetric keys are
+partially superseded by
+[ADR-0030](0030-asymmetric-evidence-chain-ed25519.md); HMAC bundles remain
+verifiable as legacy artefacts
 
 ## Context
 

@@ -7,7 +7,9 @@ Date: 2026-10-08
 
 ## Status
 
-Accepted
+Accepted — the HMAC-only anchor signature is partially superseded by
+[ADR-0030](0030-asymmetric-evidence-chain-ed25519.md); HMAC anchors remain
+verifiable as legacy artefacts
 
 ## Context
 
