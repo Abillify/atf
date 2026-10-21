@@ -13,7 +13,8 @@ import type { AccessScope } from "./access-scope.js";
 import { AppError, collectionTableName } from "./collection-ddl.js";
 import type { Metadata } from "./metadata.js";
 import { DOCUMENT_BODY_SQL, DOCUMENT_ORDER_SQL, deriveFolderAggregates, documentBodyText, escapeLikeLiteral, fuzzyScore, mergeChunksWithCoordinates, mergeOrderedChunkContents, normalizePathPrefix, normalizeReference, stripNullBytes } from "./pg-helpers.js";
-import type { ChunkInfo, DocumentContent, DocumentSummary, FolderSummary, PostgresResponse, SummaryEntry } from "./pg-types.js";
+import type { ChunkInfo, DocumentContent, DocumentSummary, FolderSummary, PostgresResponse, SplitSibling, SummaryEntry } from "./pg-types.js";
+import { folderOf } from "./document-identity.js";
 
 import type { PgFactoryCtx } from "./pg-factory-ctx.js";
 
@@ -669,6 +670,69 @@ export function createDocsMethods(ctx: PgFactoryCtx) {
         }
 
         return { documents, total, truncated };
+      });
+    },
+
+    async getSplitSiblings(
+      collection: string,
+      scope: AccessScope,
+      documents: ReadonlyArray<{ reference: string; splitOf: string }>,
+      options?: { validAt?: string },
+    ): Promise<PostgresResponse<Record<string, SplitSibling[]>>> {
+      let table: string;
+      try {
+        table = collectionTableName(collection);
+      } catch (cause) {
+        return {
+          ok: false,
+          error: {
+            code: "INVALID_COLLECTION_NAME",
+            message: (cause as Error).message,
+            cause,
+          },
+        };
+      }
+      if (documents.length === 0) return { ok: true, result: {} };
+      const splitOfs = [...new Set(documents.map((d) => d.splitOf))];
+      return withClient(async (client) => {
+        const access = versionedWhere(table, collection, scope, [splitOfs], options?.validAt);
+        const { rows } = await client.query<{
+          base_ref: string;
+          title: string | null;
+          split_of: string;
+          split_order: string | null;
+        }>(
+          `SELECT base_ref, title, metadata->>'split_of' AS split_of,
+                  metadata->>'split_order' AS split_order
+             FROM "${table}"
+            WHERE metadata->>'split_of' = ANY($1)${access.sql}
+            GROUP BY base_ref, title, metadata->>'split_of', metadata->>'split_order'`,
+          access.params,
+        );
+        const groupKey = (reference: string, splitOf: string): string => `${folderOf(reference)}\u0000${splitOf}`;
+        const parts = new Map<string, SplitSibling[]>();
+        for (const row of rows) {
+          const order = row.split_order === null ? Number.NaN : Number(row.split_order);
+          const list = parts.get(groupKey(row.base_ref, row.split_of)) ?? [];
+          list.push({
+            base_ref: row.base_ref,
+            title: row.title,
+            order: Number.isFinite(order) ? order : null,
+          });
+          parts.set(groupKey(row.base_ref, row.split_of), list);
+        }
+        const bySiblings: Record<string, SplitSibling[]> = {};
+        for (const doc of documents) {
+          const siblings = (parts.get(groupKey(doc.reference, doc.splitOf)) ?? [])
+            .filter((part) => part.base_ref !== doc.reference)
+            .sort(
+              (a, b) =>
+                (a.order ?? Number.POSITIVE_INFINITY) - (b.order ?? Number.POSITIVE_INFINITY) ||
+                (a.base_ref < b.base_ref ? -1 : a.base_ref > b.base_ref ? 1 : 0),
+            );
+          if (siblings.length > 0) bySiblings[doc.reference] = siblings;
+        }
+        return bySiblings;
       });
     },
 

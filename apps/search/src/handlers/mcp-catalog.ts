@@ -21,6 +21,7 @@ import { responseTrustLabels, trustLabels } from "../content-trust.js";
 import type { AssetScope } from "../asset-store.js";
 import { normalizePathPrefix, normalizeReference } from "../postgres-client.js";
 import { expectedReferenceMatches } from "../expected-reference.js";
+import { splitOfValue } from "../document-identity.js";
 import { V2_ASSET_MIME_TYPES } from "./v2-assets.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
@@ -822,7 +823,7 @@ export function registerCatalogTools(opts: McpToolContext): void {
   // the model context; `truncated` signals when not everything was returned.
   server.tool(
     "get_documents",
-    "Fetch every document beneath a folder path at once, each reassembled from its chunks (in order, overlaps trimmed). Use this to read a whole folder of the akte in one call. Bounded by limit and max_chars; check the 'truncated' flag and paginate/narrow the path if it is true.",
+    "Fetch every document beneath a folder path at once, each reassembled from its chunks (in order, overlaps trimmed). Use this to read a whole folder of the akte in one call. Bounded by limit and max_chars; check the 'truncated' flag and paginate/narrow the path if it is true. A document ingested as one part of a split document (metadata.split_of) also lists the other parts as 'siblings' ({ base_ref, title, order }, sorted by metadata.split_order).",
     {
       path_prefix: z
         .string()
@@ -884,8 +885,21 @@ export function registerCatalogTools(opts: McpToolContext): void {
         };
       }
       const { documents, total, truncated } = result.result;
+      // Parts of a split document list each other (declared via metadata.split_of).
+      const splitDocs = documents.flatMap((d) => {
+        const splitOf = splitOfValue(d.metadata);
+        return splitOf !== undefined ? [{ reference: d.reference, splitOf }] : [];
+      });
+      const siblingsResult =
+        splitDocs.length > 0
+          ? await postgresClient.getSplitSiblings(col, accessScopeForMcp(), splitDocs, {
+              ...(valid_at !== undefined ? { validAt: valid_at } : {}),
+            })
+          : undefined;
+      const siblingsByRef = siblingsResult?.ok === true ? siblingsResult.result : {};
       const labeledDocuments = documents.map((d) => ({
         ...d,
+        ...(siblingsByRef[d.reference] !== undefined ? { siblings: siblingsByRef[d.reference] } : {}),
         ...trustLabels(d.content),
       }));
       emitQueryActivity({

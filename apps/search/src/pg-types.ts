@@ -692,6 +692,14 @@ export interface SummaryEntry {
 }
 
 /** A whole document reassembled from its (latest) chunks. */
+/** Another part of the same split document, as `get_documents` lists it. */
+export interface SplitSibling {
+  base_ref: string;
+  title: string | null;
+  /** `metadata.split_order` as a number, null when absent or not numeric. */
+  order: number | null;
+}
+
 export interface DocumentContent {
   reference: string;
   title: string | null;
@@ -1182,6 +1190,20 @@ export interface PostgresClient {
       truncated: boolean;
     }>
   >;
+
+  /**
+   * The other parts of each given split document: documents of the same folder
+   * (everything before the last `/` of `base_ref`) that carry the same
+   * `metadata.split_of`, ordered by `metadata.split_order`. Only documents the
+   * caller may read are listed. A reference without siblings is absent from the
+   * result.
+   */
+  getSplitSiblings(
+    collection: string,
+    scope: AccessScope,
+    documents: ReadonlyArray<{ reference: string; splitOf: string }>,
+    options?: { validAt?: string },
+  ): Promise<PostgresResponse<Record<string, SplitSibling[]>>>;
 
   /**
    * Fetch the stored summary/prefix of a single document (chunk-0 `prefix`).

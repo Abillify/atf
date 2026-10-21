@@ -186,6 +186,14 @@ grid once (`metadata.display_len`; the "Spalte: Wert" lines are search-only), a 
 transcription headed `[Abbildung <figure_id> · <kind> · asset_id=…]`, and a chunk ending in a
 paragraph that runs over the page break is read without the carried continuation. The summary
 is the `document` unit's (or a backfilled one), the title the first non-empty one.
+
+**Split documents.** A document the caller ingests in several parts declares that with the
+document attributes `metadata.split_of` (a string naming the whole, for example `"spec-1"`) and
+optionally `metadata.split_order` (a number). Parts in the same folder (everything before the last
+`/` of `base_ref`) with the same `split_of` form a group of kind `split_document` (the
+`document_group` of a hit), and `get_documents` adds `siblings: [{ base_ref, title, order }]` to
+each part: the other parts the caller may read, sorted by `split_order`. Nothing is inferred from
+file names; a document without `split_of` has no group and no siblings.
 `get_section` and `get_pages` (Markdown format) follow the same body rules and return the
 summary units of the range apart, in `summaries`; `units` counts the body units.
 

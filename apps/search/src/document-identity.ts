@@ -702,7 +702,11 @@ const SUBJECT_WINDOW_DAYS = 180;
  * switch's transaction:
  *   - an e-mail is threaded (see the module header) and grouped by its thread;
  *   - an attachment (a document with a parent) records its parent and inherits
- *     the parent's group at read time, whichever of the two commits first.
+ *     the parent's group at read time, whichever of the two commits first;
+ *   - a document the caller declared part of a split document (`metadata.split_of`,
+ *     see {@link splitGroupId}) joins the group of the parts that share its folder
+ *     and its `split_of`. The runtime never guesses this: without `split_of`
+ *     there is no group.
  */
 export async function registerDocumentGroup(
   client: PoolClient,
@@ -722,7 +726,46 @@ export async function registerDocumentGroup(
          title = EXCLUDED.title, modified = NOW()`,
       [tenantId, collection, reference, info.parentReference, info.title ?? null],
     );
+    return;
   }
+  const splitId = splitGroupId(reference, info.metadata);
+  if (splitId !== undefined) {
+    await client.query(
+      `INSERT INTO ${GROUPS} (tenant_id, collection, reference, group_id, parent_reference, kind, title)
+       VALUES ($1, $2, $3, $4, NULL, 'split', $5)
+       ON CONFLICT (tenant_id, collection, reference) DO UPDATE SET
+         group_id = EXCLUDED.group_id, parent_reference = NULL, kind = 'split',
+         title = EXCLUDED.title, modified = NOW()`,
+      [tenantId, collection, reference, splitId, info.title ?? null],
+    );
+  }
+}
+
+/** The part of a reference before its last `/` ("" for a reference without one). */
+export function folderOf(reference: string): string {
+  const slash = reference.lastIndexOf("/");
+  return slash === -1 ? "" : reference.slice(0, slash);
+}
+
+/** The `split_of` value of a document's metadata: a non-blank string, else undefined. */
+export function splitOfValue(metadata: Record<string, unknown> | undefined): string | undefined {
+  const value = metadata?.split_of;
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+/**
+ * Group id of a split document's part: documents belong together when they
+ * share the folder of their `base_ref` (everything before the last `/`) AND the
+ * same `split_of` value. Returns undefined for a document that is not declared
+ * as part of a split document — there is no automatic guessing.
+ */
+export function splitGroupId(
+  reference: string,
+  metadata: Record<string, unknown> | undefined,
+): string | undefined {
+  const splitOf = splitOfValue(metadata);
+  if (splitOf === undefined || !reference.includes("/")) return undefined;
+  return `split:${createHash("sha256").update(`${folderOf(reference)}\n${splitOf}`).digest("hex").slice(0, 32)}`;
 }
 
 async function threadEmail(
@@ -836,7 +879,7 @@ async function threadEmail(
 export interface DocumentGroup {
   /** Stable group id: the thread id, or the parent reference of an attachment. */
   id: string;
-  kind: "email_thread" | "attachment";
+  kind: "email_thread" | "attachment" | "split_document";
   /** The thread subject (or the attachment's parent title). */
   title?: string;
   /** When the document was sent, for ordering a thread chronologically. */
@@ -878,6 +921,15 @@ export async function resolveDocumentGroups(
     [args.tenantId, args.collection, refs],
   );
   for (const row of res.rows) {
+    if (row.kind === "split") {
+      if (!row.group_id) continue;
+      out.set(row.reference, {
+        id: row.group_id,
+        kind: "split_document",
+        ...(row.title ? { title: row.title } : {}),
+      });
+      continue;
+    }
     const threadId = row.group_id ?? row.parent_group_id;
     const id = threadId ?? row.parent_reference;
     if (!id) continue;
