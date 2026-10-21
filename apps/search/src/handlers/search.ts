@@ -442,6 +442,11 @@ export function createSearchHandler(
         "Incoming search query",
       );
 
+      // The authorization scope is resolved up front: the HyDE and embedding
+      // caches below bind their keys to the caller's tenant, and an
+      // unauthenticated request must be rejected before any backend call.
+      const scope = accessScopeForRequest(req);
+
       // 12. Determine query text (optionally expanded via HyDE)
       // Apply the same pre-processing used at ingest time: strip URLs and other
       // noise tokens so the embedding and FTS query match what is actually indexed.
@@ -449,8 +454,8 @@ export function createSearchHandler(
       let queryText = prepareFtsContent(body);
       let hydeExpanded: string | undefined;
 
-      if (hydeRequested) {
-        const hydeRes = await hydeClient!.expand(body);
+      if (hydeRequested && hydeClient) {
+        const hydeRes = await hydeClient.expand(body, scope.tenantId);
         if (hydeRes.ok) {
           hydeExpanded = hydeRes.result;
           queryText = hydeRes.result;
@@ -472,11 +477,15 @@ export function createSearchHandler(
       if (!ftsOnly) {
         if (queryCache) {
           try {
-            vector = await queryCache.getOrEmbed(queryText, async () => {
-              const r = await embeddingClient.embed(queryText);
-              if (!r.ok) throw new Error(r.error.message);
-              return r.result.vector;
-            });
+            vector = await queryCache.getOrEmbed(
+              queryText,
+              async () => {
+                const r = await embeddingClient.embed(queryText);
+                if (!r.ok) throw new Error(r.error.message);
+                return r.result.vector;
+              },
+              scope.tenantId,
+            );
           } catch (err) {
             const message =
               err instanceof Error ? err.message : "Embedding failed";
@@ -538,7 +547,6 @@ export function createSearchHandler(
       }
 
       // 16. Search
-      const scope = accessScopeForRequest(req);
       const searchOffset = rerankActive ? 0 : offset;
       const searchResult = await postgresClient.search(
         body, // original query for PostgreSQL FTS/ts_rank (not HyDE text)

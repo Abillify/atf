@@ -139,4 +139,27 @@ describe("createHydeClient · expansion cache", () => {
     await hyde.expand("q");
     expect(calls).toBe(2);
   });
+
+  it("same tenant and identical query: one upstream call", async () => {
+    const hyde = client({ cacheTtlMs: 60_000 });
+    const first = await hyde.expand("Wie hoch ist die Miete?", "tenant-a");
+    const second = await hyde.expand("Wie hoch ist die Miete?", "tenant-a");
+    expect(first.ok && second.ok).toBe(true);
+    if (first.ok && second.ok) expect(second.result).toBe(first.result);
+    expect(calls).toBe(1);
+  });
+
+  it("different tenants asking the same query: two upstream calls", async () => {
+    const hyde = client({ cacheTtlMs: 60_000 });
+    await hyde.expand("Wie hoch ist die Miete?", "tenant-a");
+    await hyde.expand("Wie hoch ist die Miete?", "tenant-b");
+    expect(calls).toBe(2);
+  });
+
+  it("without a scope key caching stays effective", async () => {
+    const hyde = client({ cacheTtlMs: 60_000 });
+    await hyde.expand("Wie hoch ist die Miete?");
+    await hyde.expand("Wie hoch ist die Miete?");
+    expect(calls).toBe(1);
+  });
 });

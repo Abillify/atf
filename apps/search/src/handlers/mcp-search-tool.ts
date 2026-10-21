@@ -450,8 +450,11 @@ export function registerSearchTool(opts: McpToolContext): void {
           ? "unavailable"
           : null
         : "not-requested";
-      if (useHyde) {
-        const hydeRes = await hydeClient!.expand(query);
+      if (useHyde && hydeClient) {
+        const hydeRes = await hydeClient.expand(
+          query,
+          accessScopeForMcp().tenantId,
+        );
         if (hydeRes.ok) {
           embedText = hydeRes.result;
           hydeApplied = true;

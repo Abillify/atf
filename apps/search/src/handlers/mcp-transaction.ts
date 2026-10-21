@@ -198,8 +198,11 @@ export function registerTransactionTools(opts: McpToolContext): void {
 
       let embedText = query;
       let hydeApplied = false;
-      if (useHyde) {
-        const hydeResult = await hydeClient!.expand(query);
+      if (useHyde && hydeClient) {
+        const hydeResult = await hydeClient.expand(
+          query,
+          accessScopeForMcp().tenantId,
+        );
         if (hydeResult.ok) {
           embedText = hydeResult.result;
           hydeApplied = true;
@@ -214,11 +217,15 @@ export function registerTransactionTools(opts: McpToolContext): void {
       let vector: number[];
       try {
         if (queryCache) {
-          vector = await queryCache.getOrEmbed(embedText, async () => {
-            const embedding = await embeddingClient.embed(embedText);
-            if (!embedding.ok) throw new Error(embedding.error.message);
-            return embedding.result.vector;
-          });
+          vector = await queryCache.getOrEmbed(
+            embedText,
+            async () => {
+              const embedding = await embeddingClient.embed(embedText);
+              if (!embedding.ok) throw new Error(embedding.error.message);
+              return embedding.result.vector;
+            },
+            accessScopeForMcp().tenantId,
+          );
         } else {
           const embedding = await embeddingClient.embed(embedText);
           if (!embedding.ok) throw new Error(embedding.error.message);

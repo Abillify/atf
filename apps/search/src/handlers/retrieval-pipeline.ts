@@ -100,22 +100,29 @@ export class CandidateSearchError extends Error {
 }
 
 /**
- * Embed `text`, reusing the configured query cache. Throws
- * {@link EmbeddingFailedError} with the backend message; the call-site decides
- * the HTTP/tool error shape and its own log line.
+ * Embed `text`, reusing the configured query cache. `scopeKey` (the caller's
+ * tenant id) binds the cache entry to the tenant so hits are never shared
+ * across tenants. Throws {@link EmbeddingFailedError} with the backend
+ * message; the call-site decides the HTTP/tool error shape and its own log
+ * line.
  */
 export async function embedQuery(
 	clients: RetrievalClients,
 	text: string,
+	scopeKey?: string,
 ): Promise<number[]> {
 	const { embeddingClient, queryCache } = clients;
 	if (queryCache) {
 		try {
-			return await queryCache.getOrEmbed(text, async () => {
-				const r = await embeddingClient.embed(text);
-				if (!r.ok) throw new Error(r.error.message);
-				return r.result.vector;
-			});
+			return await queryCache.getOrEmbed(
+				text,
+				async () => {
+					const r = await embeddingClient.embed(text);
+					if (!r.ok) throw new Error(r.error.message);
+					return r.result.vector;
+				},
+				scopeKey,
+			);
 		} catch (err) {
 			throw new EmbeddingFailedError(
 				err instanceof Error ? err.message : String(err),
@@ -488,7 +495,7 @@ export async function runRetrievalPipeline(
 	// a dense failure throws, and the settled sparse promise is simply dropped.
 	const [vector, { vector: sparseVec, failed: sparseFailed }] =
 		await Promise.all([
-			embedQuery(clients, cfg.embedText),
+			embedQuery(clients, cfg.embedText, cfg.scope.tenantId),
 			embedSparseVector(clients, cfg.hybrid, cfg.embedText),
 		]);
 	if (sparseFailed !== undefined && cfg.logSparseFailure) {

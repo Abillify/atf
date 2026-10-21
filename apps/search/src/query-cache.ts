@@ -1,6 +1,26 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { createHash } from "node:crypto";
+
+/**
+ * Cache key binding a scope (the caller's tenant id, or `undefined` for a
+ * caller without one) to a text. Hashed so the key never contains the raw
+ * query, and separated with NUL so (scope, text) pairs cannot collide by
+ * concatenation. Shared by the query-embedding cache and the HyDE expansion
+ * cache so both bind tenant and query identically.
+ */
+export function scopedCacheKey(
+  scopeKey: string | undefined,
+  text: string,
+): string {
+  return createHash("sha256")
+    .update(scopeKey ?? "")
+    .update("\u0000")
+    .update(text)
+    .digest("hex");
+}
+
 /**
  * LRU (Least Recently Used) cache for search-query embeddings.
  *
@@ -8,7 +28,8 @@
  * etc.) while ingest texts are generally unique. Caching only the search path
  * avoids storing embeddings that will never be re-used.
  *
- * The cache is keyed by the exact query string — callers should normalise
+ * Entries are keyed by tenant scope and query text (see {@link scopedCacheKey})
+ * so a cache hit is never observable across tenants. Callers should normalise
  * (trim, lowercase, …) if case-insensitive deduplication is desired.
  *
  * Set maxSize = 0 to disable caching entirely (createQueryEmbeddingCache
@@ -50,10 +71,17 @@ class LRUCache<K, V> {
 
 export interface QueryEmbeddingCache {
   /**
-   * Return the cached vector for `text`, or call `embed()` to compute it,
-   * cache the result, and return it.
+   * Return the cached vector for `text` within `scopeKey` (the caller's tenant
+   * id), or call `embed()` to compute it, cache the result, and return it.
+   * Keys bind tenant and text (see {@link scopedCacheKey}) so one tenant can
+   * never observe — via a hit or a shared in-flight call — that another tenant
+   * asked the same question.
    */
-  getOrEmbed(text: string, embed: () => Promise<number[]>): Promise<number[]>;
+  getOrEmbed(
+    text: string,
+    embed: () => Promise<number[]>,
+    scopeKey?: string,
+  ): Promise<number[]>;
   /**
    * Drop every cached embedding (task 4.2, Requirement 2.4). Called after a
    * document delete so no in-process entry survives the data it was derived
@@ -66,7 +94,7 @@ export interface QueryEmbeddingCache {
 
 /** No-op implementation used when caching is disabled (maxSize = 0). */
 const noopCache: QueryEmbeddingCache = {
-  getOrEmbed: (_text, embed) => embed(),
+  getOrEmbed: (_text, embed, _scopeKey) => embed(),
   clear(): void {},
   get size() {
     return 0;
@@ -87,23 +115,25 @@ export function createQueryEmbeddingCache(
     getOrEmbed(
       text: string,
       embed: () => Promise<number[]>,
+      scopeKey?: string,
     ): Promise<number[]> {
-      const cached = cache.get(text);
+      const key = scopedCacheKey(scopeKey, text);
+      const cached = cache.get(key);
       if (cached) return Promise.resolve(cached);
 
-      const inflight = pending.get(text);
+      const inflight = pending.get(key);
       if (inflight) return inflight;
 
       const promise = embed()
         .then((vector) => {
-          cache.set(text, vector);
+          cache.set(key, vector);
           return vector;
         })
         .finally(() => {
-          pending.delete(text);
+          pending.delete(key);
         });
 
-      pending.set(text, promise);
+      pending.set(key, promise);
       return promise;
     },
     clear(): void {

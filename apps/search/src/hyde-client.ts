@@ -6,6 +6,7 @@ import type pino from "pino";
 import { retryWithBackoff, type CircuitBreaker } from "./retry.js";
 import { injectTraceHeaders } from "./trace-context.js";
 import { recordUsage } from "./usage-context.js";
+import { scopedCacheKey } from "./query-cache.js";
 
 export interface HydeClientConfig {
   /**
@@ -75,8 +76,10 @@ export interface HydeClient {
    * Generate a hypothetical document that would answer `query`.
    * The returned text is then embedded and used as the search vector instead
    * of the raw query (HyDE — Hypothetical Document Embeddings, Gao et al. 2022).
+   * `scopeKey` is the caller's tenant id; the expansion cache (when enabled)
+   * keys entries by tenant and query so hits are never shared across tenants.
    */
-  expand(query: string): Promise<HydeResponse>;
+  expand(query: string, scopeKey?: string): Promise<HydeResponse>;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -292,36 +295,38 @@ export function createHydeClient(config: HydeClientConfig): HydeClient {
   const cacheTtlMs = Math.max(0, config.cacheTtlMs ?? 0);
   if (cacheTtlMs === 0) return { expand: expandUncached };
 
-  // Process-local, bounded, time-limited. The expansion depends on the query
-  // text only (no tenant data goes in), so a hit is safe for any caller.
+  // Process-local, bounded, time-limited. Keys bind the tenant (scopeKey) to
+  // the query text, so one tenant cannot observe from latency whether another
+  // tenant asked the same question.
   const maxEntries = Math.max(1, config.cacheMaxEntries ?? 256);
   const cache = new Map<string, { text: string; expiresAt: number }>();
   const inFlight = new Map<string, Promise<HydeResponse>>();
   return {
-    async expand(query: string): Promise<HydeResponse> {
+    async expand(query: string, scopeKey?: string): Promise<HydeResponse> {
       const now = Date.now();
-      const hit = cache.get(query);
+      const key = scopedCacheKey(scopeKey, query);
+      const hit = cache.get(key);
       if (hit !== undefined) {
         if (hit.expiresAt > now) {
           // Re-insert: Map order doubles as LRU order.
-          cache.delete(query);
-          cache.set(query, hit);
+          cache.delete(key);
+          cache.set(key, hit);
           return { ok: true, result: hit.text };
         }
-        cache.delete(query);
+        cache.delete(key);
       }
-      const pending = inFlight.get(query);
+      const pending = inFlight.get(key);
       if (pending !== undefined) {
         // Same query already being expanded: share the call, and the cost.
         const shared = await pending;
         return shared.ok ? { ok: true, result: shared.result } : shared;
       }
       const call = expandUncached(query);
-      inFlight.set(query, call);
+      inFlight.set(key, call);
       try {
         const res = await call;
         if (res.ok) {
-          cache.set(query, { text: res.result, expiresAt: Date.now() + cacheTtlMs });
+          cache.set(key, { text: res.result, expiresAt: Date.now() + cacheTtlMs });
           while (cache.size > maxEntries) {
             const oldest = cache.keys().next().value;
             if (oldest === undefined) break;
@@ -330,7 +335,7 @@ export function createHydeClient(config: HydeClientConfig): HydeClient {
         }
         return res;
       } finally {
-        inFlight.delete(query);
+        inFlight.delete(key);
       }
     },
   };

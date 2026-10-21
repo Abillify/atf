@@ -228,6 +228,7 @@ releases:
   link and the trusted-writer ACL override), each backed by file and line.
 - With the production profile a flow whose node `config` contains a key the node type does not read is no longer loaded; it is reported as a flow load failure (readiness `flow_load: degraded`). Elsewhere the load logs a warning.
 - Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms (longest first).
+- Search: the HyDE and query-embedding caches key entries by tenant and query, so cache hits no longer reveal across tenants which questions were asked.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
