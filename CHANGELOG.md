@@ -683,6 +683,7 @@ releases:
 - Gate monitor and playground derive the tenant like the MCP authenticator (claim names, issuer-tenant binding), pass the verified claims to tools, and read groups from `monitoring.oidc.groupsClaim`.
 - `ARCHITECTURE.md` lists the current contract package versions, and `verify:version` now fails when that table drifts from the package manifests.
 - `docs/README.md`, the root README and `ARCHITECTURE.md` reflect the current documents, gates, Redis behaviour and trust architecture.
+- Gate no longer returns internal error messages of failed tools to MCP clients: the client receives `Tool execution failed (reference <id>)`, the full text stays in the log and the monitor stream.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

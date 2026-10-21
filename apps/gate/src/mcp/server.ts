@@ -767,8 +767,13 @@ export class McpToolDispatcher {
         durationMs: Date.now() - started,
         message,
       });
+      // The full text may carry driver, host or SQL details; it goes to the
+      // log and the monitor, the client gets a reference to look it up by.
+      logger.error(`tool '${name}' failed (reference ${this.requestId}): ${message}`);
       return {
-        content: [{ type: "text", text: `Tool execution failed: ${message}` }],
+        content: [
+          { type: "text", text: `Tool execution failed (reference ${this.requestId})` },
+        ],
         isError: true,
       };
     }
