@@ -68,9 +68,15 @@ describe("isForbiddenAddress (table spot-checks)", () => {
     "172.16.0.1",
     "172.31.255.255",
     "192.0.0.1",
+    "192.0.2.1", // TEST-NET-1
     "192.168.0.1",
     "198.18.0.1",
     "198.19.255.255",
+    "198.51.100.7", // TEST-NET-2
+    "203.0.113.5", // TEST-NET-3
+    "::ffff:203.0.113.5", // mapped TEST-NET-3
+    "2001:db8::1", // IPv6 documentation prefix
+    "2001:db8:ffff::1",
     "224.0.0.5",
     "239.255.255.255",
     "240.0.0.1",
@@ -108,7 +114,10 @@ describe("isForbiddenAddress (table spot-checks)", () => {
     "192.169.255.255",
     "198.17.255.255",
     "198.20.0.1",
-    "203.0.113.5", // TEST-NET-3 is not in the table (documentation ranges are not "reserved" here)
+    "192.0.3.1", // just above TEST-NET-1
+    "198.51.101.1", // just above TEST-NET-2
+    "203.0.114.1", // just above TEST-NET-3
+    "2001:db9::1", // just above the IPv6 documentation prefix
     "2001:4860:4860::8888",
     "2606:4700:4700::1111",
     "2002:0101:0101::", // 6to4 carrying 1.1.1.1

@@ -26,9 +26,11 @@ import { McpProxyToolSchema } from "../../src/config/schema.ts";
 import { McpProxyToolExecutor } from "../../src/tools/mcp-proxy-tool.ts";
 import type { ToolRuntime } from "../../src/tools/types.ts";
 
-/** TEST-NET-3 (RFC 5737): documentation address — never routable, and not in
- * the SSRF forbidden catalog, so `validateOutboundUrl` passes without DNS. */
-const DOWNSTREAM_URL = "https://203.0.113.7/mcp";
+/** A public IP literal (the long-standing example.com address): outside the
+ * SSRF forbidden catalog, so `validateOutboundUrl` passes without DNS. The
+ * documentation ranges (RFC 5737) are forbidden by the egress guard. The test
+ * never connects: the SDK client is spied. */
+const DOWNSTREAM_URL = "https://93.184.216.34/mcp";
 
 const authContext: AuthContext = {
   method: "oauth",
@@ -44,7 +46,7 @@ const authContext: AuthContext = {
 const runtime = {
   db: {},
   bus: {},
-  outboundAllowedHosts: ["203.0.113.7"],
+  outboundAllowedHosts: ["93.184.216.34"],
 } as unknown as ToolRuntime;
 
 function executor(): McpProxyToolExecutor {

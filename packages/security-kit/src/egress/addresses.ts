@@ -9,7 +9,9 @@
  * all services refuse exactly the same address space: private, loopback,
  * link-local/metadata, ULA, CGNAT, unspecified, multicast, reserved, the
  * benchmarking range 198.18.0.0/15, the IETF protocol-assignment range
- * 192.0.0.0/24, and every form in which a forbidden IPv4 can hide inside an
+ * 192.0.0.0/24, the documentation ranges (TEST-NET-1/2/3 and 2001:db8::/32 —
+ * never routable, so a name resolving there is a misconfiguration or an
+ * attempt to reach something internal), and every form in which a forbidden IPv4 can hide inside an
  * IPv6 literal — IPv4-mapped (`::ffff:0:0/96`), IPv4-compatible, NAT64
  * well-known (`64:ff9b::/96`) and 6to4 (`2002::/16`).
  *
@@ -27,8 +29,11 @@ const FORBIDDEN_V4: ReadonlyArray<readonly [number, number]> = [
   [0xa9fe0000, 16], // 169.254.0.0/16 link-local / cloud metadata
   [0xac100000, 12], // 172.16.0.0/12 private
   [0xc0000000, 24], // 192.0.0.0/24 IETF protocol assignments
+  [0xc0000200, 24], // 192.0.2.0/24 TEST-NET-1 documentation
   [0xc0a80000, 16], // 192.168.0.0/16 private
   [0xc6120000, 15], // 198.18.0.0/15 benchmarking
+  [0xc6336400, 24], // 198.51.100.0/24 TEST-NET-2 documentation
+  [0xcb007100, 24], // 203.0.113.0/24 TEST-NET-3 documentation
   [0xe0000000, 4], // 224.0.0.0/4 multicast
   [0xf0000000, 4], // 240.0.0.0/4 reserved (incl. 255.255.255.255)
 ];
@@ -117,6 +122,7 @@ function isForbiddenIPv6(groups: number[]): boolean {
   if ((g0 & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
   if ((g0 & 0xffc0) === 0xfec0) return true; // fec0::/10 deprecated site-local
   if ((g0 & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  if (g0 === 0x2001 && g1 === 0x0db8) return true; // 2001:db8::/32 documentation
   return false;
 }
 

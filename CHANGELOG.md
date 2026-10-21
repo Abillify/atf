@@ -244,6 +244,7 @@ releases:
 - `@atf/security-kit` 1.4.0: the rate-limit middleware accepts `failMode: "closed"` and answers 503 when its shared backend throws (default stays `"open"`). The Gate normalizes `tenantIsolation.issuerTenants` keys (trailing slash), compares issuers without it, and refuses to start when a key is not a configured issuer. The Gate production check warns when a tool binds a mutable identity claim (`:ctx.claims.name`, `.email`, `.preferred_username`).
 - Gate refuses tool bindings on the caller's bearer token (`:ctx.rawToken`, `:ctx.headers.authorization`) when the configuration loads and when a binding is resolved.
 - Gate no longer closes an SSE session when a request with a bad token or another identity names its session id; only the owner's own connection ends it.
+- The egress guard blocks the documentation address ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) in addition to the private and reserved ranges it already refused.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
