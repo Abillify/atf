@@ -14,9 +14,10 @@
  * name, a unit, a code token) goes into ALLOWED with a reason.
  */
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { parse } from "@babel/parser";
 import { de } from "../lib/i18n/catalogs/de";
 import { en } from "../lib/i18n/catalogs/en";
@@ -39,17 +40,44 @@ interface Finding {
   text: string;
 }
 
-const prose = (s: string): boolean =>
-  /[A-Za-z]{2,}/.test(s) &&
-  !/^[a-z0-9_.:/#?=&-]+$/.test(s.trim()) &&
-  !/^[A-Z0-9_]+$/.test(s.trim()) &&
-  !/^https?:\/\//.test(s.trim()) &&
-  !ALLOWED.has(s.trim());
+const HAS_WORD = /[A-Za-z]{2,}/;
+const TOKEN_LIKE = /^[a-z0-9_.:/#?=&-]+$/;
+const CONSTANT_LIKE = /^[A-Z0-9_]+$/;
+const URL_LIKE = /^https?:\/\//;
+const SKIPPED_DIR = /__tests__|lib\/i18n/;
+const FEEDBACK_SKIPPED_DIR = /__tests__|\/api$|\/api\//;
+
+const prose = (s: string): boolean => {
+  const trimmed = s.trim();
+  return (
+    HAS_WORD.test(s) &&
+    !TOKEN_LIKE.test(trimmed) &&
+    !CONSTANT_LIKE.test(trimmed) &&
+    !URL_LIKE.test(trimmed) &&
+    !ALLOWED.has(trimmed)
+  );
+};
+
+/**
+ * Every source file is read once (in parallel) and parsed at most once: the two
+ * scans below walk the same `.tsx` files, and parsing is what costs time.
+ */
+const texts = new Map<string, string>();
+// biome-ignore lint/suspicious/noExplicitAny: Babel AST nodes are walked generically.
+const asts = new Map<string, any>();
+function astOf(file: string) {
+  let ast = asts.get(file);
+  if (ast === undefined) {
+    ast = parse(texts.get(file) ?? "", { sourceType: "module", plugins: ["jsx", "typescript"] });
+    asts.set(file, ast);
+  }
+  return ast;
+}
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return /__tests__|lib\/i18n/.test(path) ? [] : sources(path);
+    if (statSync(path).isDirectory()) return SKIPPED_DIR.test(path) ? [] : sources(path);
     return entry.endsWith(".tsx") && !entry.includes(".test.") ? [path] : [];
   });
 }
@@ -58,8 +86,7 @@ function sources(dir: string): string[] {
 type Node = any;
 
 function findings(file: string): Finding[] {
-  const src = readFileSync(file, "utf8");
-  const ast = parse(src, { sourceType: "module", plugins: ["jsx", "typescript"] });
+  const ast = astOf(file);
   const out: Finding[] = [];
   const rel = relative(SRC, file);
   const report = (node: Node, text: string) =>
@@ -120,13 +147,12 @@ const FEEDBACK_DIRS = ["components", "hooks", "app"];
 function feedbackSources(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return /__tests__|\/api$|\/api\//.test(path) ? [] : feedbackSources(path);
+    if (statSync(path).isDirectory()) return FEEDBACK_SKIPPED_DIR.test(path) ? [] : feedbackSources(path);
     return /\.tsx?$/.test(entry) && !entry.includes(".test.") ? [path] : [];
   });
 }
 function feedbackFindings(file: string): Finding[] {
-  const src = readFileSync(file, "utf8");
-  const ast = parse(src, { sourceType: "module", plugins: ["jsx", "typescript"] });
+  const ast = astOf(file);
   const out: Finding[] = [];
   const rel = relative(SRC, file);
   const literal = (n: Node): string | undefined =>
@@ -163,14 +189,22 @@ function feedbackFindings(file: string): Finding[] {
   visit(ast.program);
   return out;
 }
+const componentFiles = sources(SRC);
+const feedbackFiles = FEEDBACK_DIRS.flatMap((d) => feedbackSources(join(SRC, d)));
+
 describe("i18n coverage", () => {
+  beforeAll(async () => {
+    const files = [...new Set([...componentFiles, ...feedbackFiles])];
+    await Promise.all(files.map(async (file) => texts.set(file, await readFile(file, "utf8"))));
+  });
+
   test("no hard-coded user-visible text in components", () => {
-    const all = sources(SRC).flatMap(findings);
+    const all = componentFiles.flatMap(findings);
     expect(all.map((f) => `${f.file}:${f.line} ${JSON.stringify(f.text)}`)).toEqual([]);
   });
 
   test("no hard-coded user-visible text in thrown errors, setError() and toasts", () => {
-    const all = FEEDBACK_DIRS.flatMap((d) => feedbackSources(join(SRC, d))).flatMap(feedbackFindings);
+    const all = feedbackFiles.flatMap(feedbackFindings);
     expect(all.map((f) => `${f.file}:${f.line} ${JSON.stringify(f.text)}`)).toEqual([]);
   });
   test("the German catalog translates every key and keeps every placeholder", () => {
