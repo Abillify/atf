@@ -661,6 +661,10 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
   with a connection cap and ticket-based authorization
   (`MONITORING_TRANSPORT`, `MONITORING_AUTH`, `MONITORING_MAX_CONNECTIONS`).
 - **SLO tracking** and alert webhooks.
+- **Governance posture report.** `GET /monitoring/posture` (and `cli.ts posture`) list
+  which governance controls are active — evidence key, anchors, egress, taint,
+  disclosure, policy, receipts, shared state — as ok/warn/fail, so the configured
+  control set is provable at a point in time.
 
 ## Operator interface
 

@@ -760,6 +760,79 @@ async function cmdDoctor(args: ParsedArgs): Promise<number> {
   return exitCode;
 }
 
+/**
+ * posture: report which governance controls are active.
+ *
+ * Without `--server` the report is built locally from the current environment
+ * (config loading works like `doctor`; the compliance policy is read from
+ * FLOWS_DIR). With `--server` the live report of a running instance is fetched
+ * from `GET /monitoring/posture`. Exit code 1 when at least one check fails.
+ */
+async function cmdPosture(args: ParsedArgs): Promise<number> {
+  const { buildPostureReport, formatPostureReportAsTable } = await import(
+    "../src/compliance/posture.js"
+  );
+  type PostureReportLike = Parameters<typeof formatPostureReportAsTable>[0];
+
+  let report: PostureReportLike;
+  const rawArgv = process.argv.slice(2);
+
+  if (rawArgv.includes("--server")) {
+    const url = `${args.server}/monitoring/posture`;
+    const headers: Record<string, string> = {};
+    if (args.token) headers.Authorization = `Bearer ${args.token}`;
+    let resp: Response;
+    try {
+      resp = await fetch(url, { headers });
+    } catch (err) {
+      console.error(`${fail} Could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => ({}))) as {
+        error?: { message?: string };
+      };
+      console.error(
+        `${fail} ${url} responded HTTP ${resp.status}${body.error?.message ? `: ${body.error.message}` : ""}`,
+      );
+      return 1;
+    }
+    try {
+      report = (await resp.json()) as PostureReportLike;
+    } catch (err) {
+      console.error(`${fail} ${url} did not return a posture report: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    if (!Array.isArray(report.checks)) {
+      console.error(`${fail} ${url} returned a malformed posture report (missing checks).`);
+      return 1;
+    }
+  } else {
+    // Local mode: configuration facts only. Flow files are not loaded here,
+    // so flow-load failures cannot be known and are reported as zero.
+    const { loadConfig } = await import("../src/config/index.js");
+    const config = loadConfig();
+    const { createCompliancePolicyLoader } = await import(
+      "../src/compliance/policy-loader.js"
+    );
+    const compliancePolicyLoaded = createCompliancePolicyLoader(config.flowsDir).hasPolicy;
+    report = buildPostureReport(config, { compliancePolicyLoaded, flowLoadFailures: 0 });
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(`${bold("aiperator posture")} — active governance controls\n`);
+    console.log(formatPostureReportAsTable(report));
+    if (!rawArgv.includes("--server")) {
+      console.log(
+        `\n${dim("(local mode reflects the current configuration; pass --server <url> for a running instance's live report)")}`,
+      );
+    }
+  }
+  return report.summary.fail > 0 ? 1 : 0;
+}
+
 /** test: send a message to a flow and stream the response. */
 async function cmdTest(args: ParsedArgs): Promise<number> {
   const [flowId] = args.positional;
@@ -1052,6 +1125,7 @@ ${bold("Commands:")}
   ${bold("deploy")} <file>                   Validate + publish a flow to a server
   ${bold("test")} <flowId>                   Send a test message to a flow
   ${bold("doctor")} [--server <url>]         Check local env/config for startup issues (optionally probe a live instance)
+  ${bold("posture")} [--server <url>]        Show which governance controls are active (ok/warn/fail)
   ${bold("rls-status")}                      Report Row-Level Security enforcement per tenant table
   ${bold("rls-setup")} [--confirm]            Onboard Row-Level Security (dry-run unless --confirm)
   ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
@@ -1077,6 +1151,8 @@ ${bold("Examples:")}
   AIPERATOR_TOKEN=sk-... bun run scripts/cli.ts test my-flow --json
   bun run scripts/cli.ts doctor
   bun run scripts/cli.ts doctor --server https://aiperator.example.com
+  bun run scripts/cli.ts posture
+  bun run scripts/cli.ts posture --server https://aiperator.example.com --token sk-... --json
   DATABASE_URL=postgres://... bun run scripts/cli.ts rls-status
   DATABASE_URL=postgres://... bun run scripts/cli.ts rls-setup --confirm
   bun run scripts/cli.ts verify-bundle bundle.json --jwks https://aiperator.example.com/.well-known/atf-evidence-jwks.json
@@ -1113,6 +1189,9 @@ async function main(): Promise<void> {
       break;
     case "doctor":
       exitCode = await cmdDoctor(args);
+      break;
+    case "posture":
+      exitCode = await cmdPosture(args);
       break;
     case "rls-status":
       exitCode = await cmdRlsStatus(args);

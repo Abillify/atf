@@ -118,6 +118,9 @@ Settings that changed with the 0.18.x hardening, worth knowing early:
   `scripts/cli.ts verify-bundle <bundle.json>` verifies an exported evidence
   bundle against it (or against the public keys from
   `/.well-known/atf-evidence-jwks.json`)
+- `scripts/cli.ts posture` — reports which governance controls are active
+  (evidence key, anchors, egress, taint, disclosure, policy, receipts, shared
+  state) as ok/warn/fail; add `--server <url>` to query a running instance
 - `COMPLIANCE_POLICY_REQUIRED` — with it set, production refuses to start
   without a loaded compliance policy; without it the Runtime only logs at startup
 - `TRANSACTION_SIGNING_ALG` — algorithm for agent transaction tokens; the
