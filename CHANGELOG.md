@@ -675,6 +675,7 @@ releases:
 - Search v1/v2 embed the raw query when it consists only of noise characters, and v1 computes dense and sparse embeddings in parallel.
 - Search `group_by_section` no longer merges equally named sections of different documents.
 - Search keeps revisions apart when `include_all_versions` is set (diversification and document grouping).
+- Gate monitor and playground derive the tenant like the MCP authenticator (claim names, issuer-tenant binding), pass the verified claims to tools, and read groups from `monitoring.oidc.groupsClaim`.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

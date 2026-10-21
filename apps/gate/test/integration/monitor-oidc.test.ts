@@ -52,6 +52,8 @@ interface FakeIdpOpts {
   /** Add this value as a second audience (and set `azp` as given). */
   extraAudience?: string;
   azp?: string;
+  /** Further claims merged into the signed id_token. */
+  extraClaims?: Record<string, unknown>;
 }
 
 /** Requests the fake provider's token endpoint received, newest last. */
@@ -111,6 +113,7 @@ function startFakeIdp(
               ...(nonce !== undefined && !opts.omitNonce ? { nonce } : {}),
               ...(opts.groups !== undefined ? { groups: opts.groups } : {}),
               ...(opts.tools !== undefined ? { tools: opts.tools } : {}),
+              ...(opts.extraClaims ?? {}),
             },
             forgedKeyPair?.privateKey ?? privateKey,
           );
@@ -156,6 +159,7 @@ function buildConfig(
 }
 
 let handle: AppHandle | undefined;
+let fakeDb: FakeDb | undefined;
 let server: Server | undefined;
 let idp: { server: Server; port: number; issuer: string } | undefined;
 
@@ -173,8 +177,8 @@ const CLIENT_ID = "client";
 interface StartOpts {
   /** Merged into `monitoring` next to the oidc block (e.g. playground). */
   monitoring?: Record<string, unknown>;
-  /** Top-level config overrides (e.g. policies, server.trustProxy). */
-  extra?: Record<string, unknown>;
+  /** Top-level config overrides (e.g. policies, server.trustProxy); may depend on the IdP issuer. */
+  extra?: Record<string, unknown> | ((issuer: string) => Record<string, unknown>);
 }
 
 async function start(
@@ -183,6 +187,7 @@ async function start(
   opts: StartOpts = {},
 ): Promise<number> {
   idp = await startFakeIdp(CLIENT_ID, idpOpts);
+  fakeDb = new FakeDb({ main: [{ id: 1 }] });
   handle = await buildApp(
     buildConfig(
       {
@@ -196,9 +201,9 @@ async function start(
         },
         ...opts.monitoring,
       },
-      opts.extra,
+      typeof opts.extra === "function" ? opts.extra(idp.issuer) : opts.extra,
     ),
-    { db: new FakeDb({ main: [{ id: 1 }] }) },
+    { db: fakeDb },
   );
   const l = await listen(handle.app);
   server = l.server;
@@ -358,6 +363,98 @@ describe("Monitor OIDC requiredGroups", () => {
     const res = await loginAndCallback(port);
     expect(res.status).toBe(302);
     expect(getCookie(res, "mcpgate_monitor_session")).toBeDefined();
+  });
+});
+
+describe("Monitor OIDC groupsClaim", () => {
+  it("reads the groups for requiredGroups from the configured claim", async () => {
+    const port = await start(
+      { requiredGroups: ["monitors"], groupsClaim: "roles" },
+      { groups: ["monitors"], extraClaims: { roles: ["devs"] } },
+    );
+    const res = await loginAndCallback(port);
+    expect(res.status).toBe(403);
+  });
+
+  it("accepts a member of the group named in the configured claim", async () => {
+    const port = await start(
+      { requiredGroups: ["monitors"], groupsClaim: "roles" },
+      { extraClaims: { roles: ["monitors"] } },
+    );
+    const res = await loginAndCallback(port);
+    expect(res.status).toBe(302);
+  });
+});
+
+describe("Monitor OIDC tenant like the MCP authenticator", () => {
+  const isolation = (issuerTenants: (issuer: string) => Record<string, string[]>) => (issuer: string) => ({
+    tenantIsolation: { enabled: true, claimNames: ["tenant"], issuerTenants: issuerTenants(issuer) },
+  });
+
+  it("refuses a login without a verified tenant claim when isolation is on", async () => {
+    const port = await start({}, {}, { extra: isolation(() => ({})) });
+    const res = await loginAndCallback(port);
+    expect(getCookie(res, "mcpgate_monitor_session")).toBeUndefined();
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("refuses a tenant the issuer is not bound to", async () => {
+    const port = await start(
+      {},
+      { extraClaims: { tenant: "other" } },
+      { extra: isolation((issuer) => ({ [issuer]: ["acme"] })) },
+    );
+    const res = await loginAndCallback(port);
+    expect(getCookie(res, "mcpgate_monitor_session")).toBeUndefined();
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("accepts the bound tenant and uses the configured claim name", async () => {
+    const port = await start(
+      {},
+      { extraClaims: { tenant: "acme" } },
+      { extra: isolation((issuer) => ({ [issuer]: ["acme"] })) },
+    );
+    const res = await loginAndCallback(port);
+    expect(res.status).toBe(302);
+    expect(getCookie(res, "mcpgate_monitor_session")).toBeDefined();
+  });
+});
+
+describe("Monitor playground · verified claims of the session", () => {
+  it("passes the verified id_token claims to the tool, without nonce", async () => {
+    const claimTool = {
+      name: "claim_orders",
+      type: "database",
+      access: "read",
+      database: "main",
+      query: "SELECT id FROM orders WHERE dept = :ctx.claims.department",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    };
+    const port = await start(
+      {},
+      { extraClaims: { department: "ops" } },
+      { monitoring: { playground: { enabled: true } }, extra: { tools: [claimTool] } },
+    );
+    const callbackRes = await loginAndCallback(port);
+    const sessionCookie = getCookie(callbackRes, "mcpgate_monitor_session");
+    expect(sessionCookie).toBeDefined();
+    const payload = JSON.parse(
+      Buffer.from(String(sessionCookie).split(".")[0] ?? "", "base64url").toString(),
+    ) as { claims: Record<string, unknown> };
+    expect(payload.claims.department).toBe("ops");
+    expect(payload.claims).not.toHaveProperty("nonce");
+
+    const res = await fetch(`http://127.0.0.1:${port}/monitor/tools/claim_orders/run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `mcpgate_monitor_session=${sessionCookie}`,
+      },
+      body: JSON.stringify({ args: {} }),
+    });
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(fakeDb?.last("main")?.bindings).toContain("ops");
   });
 });
 

@@ -1336,6 +1336,8 @@ export const MonitoringConfigSchema = z.object({
          * base a dashboard that shows tool arguments and results.
          */
         requiredGroups: z.array(z.string()).default([]),
+        /** id_token claim that carries the user's groups (for `requiredGroups`). */
+        groupsClaim: z.string().min(1).default("groups"),
       })
       .optional(),
   ),

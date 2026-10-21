@@ -508,6 +508,7 @@ export async function buildApp(
         config: config.monitoring,
         registry,
         instructions: buildInstructions,
+        tenantIsolation: config.tenantIsolation,
         // The playground executes through the same MCP dispatch pipeline as
         // a real tools/call: policy, approval, scopes, validation, identity
         // rate limit, transaction fabric, and audit under the real identity.

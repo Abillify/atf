@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { Router, type Request, type Response } from "express";
-import type { MonitoringConfig } from "../config/schema.ts";
+import type { MonitoringConfig, TenantIsolationConfig } from "../config/schema.ts";
 import type { MonitorBus, MonitorEvent } from "./events.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { AuthContext } from "../auth/context.ts";
@@ -14,6 +14,7 @@ import { normalizeHeaders } from "../auth/context.ts";
 import { logger } from "../logger.ts";
 import { verifyIdToken } from "./oidc-verify.ts";
 import { McpToolDispatcher, type McpServerDeps } from "../mcp/server.ts";
+import { resolveTenantForIssuer } from "../auth/authenticator.ts";
 
 type OidcConfig = NonNullable<MonitoringConfig["oidc"]>;
 
@@ -34,6 +35,11 @@ export interface MonitorDeps {
    * tools out-of-band.
    */
   dispatcherDeps?: Omit<McpServerDeps, "registry" | "bus" | "instructions">;
+  /**
+   * Tenant isolation of the MCP authenticator. An OIDC monitor login derives
+   * its tenant exactly like a bearer token does (claim names, issuer binding).
+   */
+  tenantIsolation?: TenantIsolationConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +228,31 @@ interface MonitorSession {
   username: string;
   scopes: string[];
   tenantId: string;
+  /** Verified id_token claims handed to Tool Playground runs as `:ctx.claims`. */
+  claims: Record<string, unknown>;
   exp: number;
+}
+
+/** Id-token claims that only bind the token to the login and carry no identity. */
+const SESSION_CLAIMS_EXCLUDED = new Set(["nonce", "at_hash", "c_hash"]);
+
+/** A cookie above this size risks being dropped by browsers (limit ~4096 bytes). */
+const MAX_SESSION_COOKIE_CHARS = 3800;
+
+const DEFAULT_TENANT_ISOLATION: TenantIsolationConfig = {
+  enabled: false,
+  defaultTenantId: "default",
+  claimNames: ["tenant_id", "tenant", "tid", "client_id"],
+  issuerTenants: {},
+  isolatedDatabases: [],
+  sqlValidationMode: "report",
+};
+
+/** The verified id_token claims a session keeps, without the login-binding ones. */
+function sessionClaims(claims: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(claims).filter(([name]) => !SESSION_CLAIMS_EXCLUDED.has(name)),
+  );
 }
 
 function claimStrings(value: unknown): string[] {
@@ -250,6 +280,10 @@ function readSessionCookie(req: Request, oidc: OidcConfig): MonitorSession | und
     username: typeof session.username === "string" ? session.username : session.sub,
     scopes: Array.isArray(session.scopes) ? session.scopes.map(String) : [],
     tenantId: typeof session.tenantId === "string" ? session.tenantId : "default",
+    claims:
+      session.claims && typeof session.claims === "object" && !Array.isArray(session.claims)
+        ? (session.claims as Record<string, unknown>)
+        : {},
     exp: session.exp,
   };
 }
@@ -464,7 +498,7 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
         // least one listed group get a session — authenticating at the IdP
         // alone must not be enough for a dashboard that shows tool arguments.
         if (oidc.requiredGroups.length > 0) {
-          const groups = new Set(claimStrings(verified.claims.groups));
+          const groups = new Set(claimStrings(verified.claims[oidc.groupsClaim]));
           if (!oidc.requiredGroups.some((group) => groups.has(group))) {
             logger.warn(
               "monitor OIDC login refused: no required group membership",
@@ -492,11 +526,12 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
           username:
             typeof usernameClaim === "string" ? usernameClaim : verified.sub,
           scopes: [...new Set(claimStrings(verified.claims.tools))],
-          tenantId:
-            typeof verified.claims.tenant_id === "string" &&
-            verified.claims.tenant_id.length > 0
-              ? verified.claims.tenant_id
-              : "default",
+          tenantId: resolveTenantForIssuer(
+            verified.claims,
+            verified.claims.iss ?? oidc.issuer,
+            deps.tenantIsolation ?? DEFAULT_TENANT_ISOLATION,
+          ),
+          claims: sessionClaims(verified.claims),
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -507,7 +542,20 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
       }
 
       const exp = Math.floor(Date.now() / 1000) + oidc.sessionMaxAge;
-      const sessionCookie = signCookie({ ...session, exp }, oidc.sessionSecret);
+      let sessionCookie = signCookie({ ...session, exp }, oidc.sessionSecret);
+      if (sessionCookie.length > MAX_SESSION_COOKIE_CHARS) {
+        // Browsers drop oversized cookies and the login would silently fail:
+        // keep only the claims the tenant and scope decisions rest on.
+        logger.warn("monitor OIDC session cookie too large; keeping minimal claims", {
+          size: sessionCookie.length,
+        });
+        const minimal = Object.fromEntries(
+          ["iss", "sub", "tools", ...(deps.tenantIsolation ?? DEFAULT_TENANT_ISOLATION).claimNames]
+            .filter((name) => name in session.claims)
+            .map((name) => [name, session.claims[name]]),
+        );
+        sessionCookie = signCookie({ ...session, claims: minimal, exp }, oidc.sessionSecret);
+      }
       const secure = req.secure || req.headers["x-forwarded-proto"] === "https" ? " Secure;" : "";
       res.setHeader(
         "Set-Cookie",
@@ -671,8 +719,8 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
         claims?: unknown;
         headers?: unknown;
       };
-      const sessionClaims: Record<string, unknown> | undefined = oidcSession
-        ? { tools: oidcSession.scopes, tenant_id: oidcSession.tenantId }
+      const sessionClaimSet: Record<string, unknown> | undefined = oidcSession
+        ? { ...oidcSession.claims, tools: oidcSession.scopes }
         : undefined;
       const ctx: AuthContext = {
         method: oidcSession ? "oauth" : "static",
@@ -701,7 +749,7 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
               ]),
             ],
         claims:
-          sessionClaims ??
+          sessionClaimSet ??
           (identity.claims && typeof identity.claims === "object"
             ? (identity.claims as Record<string, unknown>)
             : {}),

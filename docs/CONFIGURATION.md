@@ -953,6 +953,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `monitoring.oidc` | object | — | Alternative/additional login for human operators: OAuth2/OIDC against an external provider (e.g. Authentik). When set, `GET /monitor/login` starts the authorization-code flow and a signed session cookie is accepted everywhere `monitoring.token` would be. Both can be configured together — either one is sufficient to authorize a request. `config.yaml` substitutes unset `${VAR:-}` env vars with `""`, not `undefined` — so the preprocess below treats an object whose required fields are all blank as "not configured" rather than failing validation. |
 | `monitoring.oidc.clientId` | string | — | — |
 | `monitoring.oidc.clientSecret` | string | — | — |
+| `monitoring.oidc.groupsClaim` | string | `"groups"` | id_token claim that carries the user's groups (for `requiredGroups`). |
 | `monitoring.oidc.issuer` | string | — | — |
 | `monitoring.oidc.redirectUri` | string | — | Must exactly match the redirect URI registered with the provider. |
 | `monitoring.oidc.requiredGroups` | array | — | Group names (from the id_token `groups` claim) that grant monitor access. Empty = every authenticated user of the provider may log in; non-empty = the callback rejects anyone who is not a member of at least one listed group, so a shared IdP cannot hand its whole user base a dashboard that shows tool arguments and results. |

@@ -81,6 +81,63 @@ const DEFAULT_TENANT_ISOLATION: TenantIsolationConfig = {
   sqlValidationMode: "report",
 };
 
+/**
+ * Tenant of a verified claim set under `tenantIsolation`: the first verified
+ * claim of `claimNames` (conflicting values are refused); with isolation off
+ * the configured default tenant.
+ */
+export function resolveTenant(
+  claims: Record<string, unknown>,
+  tenantIsolation: TenantIsolationConfig,
+): string {
+  let verified: string | undefined;
+  try {
+    verified = verifiedTenantClaim({ claims }, tenantIsolation.claimNames);
+  } catch {
+    throw new AuthError("Conflicting verified tenant claims", 401);
+  }
+  if (!tenantIsolation.enabled) return tenantIsolation.defaultTenantId;
+  if (!verified) throw new AuthError("Verified tenant claim is required", 403);
+  return verified;
+}
+
+/**
+ * Issuer → tenant binding (`tenantIsolation.issuerTenants`). A verified
+ * signature proves WHO issued the token, not that this issuer may speak for
+ * the tenant its claim names. With a binding configured, an issuer that is
+ * not listed, or a tenant it may not act for, is refused — the same contract
+ * as the Runtime's JWT_ISSUER_TENANTS. Without a binding (the default) the
+ * previous behaviour is unchanged.
+ */
+export function enforceIssuerTenant(
+  issuer: unknown,
+  tenantId: string,
+  tenantIsolation: TenantIsolationConfig,
+): void {
+  const binding = tenantIsolation.issuerTenants;
+  if (!tenantIsolation.enabled || Object.keys(binding).length === 0) {
+    return;
+  }
+  const allowed = typeof issuer === "string" ? binding[issuer] : undefined;
+  if (allowed === undefined) {
+    throw new AuthError("Token issuer is not bound to a tenant", 401);
+  }
+  if (!allowed.includes("*") && !allowed.includes(tenantId)) {
+    throw new AuthError("Token issuer may not act for this tenant", 403);
+  }
+}
+
+/** Tenant of a verified token of `issuer`, with the issuer binding applied. */
+export function resolveTenantForIssuer(
+  claims: Record<string, unknown>,
+  issuer: unknown,
+  tenantIsolation: TenantIsolationConfig,
+): string {
+  const tenantId = resolveTenant(claims, tenantIsolation);
+  enforceIssuerTenant(issuer, tenantId, tenantIsolation);
+  return tenantId;
+}
+
 export class Authenticator {
   private readonly jwtVerifier: JwtVerifier | undefined;
 
@@ -154,20 +211,7 @@ export class Authenticator {
   }
 
   private tenantId(claims: Record<string, unknown>): string {
-    let verified: string | undefined;
-    try {
-      verified = verifiedTenantClaim(
-        { claims },
-        this.tenantIsolation.claimNames,
-      );
-    } catch {
-      throw new AuthError("Conflicting verified tenant claims", 401);
-    }
-    if (!this.tenantIsolation.enabled)
-      return this.tenantIsolation.defaultTenantId;
-    if (!verified)
-      throw new AuthError("Verified tenant claim is required", 403);
-    return verified;
+    return resolveTenant(claims, this.tenantIsolation);
   }
 
   private context(
@@ -287,25 +331,7 @@ export class Authenticator {
     this.enforceIssuerTenant(payload.iss, ctx.tenantId);
     return ctx;
   }
-  /**
-   * Issuer → tenant binding (`tenantIsolation.issuerTenants`). A verified
-   * signature proves WHO issued the token, not that this issuer may speak for
-   * the tenant its claim names. With a binding configured, an issuer that is
-   * not listed, or a tenant it may not act for, is refused — the same contract
-   * as the Runtime's JWT_ISSUER_TENANTS. Without a binding (the default) the
-   * previous behaviour is unchanged.
-   */
   private enforceIssuerTenant(issuer: unknown, tenantId: string): void {
-    const binding = this.tenantIsolation.issuerTenants;
-    if (!this.tenantIsolation.enabled || Object.keys(binding).length === 0) {
-      return;
-    }
-    const allowed = typeof issuer === "string" ? binding[issuer] : undefined;
-    if (allowed === undefined) {
-      throw new AuthError("Token issuer is not bound to a tenant", 401);
-    }
-    if (!allowed.includes("*") && !allowed.includes(tenantId)) {
-      throw new AuthError("Token issuer may not act for this tenant", 403);
-    }
+    enforceIssuerTenant(issuer, tenantId, this.tenantIsolation);
   }
 }
