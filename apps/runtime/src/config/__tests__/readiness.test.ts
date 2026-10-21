@@ -93,6 +93,14 @@ describe("checkProductionReadiness", () => {
     ).toBe(true);
   });
 
+  test("the anchor warning recommends the Ed25519 evidence key, not the HMAC secret alone", () => {
+    const { warnings } = checkProductionReadiness(productionConfig());
+    const warning = warnings.find((w) => w.includes("AUDIT_ANCHOR_FILE is not set")) ?? "";
+    expect(warning).toContain(
+      "Configure AUDIT_ANCHOR_FILE (with EVIDENCE_SIGNING_KEY, Ed25519; AUDIT_ANCHOR_SECRET only for legacy HMAC anchors)",
+    );
+  });
+
   test("no anchor warning when AUDIT_ANCHOR_FILE is configured", () => {
     const { warnings } = checkProductionReadiness(
       productionConfig({

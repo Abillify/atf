@@ -591,8 +591,9 @@ export function checkProductionReadiness(
     const msg =
       "AUDIT_ANCHOR_FILE is not set: signed audit-chain checkpoints are kept " +
       "in memory only and lost on restart. Configure AUDIT_ANCHOR_FILE (with " +
-      "AUDIT_ANCHOR_SECRET) so external anchors survive restarts and a " +
-      "tampered chain rebuild stays detectable.";
+      "EVIDENCE_SIGNING_KEY, Ed25519; AUDIT_ANCHOR_SECRET only for legacy HMAC " +
+      "anchors) so external anchors survive restarts and a tampered chain " +
+      "rebuild stays detectable.";
     if (regulatedPreset) fatal.push(`${presetPrefix}${msg}`);
     else warnings.push(msg);
   }
