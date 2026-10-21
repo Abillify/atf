@@ -1083,8 +1083,10 @@ export const EnvSchema = z.object({
       }
     }),
   // Ed25519 private key (PEM or raw 32-byte base64) signing Erasure_Receipts
-  // (Req 2.11). When absent the orchestrator falls back to an audit-anchor
-  // HMAC and records the algorithm in the receipt envelope.
+  // (Req 2.11). Precedence: ERASURE_RECEIPT_SIGNING_KEY → EVIDENCE_SIGNING_KEY
+  // → audit-anchor HMAC (AUDIT_ANCHOR_SECRET). The algorithm and, for Ed25519,
+  // the key id (`kid`) are recorded in the receipt envelope; when this key is
+  // set its public key is also published in the evidence JWKS.
   ERASURE_RECEIPT_SIGNING_KEY: z.string().min(16).optional(),
   // Decision_Receipts (Req 15): master switch + Ed25519 signing key. When the
   // switch is on but the key is missing, startup fails — receipts without a

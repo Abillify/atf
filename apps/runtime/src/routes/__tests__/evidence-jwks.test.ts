@@ -39,4 +39,45 @@ describe("GET /.well-known/atf-evidence-jwks.json", () => {
     // The private key must never leak into the public JWKS.
     expect(jwk).not.toHaveProperty("d");
   });
+
+  it("publishes the evidence key and an extra erasure key as two entries", async () => {
+    const evidence = parseEvidenceSigningKey(SEED_B64);
+    const erasure = parseEvidenceSigningKey(
+      Buffer.from(Array.from({ length: 32 }, (_, i) => i + 100)).toString(
+        "base64",
+      ),
+    );
+    if (evidence === undefined || erasure === undefined)
+      throw new Error("expected keys");
+    const app = new Hono();
+    app.route("/", createEvidenceJwksRouter(evidence, [erasure]));
+    const res = await app.request("/.well-known/atf-evidence-jwks.json");
+    const body = (await res.json()) as { keys: { kid: string }[] };
+    expect(body.keys).toHaveLength(2);
+    expect(body.keys.map((k) => k.kid).sort()).toEqual(
+      [evidence.kid, erasure.kid].sort(),
+    );
+  });
+
+  it("deduplicates by kid when both keys are the same", async () => {
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const app = new Hono();
+    app.route("/", createEvidenceJwksRouter(key, [key]));
+    const res = await app.request("/.well-known/atf-evidence-jwks.json");
+    const body = (await res.json()) as { keys: { kid: string }[] };
+    expect(body.keys).toHaveLength(1);
+    expect(body.keys[0].kid).toBe(key.kid);
+  });
+
+  it("publishes only the erasure key when no evidence key exists", async () => {
+    const erasure = parseEvidenceSigningKey(SEED_B64);
+    if (erasure === undefined) throw new Error("expected a key");
+    const app = new Hono();
+    app.route("/", createEvidenceJwksRouter(undefined, [erasure]));
+    const res = await app.request("/.well-known/atf-evidence-jwks.json");
+    const body = (await res.json()) as { keys: { kid: string }[] };
+    expect(body.keys).toHaveLength(1);
+    expect(body.keys[0].kid).toBe(erasure.kid);
+  });
 });

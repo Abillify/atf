@@ -124,7 +124,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createJobsRouter` | — (full paths) | `jobStore is set` | GET `/v1/jobs/:id` |
 | `createReceiptsRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/v1/receipts`<br/>GET `/v1/receipts/:id`<br/>GET `/v1/receipts/:id/proof` |
 | `createReceiptJwksRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/.well-known/atf-receipt-jwks.json` |
-| `createEvidenceJwksRouter` | — (full paths) | `evidenceKey is set` | GET `/.well-known/atf-evidence-jwks.json` |
+| `createEvidenceJwksRouter` | — (full paths) | `evidenceKey is set || erasureJwksKey is set` | GET `/.well-known/atf-evidence-jwks.json` |
 | `createFlowMcpRouter` | — (full paths) | always | ALL `/mcp` |
 | `createRedTeamRouter` | — (full paths) | always | POST `/security/red-team/:flowId/run`<br/>GET `/security/red-team/runs`<br/>GET `/security/red-team/runs/:runId`<br/>GET `/security/red-team/posture`<br/>GET `/security/red-team/attacks`<br/>POST `/security/red-team/attacks/refresh`<br/>POST `/security/red-team/attacks/register`<br/>GET `/security/tool-authz`<br/>PUT `/security/tool-authz`<br/>GET `/security/mcp` |
 | `createRagRouter` | — (full paths) | `vectorStore is set && ragEmbedder is set` | POST `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection`<br/>GET `/v1/rag/collections`<br/>GET `/v1/rag/:collection/count`<br/>GET `/v1/rag/:collection/documents` |

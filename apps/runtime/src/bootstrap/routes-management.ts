@@ -671,7 +671,11 @@ export async function registerManagementRoutes(
     const receiptKey =
       ed25519ReceiptKey(config.erasureReceiptSigningKey) ??
       (evidenceKey !== undefined
-        ? ({ alg: "Ed25519", key: evidenceKey.privateKey } as const)
+        ? ({
+            alg: "Ed25519",
+            key: evidenceKey.privateKey,
+            kid: evidenceKey.kid,
+          } as const)
         : undefined) ??
       hmacReceiptKey(config.auditAnchorSecret);
     const erasureOrchestrator = createErasureOrchestrator({

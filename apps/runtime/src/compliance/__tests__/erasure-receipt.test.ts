@@ -26,6 +26,7 @@ import {
   verifyReceipt,
   type ErasureReceiptKey,
 } from "../erasure-receipt.js";
+import { parseEvidenceSigningKey } from "../../observability/evidence-key.js";
 import type { ErasureOperation } from "../erasure-orchestrator.js";
 
 function operation(overrides: Partial<ErasureOperation> = {}): ErasureOperation {
@@ -46,7 +47,10 @@ function operation(overrides: Partial<ErasureOperation> = {}): ErasureOperation 
 
 function edKey(): ErasureReceiptKey {
   const { privateKey } = generateKeyPairSync("ed25519");
-  return { alg: "Ed25519", key: privateKey };
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const parsed = ed25519ReceiptKey(pem);
+  if (parsed === undefined) throw new Error("expected an Ed25519 receipt key");
+  return parsed;
 }
 
 /** Payload for a populated operation — buildReceiptPayload never returns
@@ -112,6 +116,26 @@ describe("signReceipt / verifyReceipt", () => {
     expect(envelope.typ).toBe(ERASURE_RECEIPT_TYPE);
     expect(envelope.alg).toBe("Ed25519");
     expect(verifyReceipt(envelope, key)).toBe(true);
+  });
+
+  it("Ed25519 envelope carries the kid (public-key thumbprint)", () => {
+    const seed = Buffer.from(
+      Array.from({ length: 32 }, (_, i) => i + 1),
+    ).toString("base64");
+    const key = ed25519ReceiptKey(seed);
+    const expected = parseEvidenceSigningKey(seed);
+    if (key === undefined || key.alg !== "Ed25519" || expected === undefined)
+      throw new Error("expected an Ed25519 receipt key");
+    expect(key.kid).toBe(expected.kid);
+    const envelope = signReceipt(payloadOf(operation()), key);
+    expect(envelope.kid).toBe(expected.kid);
+  });
+
+  it("HS256 envelope carries no kid", () => {
+    const key = requireKey(hmacReceiptKey("anchor-secret-0123456789"));
+    const envelope = signReceipt(payloadOf(operation()), key);
+    expect(envelope.alg).toBe("HS256");
+    expect(envelope).not.toHaveProperty("kid");
   });
 
   it("raw base64 seed parses into a working Ed25519 key", () => {

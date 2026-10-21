@@ -8,14 +8,22 @@
  * the subject appears only as `sha256(tenantId + "|" + identifier)`. The byte
  * source for signing is the canonical JSON form (recursively sorted keys).
  *
- * Signing algorithm (design.md §Erasure): Ed25519 with
- * `ERASURE_RECEIPT_SIGNING_KEY`; when that key is unset the audit-anchor HMAC
- * secret (`AUDIT_ANCHOR_SECRET`) is used as documented fallback and the
- * algorithm is recorded in the envelope's `alg` field — never in the payload,
- * so the payload stays byte-stable across key rotations.
+ * Signing algorithm (design.md §Erasure): Ed25519, precedence
+ * `ERASURE_RECEIPT_SIGNING_KEY` → `EVIDENCE_SIGNING_KEY` → the audit-anchor
+ * HMAC secret (`AUDIT_ANCHOR_SECRET`) as documented fallback. The algorithm
+ * is recorded in the envelope's `alg` field and, for Ed25519, the key id
+ * (`kid`, the SHA-256 thumbprint of the public key) in the envelope's `kid`
+ * field — both outside the payload, so the payload stays byte-stable across
+ * key rotations.
  */
 
-import { createHmac, createPrivateKey, sign, verify, timingSafeEqual } from "node:crypto";
+import {
+  createHmac,
+  type createPrivateKey,
+  sign,
+  verify,
+  timingSafeEqual,
+} from "node:crypto";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -26,6 +34,7 @@ import {
   type ErasureReceiptPayload,
 } from "@atf/erasure-contract";
 
+import { parseEvidenceSigningKey } from "../observability/evidence-key.js";
 import type { ErasureOperation } from "./erasure-orchestrator.js";
 
 /** Algorithm recorded in the signed envelope (not in the payload). */
@@ -33,46 +42,40 @@ export type ErasureReceiptAlg = "Ed25519" | "HS256";
 
 /** A parsed signing key: Ed25519 private key or the audit-anchor HMAC secret. */
 export type ErasureReceiptKey =
-  | { readonly alg: "Ed25519"; readonly key: ReturnType<typeof createPrivateKey> }
+  | {
+      readonly alg: "Ed25519";
+      readonly key: ReturnType<typeof createPrivateKey>;
+      /** base64url SHA-256 thumbprint of the public key (the envelope `kid`). */
+      readonly kid: string;
+    }
   | { readonly alg: "HS256"; readonly secret: string };
 
 /** The signed envelope persisted with the operation and served by the API. */
 export interface ErasureReceiptEnvelope {
   readonly typ: typeof ERASURE_RECEIPT_TYPE;
   readonly alg: ErasureReceiptAlg;
+  /**
+   * Key id (SHA-256 thumbprint) of the Ed25519 signing key, published in the
+   * evidence JWKS. Absent for HS256. Outside `payload`, so payload bytes stay
+   * stable across key rotations.
+   */
+  readonly kid?: string;
   readonly payload: ErasureReceiptPayload;
   /** base64url signature over the canonical JSON bytes of `payload`. */
   readonly signature: string;
 }
 
 /**
- * PKCS#8 DER prefix for an Ed25519 private key wrapping a raw 32-byte seed
- * (RFC 8410): `SEQUENCE { INTEGER 0, SEQUENCE { OID 1.3.101.112 }, OCTET
- * STRING { OCTET STRING <seed> } }`.
- */
-const ED25519_PKCS8_SEED_PREFIX = "302e020100300506032b657004220420";
-
-/**
  * Parse the configured signing key. Accepts a PEM private key or a raw
- * base64-encoded 32-byte Ed25519 seed. Returns `undefined` when no key is
- * configured; the caller may then fall back to {@link hmacReceiptKey}.
+ * base64-encoded 32-byte Ed25519 seed — the same formats as
+ * `EVIDENCE_SIGNING_KEY`, parsed by the same code so the `kid` thumbprint is
+ * computed identically. Returns `undefined` when no key is configured; the
+ * caller may then fall back to {@link hmacReceiptKey}.
  */
 export function ed25519ReceiptKey(value: string | undefined): ErasureReceiptKey | undefined {
-  if (value === undefined || value.length === 0) return undefined;
-  if (value.startsWith("-----BEGIN")) {
-    return { alg: "Ed25519", key: createPrivateKey({ key: value, format: "pem", type: "pkcs8" }) };
-  }
-  const seed = Buffer.from(value, "base64");
-  if (seed.length !== 32) {
-    throw new Error(
-      "ERASURE_RECEIPT_SIGNING_KEY must be a PEM private key or a base64-encoded 32-byte Ed25519 seed",
-    );
-  }
-  const der = Buffer.from(ED25519_PKCS8_SEED_PREFIX + seed.toString("hex"), "hex");
-  return {
-    alg: "Ed25519",
-    key: createPrivateKey({ key: der, format: "der", type: "pkcs8" }),
-  };
+  const parsed = parseEvidenceSigningKey(value);
+  if (parsed === undefined) return undefined;
+  return { alg: "Ed25519", key: parsed.privateKey, kid: parsed.kid };
 }
 
 /** Documented fallback: audit-anchor HMAC (Req 2.11, design.md). */
@@ -136,6 +139,7 @@ export function signReceipt(
   return {
     typ: ERASURE_RECEIPT_TYPE,
     alg: key.alg,
+    ...(key.alg === "Ed25519" ? { kid: key.kid } : {}),
     payload,
     signature: signature.toString("base64url"),
   };

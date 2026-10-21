@@ -48,7 +48,10 @@ import { aiDisclosureMiddleware } from "../middleware/ai-disclosure.js";
 import { createModelsRouter } from "../routes/models.js";
 import { createReceiptJwksRouter } from "../routes/receipt-jwks.js";
 import { createEvidenceJwksRouter } from "../routes/evidence-jwks.js";
-import type { Ed25519EvidenceKey } from "../observability/evidence-key.js";
+import {
+  parseEvidenceSigningKey,
+  type Ed25519EvidenceKey,
+} from "../observability/evidence-key.js";
 import { createReceiptsRouter } from "../routes/receipts.js";
 import { createResponsesRouter } from "../routes/responses.js";
 import { createTransactionJwksRouter } from "../routes/transaction-jwks.js";
@@ -372,11 +375,20 @@ export async function registerInferenceRoutes(
     logger.info("Decision receipts API enabled at /v1/receipts/:id");
   }
 
-  // Evidence-chain JWKS (ADR 0030): the public half of EVIDENCE_SIGNING_KEY,
-  // so auditors can verify audit anchors / Evidence Bundles / Erasure Receipts
-  // offline without any shared secret.
-  if (evidenceKey !== undefined) {
-    app.route("/", createEvidenceJwksRouter(evidenceKey));
+  // Evidence-chain JWKS (ADR 0030): the public half of EVIDENCE_SIGNING_KEY
+  // plus, when set, the public half of ERASURE_RECEIPT_SIGNING_KEY, so
+  // auditors can verify audit anchors / Evidence Bundles / Erasure Receipts
+  // offline without any shared secret. A malformed erasure key fails the
+  // start loudly, like the evidence key.
+  const erasureJwksKey = parseEvidenceSigningKey(config.erasureReceiptSigningKey);
+  if (evidenceKey !== undefined || erasureJwksKey !== undefined) {
+    app.route(
+      "/",
+      createEvidenceJwksRouter(
+        evidenceKey,
+        erasureJwksKey !== undefined ? [erasureJwksKey] : [],
+      ),
+    );
     logger.info(
       "Evidence-chain JWKS enabled at /.well-known/atf-evidence-jwks.json",
     );
