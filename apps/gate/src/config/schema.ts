@@ -1341,6 +1341,22 @@ export const MonitoringConfigSchema = z.object({
   ),
   bufferSize: z.coerce.number().int().nonnegative().default(200),
   /**
+   * Which events the SSE monitor stream shows an OIDC-logged-in viewer.
+   * `"session"` (default) sends only events whose `tenantId` matches the
+   * viewer's session tenant; events without a tenant are withheld. `"all"`
+   * sends everything, like the static monitor token does. The token viewer
+   * is the operator and always sees all events.
+   */
+  tenantScope: z.enum(["session", "all"]).default("session"),
+  /**
+   * Whether the monitor stream may carry the full tool result in
+   * `meta.content`. Default `false`: the result is replaced by
+   * `meta.contentDigest` (SHA-256 hex over its JSON plus the UTF-8 byte
+   * length), so the dashboard shows that a tool returned data and of what
+   * size without leaking the data itself.
+   */
+  includeToolContent: boolish.default(false),
+  /**
    * Tool Playground (execute tools from the dashboard). Disabled by default
    * because it runs tools out-of-band from a normal MCP session. When enabled
    * it requires `monitoring.token` to be set, and write-access tools stay

@@ -470,6 +470,11 @@ configuration and clients. Do these **before** rolling out:
     (in `apps/runtime`) before upgrading a production Runtime; every warning about an
     unknown config key becomes a flow load failure there. Rename typos or prefix
     annotation keys with `x-`.
+25. **Gate monitor stream.** OIDC users now see only events of their own tenant
+    (`monitoring.tenantScope: session`) and tool results only as digest
+    (`monitoring.includeToolContent: false`). Set `tenantScope: all` and/or
+    `includeToolContent: true` to restore the previous view. The static monitor
+    token keeps the operator view (all events) either way.
 
 ### Not yet shared between replicas (roadmap)
 

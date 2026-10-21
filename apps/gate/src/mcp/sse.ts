@@ -115,6 +115,7 @@ export function createSseRouter(deps: SseDeps): Router {
         /* best-effort */
       }
       bus.publish({
+        tenantId: session.ctx.tenantId,
         type: "disconnection",
         sessionId,
         username: session.ctx.username,
@@ -155,6 +156,7 @@ export function createSseRouter(deps: SseDeps): Router {
         user: ctx.username,
       });
       bus.publish({
+        tenantId: ctx.tenantId,
         type: "error",
         status: "error",
         username: ctx.username,
@@ -172,6 +174,7 @@ export function createSseRouter(deps: SseDeps): Router {
     logger.debug("sse stream opened", { session: sessionId, user: ctx.username });
 
     bus.publish({
+      tenantId: ctx.tenantId,
       type: "connection",
       sessionId,
       username: ctx.username,
@@ -181,6 +184,7 @@ export function createSseRouter(deps: SseDeps): Router {
       headers: redactHeaders(req.headers as Record<string, unknown>),
     });
     bus.publish({
+      tenantId: ctx.tenantId,
       type: "auth",
       sessionId,
       username: ctx.username,
@@ -193,7 +197,12 @@ export function createSseRouter(deps: SseDeps): Router {
     res.on("close", () => {
       sessions.delete(sessionId);
       logger.debug("sse stream closed", { session: sessionId });
-      bus.publish({ type: "disconnection", sessionId, username: ctx.username });
+      bus.publish({
+        tenantId: ctx.tenantId,
+        type: "disconnection",
+        sessionId,
+        username: ctx.username,
+      });
     });
     res.on("error", (err) => {
       logger.debug("sse stream error", { session: sessionId, error: err.message });
@@ -216,6 +225,7 @@ export function createSseRouter(deps: SseDeps): Router {
     } catch (err) {
       sessions.delete(sessionId);
       bus.publish({
+        tenantId: ctx.tenantId,
         type: "error",
         sessionId,
         status: "error",
@@ -252,6 +262,7 @@ export function createSseRouter(deps: SseDeps): Router {
         /* best-effort */
       }
       bus.publish({
+        tenantId: session.ctx.tenantId,
         type: "auth_failure",
         sessionId,
         status: "error",

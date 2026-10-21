@@ -41,6 +41,13 @@ export interface MonitorEvent {
    * action from an agent acting on the user's behalf.
    */
   actor?: string;
+  /**
+   * Tenant of the principal that caused the event; the monitor stream filters
+   * on it. Absent for events with no authenticated principal in reach (an
+   * failed login before the token was read, a session eviction whose tenant
+   * was never recorded), which a tenant-scoped viewer never sees.
+   */
+  tenantId?: string;
   authMethod?: string;
   tool?: string;
   /** Inbound HTTP headers, redacted (no Authorization value). */

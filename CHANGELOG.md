@@ -231,6 +231,7 @@ releases:
 - Search: the HyDE and query-embedding caches key entries by tenant and query, so cache hits no longer reveal across tenants which questions were asked.
 - Search verifies the `typ` header of transaction tokens (`at+jwt` or `txn+jwt`) and answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) when the JWKS is unreachable, instead of reporting an invalid token.
 - Gate warns in production while `monitoring.oidc.requiredGroups` is empty (every identity-provider user could open the monitor).
+- Gate monitor stream filters events by the OIDC session's tenant (`monitoring.tenantScope`, default `session`) and replaces tool results with a SHA-256 digest and size unless `monitoring.includeToolContent` is true.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
@@ -726,6 +727,7 @@ what it returns, without any code change on your side:
 - Run `bun run scripts/cli.ts validate <flows-dir>` (in `apps/runtime`) before upgrading a production Runtime; every warning about an unknown config key becomes a flow load failure there. Rename typos or prefix annotation keys with `x-`.
 - Search queries longer than 400 characters are now cut. Flows that append large context to the query should raise `SEARCH_MAX_QUERY_CHARS` or move the context out of the query.
 - Transaction tokens without a `typ` header are rejected by Search. Tokens minted by ATF Runtime already carry `typ: at+jwt`.
+- Gate monitor: OIDC users now see only events of their own tenant (`monitoring.tenantScope: session`) and tool results only as digest (`monitoring.includeToolContent: false`). Set `tenantScope: all` and/or `includeToolContent: true` to restore the previous view.
 ## [0.18.1] — 2026-10-18
 
 ### Security

@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { Router, type Request, type Response } from "express";
 import type { MonitoringConfig } from "../config/schema.ts";
-import type { MonitorBus } from "./events.ts";
+import type { MonitorBus, MonitorEvent } from "./events.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { AuthContext } from "../auth/context.ts";
 import { normalizeHeaders } from "../auth/context.ts";
@@ -63,20 +63,68 @@ function bearerMatches(req: Request, token: string): boolean {
   return presented !== undefined && safeTokenEqual(presented, token);
 }
 
-function authorize(req: Request, config: MonitoringConfig): boolean {
-  if (!config.token && !config.oidc) return true;
+/**
+ * Who got past the monitor's door. `token` is the static operator token (or a
+ * dashboard session established with it) — an operator sees every event.
+ * `oidc` is a session from the identity provider, which carries a tenant the
+ * stream filters on. `open` means neither was configured, so the monitor is
+ * unprotected and behaves like `token`.
+ */
+export type MonitorViewer =
+  | { kind: "open" }
+  | { kind: "token" }
+  | { kind: "oidc"; tenantId: string };
+
+function authorizeViewer(req: Request, config: MonitoringConfig): MonitorViewer | undefined {
+  if (!config.token && !config.oidc) return { kind: "open" };
 
   if (config.token) {
-    if (bearerMatches(req, config.token)) return true;
-    if (readTokenSessionCookie(req, config.token)) return true;
+    if (bearerMatches(req, config.token)) return { kind: "token" };
+    if (readTokenSessionCookie(req, config.token)) return { kind: "token" };
   }
 
   if (config.oidc) {
     const session = readSessionCookie(req, config.oidc);
-    if (session) return true;
+    if (session) return { kind: "oidc", tenantId: session.tenantId };
   }
 
-  return false;
+  return undefined;
+}
+
+function authorize(req: Request, config: MonitoringConfig): boolean {
+  return authorizeViewer(req, config) !== undefined;
+}
+
+/**
+ * Whether a viewer may see one event. Operators (token/open) and `all` scope
+ * see everything; an OIDC session sees only its own tenant's events, and
+ * never an event that carries no tenant at all.
+ */
+function eventVisibleTo(viewer: MonitorViewer, config: MonitoringConfig, event: MonitorEvent): boolean {
+  if (viewer.kind !== "oidc" || config.tenantScope === "all") return true;
+  return event.tenantId === viewer.tenantId;
+}
+
+/**
+ * SHA-256 hex over the JSON form of a value plus its UTF-8 length, used in
+ * place of the tool result itself when `includeToolContent` is off.
+ */
+function contentDigest(content: unknown): { sha256: string; bytes: number } {
+  const json = JSON.stringify(content) ?? "null";
+  return {
+    sha256: createHash("sha256").update(json, "utf8").digest("hex"),
+    bytes: Buffer.byteLength(json, "utf8"),
+  };
+}
+
+/**
+ * Strip the tool result from an event unless the operator opted in, leaving a
+ * digest so the dashboard can still show that and how much came back.
+ */
+function shapeForViewer(event: MonitorEvent, config: MonitoringConfig): MonitorEvent {
+  if (config.includeToolContent || event.meta?.content === undefined) return event;
+  const { content, ...rest } = event.meta;
+  return { ...event, meta: { ...rest, contentDigest: contentDigest(content) } };
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +547,8 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
 
   router.get("/monitor/stream", (req: Request, res: Response) => {
     if (!config.enabled) { res.status(404).json({ error: "Monitoring is disabled" }); return; }
-    if (!authorize(req, config)) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const viewer = authorizeViewer(req, config);
+    if (!viewer) { res.status(401).json({ error: "Unauthorized" }); return; }
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -509,7 +558,10 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     });
     res.write("retry: 3000\n\n");
 
-    const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const send = (event: MonitorEvent) => {
+      if (!eventVisibleTo(viewer, config, event)) return;
+      res.write(`data: ${JSON.stringify(shapeForViewer(event, config))}\n\n`);
+    };
 
     for (const event of bus.recent()) send(event);
     const unsubscribe = bus.subscribe(send);

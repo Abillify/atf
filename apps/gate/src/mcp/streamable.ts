@@ -122,6 +122,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
         /* best-effort */
       }
       bus.publish({
+        tenantId: session.ctx.tenantId,
         type: "disconnection",
         sessionId,
         username: session.ctx.username,
@@ -145,6 +146,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
       const session = sessionId ? sessions.get(sessionId) : undefined;
       const fingerprint = tokenFingerprint(token);
       bus.publish({
+        tenantId: session?.ctx.tenantId,
         type: "auth_failure",
         sessionId,
         username: session?.ctx.username,
@@ -241,6 +243,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
           user: ctx.username,
         });
         bus.publish({
+          tenantId: ctx.tenantId,
           type: "error",
           status: "error",
           username: ctx.username,
@@ -261,6 +264,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
         onsessioninitialized: () => {
           sessions.set(sessionId, { transport, ctx });
           bus.publish({
+            tenantId: ctx.tenantId,
             type: "connection",
             sessionId,
             username: ctx.username,
@@ -270,6 +274,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
             headers: redactHeaders(req.headers as Record<string, unknown>),
           });
           bus.publish({
+            tenantId: ctx.tenantId,
             type: "auth",
             sessionId,
             username: ctx.username,
@@ -283,7 +288,12 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
 
       transport.onclose = () => {
         if (sessions.delete(sessionId)) {
-          bus.publish({ type: "disconnection", sessionId, username: ctx.username });
+          bus.publish({
+            tenantId: ctx.tenantId,
+            type: "disconnection",
+            sessionId,
+            username: ctx.username,
+          });
         }
       };
 
@@ -305,6 +315,7 @@ export function createStreamableRouter(deps: StreamableDeps): Router {
       } catch (err) {
         sessions.delete(sessionId);
         bus.publish({
+          tenantId: ctx.tenantId,
           type: "error",
           sessionId,
           status: "error",

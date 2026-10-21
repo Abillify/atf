@@ -40,6 +40,20 @@ bun run --filter @atf/gate build
 | `/monitor/instructions` | Generated tool instructions for model prompts |
 | `/healthz`, `/readyz` | Liveness and readiness |
 
+### Monitor stream
+
+`GET /monitor/stream` replays the recent ring buffer and streams live events. What a viewer
+sees depends on how they authenticated:
+
+- **Static monitor token (or a session made with it)** is the operator view — every event.
+- **OIDC session** is scoped by `monitoring.tenantScope`: `session` (default) sends only events
+  whose `tenantId` matches the session's tenant (events with no tenant are withheld); `all`
+  sends every event, like the operator.
+- **Tool results.** Unless `monitoring.includeToolContent` is `true`, `tool_result` events carry
+  no `meta.content`; it is replaced by `meta.contentDigest` (`{ sha256, bytes }` — SHA-256 hex
+  over the result's JSON and its UTF-8 length), so the dashboard shows that and how much a tool
+  returned without leaking the data.
+
 ### Tool Playground
 
 `POST /monitor/tools/:name/run` executes a tool from the dashboard. It is opt-in

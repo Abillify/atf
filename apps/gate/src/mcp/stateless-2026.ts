@@ -244,6 +244,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
     }
     const pending = approvalStore.create(approvalOwner(ctx), ctx.tenantId, tool, args, evidenceContractHash);
     bus.publish({
+      tenantId: ctx.tenantId,
       type: "approval_requested",
       username: ctx.username,
       subject: ctx.subject,
@@ -275,6 +276,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
     try {
       const ctx = await authenticator.authenticate(token, req.headers as Record<string, unknown>);
       bus.publish({
+        tenantId: ctx.tenantId,
         type: "auth",
         username: ctx.username,
         subject: ctx.subject,
@@ -500,6 +502,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         }
         if (!pending) return error(res, 404, body.id, -32004, "Approval request not found or expired");
         bus.publish({
+          tenantId: ctx.tenantId,
           type: "approval_resolved",
           username: ctx.username,
           subject: ctx.subject,

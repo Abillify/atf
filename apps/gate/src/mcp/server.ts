@@ -516,6 +516,7 @@ export class McpToolDispatcher {
             : ""
         }.`;
         bus.publish({
+          tenantId: this.context.tenantId,
           type: "error",
           sessionId: this.requestId,
           username: this.context.username,
@@ -528,6 +529,7 @@ export class McpToolDispatcher {
     }
 
     bus.publish({
+      tenantId: this.context.tenantId,
       type: "tool_call",
       sessionId: this.requestId,
       username: this.context.username,
@@ -543,6 +545,7 @@ export class McpToolDispatcher {
     const executor = nested ? registry.getReal(name) : registry.get(name);
     if (!executor) {
       bus.publish({
+        tenantId: this.context.tenantId,
         type: "error",
         sessionId: this.requestId,
         username: this.context.username,
@@ -612,6 +615,7 @@ export class McpToolDispatcher {
       const message =
         scopeError.content[0]?.text ?? "Missing required scope(s)";
       bus.publish({
+        tenantId: this.context.tenantId,
         type: "error",
         sessionId: this.requestId,
         username: this.context.username,
@@ -628,6 +632,7 @@ export class McpToolDispatcher {
       if (!validation.ok) {
         const message = `Invalid arguments for '${name}': ${validation.errors.join("; ")}`;
         bus.publish({
+          tenantId: this.context.tenantId,
           type: "error",
           sessionId: this.requestId,
           username: this.context.username,
@@ -695,6 +700,7 @@ export class McpToolDispatcher {
                 run: (signal) => gatedRun(signal),
                 onTelemetry: (event) =>
                   bus.publish({
+                    tenantId: this.context.tenantId,
                     type: "transaction",
                     sessionId: this.requestId,
                     username: this.context.username,
@@ -709,6 +715,7 @@ export class McpToolDispatcher {
       const failure = errorSummary(result);
       const code = errorCode(result);
       bus.publish({
+        tenantId: this.context.tenantId,
         type: "tool_result",
         sessionId: this.requestId,
         username: this.context.username,
@@ -749,6 +756,7 @@ export class McpToolDispatcher {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       bus.publish({
+        tenantId: this.context.tenantId,
         type: "error",
         sessionId: this.requestId,
         username: this.context.username,
