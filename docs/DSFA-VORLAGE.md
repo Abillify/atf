@@ -55,6 +55,11 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 - [ ] Deletion concept documented (periods per data category)
 - [ ] Erasure test run documented (date, sample, result)
 
+Audit entries written by releases before this change may contain the erased
+subject in clear text (details.subject); they remain in the append-only audit
+log. Newer entries carry only subject hashes and keyed pseudonyms
+(AUDIT_PSEUDONYM_PEPPER).
+
 ## 5. Risks to rights and freedoms (likelihood × severity)
 
 | Risk | Likelihood | Severity | Measures | Residual risk |

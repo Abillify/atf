@@ -143,7 +143,12 @@ describe("checkCompliancePolicy", () => {
         compliancePolicyLoader: loaderWith(POLICY),
         flow: FLOW_BLOCKED_MODEL,
         flowId: "f1",
-        requestCtx: { ...BASE_REQUEST_CTX, clientId: "tenant-a" },
+        requestCtx: {
+          ...BASE_REQUEST_CTX,
+          clientId: "tenant-a",
+          userId: "u-42",
+          userEmail: "jane.doe@example.com",
+        },
         auditLog: auditLog as AuditLog,
         metrics,
         ctx: c,
@@ -157,6 +162,9 @@ describe("checkCompliancePolicy", () => {
     expect(recorded[0]?.action).toBe("compliance.policy.deny");
     expect(recorded[0]?.outcome).toBe("denied");
     expect(recorded[0]?.target).toBe("f1");
+    // The e-mail is personal data and must never be the audit actor.
+    expect(recorded[0]?.actor).toBe("u-42");
+    expect(JSON.stringify(recorded[0])).not.toContain("jane.doe@example.com");
   });
 
   it("denies when ANY node's model in a multi-model flow violates the policy", async () => {

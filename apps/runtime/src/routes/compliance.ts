@@ -63,6 +63,7 @@ import {
   AUDIT_UNAVAILABLE_BODY,
   AUDIT_UNAVAILABLE_STATUS,
 } from "../compliance/regulated-actions.js";
+import { auditPseudonym } from "../compliance/audit-pseudonym.js";
 import {
   aggregateStatus,
   type ErasureOperationStatus,
@@ -88,6 +89,12 @@ export interface ComplianceRouterDeps {
   authRequired?: boolean;
   operatorAuth?: OperatorAuthorizer;
   auditLog?: AuditLog;
+  /**
+   * Pepper (`AUDIT_PSEUDONYM_PEPPER`) used to derive keyed pseudonyms of
+   * erasure subjects for audit entries. Without it the pseudonyms are unkeyed
+   * SHA-256 values (see `compliance/audit-pseudonym.ts`).
+   */
+  auditPseudonymPepper?: string;
   /** JWT verifier used to extract the calling user's identity for DSAR endpoints. */
   jwtVerifier?: JwtVerifier;
   /**
@@ -125,7 +132,7 @@ export interface ComplianceRouterDeps {
 
 export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
   const router = new Hono();
-  const { retention, auditLog } = deps;
+  const { retention, auditLog, auditPseudonymPepper } = deps;
   const authRequired = deps.authRequired ?? false;
   const operatorAuth =
     deps.operatorAuth ?? createOperatorAuthorizer({ authRequired });
@@ -291,10 +298,20 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
           actor: actor.name ?? "admin",
           ...(actor.role !== undefined ? { role: actor.role } : {}),
           action: "compliance.forget",
-          target: subject.tenantId ?? subject.userId,
+          // The audit log is append-only: naming the erased subject here would
+          // undo the erasure. Only hashes and a keyed pseudonym are written.
+          target:
+            subject.userId !== undefined
+              ? auditPseudonym(
+                  `${subject.tenantId ?? ""}|${subject.userId}`,
+                  auditPseudonymPepper,
+                )
+              : subject.tenantId,
           outcome: status === "complete" ? "success" : "error",
           details: {
-            subject,
+            subjectHashes: subjectUserIds(subject).map((id) =>
+              erasureSubjectHash(subject.tenantId ?? "", id),
+            ),
             erased,
             status,
             ...(requestId !== undefined ? { requestId } : {}),
@@ -741,15 +758,22 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     // in the operator audit log before confirming it to the data subject.
     if (auditLog !== undefined) {
       try {
+        // The caller's identity is pseudonymised the same way as the target:
+        // the append-only log must not retain the erased subject or issuer.
+        const selfPseudonym = auditPseudonym(
+          `${issuer ?? ""}|${subject.userId ?? ""}`,
+          auditPseudonymPepper,
+        );
         await auditLog.recordRequired({
-          actor: subject.userId ?? "user",
+          actor: selfPseudonym,
           role: "user",
           action: "dsar.self_erasure",
-          target: subject.userId ?? subject.tenantId,
+          target: selfPseudonym,
           outcome: status === "complete" ? "success" : "error",
           details: {
-            subject,
-            issuer,
+            subjectHashes: subjectUserIds(subject).map((id) =>
+              erasureSubjectHash(subject.tenantId ?? "", id),
+            ),
             erased,
             status,
             ...(requestId !== undefined ? { requestId } : {}),

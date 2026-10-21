@@ -23,6 +23,8 @@ import {
 } from "../../compliance/erasure-receipt.js";
 import { TOKEN_KEY, type AuthContext } from "../../middleware/auth.js";
 import type { JwtVerifier } from "../../middleware/jwt-verifier.js";
+import { auditPseudonym } from "../../compliance/audit-pseudonym.js";
+import { erasureSubjectHash } from "@atf/erasure-contract";
 
 const adminAuth = createOperatorAuthorizer({
   authRequired: true,
@@ -333,11 +335,15 @@ describe("DELETE /v1/me/data — honest per-store DSAR response (Req 2.10)", () 
     expect(await auditLog.list()).toEqual([]);
   });
 
-  it("records the issuer in the audit entry", async () => {
+  it("pseudonymises the caller instead of recording the issuer", async () => {
     const { app, auditLog } = buildDsarApp({ targets: [new FakeTarget("snapshots")] });
     await app.request("/v1/me/data", deleteReq);
     const [entry] = await auditLog.list();
-    expect(entry?.details).toMatchObject({ issuer: ISSUER });
+    const pseudonym = auditPseudonym(`${ISSUER}|u-1`);
+    expect(entry?.actor).toBe(pseudonym);
+    expect(entry?.target).toBe(pseudonym);
+    expect(entry?.details).not.toHaveProperty("issuer");
+    expect(entry?.details).not.toHaveProperty("subject");
   });
 });
 
@@ -581,10 +587,17 @@ describe("POST /admin/compliance/forget", () => {
     expect(body.subject).toEqual({ tenantId: "acme", userId: "u@x.de" });
     expect(target.subjects[0]).toEqual({ tenantId: "acme", userId: "u@x.de" });
     const audit = await auditLog.list();
-    expect(audit[0]).toMatchObject({
+    const entry = audit[0];
+    if (!entry) throw new Error("expected an audit entry");
+    expect(entry).toMatchObject({
       action: "compliance.forget",
-      target: "acme",
+      // The subject is erased, so the append-only log carries only a
+      // pseudonym and the subject hashes — never the identifiers.
+      target: auditPseudonym("acme|u@x.de"),
     });
+    expect(entry.details).not.toHaveProperty("subject");
+    const details = entry.details as { subjectHashes: string[] };
+    expect(details.subjectHashes.length).toBeGreaterThanOrEqual(1);
   });
 
   it("rejects an empty subject with 400", async () => {
@@ -655,5 +668,62 @@ describe("GET /admin/compliance/dossier", () => {
       headers: { Authorization: "Bearer viewer-tok" },
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("erasure audit entries carry no clear-text subject (regression)", () => {
+  const EMAIL = "jane.doe@example.com";
+  const USER_ID = "jane-doe-42";
+  const DSAR_ISSUER = "https://idp.example.test/";
+
+  it("POST /admin/compliance/forget logs only subject hashes and a pseudonym", async () => {
+    const { app, auditLog } = buildApp();
+    const res = await app.request(
+      "/admin/compliance/forget",
+      authed({ tenantId: "acme", userId: USER_ID }),
+    );
+    expect(res.status).toBe(200);
+    const rows = await auditLog.list();
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      const json = JSON.stringify(row);
+      expect(json).not.toContain(EMAIL);
+      expect(json).not.toContain(USER_ID);
+    }
+    const forget = rows.find((r) => r.action === "compliance.forget");
+    const details = forget?.details as { subjectHashes: string[] };
+    expect(details.subjectHashes.length).toBeGreaterThanOrEqual(1);
+    expect(details.subjectHashes).toContain(erasureSubjectHash("acme", USER_ID));
+    expect(forget?.target).toBe(auditPseudonym(`acme|${USER_ID}`));
+  });
+
+  it("DELETE /v1/me/data logs only subject hashes and a pseudonym", async () => {
+    const { app, auditLog } = buildDsarApp({
+      targets: [new FakeTarget("snapshots")],
+      claims: {
+        iss: DSAR_ISSUER,
+        sub: USER_ID,
+        email: EMAIL,
+        email_verified: true,
+        tenant_id: "acme",
+      },
+    });
+    const res = await app.request("/v1/me/data", {
+      method: "DELETE",
+      headers: { Authorization: "Bearer dsar-token" },
+    });
+    expect(res.status).toBe(200);
+    const rows = await auditLog.list();
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      const json = JSON.stringify(row);
+      expect(json).not.toContain(EMAIL);
+      expect(json).not.toContain(USER_ID);
+      expect(json).not.toContain(DSAR_ISSUER);
+    }
+    const dsar = rows.find((r) => r.action === "dsar.self_erasure");
+    const details = dsar?.details as { subjectHashes: string[] };
+    expect(details.subjectHashes.length).toBeGreaterThanOrEqual(1);
+    expect(details.subjectHashes).toContain(erasureSubjectHash("acme", USER_ID));
   });
 });

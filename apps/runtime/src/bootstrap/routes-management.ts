@@ -691,6 +691,9 @@ export async function registerManagementRoutes(
         authRequired: config.monitoringAuthRequired,
         operatorAuth,
         auditLog,
+        ...(config.auditPseudonymPepper !== undefined
+          ? { auditPseudonymPepper: config.auditPseudonymPepper }
+          : {}),
         policyLoader: compliancePolicyLoader,
         evalRunHistory,
         ...(redTeamEngine !== undefined ? { redTeamEngine } : {}),

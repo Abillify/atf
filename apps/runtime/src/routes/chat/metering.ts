@@ -458,8 +458,8 @@ export async function checkCompliancePolicy(opts: {
 
   metrics?.recordRejected("compliance_policy");
   auditLog?.record({
-    actor:
-      requestCtx.userEmail ?? requestCtx.userId ?? requestCtx.clientId ?? "anonymous",
+    // The e-mail is personal data: the audit actor is the user id instead.
+    actor: requestCtx.userId ?? requestCtx.clientId ?? "anonymous",
     action: "compliance.policy.deny",
     outcome: "denied",
     target: flowId,

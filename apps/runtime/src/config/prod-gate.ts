@@ -580,5 +580,14 @@ export function checkProductionReadiness(
     );
   }
 
+  // Audit pseudonyms of erasure subjects are keyed with AUDIT_PSEUDONYM_PEPPER.
+  // Without a pepper they degrade to unkeyed SHA-256 values, which an attacker
+  // who guesses a subject identifier can recompute and match against entries.
+  if (isProd && config.auditPseudonymPepper === undefined) {
+    warnings.push(
+      "AUDIT_PSEUDONYM_PEPPER is not set: audit pseudonyms of erasure subjects are unkeyed SHA-256 values that anyone who knows an identifier can recompute. Set a random secret of at least 32 characters.",
+    );
+  }
+
   return { fatal, warnings };
 }

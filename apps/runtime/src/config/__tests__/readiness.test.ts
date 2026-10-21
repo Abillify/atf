@@ -114,6 +114,33 @@ describe("checkProductionReadiness", () => {
     ).toBe(false);
   });
 
+  test("warns in production when AUDIT_PSEUDONYM_PEPPER is unset", () => {
+    const { warnings } = checkProductionReadiness(productionConfig());
+    expect(
+      warnings.some((w) => w.includes("AUDIT_PSEUDONYM_PEPPER is not set")),
+    ).toBe(true);
+  });
+
+  test("no pseudonym pepper warning when AUDIT_PSEUDONYM_PEPPER is configured", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        auditPseudonymPepper: "p".repeat(32),
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("AUDIT_PSEUDONYM_PEPPER is not set")),
+    ).toBe(false);
+  });
+
+  test("no pseudonym pepper warning outside production", () => {
+    const { warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "development" }),
+    );
+    expect(
+      warnings.some((w) => w.includes("AUDIT_PSEUDONYM_PEPPER is not set")),
+    ).toBe(false);
+  });
+
   test("warns about process-local media and receipt state when several replicas run (P1-R1)", () => {
     const single = checkProductionReadiness(
       productionConfig({ replicas: 1, embedSearchFigures: true, mediaBaseUrl: "https://atf.example.com", decisionReceiptsEnabled: true }),

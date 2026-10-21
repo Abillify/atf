@@ -250,6 +250,13 @@ export interface AppConfig {
   /** Optional append-only JSONL file to persist anchors outside the audit DB. */
   auditAnchorFile?: string;
   /**
+   * Secret pepper (`AUDIT_PSEUDONYM_PEPPER`, ≥ 32 characters) used to derive
+   * keyed pseudonyms of erasure subjects for audit entries. Without it the
+   * pseudonyms are unkeyed SHA-256 values that anyone who knows an identifier
+   * can recompute.
+   */
+  auditPseudonymPepper?: string;
+  /**
    * Remote `POST /v1/erasure` endpoints the DSAR orchestrator fans out to
    * (Req 2.9). Parsed from the `ERASURE_TARGETS` JSON env variable.
    */
@@ -1025,6 +1032,8 @@ export const EnvSchema = z.object({
    */
   AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().min(60_000).optional(),
   AUDIT_ANCHOR_FILE: z.string().optional(),
+  /** SECRET (≥ 32 characters). Pepper for the keyed HMAC-SHA256 pseudonyms of erasure subjects in audit entries. Unset = unkeyed SHA-256 pseudonyms. */
+  AUDIT_PSEUDONYM_PEPPER: z.string().min(32).optional(),
   // Remote erasure targets for the DSAR orchestrator (Req 2.9): a JSON array
   // of `{service, url, tokenEnv}` entries pointing at the `POST /v1/erasure`
   // endpoints of Search/Extract/Gate. `tokenEnv` names an environment variable

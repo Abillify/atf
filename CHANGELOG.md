@@ -233,6 +233,7 @@ releases:
 - Gate warns in production while `monitoring.oidc.requiredGroups` is empty (every identity-provider user could open the monitor).
 - Gate monitor stream filters events by the OIDC session's tenant (`monitoring.tenantScope`, default `session`) and replaces tool results with a SHA-256 digest and size unless `monitoring.includeToolContent` is true.
 - Gate: with `policies.approval.requireDifferentApprover` an approval token whose approver is the requester is rejected even if it was issued before the flag was enabled; production warns while the flag is off and approval rules exist, and when pending approvals are per process with more than one replica.
+- Runtime no longer writes the erased subject (user id, e-mail, external ids, issuer) into the audit log; erasure entries carry subject hashes and a keyed pseudonym (`AUDIT_PSEUDONYM_PEPPER`), and policy denials use the user id instead of the e-mail as actor.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
@@ -731,6 +732,7 @@ what it returns, without any code change on your side:
 - Search queries longer than 400 characters are now cut. Flows that append large context to the query should raise `SEARCH_MAX_QUERY_CHARS` or move the context out of the query.
 - Transaction tokens without a `typ` header are rejected by Search. Tokens minted by ATF Runtime already carry `typ: at+jwt`.
 - Gate monitor: OIDC users now see only events of their own tenant (`monitoring.tenantScope: session`) and tool results only as digest (`monitoring.includeToolContent: false`). Set `tenantScope: all` and/or `includeToolContent: true` to restore the previous view.
+- Set `AUDIT_PSEUDONYM_PEPPER` (random, ≥ 32 characters) and keep it stable; changing it changes the pseudonyms of later audit entries.
 ## [0.18.1] — 2026-10-18
 
 ### Security

@@ -205,6 +205,7 @@ export function loadConfig(): AppConfig {
     auditAnchorSecret: env.AUDIT_ANCHOR_SECRET,
     auditAnchorIntervalMs: env.AUDIT_ANCHOR_INTERVAL_MS,
     auditAnchorFile: env.AUDIT_ANCHOR_FILE,
+    auditPseudonymPepper: env.AUDIT_PSEUDONYM_PEPPER,
     ...(env.ERASURE_TARGETS !== undefined
       ? { erasureTargets: env.ERASURE_TARGETS }
       : {}),
