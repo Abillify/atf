@@ -635,6 +635,7 @@ export function createMcpHandlers(opts: McpHandlerOptions): {
       }
     } catch (err) {
       if (isTransactionError(err) && !res.headersSent) {
+        if (err.status === 503) res.set("Retry-After", "5");
         res.status(err.status).json(err.body);
         return;
       }
@@ -926,6 +927,7 @@ export function createMcp2026Handlers(
       res.json({ jsonrpc: "2.0", id: body.id ?? null, result });
     } catch (err) {
       if (isTransactionError(err)) {
+        if (err.status === 503) res.set("Retry-After", "5");
         mcp2026Error(res, err.status, body.id, -32001, err.body.code); return;
       }
       if (err instanceof AccessDeniedError) {

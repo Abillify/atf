@@ -229,6 +229,7 @@ releases:
 - With the production profile a flow whose node `config` contains a key the node type does not read is no longer loaded; it is reported as a flow load failure (readiness `flow_load: degraded`). Elsewhere the load logs a warning.
 - Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms (longest first).
 - Search: the HyDE and query-embedding caches key entries by tenant and query, so cache hits no longer reveal across tenants which questions were asked.
+- Search verifies the `typ` header of transaction tokens (`at+jwt` or `txn+jwt`) and answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) when the JWKS is unreachable, instead of reporting an invalid token.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
@@ -719,6 +720,7 @@ what it returns, without any code change on your side:
   order of UPGRADE item 20.
 - Run `bun run scripts/cli.ts validate <flows-dir>` (in `apps/runtime`) before upgrading a production Runtime; every warning about an unknown config key becomes a flow load failure there. Rename typos or prefix annotation keys with `x-`.
 - Search queries longer than 400 characters are now cut. Flows that append large context to the query should raise `SEARCH_MAX_QUERY_CHARS` or move the context out of the query.
+- Transaction tokens without a `typ` header are rejected by Search. Tokens minted by ATF Runtime already carry `typ: at+jwt`.
 ## [0.18.1] — 2026-10-18
 
 ### Security

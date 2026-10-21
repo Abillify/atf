@@ -74,7 +74,7 @@ export interface TransactionConfig {
   jwks?: JWTVerifyGetKey;
 }
 export interface FabricErrorBody {
-  code: string; category: "authentication" | "authorization" | "budget" | "deadline" | "validation" | "conflict" | "internal";
+  code: string; category: "authentication" | "authorization" | "budget" | "deadline" | "validation" | "conflict" | "internal" | "unavailable";
   retryable: boolean; outcome: "denied" | "failed" | "outcome_unknown"; invocationId?: string; traceId?: string;
 }
 const transactionErrorBrand = Symbol.for("@atf/search/TransactionError");
@@ -104,7 +104,22 @@ export const requireTransactionContext = (): TransactionContext => {
 };
 
 function error(code: string, category: FabricErrorBody["category"], status: number, envelope?: Partial<TransactionEnvelope>): TransactionError {
-  return new TransactionError(status, { code, category, retryable: false, outcome: "denied", ...(envelope?.invocationId ? { invocationId: envelope.invocationId } : {}), ...(envelope?.trace?.traceId ? { traceId: envelope.trace.traceId } : {}) }, code);
+  // A 503 means the request could not be assessed at all (an unreachable key
+  // source), so the client may retry the very same token.
+  const retryable = status === 503;
+  return new TransactionError(status, { code, category, retryable, outcome: retryable ? "failed" : "denied", ...(envelope?.invocationId ? { invocationId: envelope.invocationId } : {}), ...(envelope?.trace?.traceId ? { traceId: envelope.trace.traceId } : {}) }, code);
+}
+
+/**
+ * Accepted JWT `typ` header values for transaction tokens: `at+jwt` and
+ * `txn+jwt`, case-insensitive and tolerant of the optional `application/`
+ * prefix. A missing or different `typ` is rejected — the Runtime issuer always
+ * sets `at+jwt`.
+ */
+export function isAcceptedTransactionTyp(typ: unknown): boolean {
+  if (typeof typ !== "string") return false;
+  const normalized = typ.toLowerCase().replace(/^application\//, "");
+  return normalized === "at+jwt" || normalized === "txn+jwt";
 }
 function deadlineMs(value: string | number): number { return typeof value === "number" ? (value < 10_000_000_000 ? value * 1000 : value) : Date.parse(value); }
 
@@ -146,8 +161,14 @@ export async function verifyTransactionToken(token: string | undefined, config: 
   // source, and only from the configured allow-list: `none`, an algorithm the
   // deployment does not accept and a symmetric/asymmetric mix-up all end here.
   let alg: string | undefined;
-  try { alg = decodeProtectedHeader(token).alg; } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+  let typ: unknown;
+  try {
+    const header = decodeProtectedHeader(token);
+    alg = header.alg;
+    typ = header.typ;
+  } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
   if (alg === undefined || !(accepted as readonly string[]).includes(alg)) throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401);
+  if (!isAcceptedTransactionTyp(typ)) throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401);
   const verifyOptions = { issuer: config.issuer, audience: config.audience, clockTolerance: config.clockToleranceSeconds };
   let payload: unknown;
   if (alg === "HS256") {
@@ -159,7 +180,18 @@ export async function verifyTransactionToken(token: string | undefined, config: 
     if (!config.jwks) throw error("TRANSACTION_CONFIG_INVALID", "internal", 500);
     try {
       ({ payload } = await jwtVerify(token, config.jwks, { ...verifyOptions, algorithms: [alg] }));
-    } catch { throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401); }
+    } catch (err) {
+      // An unreachable key source is not the token's fault: report it as a
+      // retryable 503 instead of pretending the token is invalid. A key that
+      // simply does not match (`ERR_JWKS_NO_MATCHING_KEY`) stays a 401.
+      const code = (err as { code?: string }).code;
+      const keysUnreachable =
+        code === "ERR_JWKS_TIMEOUT" ||
+        err instanceof TypeError ||
+        (code === "ERR_JOSE_GENERIC" && /fetch|network|ECONN|ENOTFOUND/i.test(String((err as Error).message)));
+      if (keysUnreachable) throw error("TRANSACTION_KEYS_UNAVAILABLE", "unavailable", 503);
+      throw error("TRANSACTION_TOKEN_INVALID", "authentication", 401);
+    }
   }
   const parsed = transactionEnvelopeSchema.safeParse(payload);
   if (!parsed.success) throw error("TRANSACTION_ENVELOPE_INVALID", "validation", 400);

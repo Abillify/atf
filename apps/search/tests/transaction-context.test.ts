@@ -7,6 +7,7 @@ import {
   enforceRetrievalBudget,
   canonicalActionContractHash,
   extractTransactionToken,
+  isAcceptedTransactionTyp,
   runWithTransaction,
   stableHash,
   TransactionError,
@@ -19,7 +20,9 @@ const secret = "0123456789abcdef0123456789abcdef";
 const config: TransactionConfig = { enforcement: "required", secret, issuer: "issuer", audience: "vectorsearch", clockToleranceSeconds: 0, maxTtlSeconds: 300 };
 const principal: RequestPrincipal = { userId: "alice", userGroups: ["legal"], source: "jwt" };
 const base = (now: number) => ({ version: "v1", iss: "issuer", aud: "vectorsearch", iat: now, exp: now + 60, jti: "jti", executionId: "exec", invocationId: "invoke", userId: "alice", scopes: ["retrieve"], groups: ["legal"], budget: { maxRetrievalDocuments: 2 }, delegationChain: [], trace: { traceId: "trace" } });
-async function token(payload: Record<string, unknown>, key = secret) { return new SignJWT(payload).setProtectedHeader({ alg: "HS256" }).sign(new TextEncoder().encode(key)); }
+// The new stricter behaviour requires an accepted `typ`; tokens minted by ATF
+// Runtime always carry `at+jwt`. Pass `null` to mint a token without a `typ`.
+async function token(payload: Record<string, unknown>, key = secret, typ: string | null = "at+jwt") { return new SignJWT(payload).setProtectedHeader({ alg: "HS256", ...(typ === null ? {} : { typ }) }).sign(new TextEncoder().encode(key)); }
 
 function expectCode(promise: Promise<unknown>, code: string) {
   return expect(promise).rejects.toMatchObject({ body: { code } });
@@ -112,6 +115,28 @@ describe("Agent Transaction Fabric v1", () => {
   });
 });
 
+describe("transaction token typ header", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+
+  it("normalizes case and the optional application/ prefix", () => {
+    expect(isAcceptedTransactionTyp("at+jwt")).toBe(true);
+    expect(isAcceptedTransactionTyp("AT+JWT")).toBe(true);
+    expect(isAcceptedTransactionTyp("application/txn+jwt")).toBe(true);
+    expect(isAcceptedTransactionTyp("JWT")).toBe(false);
+    expect(isAcceptedTransactionTyp(undefined)).toBe(false);
+  });
+
+  it("accepts typ at+jwt and application/txn+jwt", async () => {
+    await expect(verifyTransactionToken(await token(base(now())), config, principal)).resolves.toMatchObject({ legacy: false });
+    await expect(verifyTransactionToken(await token(base(now()), secret, "application/txn+jwt"), config, principal)).resolves.toMatchObject({ legacy: false });
+  });
+
+  it("rejects typ JWT and a missing typ", async () => {
+    await expectCode(verifyTransactionToken(await token(base(now()), secret, "JWT"), config, principal), "TRANSACTION_TOKEN_INVALID");
+    await expectCode(verifyTransactionToken(await token(base(now()), secret, null), config, principal), "TRANSACTION_TOKEN_INVALID");
+  });
+});
+
 describe("asymmetric transaction tokens (ES256 / EdDSA through the issuer's JWKS)", () => {
   async function issuer(alg: "EdDSA" | "ES256", kid = `key-${alg}`) {
     const { privateKey, publicKey } = await generateKeyPair(alg, { extractable: true });
@@ -163,6 +188,35 @@ describe("asymmetric transaction tokens (ES256 / EdDSA through the issuer's JWKS
     const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks };
     await expectCode(verifyTransactionToken(await sign({ ...base(now()), aud: "mcpgate" }), cfg, principal), "TRANSACTION_TOKEN_INVALID");
     await expectCode(verifyTransactionToken(await sign({ ...base(now()), iss: "someone-else" }), cfg, principal), "TRANSACTION_TOKEN_INVALID");
+  });
+
+  it("reports an unreachable JWKS as a retryable 503 instead of an invalid token", async () => {
+    const { sign } = await issuer("EdDSA");
+    const timeoutResolver: JWTVerifyGetKey = () => {
+      throw Object.assign(new Error("timeout"), { code: "ERR_JWKS_TIMEOUT" });
+    };
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks: timeoutResolver };
+    await expect(verifyTransactionToken(await sign(base(now())), cfg, principal)).rejects.toMatchObject({
+      status: 503,
+      body: { code: "TRANSACTION_KEYS_UNAVAILABLE", category: "unavailable", retryable: true },
+    });
+    // A raw fetch failure surfaces as a TypeError from fetch().
+    const networkResolver: JWTVerifyGetKey = () => {
+      throw new TypeError("fetch failed");
+    };
+    await expect(verifyTransactionToken(await sign(base(now())), { ...cfg, jwks: networkResolver }, principal)).rejects.toMatchObject({
+      status: 503,
+      body: { code: "TRANSACTION_KEYS_UNAVAILABLE", retryable: true },
+    });
+  });
+
+  it("keeps a non-matching key (ERR_JWKS_NO_MATCHING_KEY) a 401", async () => {
+    const { jwks } = await issuer("EdDSA");
+    const cfg: TransactionConfig = { ...config, secret: null, algorithms: ["EdDSA"], jwks };
+    // A token whose `kid` is absent from the JWKS: jose fails with
+    // ERR_JWKS_NO_MATCHING_KEY, which must stay a 401, not a 503.
+    const foreign = await issuer("EdDSA", "unknown-kid");
+    await expectCode(verifyTransactionToken(await foreign.sign(base(now())), cfg, principal), "TRANSACTION_TOKEN_INVALID");
   });
 
   it("reports a misconfiguration (an accepted asymmetric algorithm without a key source) as a server error", async () => {

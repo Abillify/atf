@@ -320,9 +320,11 @@ Runtime (the Agent Transaction Fabric envelope). Search verifies it with the sha
 ES256/EdDSA tokens, so a verifier cannot mint tokens. `TRANSACTION_ALGORITHMS` lists what is
 accepted at the same time (default: HS256 when the secret is set, plus ES256 and EdDSA when
 the JWKS URL is set), which lets issuers switch one at a time; the token's `alg` only picks
-the key source and only from that list. Issuer (`TRANSACTION_ISSUER`) and audience
-(`TRANSACTION_AUDIENCE`, default `vectorsearch`) must match, so a token minted for another
-service is refused. Production requires enforcement `required`, an https JWKS URL for the
+the key source and only from that list. Search accepts transaction tokens with the JWT header
+`typ` `at+jwt` or `txn+jwt`; any other `typ` is rejected. When the JWKS cannot be fetched
+Search answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) instead of 401. Issuer
+(`TRANSACTION_ISSUER`) and audience (`TRANSACTION_AUDIENCE`, default `vectorsearch`) must
+match, so a token minted for another service is refused. Production requires enforcement `required`, an https JWKS URL for the
 asymmetric algorithms, and warns while HS256 is accepted. The migration order is in
 [the upgrade guide](../../docs/UPGRADE.md) (item 20) and
 [ADR-0035](../../docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md).
