@@ -31,6 +31,7 @@ import {
   offActivity,
   type ActivityEvent,
 } from "../activity-emitter.js";
+import { getPrincipal, type RequestPrincipal } from "../request-principal.js";
 
 /** Number of recent events kept in memory for reconnection replay. */
 const REPLAY_BUFFER_SIZE = 200;
@@ -45,8 +46,49 @@ onActivity((event: ActivityEvent) => {
   }
 });
 
+/**
+ * The tenant-visibility attributes of a stream subscriber, derived from its
+ * request principal.
+ */
+export interface ActivityViewer {
+  tenantId?: string;
+  operator?: boolean;
+  service?: boolean;
+  authorizationBypass?: boolean;
+}
+
+/** Derive the activity-visibility attributes from a request principal. */
+export function activityViewerFromPrincipal(
+  principal: RequestPrincipal,
+): ActivityViewer {
+  return {
+    tenantId: principal.tenantId,
+    operator: principal.scopes?.includes("operator") === true,
+    service: principal.source === "service",
+    authorizationBypass: principal.authorizationBypass === true,
+  };
+}
+
+/**
+ * Whether an activity event may be delivered to a viewer.
+ *
+ * Operator, service and authorization-bypass (auth disabled) viewers see
+ * everything. A tenant-scoped viewer sees only events tagged with its own
+ * tenant; events without a tenant (emitted outside any request scope) are
+ * withheld fail-closed.
+ */
+export function activityVisibleTo(
+  event: ActivityEvent,
+  viewer: ActivityViewer,
+): boolean {
+  if (viewer.operator || viewer.service || viewer.authorizationBypass)
+    return true;
+  return event.tenantId !== undefined && event.tenantId === viewer.tenantId;
+}
+
 export function createActivityStreamHandler(): RequestHandler {
   return (req, res) => {
+    const viewer = activityViewerFromPrincipal(getPrincipal(req));
     // ── SSE handshake ──────────────────────────────────────────────────────
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -60,12 +102,14 @@ export function createActivityStreamHandler(): RequestHandler {
       const idx = replayBuffer.findIndex((e) => e.id === lastId);
       const missed = idx >= 0 ? replayBuffer.slice(idx + 1) : replayBuffer;
       for (const event of missed) {
+        if (!activityVisibleTo(event, viewer)) continue;
         res.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
       }
     }
 
     // ── Subscribe to live events ───────────────────────────────────────────
     const onActivityEvent = (event: ActivityEvent) => {
+      if (!activityVisibleTo(event, viewer)) return;
       res.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     };
 

@@ -633,6 +633,7 @@ export function createSearchHandler(
         const usage = getUsageContext();
         emitActivity({
           id: newActivityId(),
+          tenantId: scope.tenantId,
           type: "search",
           status: "ok",
           summary: buildSearchSummary({
@@ -814,6 +815,7 @@ export function createSearchHandler(
       const usage = getUsageContext();
       emitActivity({
         id: newActivityId(),
+        tenantId: scope.tenantId,
         type: "search",
         status: "ok",
         summary: buildSearchSummary({
@@ -1049,8 +1051,10 @@ export function buildSearchDetail(opts: {
   };
   if (opts.source) detail["source"] = opts.source;
   if (opts.tags && opts.tags.length > 0) detail["tags"] = opts.tags;
+  // Only the names of the applied metadata filters, never their values —
+  // activity events are visible beyond the emitting request.
   if (opts.filter && Object.keys(opts.filter).length > 0)
-    detail["filter"] = opts.filter;
+    detail["filterKeys"] = Object.keys(opts.filter);
   return detail;
 }
 

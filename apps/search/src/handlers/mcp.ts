@@ -85,7 +85,7 @@ import {
 } from "../invocation-ledger.js";
 import type { PostgresClient } from "../postgres-client.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
-import { getPrincipal, runWithPrincipal } from "../request-principal.js";
+import { getAmbientPrincipal, getPrincipal, runWithPrincipal } from "../request-principal.js";
 import type { RerankerClient } from "../reranker-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { SummaryClient } from "../summary-client.js";
@@ -262,6 +262,7 @@ function emitQueryActivity(params: {
   const usage = getUsageContext();
   emitActivity({
     id: newActivityId(),
+    tenantId: getAmbientPrincipal()?.tenantId,
     type: "query",
     status: params.status,
     summary: `${params.tool}: ${params.summary}`,

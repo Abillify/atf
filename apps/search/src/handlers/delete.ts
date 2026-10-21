@@ -39,6 +39,7 @@ export function createDeleteHandler(
           log.warn({ error: deleteResult.error }, "Delete by reference failed");
           emitActivity({
             id: newActivityId(),
+            tenantId: accessScopeForRequest(req).tenantId,
             type: "delete",
             status: "error",
             summary:
@@ -53,6 +54,7 @@ export function createDeleteHandler(
         }
         emitActivity({
           id: newActivityId(),
+          tenantId: accessScopeForRequest(req).tenantId,
           type: "delete",
           status: "ok",
           summary:
@@ -85,6 +87,7 @@ export function createDeleteHandler(
         log.warn({ error: deleteResult.error }, "Delete failed");
         emitActivity({
           id: newActivityId(),
+          tenantId: accessScopeForRequest(req).tenantId,
           type: "delete",
           status: "error",
           summary:
@@ -100,6 +103,7 @@ export function createDeleteHandler(
 
       emitActivity({
         id: newActivityId(),
+        tenantId: accessScopeForRequest(req).tenantId,
         type: "delete",
         status: "ok",
         summary:

@@ -713,6 +713,7 @@ export function registerSearchTool(opts: McpToolContext): void {
       const usage = getUsageContext();
       emitActivity({
         id: newActivityId(),
+        tenantId: accessScopeForMcp().tenantId,
         type: "search",
         status: "ok",
         summary: buildSearchSummary({

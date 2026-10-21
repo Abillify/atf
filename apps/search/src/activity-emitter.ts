@@ -27,6 +27,14 @@ export type ActivityStatus = "ok" | "error";
 export interface ActivityEvent {
   /** Unique event ID (used as SSE `id:` field for last-event-id reconnection). */
   id: string;
+  /**
+   * Tenant the event belongs to, set wherever the emitting request has a
+   * resolvable scope. The activity stream uses it to hide events from
+   * subscribers of other tenants; events without a tenant (emitted outside
+   * any request scope, e.g. background work) are withheld from tenant-scoped
+   * subscribers and visible only to operator and service viewers.
+   */
+  tenantId?: string;
   type: ActivityType;
   status: ActivityStatus;
   /** Human-readable one-liner, e.g. '"foo bar" in documents [hybrid]'. */

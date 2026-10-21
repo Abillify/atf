@@ -19,12 +19,13 @@
  * the Activity page next to ingest/search/delete.
  */
 
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import type { PostgresClient } from "../postgres-client.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { accessScopeForRequest } from "../access-scope.js";
+import { getPrincipal } from "../request-principal.js";
 import { getUsageContext } from "../usage-context.js";
 
 export interface QueryHandlerOptions {
@@ -38,6 +39,7 @@ export interface QueryHandlerOptions {
  * any cost incurred during the call surfaces on the Activity page.
  */
 function emitQueryActivity(params: {
+  req: Request;
   tool: string;
   summary: string;
   status: "ok" | "error";
@@ -47,6 +49,7 @@ function emitQueryActivity(params: {
   const usage = getUsageContext();
   emitActivity({
     id: newActivityId(),
+    tenantId: getPrincipal(params.req).tenantId,
     type: "query",
     status: params.status,
     summary: `${params.tool}: ${params.summary}`,
@@ -126,6 +129,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "list_documents failed");
         emitQueryActivity({
+          req,
           tool: "list_documents",
           summary: `${collection}${prefix ? " " + prefix : ""} — failed`,
           status: "error",
@@ -137,6 +141,7 @@ export function createQueryHandlers(
       }
       const { documents, total } = result.result;
       emitQueryActivity({
+        req,
         tool: "list_documents",
         summary: `${documents.length} of ${total} document${total === 1 ? "" : "s"} in ${collection}${prefix ? " " + prefix : ""}`,
         status: "ok",
@@ -181,6 +186,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "get_document failed");
         emitQueryActivity({
+          req,
           tool: "get_document",
           summary: `${reference}${collection !== "documents" ? " in " + collection : ""} — failed`,
           status: "error",
@@ -192,6 +198,7 @@ export function createQueryHandlers(
       }
       if (result.result === null) {
         emitQueryActivity({
+          req,
           tool: "get_document",
           summary: `${reference}${collection !== "documents" ? " in " + collection : ""} — not found`,
           status: "error",
@@ -204,6 +211,7 @@ export function createQueryHandlers(
         return;
       }
       emitQueryActivity({
+        req,
         tool: "get_document",
         summary: `${reference}${collection !== "documents" ? " in " + collection : ""}`,
         status: "ok",
@@ -245,6 +253,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "get_documents failed");
         emitQueryActivity({
+          req,
           tool: "get_documents",
           summary: `${collection}${prefix ? " " + prefix : ""} — failed`,
           status: "error",
@@ -256,6 +265,7 @@ export function createQueryHandlers(
       }
       const { documents, total, truncated } = result.result;
       emitQueryActivity({
+        req,
         tool: "get_documents",
         summary: `${documents.length} of ${total} document${total === 1 ? "" : "s"} in ${collection}${prefix ? " " + prefix : ""}${truncated ? " (truncated)" : ""}`,
         status: "ok",
@@ -288,6 +298,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "list_folders failed");
         emitQueryActivity({
+          req,
           tool: "list_folders",
           summary: `${collection}${prefix ? " " + prefix : ""} — failed`,
           status: "error",
@@ -298,6 +309,7 @@ export function createQueryHandlers(
         return;
       }
       emitQueryActivity({
+        req,
         tool: "list_folders",
         summary: `${collection}${prefix ? " " + prefix : "/"}`,
         status: "ok",
@@ -326,6 +338,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "get_summary failed");
         emitQueryActivity({
+          req,
           tool: "get_summary",
           summary: `${reference}${collection !== "documents" ? " in " + collection : ""} — failed`,
           status: "error",
@@ -337,6 +350,7 @@ export function createQueryHandlers(
       }
       if (result.result === null) {
         emitQueryActivity({
+          req,
           tool: "get_summary",
           summary: `${reference}${collection !== "documents" ? " in " + collection : ""} — not found`,
           status: "error",
@@ -349,6 +363,7 @@ export function createQueryHandlers(
         return;
       }
       emitQueryActivity({
+        req,
         tool: "get_summary",
         summary: `${reference}${collection !== "documents" ? " in " + collection : ""}`,
         status: "ok",
@@ -387,6 +402,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "get_summaries failed");
         emitQueryActivity({
+          req,
           tool: "get_summaries",
           summary: `${collection}${prefix ? " " + prefix : ""} — failed`,
           status: "error",
@@ -398,6 +414,7 @@ export function createQueryHandlers(
       }
       const { summaries, total } = result.result;
       emitQueryActivity({
+        req,
         tool: "get_summaries",
         summary: `${summaries.length} of ${total} summar${total === 1 ? "y" : "ies"} in ${collection}${prefix ? " " + prefix : ""}`,
         status: "ok",
@@ -422,6 +439,7 @@ export function createQueryHandlers(
       if (!result.ok) {
         log.warn({ error: result.error }, "collection_stats failed");
         emitQueryActivity({
+          req,
           tool: "collection_stats",
           summary: `${collection}${prefix ? " " + prefix : ""} — failed`,
           status: "error",
@@ -432,6 +450,7 @@ export function createQueryHandlers(
         return;
       }
       emitQueryActivity({
+        req,
         tool: "collection_stats",
         summary: `${collection}${prefix ? " " + prefix : ""}`,
         status: "ok",

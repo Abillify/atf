@@ -508,6 +508,7 @@ export function createErasureHandler(
 
       emitActivity({
         id: newActivityId(),
+        tenantId: request.tenantId,
         type: "delete",
         status: failed === 0 ? "ok" : "error",
         summary: `erasure ${request.scope}${dryRun ? " (dry-run)" : ""} ${request.requestId}`,

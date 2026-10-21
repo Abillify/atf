@@ -324,6 +324,7 @@ export function createIngestHandler(
           log.warn({ error: upsertResult.error }, "Upsert failed");
           emitActivity({
             id: newActivityId(),
+            tenantId: scope?.tenantId,
             type: "ingest",
             status: "error",
             summary:
@@ -360,6 +361,7 @@ export function createIngestHandler(
         };
         emitActivity({
           id: newActivityId(),
+          tenantId: scope?.tenantId,
           type: "ingest",
           status: "ok",
           summary:
@@ -386,6 +388,7 @@ export function createIngestHandler(
           log.warn({ error: batchResult.error }, "Batch upsert failed");
           emitActivity({
             id: newActivityId(),
+            tenantId: scope?.tenantId,
             type: "ingest",
             status: "error",
             summary:
@@ -427,6 +430,7 @@ export function createIngestHandler(
         };
         emitActivity({
           id: newActivityId(),
+          tenantId: scope?.tenantId,
           type: "ingest",
           status: "ok",
           summary:

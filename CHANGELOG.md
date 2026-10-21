@@ -237,6 +237,7 @@ releases:
 - Gate: with `policies.approval.requireDifferentApprover` an approval token whose approver is the requester is rejected even if it was issued before the flag was enabled; production warns while the flag is off and approval rules exist, and when pending approvals are per process with more than one replica.
 - Runtime no longer writes the erased subject (user id, e-mail, external ids, issuer) into the audit log; erasure entries carry subject hashes and a keyed pseudonym (`AUDIT_PSEUDONYM_PEPPER`), and policy denials use the user id instead of the e-mail as actor.
 - With `TAINT_MODE=on-untrusted-source`, results of MCP servers without `contentTrust: trusted` now taint the execution (previously only results labelled untrusted by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
+- Search activity stream: events are filtered by the subscriber's tenant and carry only the names of metadata filters, not their values.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

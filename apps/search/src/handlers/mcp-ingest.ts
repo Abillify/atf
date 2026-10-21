@@ -285,6 +285,7 @@ export function registerIngestTools(opts: McpToolContext): void {
       const usage = getUsageContext();
       emitActivity({
         id: newActivityId(),
+        tenantId: accessScopeForMcp().tenantId,
         type: "ingest",
         status: "ok",
         summary:
@@ -373,6 +374,7 @@ export function registerIngestTools(opts: McpToolContext): void {
 
       emitActivity({
         id: newActivityId(),
+        tenantId: accessScopeForMcp().tenantId,
         type: "delete",
         status: "ok",
         summary:
