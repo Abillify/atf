@@ -184,6 +184,13 @@ Node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`, `mem
 type string resolves through the plugin node-handler registry. Edges carry conditions evaluated
 by a safe expression evaluator against run state and classifier output.
 
+An `llm` node can start on a cheap model and escalate once: `config.cascade: { escalateTo:
+{ shortcut: pro }, when: { minCitations, sourcesCheckFailed, maxTopScore, finishReasonLength } }`
+regenerates the answer with the stronger model when it has too few citations, fails the sources
+check, rests on weak grounding or was cut off for length. The first attempt's text is held back
+until that is decided; the debug trace records `cascade` and the metric
+`aiperator_cascade_escalations_total` counts escalations.
+
 Complete reference (generated): [`docs/FLOWS.md`](../../docs/FLOWS.md). Examples:
 [`deploy/examples/flows/`](../../deploy/examples/flows/).
 

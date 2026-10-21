@@ -47,6 +47,33 @@ export function providerAttemptsSummary(
   };
 }
 
+/**
+ * Summarises the node's cascade diagnostics (`cascade_escalated` /
+ * `cascade_kept`) into the trace field `cascade`; `undefined` for a node
+ * without a cascade. The latest diagnostic wins.
+ */
+export function cascadeSummary(
+  diagnostics: readonly DebugNodeDiagnostic[] | undefined,
+): { cascade: NonNullable<DebugNodeTrace["cascade"]> } | undefined {
+  const decision = (diagnostics ?? [])
+    .filter((d) => d.code === "cascade_escalated" || d.code === "cascade_kept")
+    .at(-1);
+  if (decision === undefined) return undefined;
+  const details = decision.details ?? {};
+  const reasons = Array.isArray(details.reasons)
+    ? details.reasons.filter((r): r is string => typeof r === "string")
+    : [];
+  const text = (value: unknown): string => (typeof value === "string" ? value : "");
+  return {
+    cascade: {
+      escalated: decision.code === "cascade_escalated",
+      reasons,
+      firstModel: text(details.first_model),
+      finalModel: text(details.final_model),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tool-reported usage/cost extraction
 // ---------------------------------------------------------------------------

@@ -499,6 +499,14 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Objective-driven routing.** A solver selects a model per request against a stated
   objective such as lowest cost at a required quality level, using observed quality with a
   configurable half-life (`ROUTER_QUALITY_HALF_LIFE_MS`).
+- **Model cascade.** An `llm` node with `config.cascade` lets a cheap model answer first and
+  regenerates the answer once with `cascade.escalateTo` when the evidence is weak: too few
+  distinct `[n]` citations (`minCitations`, default 1), a failed `sourcesCheck`, a best
+  grounding score below `maxTopScore`, or a length cut-off. The rules need no model; the first
+  attempt's text is held back until the decision is made, so a dropped answer never reaches the
+  client. The decision is in the debug trace (`cascade`), as the `cascade_escalated` diagnostic
+  and in `aiperator_cascade_escalations_total`. Tool calls of the first attempt are not undone,
+  so use it on answering nodes whose tools only read.
 - **Fallback chains and failover.** `FALLBACK_LLM` and `FALLBACK_CHAIN` switch providers when
   one fails, with a circuit breaker per provider. An unreachable provider (connection refused or
   closed, DNS failure, 5xx/408) fails over to the next candidate at once. While another candidate

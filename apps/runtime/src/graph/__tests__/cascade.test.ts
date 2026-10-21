@@ -16,6 +16,8 @@ import type { FlowDefinition } from "../../types/flow.js";
 import type { ChatCompletionChunk } from "../../types/openai.js";
 import type { FlowRegistry } from "../flow-parser.js";
 import { createGraphEngine } from "../graph-engine.js";
+import { createMetrics } from "../../observability/metrics.js";
+import { cascadeSummary } from "../graph-engine/tool-usage.js";
 import {
   CASCADE_DEFAULTS,
   countCitations,
@@ -204,9 +206,11 @@ async function run(s: Scenario, executionId: string) {
   } as unknown as FlowDefinition;
   const map = new Map([[flow.id, flow]]);
   const registry: FlowRegistry = { get: (id) => map.get(id), list: () => [...map.values()] };
+  const metrics = createMetrics(true);
   const engine = createGraphEngine(baseConfig, {
     flowRegistry: registry,
     mcpWrapper: mcp,
+    metrics,
     llmProviderFactory: (cfg) => {
       used.push(cfg.model);
       return cfg.model === "pro" ? scriptedModel(s.pro) : scriptedModel(s.flash, s.flashFinish);
@@ -233,6 +237,7 @@ async function run(s: Scenario, executionId: string) {
     used,
     content,
     node,
+    metrics: metrics.render(),
     escalation: node?.diagnostics?.find((d) => d.code === "cascade_escalated"),
   };
 }
@@ -251,6 +256,14 @@ describe("LLM node cascade (engine)", () => {
     });
     expect(r.used.filter((m) => m === "pro")).toHaveLength(1);
     expect(r.node?.status).toBe("completed");
+    // The trace carries the decision, the metric counts it.
+    expect(r.node?.cascade).toEqual({
+      escalated: true,
+      reasons: ["citations 0 < 1"],
+      firstModel: "openai/flash",
+      finalModel: "openai/pro",
+    });
+    expect(r.metrics).toMatch(/aiperator_cascade_escalations_total\{[^}]*flow_id="cascade-flow"[^}]*node_id="llm-1"[^}]*\} 1/);
   });
 
   test("an answer with two citations stays; the stronger model is never built", async () => {
@@ -258,6 +271,13 @@ describe("LLM node cascade (engine)", () => {
     expect(r.content).toBe("Guter Befund [1][2].");
     expect(r.escalation).toBeUndefined();
     expect(r.used).not.toContain("pro");
+    expect(r.node?.cascade).toEqual({
+      escalated: false,
+      reasons: [],
+      firstModel: "openai/flash",
+      finalModel: "openai/flash",
+    });
+    expect(r.metrics).not.toContain("aiperator_cascade_escalations_total");
   });
 
   test("the held answer is released in order, token by token content intact", async () => {
@@ -320,5 +340,26 @@ describe("LLM node cascade (engine)", () => {
     expect(r.content).toBe("Ohne Beleg.");
     expect(r.escalation).toBeUndefined();
     expect(r.used).not.toContain("pro");
+    expect(r.node?.cascade).toBeUndefined();
+  });
+});
+
+describe("cascadeSummary", () => {
+  const diag = (code: string, details: Record<string, unknown>) =>
+    ({ code, level: "info", message: "", at: "2026-01-01T00:00:00.000Z", details }) as never;
+  test("is undefined without a cascade decision", () => {
+    expect(cascadeSummary(undefined)).toBeUndefined();
+    expect(cascadeSummary([diag("retry", {})])).toBeUndefined();
+  });
+  test("reads escalation and the kept answer from the diagnostics; the latest wins", () => {
+    expect(
+      cascadeSummary([diag("cascade_escalated", { reasons: ["finish_reason_length"], first_model: "a/b", final_model: "c/d" })]),
+    ).toEqual({ cascade: { escalated: true, reasons: ["finish_reason_length"], firstModel: "a/b", finalModel: "c/d" } });
+    expect(
+      cascadeSummary([
+        diag("cascade_escalated", { reasons: ["x"], first_model: "a/b", final_model: "c/d" }),
+        diag("cascade_kept", { reasons: [], first_model: "a/b", final_model: "a/b" }),
+      ])?.cascade.escalated,
+    ).toBe(false);
   });
 });

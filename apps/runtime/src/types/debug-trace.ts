@@ -304,6 +304,21 @@ export interface DebugNodeTrace {
     final_attempt: number;
     final_outcome: "ok" | "error";
   };
+  /**
+   * Model cascade outcome (`config.cascade`), derived from the node's
+   * `cascade_escalated` / `cascade_kept` diagnostics; absent for nodes
+   * without a cascade.
+   *   - `escalated`  — the answer was regenerated with the stronger model
+   *   - `reasons`    — why (empty when the answer stood)
+   *   - `firstModel` / `finalModel` — `provider/model` of the first attempt and
+   *     of the answer that was kept
+   */
+  cascade?: {
+    escalated: boolean;
+    reasons: string[];
+    firstModel: string;
+    finalModel: string;
+  };
   /** Why this attempt started (graph lifecycle, harness delegation, retry, …). */
   attempt_trigger?: string;
   /** Parent node that initiated the attempt, when delegated. */

@@ -51,6 +51,11 @@ export const CASCADE_DEFAULTS = {
 /** Diagnostic codes the cascade reads from the first attempt. */
 export const SOURCES_CHECK_DIAGNOSTIC = "answer_sources_check";
 export const LENGTH_CUTOFF_DIAGNOSTIC = "llm_output_length_limit";
+/** Diagnostics the cascade itself emits; the debug trace summarises them as `cascade`. */
+export const CASCADE_ESCALATED_DIAGNOSTIC = "cascade_escalated";
+export const CASCADE_KEPT_DIAGNOSTIC = "cascade_kept";
+/** Counter of escalations, labelled by flow and node. */
+export const CASCADE_ESCALATIONS_METRIC = "aiperator_cascade_escalations_total";
 
 export interface CascadeSignalInput {
   /** The first attempt's answer text. */
@@ -216,7 +221,15 @@ export function withCascade(node: FlowNode, createHandler: (node: FlowNode) => H
           cascade.when,
         );
 
+    const modelOf = (llm: { provider?: string; model?: string } | undefined): string =>
+      `${llm?.provider ?? "default"}/${llm?.model ?? "default"}`;
     if (!shouldEscalate(reasons)) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "info",
+        code: CASCADE_KEPT_DIAGNOSTIC,
+        message: "The answer had enough evidence; the cascade kept it.",
+        details: { reasons: [], first_model: modelOf(node.llm), final_model: modelOf(node.llm) },
+      });
       // The answer stands: release what was held, in the order it arrived.
       for (const piece of attempt.held) {
         if (piece.channel === "token") await runtime.onToken(node.id, piece.text);
@@ -227,13 +240,13 @@ export function withCascade(node: FlowNode, createHandler: (node: FlowNode) => H
 
     runtime.onNodeDiagnostic?.(node.id, {
       level: "info",
-      code: "cascade_escalated",
+      code: CASCADE_ESCALATED_DIAGNOSTIC,
       message: `The answer had weak evidence (${reasons.join("; ")}); the node ran again with the stronger model.`,
-      details: {
-        reasons,
-        first_model: `${node.llm?.provider ?? "default"}/${node.llm?.model ?? "default"}`,
-        final_model: `${cascade.escalateTo.provider}/${cascade.escalateTo.model}`,
-      },
+      details: { reasons, first_model: modelOf(node.llm), final_model: modelOf(cascade.escalateTo) },
+    });
+    runtime.metrics.recordCounter(CASCADE_ESCALATIONS_METRIC, {
+      flow_id: runtime.flowId ?? "",
+      node_id: node.id,
     });
     // The first answer is dropped; the second one streams normally. The node
     // has already started, so a second start event would only duplicate it.

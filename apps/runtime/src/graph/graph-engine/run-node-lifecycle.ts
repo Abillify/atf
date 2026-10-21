@@ -28,7 +28,7 @@ import type { FlowSpanManager } from "./spans.js";
 import type { SseEmitter } from "./sse-emitter.js";
 import type { CitationRegistry } from "./citation-registry.js";
 import type { HashedImageRefRegistry } from "../image-reference.js";
-import { providerAttemptsSummary } from "./tool-usage.js";
+import { cascadeSummary, providerAttemptsSummary } from "./tool-usage.js";
 import type { AgentState } from "./state.js";
 import type { NodeRunState } from "./run-state.js";
 import { nodeStateKey } from "./node-instance.js";
@@ -511,6 +511,7 @@ export function createNodeLifecycle(deps: {
             ? { attempt: nodeAttempts.get(stateKey) }
             : {}),
           ...(providerAttemptsSummary(nodeDiagnostics.get(stateKey)) ?? {}),
+          ...(cascadeSummary(nodeDiagnostics.get(stateKey)) ?? {}),
           ...(nodeAttemptContexts.has(stateKey)
             ? {
                 attempt_trigger: nodeAttemptContexts.get(stateKey)?.trigger,
