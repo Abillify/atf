@@ -3,7 +3,7 @@
 
 # 31. Shared rate-limit backends and an explicit REPLICAS knob
 
-Date: 2026-10-22
+Date: 2026-10-20
 
 ## Status
 
@@ -101,3 +101,5 @@ missed it because the test fake mirrored the legacy call shape.
   parses. Deployments running the Gate with `store.type=redis` on redis v4+/v5
   were broken before this fix (all requests denied under fail-closed) — see
   the CHANGELOG Fixed entry.
+- The Helm chart declares replicaCount: 2 and exports REPLICAS / MCPGATE_REPLICAS, so the production gates apply to a stock install; a shared Redis is required (global.redis).
+- Still per process: the Runtime media store (show_figure links), the decision-receipt transparency log, and — without Redis — the Gate's pending approvals; the production gates warn about them when REPLICAS > 1.

@@ -3,7 +3,7 @@
 
 # 32. Propagating Search content-trust labels into execution taint
 
-Date: 2026-10-23
+Date: 2026-10-20
 
 ## Status
 

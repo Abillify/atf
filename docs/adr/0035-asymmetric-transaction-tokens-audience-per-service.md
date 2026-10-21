@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Elastic-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Abillify Technology GmbH -->
 # 35. Asymmetric transaction tokens and one audience per service
-Date: 2026-10-23
+Date: 2026-10-20
 ## Status
 Accepted — extends [ADR-0030](0030-asymmetric-evidence-chain-ed25519.md) from the
 evidence chain to the transaction envelope the runtime sends to every Gate and
