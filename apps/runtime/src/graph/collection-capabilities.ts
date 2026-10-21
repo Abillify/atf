@@ -149,12 +149,12 @@ export class CollectionCapabilityCache {
   }
 
   private async fetchWithTimeout(
-    fetch: () => Promise<string>,
+    fetchStats: () => Promise<string>,
   ): Promise<CollectionCapabilities | undefined> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const text = await Promise.race([
-        fetch(),
+        fetchStats(),
         new Promise<undefined>((resolve) => {
           timer = setTimeout(() => resolve(undefined), FETCH_TIMEOUT_MS);
         }),
