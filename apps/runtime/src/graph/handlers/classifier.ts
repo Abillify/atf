@@ -219,6 +219,13 @@ export function createClassifierNodeHandler(
     // attempt re-derives its per-model strategy (structured-output mode, prompt
     // cache) from the capability registry, so a mixed pool (local + cloud)
     // routes each member correctly.
+    const sticky = llmConfig.pool?.sticky;
+    const stickyKey =
+      sticky === "conversation"
+        ? (runtime.poolSticky?.conversation ?? runtime.poolSticky?.execution)
+        : sticky === "execution"
+          ? runtime.poolSticky?.execution
+          : undefined;
     const poolChain = buildPoolCandidateChain(
       llmConfig,
       `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool?.candidates ?? [])}`,
@@ -226,6 +233,7 @@ export function createClassifierNodeHandler(
         isAvailable: (candidate) =>
           runtime.providerCircuitBreaker?.getState(candidate.provider).state !==
           "open",
+        ...(stickyKey !== undefined ? { stickyKey } : {}),
       },
     );
     let lastAttemptError = "classifier model call failed";

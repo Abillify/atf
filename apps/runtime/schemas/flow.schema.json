@@ -230,6 +230,14 @@
                         "items": {
                           "$ref": "#/$defs/__schema0"
                         }
+                      },
+                      "sticky": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "execution",
+                          "conversation"
+                        ]
                       }
                     },
                     "required": [
@@ -408,6 +416,14 @@
                               "items": {
                                 "$ref": "#/$defs/__schema0"
                               }
+                            },
+                            "sticky": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "execution",
+                                "conversation"
+                              ]
                             }
                           },
                           "required": [
@@ -604,6 +620,14 @@
               "items": {
                 "$ref": "#/$defs/__schema0"
               }
+            },
+            "sticky": {
+              "type": "string",
+              "enum": [
+                "none",
+                "execution",
+                "conversation"
+              ]
             }
           },
           "required": [

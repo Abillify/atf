@@ -962,6 +962,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
       ...(resolvedFlow.budgets !== undefined
         ? { executionBudget: new ExecutionBudget(resolvedFlow.budgets) }
         : {}),
+      // Identity keys for model-pool stickiness: a unique id per execution,
+      // plus the conversation id when the request carries one.
+      poolSticky: {
+        execution: crypto.randomUUID(),
+        ...conversationStickyKey(ctx),
+      },
       llmProviderFactory: this.llmProviderFactory,
       // Flow-local decisions (a dead endpoint in this run must not skip the
       // provider in unrelated runs), while the reachability signal is also fed
@@ -1591,6 +1597,25 @@ class GraphEngineServiceImpl implements GraphEngineService {
       throw err;
     }
   }
+}
+
+/**
+ * Conversation sticky key for model pools (T-037): the conversation id from
+ * the request context when present, else the session id. Returns an empty
+ * object when neither is available, so the pool falls back to the execution
+ * key.
+ */
+function conversationStickyKey(
+  ctx: RequestContext,
+): { conversation: string } | Record<string, never> {
+  const conversationId = ctx.requestParams?.conversation_id;
+  if (typeof conversationId === "string" && conversationId !== "") {
+    return { conversation: conversationId };
+  }
+  if (typeof ctx.sessionId === "string" && ctx.sessionId !== "") {
+    return { conversation: ctx.sessionId };
+  }
+  return {};
 }
 
 /**

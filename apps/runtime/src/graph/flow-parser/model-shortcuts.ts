@@ -45,7 +45,11 @@
  */
 
 import * as fs from "node:fs";
-import type { LlmConfig, LlmPoolStrategy } from "../../types/flow.js";
+import type {
+  LlmConfig,
+  LlmPoolStickiness,
+  LlmPoolStrategy,
+} from "../../types/flow.js";
 import { parseFlowFile, resolveConfigFile } from "../../util/parse-flow-file.js";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,8 @@ interface PoolMemberDef {
 interface PoolShortcutDef {
   /** Selection strategy; `"fallback"` when omitted. */
   strategy: LlmPoolStrategy;
+  /** Prefix-cache stickiness; omitted = `"none"`. */
+  sticky?: LlmPoolStickiness;
   /** Ordered members (>= 1 after parsing). */
   members: PoolMemberDef[];
   /**
@@ -215,6 +221,16 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
       )
         ? (poolSource?.strategy as LlmPoolStrategy)
         : "fallback";
+      const validStickies: LlmPoolStickiness[] = [
+        "none",
+        "execution",
+        "conversation",
+      ];
+      const sticky = validStickies.includes(
+        poolSource?.sticky as LlmPoolStickiness,
+      )
+        ? (poolSource?.sticky as LlmPoolStickiness)
+        : undefined;
       const members: PoolMemberDef[] = [];
       for (const rawMember of rawMembers) {
         if (!isRecord(rawMember)) continue;
@@ -250,6 +266,7 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
       if (members.length === 0) return null;
       return {
         strategy,
+        ...(sticky !== undefined ? { sticky } : {}),
         members,
         ...(isRecord(poolSource?.parameters)
           ? { parameters: poolSource.parameters }
@@ -542,7 +559,11 @@ function expandShortcutToConfig(
   ) {
     config.parameters = first.parameters;
   }
-  config.pool = { strategy: shortcut.strategy, candidates };
+  config.pool = {
+    strategy: shortcut.strategy,
+    candidates,
+    ...(shortcut.sticky !== undefined ? { sticky: shortcut.sticky } : {}),
+  };
   return config;
 }
 

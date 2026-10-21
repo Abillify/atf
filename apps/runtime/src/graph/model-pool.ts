@@ -29,6 +29,16 @@
  * between a and b, and c is only reached once both a and b are exhausted or
  * unavailable. Each sub-pool uses an independent cursor key.
  *
+ * Stickiness (`pool.sticky`, see `LlmPoolStickiness`): small local servers
+ * often keep only one slot and cache the prompt prefix, so rotating away on
+ * every call defeats that cache. With `sticky: "execution"` or
+ * `"conversation"` the leaf selected on the pool's FIRST call for a given
+ * context (an execution, or a conversation keyed by `conversationId`/
+ * `sessionId`) is remembered and moved to the front on later calls; the rest
+ * of the order is untouched, so failover still works. Sticky entries live in
+ * a bounded LRU map with a TTL — process-local like the cursors, and losing
+ * them is harmless.
+ *
  * A config with no `pool` yields a single-element chain `[config]`, so callers
  * get uniform handling whether or not a pool is in play. The returned chain is
  * always a FLAT list of concrete leaf configs.
@@ -55,11 +65,102 @@ import type { LlmConfig, LlmPoolStrategy } from "../types/flow.js";
 const roundRobinCursors = new Map<string, number>();
 const usageCounters = new Map<string, number[]>();
 
+/** Max sticky entries kept in memory; oldest are evicted beyond this. */
+export const STICKY_MAX_ENTRIES = 10_000;
+/** A sticky entry is forgotten after this many milliseconds without a hit. */
+export const STICKY_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Sticky pool selections keyed by `<poolKey>|<stickyKey>`: the leaf the pool
+ * picked on the first call for a context, plus the last time it was used.
+ * `Map` insertion order doubles as the LRU order (entries are re-inserted on
+ * every hit). Process-local like the cursors — a restart simply un-pins.
+ */
+const stickySelections = new Map<string, { leafKey: string; touchedAt: number }>();
+
+/** `provider/model` identity of a leaf config. */
+function leafKeyOf(config: LlmConfig): string {
+  return `${config.provider}/${config.model}`;
+}
+
+/**
+ * Drops expired entries and, if still over {@link STICKY_MAX_ENTRIES}, the
+ * least-recently-touched ones (`Map` iteration order = insertion order, and
+ * hits re-insert, so the oldest insertion is the LRU victim).
+ */
+function pruneStickyEntries(now: number): void {
+  if (stickySelections.size <= STICKY_MAX_ENTRIES) return;
+  for (const [key, entry] of stickySelections) {
+    if (now - entry.touchedAt > STICKY_TTL_MS) {
+      stickySelections.delete(key);
+    }
+  }
+  while (stickySelections.size > STICKY_MAX_ENTRIES) {
+    const oldest = stickySelections.keys().next();
+    if (oldest.done === true) break;
+    stickySelections.delete(oldest.value);
+  }
+}
+
+/**
+ * Applies stickiness to an ordered leaf chain for one pool + context.
+ *
+ * When a fresh sticky entry exists whose leaf is still in `ordered`, that leaf
+ * is moved to position 1 and the rest of the order is kept unchanged (so the
+ * failover chain survives). Otherwise the current head becomes the sticky
+ * leaf. The entry is refreshed (re-inserted) on every access.
+ *
+ * @param ordered - The ordered leaf chain produced by the pool strategy.
+ * @param poolKey - Identity of the pool (its cursor key).
+ * @param stickyKey - Identity of the stickiness context (execution or
+ *   conversation id).
+ * @returns The (possibly reordered) chain, first = primary.
+ */
+export function applyStickiness(
+  ordered: LlmConfig[],
+  poolKey: string,
+  stickyKey: string,
+): LlmConfig[] {
+  if (ordered.length === 0) return ordered;
+  const now = Date.now();
+  pruneStickyEntries(now);
+  const key = `${poolKey}|${stickyKey}`;
+  const entry = stickySelections.get(key);
+  const stickyIndex =
+    entry === undefined || now - entry.touchedAt > STICKY_TTL_MS
+      ? -1
+      : ordered.findIndex((leaf) => leafKeyOf(leaf) === entry.leafKey);
+  if (stickyIndex <= 0) {
+    // No usable sticky leaf (none yet, expired, or the pinned leaf dropped
+    // out of the chain): the head becomes the new sticky leaf.
+    stickySelections.delete(key);
+    stickySelections.set(key, { leafKey: leafKeyOf(ordered[0]), touchedAt: now });
+    return ordered;
+  }
+  stickySelections.delete(key);
+  stickySelections.set(key, {
+    leafKey: leafKeyOf(ordered[stickyIndex]),
+    touchedAt: now,
+  });
+  return [
+    ordered[stickyIndex],
+    ...ordered.slice(0, stickyIndex),
+    ...ordered.slice(stickyIndex + 1),
+  ];
+}
+
 export interface PoolSelectionOptions {
   /** Candidates returning false are skipped before selection and failover. */
   isAvailable?: (candidate: LlmConfig) => boolean;
   /** Injectable randomness for deterministic tests. Returns [0, 1). */
   random?: () => number;
+  /**
+   * Identity of the stickiness context (execution or conversation id). When
+   * set and the pool is `sticky: "execution" | "conversation"`, the selected
+   * leaf is remembered for this context and kept at the front of later
+   * chains. Omit to disable stickiness for this call.
+   */
+  stickyKey?: string;
 }
 
 /**
@@ -259,6 +360,25 @@ export function buildPoolCandidateChain(
   cursorKey: string,
   options: PoolSelectionOptions = {},
 ): LlmConfig[] {
+  const leaves = expandPoolCandidateChain(config, cursorKey, options);
+  // Stickiness is applied once, to the final FLAT chain of the outermost pool,
+  // so a pinned leaf stays first regardless of nested sub-pool expansion.
+  const sticky = config.pool?.sticky;
+  if (
+    options.stickyKey !== undefined &&
+    (sticky === "execution" || sticky === "conversation") &&
+    leaves.length > 0
+  ) {
+    return applyStickiness(leaves, cursorKey, options.stickyKey);
+  }
+  return leaves;
+}
+
+function expandPoolCandidateChain(
+  config: LlmConfig,
+  cursorKey: string,
+  options: PoolSelectionOptions,
+): LlmConfig[] {
   const pool = config.pool;
   if (pool === undefined || !Array.isArray(pool.candidates)) {
     return [config];
@@ -298,16 +418,24 @@ export function buildPoolCandidateChain(
 }
 
 /**
- * Resets the round-robin cursor for `key`, or all cursors when omitted.
- * Exposed for tests and for operators who want to re-phase a pool after a
- * backend change; not called on the hot path.
+ * Resets the round-robin cursor for `key`, or all cursors when omitted. Also
+ * clears the matching sticky selections. Exposed for tests and for operators
+ * who want to re-phase a pool after a backend change; not called on the hot
+ * path.
  */
 export function resetPoolCursors(key?: string): void {
   if (key === undefined) {
     roundRobinCursors.clear();
     usageCounters.clear();
+    stickySelections.clear();
     return;
   }
   roundRobinCursors.delete(key);
   usageCounters.delete(key);
+  const prefix = `${key}|`;
+  for (const stickyKey of stickySelections.keys()) {
+    if (stickyKey.startsWith(prefix)) {
+      stickySelections.delete(stickyKey);
+    }
+  }
 }

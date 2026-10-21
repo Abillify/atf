@@ -81,6 +81,23 @@ export type LlmPoolStrategy =
   | "least-used";
 
 /**
+ * Stickiness for a model pool (see {@link LlmPoolConfig}): how long calls
+ * should stay on the endpoint the pool selected once.
+ *
+ * - `"none"` (default) — the strategy is applied fresh on every call.
+ * - `"execution"` — the leaf chosen on the pool's FIRST call within one flow
+ *   execution is reused for all later calls of that execution.
+ * - `"conversation"` — like `"execution"`, but the scope is the conversation
+ *   (`conversationId`/`sessionId` from the request context; falls back to the
+ *   execution when the request carries neither).
+ *
+ * Stickiness only pins the PRIMARY; the rest of the ordered chain is unchanged,
+ * so failover keeps working. When the pinned leaf becomes unavailable it is
+ * dropped as usual and the sticky entry follows the new head.
+ */
+export type LlmPoolStickiness = "none" | "execution" | "conversation";
+
+/**
  * A runtime model pool attached to an {@link LlmConfig} by the flow parser when
  * a node references a POOL shortcut in `flows/model-shortcuts.yaml` (a shortcut
  * composed of several engine/model pairs or other shortcuts).
@@ -113,6 +130,11 @@ export interface LlmPoolConfig {
    * matches the host config.
    */
   candidates: LlmConfig[];
+  /**
+   * Prefix-cache affinity: keep calls on the endpoint selected on the pool's
+   * first call (see {@link LlmPoolStickiness}). Defaults to `"none"`.
+   */
+  sticky?: LlmPoolStickiness;
 }
 
 /**

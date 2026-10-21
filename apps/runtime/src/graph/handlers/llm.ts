@@ -172,6 +172,13 @@ export function createLlmNodeHandler(
     // llmConfig entirely, which drops any pool by design.
     let poolChain: LlmConfig[] | undefined;
     if (llmConfig?.pool !== undefined) {
+      const sticky = llmConfig.pool.sticky;
+      const stickyKey =
+        sticky === "conversation"
+          ? (runtime.poolSticky?.conversation ?? runtime.poolSticky?.execution)
+          : sticky === "execution"
+            ? runtime.poolSticky?.execution
+            : undefined;
       const chain = buildPoolCandidateChain(
         llmConfig,
         `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool.candidates)}`,
@@ -179,6 +186,7 @@ export function createLlmNodeHandler(
           isAvailable: (candidate) =>
             runtime.providerCircuitBreaker?.getState(candidate.provider)
               .state !== "open",
+          ...(stickyKey !== undefined ? { stickyKey } : {}),
         },
       );
       const primary = chain[0];

@@ -233,6 +233,10 @@ const PoolStrategySchema = z
 	])
 	.optional();
 
+const PoolStickySchema = z
+	.enum(["none", "execution", "conversation"])
+	.optional();
+
 /**
  * A pool candidate: a provider/model config that may itself carry a nested
  * `pool`. Recursive via `z.lazy` so an outer pool can hold an inner sub-pool.
@@ -247,6 +251,7 @@ const LlmPoolCandidateSchema: z.ZodType<LlmConfig> = z.lazy(() =>
 			.object({
 				strategy: PoolStrategySchema,
 				candidates: z.array(LlmPoolCandidateSchema).min(1),
+				sticky: PoolStickySchema,
 			})
 			.optional(),
 	}),
@@ -269,6 +274,7 @@ export const LlmConfigSchema: z.ZodType<LlmConfig> = z
 			.object({
 				strategy: PoolStrategySchema,
 				candidates: z.array(LlmPoolCandidateSchema).min(1),
+				sticky: PoolStickySchema,
 			})
 			.optional()
 			.describe(

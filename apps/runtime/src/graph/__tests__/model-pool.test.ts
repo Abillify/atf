@@ -3,13 +3,16 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  applyStickiness,
   buildPoolCandidateChain,
   poolLeafConfigs,
   poolSignature,
   resetPoolCursors,
+  STICKY_MAX_ENTRIES,
+  STICKY_TTL_MS,
 } from "../model-pool.js";
 import type { LlmConfig } from "../../types/flow.js";
-import type { LlmPoolStrategy } from "../../types/flow.js";
+import type { LlmPoolStickiness, LlmPoolStrategy } from "../../types/flow.js";
 
 const A: LlmConfig = { provider: "gpuvllm", model: "qwen-a" };
 const B: LlmConfig = { provider: "macminilmstudio", model: "gemma-b" };
@@ -279,5 +282,170 @@ describe("poolSignature", () => {
   test("is order-sensitive and provider/model-qualified", () => {
     expect(poolSignature([A, B])).toBe("gpuvllm/qwen-a,macminilmstudio/gemma-b");
     expect(poolSignature([A, B])).not.toBe(poolSignature([B, A]));
+  });
+});
+
+describe("pool stickiness", () => {
+  function stickyPool(
+    strategy: LlmPoolStrategy,
+    sticky: LlmPoolStickiness,
+  ): LlmConfig {
+    return {
+      ...A,
+      pool: { strategy, candidates: [A, B, C], sticky },
+    };
+  }
+
+  test("sticky execution keeps the first leaf within one execution", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "execution");
+    const key = "flow/node/rr-sticky";
+    const primaries: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const chain = buildPoolCandidateChain(config, key, {
+        stickyKey: "exec-1",
+      });
+      primaries.push(chain[0]?.model as string);
+    }
+    expect(primaries).toEqual(["qwen-a", "qwen-a", "qwen-a", "qwen-a", "qwen-a"]);
+  });
+
+  test("sticky execution rotates when the execution changes", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "execution");
+    const key = "flow/node/rr-rot";
+    const first = buildPoolCandidateChain(config, key, {
+      stickyKey: "exec-a",
+    });
+    const second = buildPoolCandidateChain(config, key, {
+      stickyKey: "exec-b",
+    });
+    expect(first[0]?.model).toBe("qwen-a");
+    expect(second[0]?.model).toBe("gemma-b");
+  });
+
+  test("sticky moves the pinned leaf back to the front of the rotated chain", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "execution");
+    const key = "flow/node/rr-order";
+    // First call selects A (cursor 0) and pins it.
+    buildPoolCandidateChain(config, key, { stickyKey: "exec-1" });
+    // The second call would rotate to B (cursor 1 -> [B, C, A]); stickiness
+    // moves A back to the front and keeps the rotated order behind it as the
+    // failover chain.
+    const chain = buildPoolCandidateChain(config, key, { stickyKey: "exec-1" });
+    expect(chain.map((c) => c.model)).toEqual([
+      "qwen-a",
+      "gemma-b",
+      "haiku-c",
+    ]);
+  });
+
+  test("unavailable sticky leaf fails over and re-pins the new head", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "execution");
+    const key = "flow/node/rr-fail";
+    buildPoolCandidateChain(config, key, { stickyKey: "exec-1" });
+    // Sticky leaf A goes down: the chain fails over to the rotated head C...
+    const down = buildPoolCandidateChain(config, key, {
+      stickyKey: "exec-1",
+      isAvailable: (c) => c.model !== "qwen-a",
+    });
+    expect(down.map((c) => c.model)).toEqual(["haiku-c", "gemma-b"]);
+    // ...and the sticky entry followed C, so C stays primary once A is back.
+    const restored = buildPoolCandidateChain(config, key, {
+      stickyKey: "exec-1",
+    });
+    expect(restored[0]?.model).toBe("haiku-c");
+  });
+
+  test("sticky conversation shares the leaf across executions of one conversation", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "conversation");
+    const key = "flow/node/conv";
+    const first = buildPoolCandidateChain(config, key, {
+      stickyKey: "conv-1",
+    });
+    const second = buildPoolCandidateChain(config, key, {
+      stickyKey: "conv-1",
+    });
+    const other = buildPoolCandidateChain(config, key, {
+      stickyKey: "conv-2",
+    });
+    expect(first[0]?.model).toBe("qwen-a");
+    expect(second[0]?.model).toBe("qwen-a");
+    // The cursor still advances per call, so a fresh conversation gets the
+    // rotated head (call 3 -> cursor 2 -> C).
+    expect(other[0]?.model).toBe("haiku-c");
+  });
+
+  test("sticky none (default) keeps rotating even with a sticky key", () => {
+    resetPoolCursors();
+    const config = stickyPool("round-robin", "none");
+    const key = "flow/node/none";
+    const primaries: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const chain = buildPoolCandidateChain(config, key, {
+        stickyKey: "exec-1",
+      });
+      primaries.push(chain[0]?.model as string);
+    }
+    expect(primaries).toEqual(["qwen-a", "gemma-b", "haiku-c"]);
+  });
+
+  test("applyStickiness pins a member of the ordered chain", () => {
+    resetPoolCursors();
+    const ordered = [A, B, C];
+    expect(applyStickiness(ordered, "p", "s").map((c) => c.model)).toEqual([
+      "qwen-a",
+      "gemma-b",
+      "haiku-c",
+    ]);
+    const rotated = [B, C, A];
+    expect(applyStickiness(rotated, "p", "s").map((c) => c.model)).toEqual([
+      "qwen-a",
+      "gemma-b",
+      "haiku-c",
+    ]);
+  });
+
+  test("applyStickiness re-pins when the sticky leaf is gone", () => {
+    resetPoolCursors();
+    applyStickiness([A, B], "p", "s");
+    expect(applyStickiness([B, C], "p", "s").map((c) => c.model)).toEqual([
+      "gemma-b",
+      "haiku-c",
+    ]);
+    // The entry now follows B, so B is pinned for later chains.
+    expect(applyStickiness([C, B], "p", "s").map((c) => c.model)).toEqual([
+      "gemma-b",
+      "haiku-c",
+    ]);
+  });
+
+  test("applyStickiness ignores entries older than the TTL", () => {
+    resetPoolCursors();
+    applyStickiness([A, B], "p", "ttl");
+    const original = Date.now;
+    try {
+      Date.now = () => original() + STICKY_TTL_MS + 1;
+      expect(
+        applyStickiness([B, A], "p", "ttl").map((c) => c.model),
+      ).toEqual(["gemma-b", "qwen-a"]);
+    } finally {
+      Date.now = original;
+    }
+  });
+
+  test("sticky store is bounded to STICKY_MAX_ENTRIES", () => {
+    resetPoolCursors();
+    for (let i = 0; i < STICKY_MAX_ENTRIES + 10; i++) {
+      applyStickiness([A, B], "p", `s${i}`);
+    }
+    // The oldest entries were evicted, so a fresh call for s0 pins the head.
+    expect(applyStickiness([B, A], "p", "s0").map((c) => c.model)).toEqual([
+      "gemma-b",
+      "qwen-a",
+    ]);
   });
 });

@@ -375,6 +375,7 @@ releases:
 - `GET /v1/jobs/{id}` reports `progress` of a running agent-harness job (updated at most every 2 s).
 - Agent harness `statusLanguage` (`en` or `de`) renders all status and task labels in one language; without it the previous texts stay unchanged.
 - Flows accept `budgets` (`maxTokens`, `maxToolCalls`, `maxWallMs`): the execution stops before the next model or tool call once a limit is reached and finishes with `finishReason: budget_exceeded`.
+- Model pools accept `sticky: execution | conversation` to keep calls of one execution or conversation on the same endpoint (prefix-cache affinity); failover still applies.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

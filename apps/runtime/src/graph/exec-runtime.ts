@@ -428,6 +428,14 @@ export interface ExecRuntime {
    * the execution gracefully with `finishReason: "budget_exceeded"`.
    */
   executionBudget?: import("./execution-budget.js").ExecutionBudget;
+  /**
+   * Identity keys for model-pool stickiness (T-037). `execution` is a unique
+   * id minted per flow execution; `conversation` is the conversation/session
+   * id from the request context when one is present. Model pools with
+   * `sticky: "execution" | "conversation"` use these to keep their calls on
+   * the same endpoint (prefix-cache affinity).
+   */
+  poolSticky?: { execution: string; conversation?: string };
   /** LLM provider factory — defaults to the real createLlmProvider. */
   llmProviderFactory: LlmProviderFactory;
   /** Flow-local provider availability state shared by all nodes in this run. */
