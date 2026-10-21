@@ -8,3 +8,13 @@ a49a740710efacd5b59831ea8622409719850d8d:apps/runtime/src/observability/audit-an
 a49a740710efacd5b59831ea8622409719850d8d:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:88
 a29870acd0a3439fe4bb8edef01b0cb6fd71480b:.gitleaksignore:generic-api-key:2
 e5f1c20bd92d9fd212448fcc9e1af8d82c1dc617:apps/runtime/src/routes/evidence-jwks.ts:generic-api-key:20
+f479bc19e273ffe0323ecfe9a178a3135687214f:.gitleaksignore:generic-api-key:2
+f479bc19e273ffe0323ecfe9a178a3135687214f:apps/runtime/src/bootstrap/observability.ts:generic-api-key:89
+f479bc19e273ffe0323ecfe9a178a3135687214f:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:79
+f479bc19e273ffe0323ecfe9a178a3135687214f:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:88
+f479bc19e273ffe0323ecfe9a178a3135687214f:apps/runtime/src/routes/explain.ts:generic-api-key:153
+bc587de2ef66361cc5cceb0d77eb3ce5811d7df6:.gitleaksignore:generic-api-key:2
+bc587de2ef66361cc5cceb0d77eb3ce5811d7df6:apps/runtime/src/bootstrap/observability.ts:generic-api-key:89
+bc587de2ef66361cc5cceb0d77eb3ce5811d7df6:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:79
+bc587de2ef66361cc5cceb0d77eb3ce5811d7df6:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:88
+bc587de2ef66361cc5cceb0d77eb3ce5811d7df6:apps/runtime/src/routes/explain.ts:generic-api-key:153
