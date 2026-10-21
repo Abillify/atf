@@ -580,6 +580,7 @@ releases:
 - `COMPLIANCE_POLICY_REQUIRED` is checked by the production-readiness gate and reported by readiness (`compliance_policy: missing`).
 - GenAI spans carry `gen_ai.provider.name` in addition to `gen_ai.system`.
 - The audit-anchor production warning recommends EVIDENCE_SIGNING_KEY.
+- Dependabot uses the bun ecosystem; CI uploads HIGH image findings as SARIF without failing.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

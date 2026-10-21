@@ -864,6 +864,10 @@ jobs:
     name: Image scan (${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # Upload of the HIGH findings to code scanning.
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -900,6 +904,23 @@ jobs:
           trivy image --scanners vuln --severity CRITICAL
           --exit-code 1 --ignore-unfixed --slow --timeout 20m
           atf-scan-${{ matrix.service }}:latest
+
+      # HIGH findings do not fail the build; they are uploaded so they are
+      # visible, deduplicated and trackable in code scanning.
+      - name: Scan image (HIGH findings as SARIF, non-blocking)
+        run: >-
+          trivy image --scanners vuln --severity HIGH
+          --format sarif --output trivy-${{ matrix.service }}.sarif
+          --exit-code 0 --ignore-unfixed --slow --timeout 20m
+          atf-scan-${{ matrix.service }}:latest
+
+      - name: Upload HIGH findings to code scanning
+        # A pull request from a fork gets a read-only token and cannot upload.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-image-${{ matrix.service }}
 
   # Requirement 13.3: SAST over the TypeScript workspaces and the Rust
   # Tauri core. Both run build-mode none (the only mode CodeQL supports for

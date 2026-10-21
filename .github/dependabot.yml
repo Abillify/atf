@@ -1,8 +1,8 @@
 version: 2
 
 updates:
-  # Bun workspaces resolve from the root lockfile, so a single npm entry covers every workspace.
-  - package-ecosystem: npm
+  # Bun workspaces resolve from the root lockfile, so a single bun entry covers every workspace.
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly
