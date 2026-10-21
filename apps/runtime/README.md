@@ -110,6 +110,8 @@ Models are configured through **named provider instances** in `PROVIDERS`. Every
 references an instance by `name`, never by protocol, which is what allows two vLLM servers or
 vLLM alongside LM Studio to coexist.
 
+Navigation tools of a Search collection (get_outline, get_section, get_pages, get_context, follow_ref) are hidden from the model when the pinned collection reports in collection_stats that it cannot serve them (COLLECTION_CAPABILITY_TTL_MS).
+
 ## Flows
 
 Flows are YAML documents in `FLOWS_DIR`, validated against

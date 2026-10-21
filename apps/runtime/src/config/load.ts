@@ -271,6 +271,7 @@ export function loadConfig(): AppConfig {
     embeddingCacheMaxEntries: env.EMBEDDING_CACHE_MAX_ENTRIES,
     embeddingCacheTtlSeconds: env.EMBEDDING_CACHE_TTL_SECONDS,
     routerQualityHalfLifeMs: env.ROUTER_QUALITY_HALF_LIFE_MS,
+    collectionCapabilityTtlMs: env.COLLECTION_CAPABILITY_TTL_MS,
     retentionEnabled: env.RETENTION_ENABLED,
     retentionSweepIntervalMs: env.RETENTION_SWEEP_INTERVAL_MS,
     retentionDefaultMaxAgeDays: env.RETENTION_DEFAULT_MAX_AGE_DAYS,

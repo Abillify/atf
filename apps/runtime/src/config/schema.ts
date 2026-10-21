@@ -368,6 +368,9 @@ export interface AppConfig {
   embeddingCacheMaxEntries?: number;
   embeddingCacheTtlSeconds?: number;
   routerQualityHalfLifeMs?: number;
+  /** TTL (ms) of the cached Search `collection_stats` capabilities used to
+   * hide navigation tools a collection cannot serve; 0 disables hiding. */
+  collectionCapabilityTtlMs?: number;
   retentionEnabled?: boolean;
   retentionSweepIntervalMs?: number;
   retentionDefaultMaxAgeDays?: number;
@@ -1397,6 +1400,19 @@ export const EnvSchema = z.object({
     .min(0)
     .max(2_592_000_000)
     .optional(),
+  /**
+   * How long the Runtime caches a Search collection's capabilities
+   * (collection_stats) to hide navigation tools the collection cannot serve
+   * (get_outline, get_section, get_pages, get_context, follow_ref). Only
+   * tools whose collection is pinned through toolArgs are affected; on any
+   * error the tool stays visible. 0 disables hiding.
+   */
+  COLLECTION_CAPABILITY_TTL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(86_400_000)
+    .default(300_000),
   /** Enable the retention sweep and the DSAR erasure endpoints (`DELETE /v1/me/data`, `/admin/compliance/forget`). */
   RETENTION_ENABLED: z
     .string()
@@ -1908,7 +1924,9 @@ export const EnvSchema = z.object({
    * after a finding. Read-only tools stay unaffected. Opt-in: it adds approval
    * prompts to flows that read and then write.
    */
-  TAINT_MODE: z.enum(["on-finding", "on-untrusted-source"]).default("on-finding"),
+  TAINT_MODE: z
+    .enum(["on-finding", "on-untrusted-source"])
+    .default("on-finding"),
   /**
    * Marks successful completions as AI-generated for downstream systems
    * (EU AI Act Art. 50): `header` adds `X-AI-Generated: true` to

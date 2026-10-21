@@ -57,6 +57,12 @@ import type {
 } from "../observability/cost.js";
 import type { Metrics } from "../observability/metrics.js";
 import { estimateCost } from "../observability/cost.js";
+import { createLogger } from "../observability/logger.js";
+import {
+  CollectionCapabilityCache,
+  NAVIGATION_TOOL_CAPABILITY,
+  shouldHideTool,
+} from "./collection-capabilities.js";
 import { filterLlmParameters } from "./llm-factory.js";
 import type { Citation, CitationEvidence } from "../types/openai.js";
 import {
@@ -328,6 +334,54 @@ export interface AgentToolJournalHooks {
   executionId: string;
 }
 
+const capabilityLog = createLogger("info");
+
+let collectionCapabilityCache: CollectionCapabilityCache | undefined;
+let collectionCapabilityCacheResolved = false;
+
+/**
+ * Module-level capabilities cache, built once from
+ * `COLLECTION_CAPABILITY_TTL_MS` (default 300000, 0 disables the feature).
+ * `buildAiTools` has no config parameter and its signature is fixed, so the
+ * value is read from the environment on first use.
+ */
+function getCollectionCapabilityCache(): CollectionCapabilityCache | undefined {
+  if (!collectionCapabilityCacheResolved) {
+    collectionCapabilityCacheResolved = true;
+    const raw = Number(process.env.COLLECTION_CAPABILITY_TTL_MS ?? 300_000);
+    if (Number.isFinite(raw) && raw > 0) {
+      collectionCapabilityCache = new CollectionCapabilityCache({ ttlMs: raw });
+    }
+  }
+  return collectionCapabilityCache;
+}
+
+/**
+ * Fetch `collection_stats` for one collection through the same MCP wrapper
+ * path the tool loop uses, returning the result content as text for
+ * `parseCollectionStats`. Throws on an error result so the cache stores it
+ * as a negative entry.
+ */
+async function fetchCollectionStats(
+  mcpWrapper: McpWrapperService,
+  serverName: string,
+  collection: string,
+  ctx: RequestContext,
+): Promise<string> {
+  const result = await mcpWrapper.callTool(
+    serverName,
+    "collection_stats",
+    { collection },
+    ctx,
+  );
+  if (result.isError === true) {
+    throw new Error("collection_stats returned an error result");
+  }
+  return typeof result.content === "string"
+    ? result.content
+    : JSON.stringify(result.content);
+}
+
 export async function buildAiTools(
   node: FlowNode,
   mcpWrapper: McpWrapperService,
@@ -473,6 +527,40 @@ export async function buildAiTools(
       configuredArgs !== undefined
         ? (substituteTemplates(configuredArgs) as Record<string, unknown>)
         : undefined;
+
+    // Hide Search navigation tools the pinned collection cannot serve
+    // (`collection_stats.capabilities`, cached per server/collection,
+    // fail-open on any error). Only a collection pinned through `toolArgs`
+    // is checked — a model-chosen collection stays fully visible.
+    const pinnedCollection =
+      typeof forcedArgs?.collection === "string" &&
+      forcedArgs.collection.length > 0
+        ? forcedArgs.collection
+        : undefined;
+    if (
+      pinnedCollection !== undefined &&
+      NAVIGATION_TOOL_CAPABILITY[bareName] !== undefined
+    ) {
+      const capabilityCache = getCollectionCapabilityCache();
+      if (capabilityCache !== undefined) {
+        const caps = await capabilityCache.get(
+          serverName,
+          pinnedCollection,
+          () =>
+            fetchCollectionStats(mcpWrapper, serverName, pinnedCollection, ctx),
+        );
+        const hiddenCapability = shouldHideTool(bareName, caps);
+        if (hiddenCapability !== undefined) {
+          // No node-diagnostic channel reaches this builder, so the same
+          // code and text go to the info log for operators.
+          capabilityLog.info(
+            `${toolRef} hidden: collection "${pinnedCollection}" has no ${hiddenCapability}`,
+            { level: "info", code: "tool_hidden_by_capability" },
+          );
+          continue;
+        }
+      }
+    }
 
     let filtered: Awaited<ReturnType<typeof mcpWrapper.getFilteredToolSchema>>;
     try {
