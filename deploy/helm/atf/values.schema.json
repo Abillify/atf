@@ -49,7 +49,45 @@
         "nodeSelector": { "type": "object" },
         "tolerations": { "type": "array" },
         "affinity": { "type": "object" },
-        "topologySpreadConstraints": { "type": "array" }
+        "topologySpreadConstraints": { "type": "array" },
+        "redis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "urlSecret"],
+          "properties": {
+            "enabled": {
+              "description": "Export the Redis URL from an existing Secret to Runtime (REDIS_URL) and Search/Extract (RATE_LIMIT_REDIS_URL). The Gate keeps its own Redis configuration.",
+              "type": "boolean"
+            },
+            "urlSecret": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "key"],
+              "properties": {
+                "name": {
+                  "description": "Name of an existing Secret holding the redis[s]://... URL.",
+                  "type": "string"
+                },
+                "key": {
+                  "description": "Key inside that Secret holding the URL.",
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "url"
+                }
+              }
+            }
+          },
+          "if": {
+            "properties": { "enabled": { "const": true } }
+          },
+          "then": {
+            "properties": {
+              "urlSecret": {
+                "properties": { "name": { "minLength": 1 } }
+              }
+            }
+          }
+        }
       }
     },
     "runtime": { "$ref": "#/definitions/runtime" },

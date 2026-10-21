@@ -574,7 +574,7 @@ worth deciding deliberately:
 | `UPLOAD_SESSION_MAX_AGE_HOURS` | 72 | Hours an unfinished resumable upload and its file are kept (0 = forever) |
 | `RETENTION_SWEEP_INTERVAL_MINUTES` | 60 | How often the retention sweep runs |
 | `RATE_LIMIT_REDIS_URL` | (unset) | Shared Redis for the rate limiters (`extract:rl`, `extract:render-rl`); without it the budget is per replica. Fails open on Redis errors. Needs the `redis` package in the image |
-| `REPLICAS` | 1 | Declared replica count for the production gate: `REPLICAS > 1` without `RATE_LIMIT_REDIS_URL` is fatal in production. The Helm chart does not set it |
+| `REPLICAS` | 1 | Declared replica count for the production gate: `REPLICAS > 1` without `RATE_LIMIT_REDIS_URL` is fatal in production. The Helm chart sets it from `replicaCount` (or the HPA maximum) |
 | `QUEUE_MAX_DEPTH` | 32 | Beyond it uploads get 503 with `Retry-After`, which a caller can act on |
 | `CALLBACK_ALLOWED_HOSTS` | (empty) | Empty allows public hosts only; list internal receivers explicitly |
 | `SUBPROCESS_TIMEOUT_MS` | 120000 | Turns a hung poppler/LibreOffice call into a warning or retryable failure; 0 disables, which the production gate refuses |

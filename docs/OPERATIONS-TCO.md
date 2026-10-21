@@ -19,7 +19,7 @@ An ATF deployment has three cost pools, and they scale very differently:
 
 | Pool | Components | Scales with |
 | --- | --- | --- |
-| **Platform** | runtime, gate, search, extract, control (5 containers), PostgreSQL/pgvector, optional Redis | request volume, corpus size, retention |
+| **Platform** | runtime, gate, search, extract, control (5 containers), PostgreSQL/pgvector, Redis (required with more than one replica; the Helm defaults declare two) | request volume, corpus size, retention |
 | **Inference** | VLM (Extract), embedding model (Search), reranker (Search), flow LLM (Runtime) | pages ingested, chunks embedded, queries reranked, flow executions |
 | **Data** | Postgres storage (vectors + extracted content), backups, object storage for assets | corpus size × (1 + replica count) × retention |
 

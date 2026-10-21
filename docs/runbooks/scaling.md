@@ -4,8 +4,9 @@
 # Runbook: Scaling
 
 ATF services scale independently; the databases and the LLM provider quota are
-the usual bottlenecks. The Helm chart carries no replica counts — the
-deployment system supplies them (see `DEPLOYMENT.md`, repository boundary).
+the usual bottlenecks. The Helm chart declares `replicaCount: 2` (or the HPA
+maximum) and exports it as `REPLICAS` / `MCPGATE_REPLICAS`; the production gates
+then require a shared Redis (see `global.redis`).
 
 ## Sizing baseline (per service)
 

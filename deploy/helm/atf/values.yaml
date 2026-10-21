@@ -46,6 +46,31 @@ global:
     extract: ""
     control: ""
 
+  # Shared Redis for the rate limiters and the approval/transaction store.
+  # The chart ships no Redis of its own (no subchart dependency): point it at
+  # an EXISTING Secret holding the connection URL, the same way the per-service
+  # Secrets above are references rather than values.
+  #
+  # Runtime reads REDIS_URL, Search and Extract read RATE_LIMIT_REDIS_URL. The
+  # Gate keeps getting Redis through its own config.yaml
+  # (server.rateLimit.store, monitoring.cluster) or MCPGATE_TRANSACTION_REDIS_URL
+  # in the Gate Secret - this block does not touch the Gate.
+  #
+  # Needed as soon as more than one Search/Extract replica runs: the production
+  # gate refuses to start those services with REPLICAS > 1 and no shared
+  # Redis. The chart's replicaCount defaults declare two replicas, so a
+  # production install needs either this block or RATE_LIMIT_REDIS_URL in the
+  # Search and Extract Secrets.
+  redis:
+    # true exports the URL below to Runtime (REDIS_URL) and to Search and
+    # Extract (RATE_LIMIT_REDIS_URL) via secretKeyRef.
+    enabled: false
+    urlSecret:
+      # Name of the existing Secret holding the URL. Required when enabled.
+      name: ""
+      # Key inside that Secret whose value is the redis[s]://... URL.
+      key: url
+
   # Annotations merged into every pod template (e.g. checksum annotations
   # for externally managed ConfigMaps).
   podAnnotations: {}

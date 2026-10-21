@@ -2,7 +2,7 @@
 
 ## Repository boundary
 
-The repository includes source code, a local unauthenticated quickstart under `deploy/examples`, and a reference Helm chart under `deploy/helm/atf`. It does **not** include a production Compose stack, customer flow bundle, credentials, production endpoints, or operational overlay. The Helm chart carries no environment-specific values: image registry/tag or digest, Secret names, flow ConfigMaps, and replica counts are supplied by the deployment system at install time.
+The repository includes source code, a local unauthenticated quickstart under `deploy/examples`, and a reference Helm chart under `deploy/helm/atf`. It does **not** include a production Compose stack, customer flow bundle, credentials, production endpoints, or operational overlay. The Helm chart carries no environment-specific values (image registry/tag or digest, Secret names, flow ConfigMaps); it declares `replicaCount: 2` per service and exports it as `REPLICAS` / `MCPGATE_REPLICAS`, so a production install needs a shared Redis (`global.redis` or `RATE_LIMIT_REDIS_URL` in the service Secrets).
 
 Environment-specific stack definitions, operational flows, and customer configuration must live in a separately access-controlled deployment system. Released images must be built from a reviewed commit, scanned, accompanied by `sbom.cdx.json` and `THIRD_PARTY_NOTICES.md`, and pinned by immutable digest in the deployment system.
 

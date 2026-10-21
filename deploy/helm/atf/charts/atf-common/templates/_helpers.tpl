@@ -142,6 +142,32 @@ Extract read REPLICAS. extraEnv is rendered after this block and wins.
 - name: {{ ternary "MCPGATE_REPLICAS" "REPLICAS" (eq .Component "gate") }}
   value: {{ ternary .Values.autoscaling.maxReplicas .Values.replicaCount .Values.autoscaling.enabled | int | quote }}
 {{- end }}
+{{- /*
+Shared Redis (global.redis): the chart ships no Redis, it only exports the URL
+of an existing Secret. Runtime reads REDIS_URL, Search and Extract read
+RATE_LIMIT_REDIS_URL (their rate limiter budgets are per-process without it,
+and the production gate refuses more than one replica without it). The Gate is
+deliberately excluded: it configures Redis in its mounted config.yaml
+(server.rateLimit.store, monitoring.cluster) or through
+MCPGATE_TRANSACTION_REDIS_URL in the Gate Secret. extraEnv is rendered after
+this block and wins.
+*/}}
+{{- if .Values.global.redis.enabled }}
+{{- if eq .Component "runtime" }}
+- name: REDIS_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.global.redis.urlSecret.name | quote }}
+      key: {{ .Values.global.redis.urlSecret.key | quote }}
+{{- end }}
+{{- if or (eq .Component "search") (eq .Component "extract") }}
+- name: RATE_LIMIT_REDIS_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.global.redis.urlSecret.name | quote }}
+      key: {{ .Values.global.redis.urlSecret.key | quote }}
+{{- end }}
+{{- end }}
 {{- if eq .Component "runtime" }}
 - name: APP_ENV
   value: {{ .Values.config.appEnv | quote }}

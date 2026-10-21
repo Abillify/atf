@@ -380,6 +380,7 @@ releases:
 - `config.toolArgs` accepts `"*"` and `"<server>/*"` keys; wildcard arguments apply to tools that declare them, exact refs still win.
 - `CHARS_PER_TOKEN` (default 4) and a per-model `charsPerToken` tune the token estimate used for context fitting and tool-result budgets.
 - An LLM call rejected for exceeding the context length is retried once with a 25 % smaller context budget (diagnostic `context_length_retry`).
+- Helm: `global.redis` exports a Redis URL from an existing Secret to Runtime (`REDIS_URL`) and Search/Extract (`RATE_LIMIT_REDIS_URL`); NOTES warn about the in-pod converter acknowledgement and about multiple replicas without Redis.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
@@ -647,6 +648,7 @@ releases:
 - Search documentation and comments no longer claim that the lexical ranker normalises by document length; flag 32 maps the score to rank/(rank+1).
 - Erasure receipts signed with Ed25519 carry the key id (`kid`) in the envelope, and the public key of `ERASURE_RECEIPT_SIGNING_KEY` is published in `/.well-known/atf-evidence-jwks.json`, so receipts verify against the evidence JWKS alone.
 - `eval:run` against a server reads tool calls, finish reason and diagnostics from the execution's debug trace, so `toolCalled` assertions work outside the in-process runner.
+- Documentation no longer claims that the Helm chart carries no replica counts.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

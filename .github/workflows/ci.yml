@@ -615,6 +615,23 @@ jobs:
           helm template atf deploy/helm/atf "${set_common[@]}" \
             --set extract.config.converterAllowLocalHtml=false > /tmp/atf-converter-off.yaml
           ! grep -q 'CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-converter-off.yaml
+          # global.redis is off by default: nothing may export a Redis URL, so a
+          # stock install stays honest about needing an explicit shared store.
+          if grep -q 'RATE_LIMIT_REDIS_URL' /tmp/atf-replicas-default.yaml; then
+            echo "default rendering must not export RATE_LIMIT_REDIS_URL"; exit 1
+          fi
+          # Enabled, it exports exactly one REDIS_URL (Runtime) and two
+          # RATE_LIMIT_REDIS_URL (Search, Extract) from the referenced Secret.
+          helm template atf deploy/helm/atf "${set_common[@]}" \
+            --set global.redis.enabled=true --set global.redis.urlSecret.name=atf-redis \
+            > /tmp/atf-redis.yaml
+          kubeconform -strict -summary /tmp/atf-redis.yaml
+          if [ "$(grep -c 'name: RATE_LIMIT_REDIS_URL' /tmp/atf-redis.yaml)" != "2" ]; then
+            echo "expected exactly 2 RATE_LIMIT_REDIS_URL (search, extract)"; exit 1
+          fi
+          if [ "$(grep -c 'name: REDIS_URL' /tmp/atf-redis.yaml)" != "1" ]; then
+            echo "expected exactly 1 REDIS_URL (runtime)"; exit 1
+          fi
       - name: Render service TLS variant and validate
         run: |
           set -euo pipefail

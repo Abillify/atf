@@ -12,6 +12,16 @@ Deployed services (one Deployment + Service each):
 Secret references (envFrom on every workload, must already exist):
 {{ range $k, $v := .Values.global.secrets }}  - {{ $k }}: {{ if $v }}{{ $v }}{{ else }}<not set>{{ end }}
 {{ end }}
+{{- if .Values.extract.config.converterAllowLocalHtml }}
+WARNING: extract.config.converterAllowLocalHtml=true — LibreOffice converts
+untrusted documents inside the Extract pod; the production gate only warns.
+Use an isolated converter for production.
+{{- end }}
+{{- if and (not .Values.global.redis.enabled) (or (gt (int .Values.runtime.replicaCount) 1) (gt (int .Values.search.replicaCount) 1) (gt (int .Values.extract.replicaCount) 1) .Values.runtime.autoscaling.enabled .Values.search.autoscaling.enabled .Values.extract.autoscaling.enabled) }}
+WARNING: more than one replica is declared but global.redis is disabled — in
+production Search and Extract refuse to start without RATE_LIMIT_REDIS_URL (put
+it in their Secret or enable global.redis).
+{{- end }}
 Migration Jobs (pre-install/pre-upgrade hooks) read the database URLs from
 these Secrets; disable per service with <service>.migration.enabled=false.
 

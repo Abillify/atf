@@ -55,11 +55,12 @@ config:
   # Set false (and provide SEARCH_URL via extraEnv) when Search runs
   # outside the release.
   autoSearchUrl: true
-  # The chart runs LibreOffice inside the Extract pod (CONVERTER_MODE=local),
-  # which the production gate refuses without an explicit acknowledgement.
-  # true exports CONVERTER_ALLOW_LOCAL_HTML=true (the gate then only warns).
-  # Set false after you moved conversion to an isolated converter
-  # (CONVERTER_MODE=isolated through extraEnv and your own pod wiring).
+  # SECURITY: true runs LibreOffice inside the Extract pod on untrusted
+  # HTML/Office input and acknowledges this to the production gate (the chart
+  # exports CONVERTER_ALLOW_LOCAL_HTML=true, so the gate only warns instead of
+  # refusing). Prefer an isolated converter (CONVERTER_MODE=isolated) for
+  # production: set this false once conversion runs outside the pod (through
+  # extraEnv and your own pod wiring).
   converterAllowLocalHtml: true
   # Set true when the Search service terminates TLS itself
   # (search.config.tls.secretName); SEARCH_URL then uses https.
