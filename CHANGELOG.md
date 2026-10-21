@@ -581,6 +581,7 @@ releases:
 - GenAI spans carry `gen_ai.provider.name` in addition to `gen_ai.system`.
 - The audit-anchor production warning recommends EVIDENCE_SIGNING_KEY.
 - Dependabot uses the bun ecosystem; CI uploads HIGH image findings as SARIF without failing.
+- GitHub releases use the version's CHANGELOG section as release notes.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

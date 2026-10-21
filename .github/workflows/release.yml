@@ -256,6 +256,22 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: atf-supply-chain-${{ github.ref_name }}-${{ github.sha }}.tar.gz
+      # The release notes are the version's own CHANGELOG section, not an
+      # auto-generated list of pull requests. A missing or empty section fails
+      # the job before anything is published.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v header="## [${version}]" '
+            index($0, header) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "CHANGELOG.md has no (or an empty) section for ${version}." >&2
+            exit 1
+          fi
       - name: Create immutable release entry and upload bundle
         env:
           GH_TOKEN: ${{ github.token }}
@@ -267,6 +283,6 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
-            --generate-notes \
+            --notes-file release-notes.md \
             "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz" \
             "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz.sha256"
