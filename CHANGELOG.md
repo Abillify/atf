@@ -398,6 +398,7 @@ releases:
 - Search signs evidence packs with Ed25519 when `SEARCH_EVIDENCE_SIGNING_KEY` is set and publishes the key at `/.well-known/atf-search-evidence-jwks.json`.
 - `@atf/security-kit` 1.2.0: the JWT verifier accepts `allowedTypes` to enforce the JWT `typ` header; the Gate exposes it as `auth.oauth.allowedTokenTypes` and warns in production while it is empty.
 - READMEs for `@atf/canonical-json`, `@atf/mcp-2026`, `@atf/security-kit` and `@atf/observability`.
+- Gate: an `mcpServers` import override accepts `pin` (SHA-256 of the downstream `description`, `inputSchema` and `annotations`); a tool whose advertised definition no longer matches is not exposed and an error with the seen digest is logged.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

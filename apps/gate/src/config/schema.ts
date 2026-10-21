@@ -1641,6 +1641,18 @@ export const McpToolOverrideSchema = z.object({
    * every call to the downstream tool.
    */
   replaceParams: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * Pin the downstream definition of this tool: the lowercase hex SHA-256 of
+   * `JSON.stringify({ description, inputSchema, annotations })` as the
+   * downstream server advertises it (before any override). When the server
+   * later advertises something else — a changed description is a classic
+   * tool-poisoning vector — the tool is not exposed and an error is logged
+   * with the digest that was seen.
+   */
+  pin: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, "pin must be a lowercase hex SHA-256 digest")
+    .optional(),
 });
 
 export const McpServerImportSchema = z.object({

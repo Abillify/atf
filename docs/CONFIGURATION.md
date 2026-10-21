@@ -908,6 +908,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `mcpServers[].overrides[].enabled` | boolean | — | Set to false to skip importing this tool (shorthand for `exclude`). |
 | `mcpServers[].overrides[].expose` | boolean | — | Override visibility for this tool only. |
 | `mcpServers[].overrides[].name` | string | — | Name of the tool as advertised by the downstream server. |
+| `mcpServers[].overrides[].pin` | string | — | Pin the downstream definition of this tool: the lowercase hex SHA-256 of `JSON.stringify({ description, inputSchema, annotations })` as the downstream server advertises it (before any override). When the server later advertises something else — a changed description is a classic tool-poisoning vector — the tool is not exposed and an error is logged with the digest that was seen. |
 | `mcpServers[].overrides[].removeOptions` | array | — | Remove these parameters from the advertised inputSchema. |
 | `mcpServers[].overrides[].replaceParams` | record | — | Fix these parameters to a constant value. They are removed from the advertised inputSchema (callers can no longer set them) and merged into every call to the downstream tool. |
 | `mcpServers[].prefix` | string | `""` | Prefix prepended to every imported tool name (e.g. "github_"). |

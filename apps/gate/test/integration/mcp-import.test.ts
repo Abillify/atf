@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Server } from "node:http";
 import type { Express } from "express";
 import { AppConfigSchema, McpServerImportSchema } from "../../src/config/schema.ts";
-import { defaultAccess, expandMcpServerImports } from "../../src/config/mcp-import.ts";
+import { defaultAccess, expandMcpServerImports, importedToolDigest } from "../../src/config/mcp-import.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
 import { FakeDb } from "../helpers/fake-db.ts";
 import { connectMcpStreamable } from "../helpers/mcp-client.ts";
@@ -172,6 +172,44 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
       expect(defaultAccess({ annotations: { readOnlyHint: "true" } })).toBe("write");
     });
   });
+  describe("pinned definitions", () => {
+    async function advertisedDigest(name: string): Promise<string> {
+      const client = await connectMcpStreamable(`http://127.0.0.1:${downstreamPort}`, DOWNSTREAM_TOKEN);
+      try {
+        const listed = await client.listTools();
+        const tool = listed.tools.find((t) => t.name === name);
+        if (!tool) throw new Error(`downstream tool ${name} not listed`);
+        return importedToolDigest(tool);
+      } finally {
+        await client.close();
+      }
+    }
+    const withPin = (pin: string | undefined) =>
+      McpServerImportSchema.parse({
+        server: { url: `http://127.0.0.1:${downstreamPort}/mcp`, token: DOWNSTREAM_TOKEN },
+        prefix: "ds_",
+        include: ["list_items", "noop"],
+        ...(pin !== undefined ? { overrides: [{ name: "list_items", pin }] } : {}),
+      });
+
+    it("exposes a tool whose definition matches its pin", async () => {
+      const pin = await advertisedDigest("list_items");
+      const tools = (await expandMcpServerImports([withPin(pin)], [], globalThis.fetch)) as Array<{ name: string }>;
+      expect(tools.map((t) => t.name).sort()).toEqual(["ds_list_items", "ds_noop"]);
+    });
+
+    it("does not expose a tool whose definition differs from its pin; unpinned tools are unaffected", async () => {
+      const tools = (await expandMcpServerImports([withPin("0".repeat(64))], [], globalThis.fetch)) as Array<{
+        name: string;
+      }>;
+      expect(tools.map((t) => t.name)).toEqual(["ds_noop"]);
+    });
+
+    it("rejects a pin that is not a SHA-256 hex digest", () => {
+      expect(() => withPin("not-a-digest")).toThrow();
+    });
+  });
+
   describe("end-to-end through an upstream mcpgate instance", () => {
     let upstream: AppHandle;
     let upstreamServer: Server;

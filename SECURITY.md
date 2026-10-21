@@ -105,9 +105,10 @@ controls rather than inventing a second set:
   unicast. This applies whether or not an allowlist is set, and IP literals are checked the same
   way. Refused IPv4 ranges: `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT, incl. the
   `100.100.100.200` metadata address), `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`,
-  `192.0.0.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `224.0.0.0/4`, and `240.0.0.0/4`.
+  `192.0.0.0/24`, the documentation ranges `192.0.2.0/24`, `198.51.100.0/24` and `203.0.113.0/24`,
+  `192.168.0.0/16`, `198.18.0.0/15`, `224.0.0.0/4`, and `240.0.0.0/4`.
   Refused IPv6: `::` and `::1`, `fc00::/7` (ULA, incl. `fd00:ec2::254`), `fe80::/10`,
-  `fec0::/10`, `ff00::/8`, and the IPv4-mapped, IPv4-compatible, NAT64 (`64:ff9b::/96`), and 6to4
+  `fec0::/10`, `ff00::/8`, `2001:db8::/32` (documentation), and the IPv4-mapped, IPv4-compatible, NAT64 (`64:ff9b::/96`), and 6to4
   (`2002::/16`) forms of a refused IPv4 address. Unparseable addresses are refused. The
   connection is pinned to the validated address, so a second DNS answer (DNS rebinding) cannot
   redirect it.

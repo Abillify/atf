@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpServerImport, McpToolOverride } from "./schema.ts";
@@ -13,6 +14,25 @@ interface RemoteTool {
   inputSchema?: unknown;
   /** MCP tool annotations as the downstream server declared them. */
   annotations?: { readOnlyHint?: unknown; destructiveHint?: unknown };
+}
+
+/**
+ * Digest a downstream tool definition is pinned by: SHA-256 (hex) over
+ * `JSON.stringify({ description, inputSchema, annotations })` exactly as the
+ * downstream server advertised it.
+ */
+export function importedToolDigest(
+  remote: Pick<RemoteTool, "description" | "inputSchema" | "annotations">,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        description: remote.description,
+        inputSchema: remote.inputSchema,
+        annotations: remote.annotations,
+      }),
+    )
+    .digest("hex");
 }
 
 /**
@@ -66,6 +86,17 @@ async function expandOne(
 
     const override = overridesByName.get(remote.name);
     if (override?.enabled === false) continue;
+
+    if (override?.pin !== undefined) {
+      const seen = importedToolDigest(remote);
+      if (seen !== override.pin) {
+        logger.error(
+          `mcpServers import '${imp.server.url}': tool '${remote.name}' no longer matches its pin ` +
+            `(expected ${override.pin}, downstream advertises ${seen}) — not exposed`,
+        );
+        continue;
+      }
+    }
 
     tools.push(buildTool(imp, remote, override));
   }
