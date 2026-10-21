@@ -458,8 +458,8 @@ configuration and clients. Do these **before** rolling out:
     signed with the old key that are still in flight (TTL ≤ 300 s) are refused.
 21. **Flow evaluation (optional).** Matrix tasks and eval cases accept structured
     `assert` / `expected` checks (`contains`, `regex`, `jsonPath`, `toolCalled`,
-    `maxTokens`) next to the reference answer; existing cases keep working
-    unchanged. `bun run eval:extract-quality` scores extraction (CER, Heading-F1,
+    `maxTokens`, `finishReason`, `noDiagnostic`) next to the reference answer;
+    existing cases keep working unchanged. `bun run eval:extract-quality` scores extraction (CER, Heading-F1,
     TEDS) against a golden set — see [scripts/eval/README.md](../scripts/eval/README.md).
 22. **Config checks for several replicas.** The production gates now warn about
     things that are per process today (see "Not yet shared between replicas"

@@ -91,6 +91,40 @@ describe("maxTokens assertion", () => {
   });
 });
 
+describe("finishReason assertion", () => {
+  test("equals and notEquals compare the reported reason", () => {
+    expect(check({ type: "finishReason", equals: "stop" }, { finishReason: "stop" }).passed).toBe(true);
+    expect(check({ type: "finishReason", equals: "stop" }, { finishReason: "length" }).passed).toBe(false);
+    expect(check({ type: "finishReason", notEquals: "length" }, { finishReason: "stop" }).passed).toBe(true);
+    expect(check({ type: "finishReason", notEquals: "length" }, { finishReason: "length" }).passed).toBe(false);
+    expect(check({ type: "finishReason", equals: "stop" }, { finishReason: "length" }).detail).toContain("length");
+  });
+  test("fails closed when the executor reported no finish reason", () => {
+    const result = check({ type: "finishReason", equals: "stop" });
+    expect(result.passed).toBe(false);
+    expect(result.detail).toBe("no finish reason available");
+    const notEquals = check({ type: "finishReason", notEquals: "length" });
+    expect(notEquals.passed).toBe(false);
+    expect(notEquals.detail).toBe("no finish reason available");
+  });
+});
+
+describe("noDiagnostic assertion", () => {
+  const diagnostics = ["loop_blocked", "tool_timeout"];
+  test("passes while the code is absent from the trace diagnostics", () => {
+    expect(check({ type: "noDiagnostic", code: "loop_blocked" }, { diagnostics }).passed).toBe(false);
+    expect(check({ type: "noDiagnostic", code: "tool_timeout" }, { diagnostics }).passed).toBe(false);
+    expect(check({ type: "noDiagnostic", code: "unknown_tool" }, { diagnostics }).passed).toBe(true);
+    expect(check({ type: "noDiagnostic", code: "loop_blocked" }, { diagnostics: [] }).passed).toBe(true);
+    expect(check({ type: "noDiagnostic", code: "loop_blocked" }, { diagnostics }).detail).toContain("loop_blocked");
+  });
+  test("fails closed when the executor reported no trace diagnostics", () => {
+    const result = check({ type: "noDiagnostic", code: "loop_blocked" });
+    expect(result.passed).toBe(false);
+    expect(result.detail).toBe("no trace diagnostics available");
+  });
+});
+
 describe("dataset runs", () => {
   test("toolCalled and maxTokens use what the executor reports; legacy cases are unchanged", async () => {
     const report = await runEval(
@@ -119,12 +153,56 @@ describe("dataset runs", () => {
     expect(report.cases.find((c) => c.id === "structured")?.passed).toBe(true);
     expect(report.cases.find((c) => c.id === "legacy")).toBeDefined();
   });
+  test("finishReason and noDiagnostic use what the executor reports", async () => {
+    const report = await runEval(
+      {
+        name: "trace",
+        cases: [
+          {
+            id: "clean",
+            messages: [{ role: "user", content: "clean" }],
+            flow: "f",
+            assert: [
+              { type: "finishReason", notEquals: "length" },
+              { type: "noDiagnostic", code: "loop_blocked" },
+            ],
+          },
+          {
+            id: "blocked",
+            messages: [{ role: "user", content: "blocked" }],
+            flow: "f",
+            assert: [{ type: "noDiagnostic", code: "loop_blocked" }],
+          },
+          {
+            id: "no-trace",
+            messages: [{ role: "user", content: "no-trace" }],
+            flow: "f",
+            assert: [{ type: "finishReason", equals: "stop" }],
+          },
+        ],
+      },
+      async (_flow, messages) =>
+        messages[0]?.content === "blocked"
+          ? { response: "x", finishReason: "stop", diagnostics: ["loop_blocked"] }
+          : messages[0]?.content === "clean"
+            ? { response: "x", finishReason: "stop", diagnostics: [] }
+            : { response: "x" },
+    );
+    expect(report.cases.find((c) => c.id === "clean")?.passed).toBe(true);
+    expect(report.cases.find((c) => c.id === "blocked")?.passed).toBe(false);
+    expect(report.cases.find((c) => c.id === "no-trace")?.passed).toBe(false);
+    expect(report.cases.find((c) => c.id === "no-trace")?.assertions?.[0]?.detail).toBe(
+      "no finish reason available",
+    );
+  });
 });
 
 describe("parseTaskAssertions", () => {
   test("absent is fine; bounded, typed and strict otherwise", () => {
     expect(parseTaskAssertions(undefined)).toEqual({ ok: true, assertions: [] });
     expect(parseTaskAssertions([{ type: "contains", value: "x" }, { type: "toolCalled", name: "s", max: 0 }]).ok).toBe(true);
+    expect(parseTaskAssertions([{ type: "finishReason", equals: "stop" }, { type: "noDiagnostic", code: "loop_blocked" }]).ok).toBe(true);
+    expect(parseTaskAssertions([{ type: "finishReason", notEquals: "length" }]).ok).toBe(true);
     for (const bad of [
       "contains",
       [{ type: "unknown" }],
@@ -133,6 +211,13 @@ describe("parseTaskAssertions", () => {
       [{ type: "regex", pattern: "a", flags: "x" }],
       [{ type: "jsonPath", path: "$..a" }],
       [{ type: "maxTokens", value: -1 }],
+      [{ type: "finishReason" }],
+      [{ type: "finishReason", equals: "stop", notEquals: "length" }],
+      [{ type: "finishReason", equals: "" }],
+      [{ type: "finishReason", equals: "x".repeat(65) }],
+      [{ type: "noDiagnostic" }],
+      [{ type: "noDiagnostic", code: "" }],
+      [{ type: "noDiagnostic", code: "x".repeat(101) }],
       [{ type: "contains", value: "x", extra: 1 }],
       Array.from({ length: 21 }, () => ({ type: "contains", value: "x" })),
     ]) {

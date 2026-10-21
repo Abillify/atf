@@ -51,6 +51,17 @@ const AssertionSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("maxTokens"), value: z.number().int().positive().finite() }).strict(),
+  z
+    .object({
+      type: z.literal("finishReason"),
+      equals: z.string().min(1).max(64).optional(),
+      notEquals: z.string().min(1).max(64).optional(),
+    })
+    .strict()
+    .refine((value) => (value.equals === undefined) !== (value.notEquals === undefined), {
+      message: "exactly one of equals or notEquals is required",
+    }),
+  z.object({ type: z.literal("noDiagnostic"), code: z.string().min(1).max(100) }).strict(),
 ]);
 
 export const MAX_ASSERTIONS_PER_TASK = 20;

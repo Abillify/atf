@@ -29,6 +29,18 @@ export type Assertion =
   | { type: "toolCalled"; name: string; min?: number; max?: number }
   /** Total tokens (prompt + completion) of the run stay at or below `value`. */
   | { type: "maxTokens"; value: number }
+  /**
+   * The execution's finish reason equals `equals` or differs from
+   * `notEquals` (exactly one of the two). Needs the executor to report a
+   * finish reason; without one the assertion fails rather than passes.
+   */
+  | { type: "finishReason"; equals?: string; notEquals?: string }
+  /**
+   * The execution trace recorded no diagnostic with `code`. Needs the
+   * executor to report diagnostics; without them the assertion fails
+   * rather than passes by default.
+   */
+  | { type: "noDiagnostic"; code: string }
   | { type: "llmJudge"; criteria: string; threshold?: number };
 
 /** Caller-supplied evaluation case. Legacy `expected` cases remain supported. */
@@ -111,13 +123,15 @@ export interface EvalReport {
   cases: CaseResult[];
 }
 
-/** What an assertion can look at. `toolCalls`/`totalTokens` are absent when the executor reports none. */
+/** What an assertion can look at. Trace fields are absent when the executor reports none. */
 export interface AssertionContext {
   text: string;
   latencyMs: number;
   cost: number;
   toolCalls?: readonly string[];
   totalTokens?: number;
+  finishReason?: string;
+  diagnostics?: readonly string[];
 }
 const MAX_JSON_SCAN_CHARS = 1_000_000;
 /** The answer parsed as JSON: the whole text, else the first fenced code block. */
@@ -261,6 +275,23 @@ export function evaluateAssertion(
         ? pass()
         : fail(`${ctx.totalTokens} tokens exceeded ${assertion.value}`);
     }
+    case "finishReason": {
+      if (ctx.finishReason === undefined) return fail("no finish reason available");
+      if (assertion.equals !== undefined) {
+        return ctx.finishReason === assertion.equals
+          ? pass()
+          : fail(`finish reason was "${ctx.finishReason}", expected "${assertion.equals}"`);
+      }
+      return ctx.finishReason !== assertion.notEquals
+        ? pass()
+        : fail(`finish reason was "${ctx.finishReason}", expected anything but "${assertion.notEquals}"`);
+    }
+    case "noDiagnostic": {
+      if (ctx.diagnostics === undefined) return fail("no trace diagnostics available");
+      return ctx.diagnostics.includes(assertion.code)
+        ? fail(`diagnostic "${assertion.code}" was reported`)
+        : pass();
+    }
     case "llmJudge":
       return fail("llmJudge assertion requires a judge (none configured)");
   }
@@ -305,6 +336,8 @@ async function runCase(
             latencyMs,
             cost,
             ...(output.toolCalls !== undefined ? { toolCalls: output.toolCalls } : {}),
+            ...(output.finishReason !== undefined ? { finishReason: output.finishReason } : {}),
+            ...(output.diagnostics !== undefined ? { diagnostics: output.diagnostics } : {}),
             ...(totalTokensOf(output.usage) !== undefined
               ? { totalTokens: totalTokensOf(output.usage) as number }
               : {}),

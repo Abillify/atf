@@ -129,9 +129,12 @@ Three settings shape what the platform does with untrusted content and what it t
   `/health/ready` report `"auth": "disabled"`, and the production gate refuses it.
 
 Evaluation cases and matrix tasks accept structured checks next to the reference answer
-(`expected` with `contains`, `regex`, `jsonPath`, `toolCalled`, `maxTokens`; matrix tasks use
-`assert`). A case passes when its reference score and all checks do; `jsonPath` is the restricted
-`$.a.b[0]` syntax, and a `toolCalled` check fails closed when the executor reports no tool calls.
+(`expected` with `contains`, `regex`, `jsonPath`, `toolCalled`, `maxTokens`, `finishReason`
+(`equals`/`notEquals`), `noDiagnostic`; matrix tasks use `assert`). A case passes when its
+reference score and all checks do; `jsonPath` is the restricted `$.a.b[0]` syntax, and a
+`toolCalled` check fails closed when the executor reports no tool calls. `finishReason` and
+`noDiagnostic` read the execution trace and likewise fail closed when the executor reports no
+finish reason or no trace diagnostics.
 
 Models are configured through **named provider instances** in `PROVIDERS`. Every model setting
 references an instance by `name`, never by protocol, which is what allows two vLLM servers or
