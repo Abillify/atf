@@ -1,6 +1,6 @@
 # @atf/canonical-json
 
-Package `1.0.0`. The one canonical-JSON implementation of the monorepo. Its bytes back
+Package `1.0.1`. The one canonical-JSON implementation of the monorepo. Its bytes back
 signed erasure receipts, the Runtime audit chain, evidence-bundle signatures,
 action-contract hashes, tool-authz policy hashes and cache keys, so the byte semantics are
 part of the contract: they must not change once a hash has been committed.
@@ -12,6 +12,8 @@ edge inputs. Pick the mode the artefact you verify was produced with; do not "cl
 into the default mode.
 
 None of the modes is RFC 8785 (JCS); external verifiers must reproduce the mode used by the artefact.
+The exact bytes of each mode are specified in [SPEC.md](SPEC.md), with machine-checked examples in
+[test-vectors.json](test-vectors.json).
 
 ## Modes
 

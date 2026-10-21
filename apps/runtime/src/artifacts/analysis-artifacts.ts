@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { canonicalJsonLocale } from "@atf/canonical-json";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../db/database.js";
@@ -219,24 +220,13 @@ export interface AnalysisArtifactStore {
   createRevision(current: AnalysisArtifactRecord, next: AnalysisArtifactRecord): Promise<AnalysisArtifactRecord>;
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
 function contentHash(input: {
   type: AnalysisArtifactType;
   schemaVersion: number;
   title: string;
   payload: Record<string, unknown>;
 }): string {
-  return createHash("sha256").update(stableJson(input)).digest("hex");
+  return createHash("sha256").update(canonicalJsonLocale(input)).digest("hex");
 }
 
 export class AnalysisArtifactConflictError extends Error {

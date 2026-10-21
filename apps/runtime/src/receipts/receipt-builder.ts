@@ -22,7 +22,7 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalizeJson } from "@atf/erasure-contract";
+import { canonicalJson as canonicalizeJson } from "@atf/canonical-json";
 import {
   cborDecode,
   cborDecodeSign1,

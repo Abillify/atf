@@ -1,0 +1,446 @@
+{
+  "description": "Byte-level test vectors for every @atf/canonical-json string mode. In `input`, {\"$undefined\":true} stands for the JS value undefined and {\"$nonFinite\":\"NaN\"|\"Infinity\"|\"-Infinity\"} for a non-finite number. See SPEC.md.",
+  "vectors": [
+    {
+      "name": "null",
+      "input": null,
+      "expected": {
+        "canonicalJson": "null",
+        "canonicalJsonConcat": "null",
+        "canonicalJsonNull": "null",
+        "canonicalJsonLocale": "null",
+        "canonicalJsonLocaleDrops": "null",
+        "canonicalSetJson": "null"
+      }
+    },
+    {
+      "name": "true",
+      "input": true,
+      "expected": {
+        "canonicalJson": "true",
+        "canonicalJsonConcat": "true",
+        "canonicalJsonNull": "true",
+        "canonicalJsonLocale": "true",
+        "canonicalJsonLocaleDrops": "true",
+        "canonicalSetJson": "true"
+      }
+    },
+    {
+      "name": "integer",
+      "input": 42,
+      "expected": {
+        "canonicalJson": "42",
+        "canonicalJsonConcat": "42",
+        "canonicalJsonNull": "42",
+        "canonicalJsonLocale": "42",
+        "canonicalJsonLocaleDrops": "42",
+        "canonicalSetJson": "42"
+      }
+    },
+    {
+      "name": "negative decimal",
+      "input": -1.5,
+      "expected": {
+        "canonicalJson": "-1.5",
+        "canonicalJsonConcat": "-1.5",
+        "canonicalJsonNull": "-1.5",
+        "canonicalJsonLocale": "-1.5",
+        "canonicalJsonLocaleDrops": "-1.5",
+        "canonicalSetJson": "-1.5"
+      }
+    },
+    {
+      "name": "exponent number",
+      "input": 1e+21,
+      "expected": {
+        "canonicalJson": "1e+21",
+        "canonicalJsonConcat": "1e+21",
+        "canonicalJsonNull": "1e+21",
+        "canonicalJsonLocale": "1e+21",
+        "canonicalJsonLocaleDrops": "1e+21",
+        "canonicalSetJson": "1e+21"
+      }
+    },
+    {
+      "name": "small number",
+      "input": 1e-7,
+      "expected": {
+        "canonicalJson": "1e-7",
+        "canonicalJsonConcat": "1e-7",
+        "canonicalJsonNull": "1e-7",
+        "canonicalJsonLocale": "1e-7",
+        "canonicalJsonLocaleDrops": "1e-7",
+        "canonicalSetJson": "1e-7"
+      }
+    },
+    {
+      "name": "empty string",
+      "input": "",
+      "expected": {
+        "canonicalJson": "\"\"",
+        "canonicalJsonConcat": "\"\"",
+        "canonicalJsonNull": "\"\"",
+        "canonicalJsonLocale": "\"\"",
+        "canonicalJsonLocaleDrops": "\"\"",
+        "canonicalSetJson": "\"\""
+      }
+    },
+    {
+      "name": "string with quote and backslash",
+      "input": "a\"b\\c",
+      "expected": {
+        "canonicalJson": "\"a\\\"b\\\\c\"",
+        "canonicalJsonConcat": "\"a\\\"b\\\\c\"",
+        "canonicalJsonNull": "\"a\\\"b\\\\c\"",
+        "canonicalJsonLocale": "\"a\\\"b\\\\c\"",
+        "canonicalJsonLocaleDrops": "\"a\\\"b\\\\c\"",
+        "canonicalSetJson": "\"a\\\"b\\\\c\""
+      }
+    },
+    {
+      "name": "string with control characters",
+      "input": "line1\nline2\ttab\u0001",
+      "expected": {
+        "canonicalJson": "\"line1\\nline2\\ttab\\u0001\"",
+        "canonicalJsonConcat": "\"line1\\nline2\\ttab\\u0001\"",
+        "canonicalJsonNull": "\"line1\\nline2\\ttab\\u0001\"",
+        "canonicalJsonLocale": "\"line1\\nline2\\ttab\\u0001\"",
+        "canonicalJsonLocaleDrops": "\"line1\\nline2\\ttab\\u0001\"",
+        "canonicalSetJson": "\"line1\\nline2\\ttab\\u0001\""
+      }
+    },
+    {
+      "name": "non-ASCII string",
+      "input": "Grüße 日本 😀",
+      "expected": {
+        "canonicalJson": "\"Grüße 日本 😀\"",
+        "canonicalJsonConcat": "\"Grüße 日本 😀\"",
+        "canonicalJsonNull": "\"Grüße 日本 😀\"",
+        "canonicalJsonLocale": "\"Grüße 日本 😀\"",
+        "canonicalJsonLocaleDrops": "\"Grüße 日本 😀\"",
+        "canonicalSetJson": "\"Grüße 日本 😀\""
+      }
+    },
+    {
+      "name": "keys with quote and backslash",
+      "input": {
+        "a\"b": 1,
+        "a\\b": 2,
+        "a": 3
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}",
+        "canonicalJsonConcat": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}",
+        "canonicalJsonNull": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}",
+        "canonicalJsonLocale": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}",
+        "canonicalJsonLocaleDrops": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}",
+        "canonicalSetJson": "{\"a\":3,\"a\\\"b\":1,\"a\\\\b\":2}"
+      }
+    },
+    {
+      "name": "empty object",
+      "input": {},
+      "expected": {
+        "canonicalJson": "{}",
+        "canonicalJsonConcat": "{}",
+        "canonicalJsonNull": "{}",
+        "canonicalJsonLocale": "{}",
+        "canonicalJsonLocaleDrops": "{}",
+        "canonicalSetJson": "{}"
+      }
+    },
+    {
+      "name": "empty array",
+      "input": [],
+      "expected": {
+        "canonicalJson": "[]",
+        "canonicalJsonConcat": "[]",
+        "canonicalJsonNull": "[]",
+        "canonicalJsonLocale": "[]",
+        "canonicalJsonLocaleDrops": "[]",
+        "canonicalSetJson": "[]"
+      }
+    },
+    {
+      "name": "keys sorted at every depth",
+      "input": {
+        "b": {
+          "z": 1,
+          "a": 2
+        },
+        "a": [
+          {
+            "y": 1,
+            "x": 2
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}",
+        "canonicalJsonConcat": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}",
+        "canonicalJsonNull": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}",
+        "canonicalJsonLocale": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}",
+        "canonicalJsonLocaleDrops": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}",
+        "canonicalSetJson": "{\"a\":[{\"x\":2,\"y\":1}],\"b\":{\"a\":2,\"z\":1}}"
+      }
+    },
+    {
+      "name": "array order preserved",
+      "input": [
+        3,
+        1,
+        2
+      ],
+      "expected": {
+        "canonicalJson": "[3,1,2]",
+        "canonicalJsonConcat": "[3,1,2]",
+        "canonicalJsonNull": "[3,1,2]",
+        "canonicalJsonLocale": "[3,1,2]",
+        "canonicalJsonLocaleDrops": "[3,1,2]",
+        "canonicalSetJson": "[1,2,3]"
+      }
+    },
+    {
+      "name": "integer-like keys",
+      "input": {
+        "9": "y",
+        "10": "x",
+        "01": "z"
+      },
+      "expected": {
+        "canonicalJson": "{\"9\":\"y\",\"10\":\"x\",\"01\":\"z\"}",
+        "canonicalJsonConcat": "{\"01\":\"z\",\"10\":\"x\",\"9\":\"y\"}",
+        "canonicalJsonNull": "{\"01\":\"z\",\"10\":\"x\",\"9\":\"y\"}",
+        "canonicalJsonLocale": "{\"01\":\"z\",\"10\":\"x\",\"9\":\"y\"}",
+        "canonicalJsonLocaleDrops": "{\"9\":\"y\",\"10\":\"x\",\"01\":\"z\"}",
+        "canonicalSetJson": "{\"9\":\"y\",\"10\":\"x\",\"01\":\"z\"}"
+      }
+    },
+    {
+      "name": "mixed-case keys",
+      "input": {
+        "B": 1,
+        "a": 2,
+        "A": 3,
+        "b": 4
+      },
+      "expected": {
+        "canonicalJson": "{\"A\":3,\"B\":1,\"a\":2,\"b\":4}",
+        "canonicalJsonConcat": "{\"A\":3,\"B\":1,\"a\":2,\"b\":4}",
+        "canonicalJsonNull": "{\"A\":3,\"B\":1,\"a\":2,\"b\":4}",
+        "canonicalJsonLocale": "{\"a\":2,\"A\":3,\"b\":4,\"B\":1}",
+        "canonicalJsonLocaleDrops": "{\"a\":2,\"A\":3,\"b\":4,\"B\":1}",
+        "canonicalSetJson": "{\"A\":3,\"B\":1,\"a\":2,\"b\":4}"
+      }
+    },
+    {
+      "name": "accented keys",
+      "input": {
+        "é": 1,
+        "e": 2,
+        "f": 3,
+        "z": 4
+      },
+      "expected": {
+        "canonicalJson": "{\"e\":2,\"f\":3,\"z\":4,\"é\":1}",
+        "canonicalJsonConcat": "{\"e\":2,\"f\":3,\"z\":4,\"é\":1}",
+        "canonicalJsonNull": "{\"e\":2,\"f\":3,\"z\":4,\"é\":1}",
+        "canonicalJsonLocale": "{\"e\":2,\"é\":1,\"f\":3,\"z\":4}",
+        "canonicalJsonLocaleDrops": "{\"e\":2,\"é\":1,\"f\":3,\"z\":4}",
+        "canonicalSetJson": "{\"e\":2,\"f\":3,\"z\":4,\"é\":1}"
+      }
+    },
+    {
+      "name": "undefined member",
+      "input": {
+        "a": 1,
+        "b": {
+          "$undefined": true
+        },
+        "c": 3
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":1,\"c\":3}",
+        "canonicalJsonConcat": "{\"a\":1,\"c\":3}",
+        "canonicalJsonNull": "{\"a\":1,\"b\":null,\"c\":3}",
+        "canonicalJsonLocale": "{\"a\":1,\"b\":null,\"c\":3}",
+        "canonicalJsonLocaleDrops": "{\"a\":1,\"c\":3}",
+        "canonicalSetJson": "{\"a\":1,\"c\":3}"
+      }
+    },
+    {
+      "name": "undefined array item",
+      "input": [
+        1,
+        {
+          "$undefined": true
+        },
+        3
+      ],
+      "expected": {
+        "canonicalJson": "[1,null,3]",
+        "canonicalJsonConcat": "[1,null,3]",
+        "canonicalJsonNull": "[1,null,3]",
+        "canonicalJsonLocale": "[1,null,3]",
+        "canonicalJsonLocaleDrops": "[1,null,3]",
+        "canonicalSetJson": "[1,3,null]"
+      }
+    },
+    {
+      "name": "nested undefined",
+      "input": {
+        "a": {
+          "b": {
+            "$undefined": true
+          },
+          "c": 1
+        },
+        "d": [
+          {
+            "$undefined": true
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":{\"c\":1},\"d\":[null]}",
+        "canonicalJsonConcat": "{\"a\":{\"c\":1},\"d\":[null]}",
+        "canonicalJsonNull": "{\"a\":{\"b\":null,\"c\":1},\"d\":[null]}",
+        "canonicalJsonLocale": "{\"a\":{\"b\":null,\"c\":1},\"d\":[null]}",
+        "canonicalJsonLocaleDrops": "{\"a\":{\"c\":1},\"d\":[null]}",
+        "canonicalSetJson": "{\"a\":{\"c\":1},\"d\":[null]}"
+      }
+    },
+    {
+      "name": "null member kept",
+      "input": {
+        "a": null,
+        "b": 1
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":null,\"b\":1}",
+        "canonicalJsonConcat": "{\"a\":null,\"b\":1}",
+        "canonicalJsonNull": "{\"a\":null,\"b\":1}",
+        "canonicalJsonLocale": "{\"a\":null,\"b\":1}",
+        "canonicalJsonLocaleDrops": "{\"a\":null,\"b\":1}",
+        "canonicalSetJson": "{\"a\":null,\"b\":1}"
+      }
+    },
+    {
+      "name": "duplicate array items",
+      "input": [
+        2,
+        1,
+        2,
+        1,
+        {
+          "b": 1,
+          "a": 2
+        },
+        {
+          "a": 2,
+          "b": 1
+        }
+      ],
+      "expected": {
+        "canonicalJson": "[2,1,2,1,{\"a\":2,\"b\":1},{\"a\":2,\"b\":1}]",
+        "canonicalJsonConcat": "[2,1,2,1,{\"a\":2,\"b\":1},{\"a\":2,\"b\":1}]",
+        "canonicalJsonNull": "[2,1,2,1,{\"a\":2,\"b\":1},{\"a\":2,\"b\":1}]",
+        "canonicalJsonLocale": "[2,1,2,1,{\"a\":2,\"b\":1},{\"a\":2,\"b\":1}]",
+        "canonicalJsonLocaleDrops": "[2,1,2,1,{\"a\":2,\"b\":1},{\"a\":2,\"b\":1}]",
+        "canonicalSetJson": "[1,2,{\"a\":2,\"b\":1}]"
+      }
+    },
+    {
+      "name": "array of arrays",
+      "input": [
+        [
+          2,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "expected": {
+        "canonicalJson": "[[2,1],[1,2],[2,1]]",
+        "canonicalJsonConcat": "[[2,1],[1,2],[2,1]]",
+        "canonicalJsonNull": "[[2,1],[1,2],[2,1]]",
+        "canonicalJsonLocale": "[[2,1],[1,2],[2,1]]",
+        "canonicalJsonLocaleDrops": "[[2,1],[1,2],[2,1]]",
+        "canonicalSetJson": "[[1,2]]"
+      }
+    },
+    {
+      "name": "non-finite numbers",
+      "input": {
+        "a": {
+          "$nonFinite": "NaN"
+        },
+        "b": {
+          "$nonFinite": "Infinity"
+        },
+        "c": [
+          {
+            "$nonFinite": "-Infinity"
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":null,\"b\":null,\"c\":[null]}",
+        "canonicalJsonConcat": "{\"a\":null,\"b\":null,\"c\":[null]}",
+        "canonicalJsonNull": "{\"a\":null,\"b\":null,\"c\":[null]}",
+        "canonicalJsonLocale": "{\"a\":null,\"b\":null,\"c\":[null]}",
+        "canonicalJsonLocaleDrops": "{\"a\":null,\"b\":null,\"c\":[null]}",
+        "canonicalSetJson": "{\"a\":null,\"b\":null,\"c\":[null]}"
+      }
+    },
+    {
+      "name": "numeric string keys of different length",
+      "input": {
+        "1": "a",
+        "2": "b",
+        "11": "c"
+      },
+      "expected": {
+        "canonicalJson": "{\"1\":\"a\",\"2\":\"b\",\"11\":\"c\"}",
+        "canonicalJsonConcat": "{\"1\":\"a\",\"11\":\"c\",\"2\":\"b\"}",
+        "canonicalJsonNull": "{\"1\":\"a\",\"11\":\"c\",\"2\":\"b\"}",
+        "canonicalJsonLocale": "{\"1\":\"a\",\"11\":\"c\",\"2\":\"b\"}",
+        "canonicalJsonLocaleDrops": "{\"1\":\"a\",\"2\":\"b\",\"11\":\"c\"}",
+        "canonicalSetJson": "{\"1\":\"a\",\"2\":\"b\",\"11\":\"c\"}"
+      }
+    },
+    {
+      "name": "deep nesting",
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "e": [
+                  1,
+                  {
+                    "f": null
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "canonicalJson": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}",
+        "canonicalJsonConcat": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}",
+        "canonicalJsonNull": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}",
+        "canonicalJsonLocale": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}",
+        "canonicalJsonLocaleDrops": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}",
+        "canonicalSetJson": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":[1,{\"f\":null}]}}}}}"
+      }
+    }
+  ]
+}

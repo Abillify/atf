@@ -21,7 +21,7 @@
         "node": ">=26 <27"
     },
     "dependencies": {
-        "@atf/canonical-json": "workspace:1.0.0",
+        "@atf/canonical-json": "workspace:1.0.1",
         "@atf/erasure-contract": "workspace:1.0.1",
         "@atf/extract-contract": "workspace:2.4.0",
         "@atf/mcp-2026": "workspace:1.0.0",

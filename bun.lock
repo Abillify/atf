@@ -242,7 +242,7 @@
     },
     "packages/canonical-json": {
       "name": "@atf/canonical-json",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "devDependencies": {
         "@types/bun": "1.4.0",
         "typescript": "7.0.2",

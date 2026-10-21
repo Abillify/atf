@@ -18,7 +18,7 @@
         "node": ">=26 <27"
     },
     "dependencies": {
-        "@atf/canonical-json": "workspace:1.0.0",
+        "@atf/canonical-json": "workspace:1.0.1",
         "@atf/erasure-contract": "workspace:1.0.1",
         "@atf/evidence-contract": "workspace:1.1.1",
         "@atf/identity-contract": "workspace:1.2.0",

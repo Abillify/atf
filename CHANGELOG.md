@@ -399,6 +399,7 @@ releases:
 - `@atf/security-kit` 1.2.0: the JWT verifier accepts `allowedTypes` to enforce the JWT `typ` header; the Gate exposes it as `auth.oauth.allowedTokenTypes` and warns in production while it is empty.
 - READMEs for `@atf/canonical-json`, `@atf/mcp-2026`, `@atf/security-kit` and `@atf/observability`.
 - Gate: an `mcpServers` import override accepts `pin` (SHA-256 of the downstream `description`, `inputSchema` and `annotations`); a tool whose advertised definition no longer matches is not exposed and an error with the seen digest is logged.
+- `@atf/canonical-json` ships a byte specification and test vectors for every mode.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

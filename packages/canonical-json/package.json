@@ -1,6 +1,6 @@
 {
 	"name": "@atf/canonical-json",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"private": true,
 	"description": "The one canonical-JSON implementation of the monorepo: recursively key-sorted, whitespace-free JSON with explicit, documented byte modes for the hash-committed call sites (erasure receipts, audit chain, evidence bundles, action contracts, cache keys)",
 	"author": "Abillify Technology GmbH <info@abillify.me>",

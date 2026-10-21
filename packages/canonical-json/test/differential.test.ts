@@ -66,6 +66,18 @@ function legacyEvidenceCanonicalJson(value: unknown): string {
 	return JSON.stringify(value) ?? "null";
 }
 
+/** apps/runtime/src/artifacts/analysis-artifacts.ts (stableJson) */
+function legacyAnalysisStableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(legacyAnalysisStableJson).join(",")}]`;
+	if (value !== null && typeof value === "object") {
+		return `{${Object.entries(value as Record<string, unknown>)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, item]) => `${JSON.stringify(key)}:${legacyAnalysisStableJson(item)}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
 /** apps/runtime/src/observability/evidence-bundle.ts (canonicalizeForBundleHash) */
 function legacyBundleCanonicalize(value: unknown): string {
 	return JSON.stringify(legacyBundleSortKeysDeep(value));
@@ -329,6 +341,18 @@ describe("canonicalJsonLocale ≡ evidence-contract canonicalJson", () => {
 		const value = { B: 1, a: 2 };
 		expect(canonicalJsonLocale(value)).toBe('{"a":2,"B":1}');
 		expect(canonicalJson(value)).toBe('{"B":1,"a":2}');
+	});
+});
+
+describe("canonicalJsonLocale ≡ analysis-artifacts stableJson", () => {
+	test("byte-identical on every corpus input", () => {
+		for (const { label, value } of CORPUS) {
+			expect(canonicalJsonLocale(value), label).toBe(legacyAnalysisStableJson(value));
+		}
+	});
+	test("top-level undefined → \"null\" on both sides", () => {
+		expect(legacyAnalysisStableJson(undefined)).toBe("null");
+		expect(canonicalJsonLocale(undefined)).toBe("null");
 	});
 });
 
