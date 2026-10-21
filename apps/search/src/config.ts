@@ -357,12 +357,13 @@ export interface Config {
   streamBodyLimit: string; // STREAM_BODY_LIMIT (default: "50mb")
 
   /**
-   * TTL in milliseconds for an uncommitted v2 revision (design §9b.3,
-   * Requirement 5.10). A staged revision that is neither committed nor
-   * heartbeated within this window is reaped by the TTL cleaner. Default:
-   * 14 days. Set REVISION_TTL in seconds.
+   * Seconds an uncommitted v2 revision is kept before the TTL cleaner reaps
+   * it (design §9b.3, Requirement 5.10); the parsed value is held in
+   * milliseconds internally. A staged revision that is neither committed nor
+   * heartbeated within this window is reaped. Default: 1209600 seconds
+   * (14 days). Set REVISION_TTL in seconds.
    */
-  revisionTtlMs: number; // REVISION_TTL seconds (default: 14 days)
+  revisionTtlMs: number; // REVISION_TTL (default: 1209600) seconds a superseded revision is kept
 
   /**
    * How often the revision TTL cleaner sweeps for expired revisions, in
@@ -606,7 +607,7 @@ export interface Config {
   nodeEnv: OperationalProfile; // ATF_PROFILE / NODE_ENV (default: "development")
 
   // Transaction Envelope v1 (MCP params._meta token or HTTP header)
-  transactionEnforcement: "off" | "optional" | "required";
+  transactionEnforcement: "off" | "optional" | "required"; // TRANSACTION_ENFORCEMENT (default: "off")
   transactionSecret: string | null;
   /**
    * TRANSACTION_JWKS_URI — the issuer's public keys (the runtime publishes

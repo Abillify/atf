@@ -361,16 +361,16 @@ Source of truth: `apps/search/src/config.ts`.
 | `ACL_REQUIRE_IDENTITY_WAIVER` | string | no | `empty` | Documented reason for running with ACL_REQUIRE_IDENTITY=false; the production check asks for it (`aclRequireIdentityWaiver`) |
 | `API_OIDC_DEFAULT_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Legacy alias of DEFAULT_TENANT_ID for OIDC callers; must match API_SERVICE_TENANT_ID when both are set |
 | `API_OIDC_ISSUERS` | string | no | — | **read directly — not validated at startup**; JSON array of trusted API token issuers, `[{"issuer": "https://…", "audience": "optional"}]`; tokens are verified against each issuer's JWKS |
-| `API_SERVICE_SCOPES` | string | no | — | **read directly — not validated at startup**; Scopes granted to the static API_TOKEN caller (comma- or space-separated) when AUTHZ_ENABLED is on |
+| `API_SERVICE_SCOPES` | string | no | — | Scopes granted to the static API_TOKEN caller (comma- or space-separated) when AUTHZ_ENABLED is on |
 | `API_SERVICE_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Legacy alias of DEFAULT_TENANT_ID for service-token callers; must match it when both are set |
 | `API_TOKEN` | string | no | — | Config member `apiToken` — optional |
 | `API_TOKEN_NEXT` | string | no | — | Optional rotation token: while both `API_TOKEN` and `API_TOKEN_NEXT` are set, either one authenticates (Requirement 11.8). — optional, rotation (`apiTokenNext`) |
 | `ASSET_STORE_BACKEND` | enum | no | `postgres` | one of `postgres`, `filesystem`; Backend for the v2 AssetStore (design §6.5, Requirement 14.2). (`assetStoreBackend`) |
 | `ASSET_STORE_DIR` | string | no | `null` | Filesystem root for asset bytes when {@link assetStoreBackend} is `filesystem`. (`assetStoreDir`) |
 | `ATF_PROFILE` | string | no | `development` | Effective operational profile: `ATF_PROFILE` (explicit, platform-wide) wins over `NODE_ENV`; unset means `development`. (`nodeEnv`) |
-| `AUTHN_MODE` | string | no | — | **read directly — not validated at startup**; API authentication: `disabled`, `token` (API_TOKEN), `oidc` (API_OIDC_ISSUERS) or `token_or_oidc`. Inferred from what is configured when unset; a mode without its credentials fails startup |
-| `AUTHZ_ENABLED` | string | no | — | **read directly — not validated at startup**; Enforce scope-based authorization on the API (canonical switch; replaces AUTHZ_ENFORCEMENT). Default `false` |
-| `AUTHZ_ENFORCEMENT` | string | no | — | **read directly — not validated at startup**; Legacy form of AUTHZ_ENABLED (`off`/`required`); `optional` is refused unless AUTHZ_ENABLED is set explicitly |
+| `AUTHN_MODE` | string | no | — | API authentication: `disabled`, `token` (API_TOKEN), `oidc` (API_OIDC_ISSUERS) or `token_or_oidc`. Inferred from what is configured when unset; a mode without its credentials fails startup |
+| `AUTHZ_ENABLED` | string | no | — | Enforce scope-based authorization on the API (canonical switch; replaces AUTHZ_ENFORCEMENT). Default `false` |
+| `AUTHZ_ENFORCEMENT` | string | no | — | Legacy form of AUTHZ_ENABLED (`off`/`required`); `optional` is refused unless AUTHZ_ENABLED is set explicitly |
 | `BATCH_WORKER` | boolean | no | `false` | The v2 batch-processing worker (design §9b.3, task 1.10). (`batchWorkerEnabled`) |
 | `BATCH_WORKER_BACKOFF_MS` | number | no | `30000` | Backoff applied to a batch's next_attempt_at after an embedding-service failure, in milliseconds (Requirement 5.4). (`batchWorkerBackoffMs`) |
 | `BATCH_WORKER_EMBED_CONCURRENCY` | number | no | `4, 1-16` | Embedding round-trips of one staged batch that run at once. (`batchWorkerEmbedConcurrency`) |
@@ -384,7 +384,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `CONTEXT_HEADER_MAX_FRACTION` | number | no | `0.15` | Fraction of the chunk token budget the contextual embedding header may occupy (Requirement 11.4). (`contextHeaderMaxFraction`) |
 | `CONTEXTUAL_CHUNK_LLM` | boolean | no | `false` | Per-chunk contextual placement sentence via the SUMMARY_* text-LLM (Requirement 11.6, design §6.3). (`contextualChunkLlm`) |
 | `CONVERTER_CA_CERT_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying the converter's TLS certificate |
-| `CONVERTER_TIMEOUT_MS` | string | no | — | **read directly — not validated at startup** |
+| `CONVERTER_TIMEOUT_MS` | string | no | — | — |
 | `CONVERTER_TOKEN` | string | no | — | **read directly — not validated at startup**; SECRET. Bearer token Search sends to the document converter (Extract) on `/ingest-file` |
 | `CONVERTER_UPLOAD_LIMIT` | string | no | — | **read directly — not validated at startup** |
 | `CONVERTER_URL` | string | no | — | Document converter backing POST /ingest-file. — opt-in (`converter`) |
@@ -395,21 +395,21 @@ Source of truth: `apps/search/src/config.ts`.
 | `DOCUMENT_ACL_DEFAULT` | string | no | `allow` | Visibility of a document without ACL entries: `allow` (default, visible to everyone in the tenant) or `deny` (visible to nobody) (`documentAclDefault`) |
 | `EMBED_EXPECTED_DIMENSION` | number | no | — | Required vector dimension for both embedding paths when configured. — optional positive int (`embedExpectedDimension`) |
 | `EMBED_FALLBACK_INPUT_FIELD` | string | no | `input` | Config member `embedFallbackInputField` |
-| `EMBED_FALLBACK_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `EMBED_FALLBACK_INPUT_TOKEN_COST` | string | no | — | — |
 | `EMBED_FALLBACK_MODEL` | string | no | — | Config member `embedFallbackModel` — enables fallback; must equal EMBED_MODEL unless EMBED_FALLBACK_SAME_SPACE=true |
-| `EMBED_FALLBACK_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `EMBED_FALLBACK_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `EMBED_FALLBACK_SAME_SPACE` | boolean | no | `false` | Explicit operator assertion that a fallback model named differently from `EMBED_MODEL` still serves the SAME underlying model (same vector space), e.g. (`embedFallbackSameSpace`) |
 | `EMBED_FALLBACK_URL` | string | no | — | Optional secondary embedder, enabled only when its model is configured. (`embedFallbackUrl`) |
 | `EMBED_INPUT_FIELD` | string | no | `inputs` | JSON field name used to pass texts in embedding requests. (`embedInputField`) |
-| `EMBED_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `EMBED_INPUT_TOKEN_COST` | string | no | — | — |
 | `EMBED_MODEL` | string | **yes** | — | Config member `embedModel` |
 | `EMBED_MODEL_REVISION` | string | no | `EMBED_MODEL` | Immutable deployment/model revision used to detect unsafe in-place embedding drift. (`embedModelRevision`) |
-| `EMBED_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `EMBED_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `EMBED_URL` | string | **yes** | — | Config member `embedUrl` |
 | `ERASURE_SUBJECT_METADATA_FIELD` | string | no | `subject` | Metadata field whose value identifies the data subject in a document (`metadata->>ERASURE_SUBJECT_METADATA_FIELD`), matched against the identifiers of a subject-scoped `POST /v1/erasure` request in addition to the `allowed_users` ACL col… (`erasureSubjectMetadataField`) |
 | `EXPOSE_ERROR_DETAIL` | boolean | no | `false` | Config member `exposeErrorDetail` |
 | `FETCH_TIMEOUT_MS` | number | no | `30000, 0 = disabled` | Abort embedding/reranking HTTP calls after this many milliseconds. (`fetchTimeoutMs`) |
-| `FTS_EXTRA_LANGUAGES` | string | no | — | **read directly — not validated at startup** |
+| `FTS_EXTRA_LANGUAGES` | string | no | — | — |
 | `FTS_LANGUAGE` | string | no | `german` | Server-wide default FTS language for new collections. (`defaultFtsLanguage`) |
 | `FTS_RANKER` | enum | no | `ts_rank_cd` | one of `ts_rank_cd`, `bm25`; Requirement 4.7: ranker for the lexical (full-text) list. (`ftsRanker`) |
 | `HNSW_EF_CONSTRUCTION` | number | no | `128` | HNSW ef_construction for new indexes. (`hnswEfConstruction`) |
@@ -420,10 +420,10 @@ Source of truth: `apps/search/src/config.ts`.
 | `HYBRID_SEARCH` | boolean | no | `true` | Config member `hybridSearch` |
 | `HYDE_CACHE_TTL_SECONDS` | number | no | `600` | Seconds a generated HyDE document is reused for an identical query. (`hydeCacheTtlSeconds`) |
 | `HYDE_ENABLE_THINKING` | boolean | no | `false` | Enable model thinking/reasoning for OpenAI-compatible HyDE calls. (`hydeEnableThinking`) |
-| `HYDE_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `HYDE_INPUT_TOKEN_COST` | string | no | — | — |
 | `HYDE_MAX_TOKENS` | number | no | `256` | Max tokens for the hypothetical document. (`hydeMaxTokens`) |
 | `HYDE_MODEL` | string | no | — | Model to use for HyDE generation. — optional (`hydeModel`) |
-| `HYDE_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `HYDE_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `HYDE_TOKEN` | string | no | — | Bearer token sent as `Authorization: Bearer <token>` on HyDE HTTP calls. — optional (`hydeToken`) |
 | `HYDE_URL` | string | no | `EMBED_URL` | URL of the chat-completions server for HyDE expansion. (`hydeUrl`) |
 | `LATE_CHUNKING_ALPHA` | number | no | `null` | Late chunking alpha (0–1). (`lateChunkingAlpha`) |
@@ -435,8 +435,8 @@ Source of truth: `apps/search/src/config.ts`.
 | `MIN_RERANK_SCORE` | number | no | `empty = off` | Optional relevance threshold (Requirement 4.8) on the reranker scale (sigmoid in [0, 1]). (`minRerankScore`) |
 | `MONITOR_TOKEN` | string | no | — | Machine-to-machine service token for API and MCP clients. (`monitorToken`) |
 | `NODE_ENV` | string | no | `development` | Read only when `ATF_PROFILE` is unset. (`nodeEnv`) |
-| `OIDC_ALLOWED_EMAIL_DOMAINS` | string | no | — | **read directly — not validated at startup**; Comma-separated e-mail domains allowed to log in to the web UI |
-| `OIDC_ALLOWED_EMAILS` | string | no | — | **read directly — not validated at startup**; Comma-separated e-mail addresses allowed to log in to the web UI; empty allows any authenticated user unless a domain or group list applies |
+| `OIDC_ALLOWED_EMAIL_DOMAINS` | string | no | — | Comma-separated e-mail domains allowed to log in to the web UI |
+| `OIDC_ALLOWED_EMAILS` | string | no | — | Comma-separated e-mail addresses allowed to log in to the web UI; empty allows any authenticated user unless a domain or group list applies |
 | `OIDC_CLIENT_ID` | string | no | — | **read directly — not validated at startup**; OIDC client id of the web UI login |
 | `OIDC_CLIENT_SECRET` | string | no | — | **read directly — not validated at startup**; SECRET. OIDC client secret of the web UI login |
 | `OIDC_GROUPS_CLAIM` | string | no | — | **read directly — not validated at startup**; ID-token claim holding the user's groups (for UI_ALLOWED_GROUPS). Default `groups` |
@@ -444,7 +444,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `OIDC_REDIRECT_URI` | string | no | — | **read directly — not validated at startup**; Callback URL registered at the IdP for the web UI login |
 | `OIDC_SCOPES` | string | no | — | **read directly — not validated at startup**; Scopes requested by the web UI login. Default `openid profile email` |
 | `OIDC_SESSION_SECRET` | string | no | — | **read directly — not validated at startup**; SECRET (≥ 16 characters). HMAC key of the web UI session cookie; rotating it ends all sessions |
-| `OIDC_SESSION_TTL` | string | no | — | **read directly — not validated at startup**; Web UI session lifetime in seconds (≥ 60). Default 28800 (8 h) |
+| `OIDC_SESSION_TTL` | string | no | — | Web UI session lifetime in seconds (≥ 60). Default 28800 (8 h) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | string | no | — | Config member `otelExporterOtlpEndpoint` — optional |
 | `OTEL_SERVICE_NAME` | string | no | `atf-search` | Config member `otelServiceName` |
 | `PG_POOL_MAX` | number | no | `20` | Maximum number of connections in the PostgreSQL pool. (`pgPoolMax`) |
@@ -464,19 +464,19 @@ Source of truth: `apps/search/src/config.ts`.
 | `RERANK_ENDPOINT` | enum | no | `rerank` | one of `embeddings`, `rerank`; Config member `rerankEndpoint` |
 | `RERANK_FALLBACK_DOCUMENTS_FIELD` | string | no | — | Config member `rerankFallbackDocumentsField` |
 | `RERANK_FALLBACK_ENDPOINT` | enum | no | — | one of `embeddings`, `rerank`; Config member `rerankFallbackEndpoint` |
-| `RERANK_FALLBACK_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `RERANK_FALLBACK_INPUT_TOKEN_COST` | string | no | — | — |
 | `RERANK_FALLBACK_MODEL` | string | no | — | Config member `rerankFallbackModel` — enables fallback |
-| `RERANK_FALLBACK_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `RERANK_FALLBACK_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `RERANK_FALLBACK_SEPARATOR` | string | no | `\n` | Config member `rerankFallbackInputSeparator` |
 | `RERANK_FALLBACK_URL` | string | no | — | Optional secondary reranker, enabled only when its model is configured. (`rerankFallbackUrl`) |
-| `RERANK_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `RERANK_INPUT_TOKEN_COST` | string | no | — | — |
 | `RERANK_MODEL` | string | **yes** | — | Config member `rerankModel` |
-| `RERANK_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `RERANK_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `RERANK_SCORE_TRANSFORM` | enum | no | `auto` | one of `auto`, `sigmoid`, `none`; How raw reranker scores map to the public score scale (Bedrock and native rerank `relevance_score`). (`rerankScoreTransform`) |
 | `RERANK_SEPARATOR` | string | no | `\n` | Config member `rerankInputSeparator` |
 | `RERANK_URL` | string | no | `EMBED_URL` | Config member `rerankUrl` |
 | `REVISION_BATCH_BODY_LIMIT` | string | no | `50mb` | Body size limit for a single v2 revision NDJSON page batch (PUT …/revisions/{rev}/batches/{seq}). (`revisionBatchBodyLimit`) |
-| `REVISION_TTL` | number | no | — | TTL in milliseconds for an uncommitted v2 revision (design §9b.3, Requirement 5.10). (`revisionTtlMs`) |
+| `REVISION_TTL` | number | no | `1209600` | Seconds an uncommitted v2 revision is kept before the TTL cleaner reaps it (design §9b.3, Requirement 5.10); the parsed value is held in milliseconds internally. (`revisionTtlMs`) |
 | `REVISION_TTL_SWEEP_MS` | number | no | `3600000` | How often the revision TTL cleaner sweeps for expired revisions, in milliseconds. (`revisionTtlSweepMs`) |
 | `RRF_K` | number | no | `60` | RRF k parameter for hybrid search. (`rrfK`) |
 | `RRF_MISSING_ZERO` | boolean | no | `true` | Requirement 4.4: a list a document did not appear in contributes 0 to the RRF fusion instead of the legacy `1/(k+1000)` pseudo-rank. (`rrfMissingZero`) |
@@ -488,9 +488,9 @@ Source of truth: `apps/search/src/config.ts`.
 | `SEARCH_MAX_QUERY_CHARS` | number | no | `400` | Upper bound for the query text of /v1/search, /v2/search and the MCP search tools. (`maxQueryChars`) |
 | `SEMANTIC_CHUNKING` | boolean | no | `false` | Use semantic (embedding-based) chunking instead of text-boundary chunking. (`semanticChunking`) |
 | `SOURCE_CLAIM_TTL` | number | no | — | How long a pending source claim (`POST /v2/sources/identify`) blocks a duplicate of it while its ingest runs, in milliseconds. (`sourceClaimTtlMs`) |
-| `SPARSE_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `SPARSE_INPUT_TOKEN_COST` | string | no | — | — |
 | `SPARSE_MODEL` | string | no | — | SPLADE model name. Required to enable sparse search. — optional (`sparseModel`) |
-| `SPARSE_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `SPARSE_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `SPARSE_URL` | string | no | `EMBED_URL` | URL of the SPLADE embedding server. (`sparseUrl`) |
 | `SPARSE_VOCAB_SIZE` | number | no | `30522` | Vocabulary size of the SPLADE model. (`sparseVocabSize`) |
 | `STATS_FLUSH_INTERVAL_MS` | number | no | `30000` | Interval in ms for flushing buffered stats to DB. (`statsFlushIntervalMs`) |
@@ -499,15 +499,15 @@ Source of truth: `apps/search/src/config.ts`.
 | `STATS_STORE_RAW_QUERY` | boolean | no | `false` | Store the raw query text in `vs_search_stats.query` in addition to the hash. (`statsStoreRawQuery`) |
 | `STREAM_BODY_LIMIT` | string | no | `50mb` | Body size limit for POST /ingest-stream (NDJSON bulk endpoint). (`streamBodyLimit`) |
 | `SUMMARY_ENABLE_THINKING` | boolean | no | `false` | Enable model thinking/reasoning for OpenAI-compatible summary calls. (`summaryEnableThinking`) |
-| `SUMMARY_INPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `SUMMARY_INPUT_TOKEN_COST` | string | no | — | — |
 | `SUMMARY_MAX_CONCURRENCY` | number | no | `4` | Max parallel requests to the summary server. (`summaryMaxConcurrency`) |
 | `SUMMARY_MAX_TOKENS` | number | no | `256` | Max tokens for the generated summary. (`summaryMaxTokens`) |
 | `SUMMARY_MODEL` | string | no | — | Model for summarization. — optional (`summaryModel`) |
-| `SUMMARY_OUTPUT_TOKEN_COST` | string | no | — | **read directly — not validated at startup** |
+| `SUMMARY_OUTPUT_TOKEN_COST` | string | no | — | — |
 | `SUMMARY_TIMEOUT_MS` | number | no | `120000, 0 = disabled` | Timeout for summary requests in ms. (`summaryTimeoutMs`) |
 | `SUMMARY_TOKEN` | string | no | — | Bearer token sent as `Authorization: Bearer <token>` on summary HTTP calls. — optional (`summaryToken`) |
 | `SUMMARY_URL` | string | no | `EMBED_URL` | URL of the chat-completions server for summarization. (`summaryUrl`) |
-| `TENANT_ISOLATION_ENABLED` | string | no | — | **read directly — not validated at startup**; Scope every request to the caller's tenant (from the token) instead of the single default tenant. Default `false` |
+| `TENANT_ISOLATION_ENABLED` | string | no | — | Scope every request to the caller's tenant (from the token) instead of the single default tenant. Default `false` |
 | `TLS_CERT_FILE` | string | no | — | Optional TLS material for the HTTP listener. (`tls`) |
 | `TLS_CLIENT_CA_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying client certificates (mTLS) on the HTTPS listener |
 | `TLS_KEY_FILE` | string | no | — | **read directly — not validated at startup**; SECRET. Private key (PEM) of the HTTPS listener; with TLS_CERT_FILE switches the server to TLS |
@@ -516,18 +516,18 @@ Source of truth: `apps/search/src/config.ts`.
 | `TOKENIZE_TIMEOUT_MS` | number | no | `5000, 0 = disabled` | Abort tokenize calls after this many ms. (`tokenizeTimeoutMs`) |
 | `TOKENIZE_URL` | string | no | `derived from EMBED_URL` | URL of the TEI `/tokenize` endpoint used to measure chunk token counts (Requirement 11.2). (`tokenizeUrl`) |
 | `TRACING_ENABLED` | boolean | no | `false` | Shared OTel span export (Req 11.6): when enabled, every request gets a server span exported through `@atf/observability` (OTLP/HTTP JSON) — the same tracer implementation the runtime uses. (`tracingEnabled`) |
-| `TRANSACTION_ALGORITHMS` | string | no | — | **read directly — not validated at startup**; Accepted transaction-token algorithms, any of `HS256`, `ES256`, `EdDSA`. Default: `HS256` when the secret is set, plus `ES256` and `EdDSA` when the JWKS URI is set, so a migration accepts both until HS256 is dropped |
+| `TRANSACTION_ALGORITHMS` | string | no | — | Accepted transaction-token algorithms, any of `HS256`, `ES256`, `EdDSA`. Default: `HS256` when the secret is set, plus `ES256` and `EdDSA` when the JWKS URI is set, so a migration accepts both until HS256 is dropped |
 | `TRANSACTION_AUDIENCE` | string | no | — | **read directly — not validated at startup**; Expected audience of agent transaction tokens. Default `vectorsearch` |
-| `TRANSACTION_CLOCK_TOLERANCE_SECONDS` | string | no | — | **read directly — not validated at startup** |
-| `TRANSACTION_ENFORCEMENT` | string | no | — | **read directly — not validated at startup** |
+| `TRANSACTION_CLOCK_TOLERANCE_SECONDS` | string | no | — | — |
+| `TRANSACTION_ENFORCEMENT` | enum | no | `off` | one of `off`, `optional`, `required`; Config member `transactionEnforcement` |
 | `TRANSACTION_HS256_SECRET` | string | no | — | **read directly — not validated at startup**; SECRET. HS256 key for verifying agent transaction tokens (TRANSACTION_ENFORCEMENT). A shared secret: every holder can also mint tokens, so prefer TRANSACTION_JWKS_URI |
 | `TRANSACTION_ISSUER` | string | no | — | **read directly — not validated at startup**; Expected issuer of agent transaction tokens. Default `vectorsearch-client` |
 | `TRANSACTION_JWKS_URI` | string | no | — | **read directly — not validated at startup**; The issuer's public keys (the Runtime serves `/.well-known/atf-transaction-jwks.json`) for ES256/EdDSA transaction tokens; no shared secret needed (ADR-0035) |
-| `TRANSACTION_MAX_TTL_SECONDS` | string | no | — | **read directly — not validated at startup** |
+| `TRANSACTION_MAX_TTL_SECONDS` | string | no | — | — |
 | `TRUST_PROXY` | boolean | no | `false` | Trust X-Forwarded-For for rate limiting. (`trustProxy`) |
-| `UI_ALLOWED_GROUPS` | string | no | — | **read directly — not validated at startup**; Groups allowed to use the web UI; empty allows any user that passed the e-mail checks |
+| `UI_ALLOWED_GROUPS` | string | no | — | Groups allowed to use the web UI; empty allows any user that passed the e-mail checks |
 | `UI_OPERATOR_GROUP` | string | no | — | **read directly — not validated at startup** |
-| `UI_SCOPES` | string | no | — | **read directly — not validated at startup**; Scopes granted to web UI sessions |
+| `UI_SCOPES` | string | no | — | Scopes granted to web UI sessions |
 | `UI_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Tenant of web UI sessions. Default DEFAULT_TENANT_ID |
 | `VECTOR_HALF_PRECISION` | boolean | no | `false` | Use halfvec (16-bit float) for new collections. (`halfPrecision`) |
 
@@ -544,7 +544,7 @@ Source of truth: `apps/extract/src/config.ts`.
 | `API_SERVICE_TENANT_ID` | string | no | — | API_SERVICE_TENANT_ID — tenant a static-token caller acts in. (`apiServiceTenantId`) |
 | `API_TOKEN` | string | no | — | SECRET. Static bearer token for the Extract API (AUTHN_MODE=token) (`apiToken`) |
 | `API_TOKEN_NEXT` | string | no | — | Optional rotation token: while both `API_TOKEN` and `API_TOKEN_NEXT` are set, either one authenticates (Requirement 11.8). — optional, rotation (`apiTokenNext`) |
-| `ASSET_UPLOAD_CONCURRENCY` | string | no | — | **read directly — not validated at startup** |
+| `ASSET_UPLOAD_CONCURRENCY` | string | no | — | — |
 | `ATF_PROFILE` | string | no | `development` | Effective operational profile: `ATF_PROFILE` (explicit, platform-wide) wins over `NODE_ENV`; unset means `development`. (`nodeEnv`) |
 | `AUTHN_MODE` | string | no | — | Config member `authnMode` — inferred from credentials |
 | `AUTHZ_ENABLED` | boolean | no | `true` | Enforce scope-based authorization on the API (canonical switch; replaces AUTHZ_ENFORCEMENT). Default `false` (`authzEnabled`) |
@@ -563,21 +563,21 @@ Source of truth: `apps/extract/src/config.ts`.
 | `EMIT_BATCH_PAGES` | string | no | — | Batch/segment/asset-concurrency tunables for the outbox emitter. (`emitter`) |
 | `EXPOSE_ERROR_DETAIL` | boolean | no | `false` | Config member `exposeErrorDetail` |
 | `EXTRACT_DATABASE_URL` | string | no | — | **read directly — not validated at startup** |
-| `EXTRACT_DB_POOL_MAX` | string | no | — | **read directly — not validated at startup** |
-| `EXTRACT_DB_STATEMENT_TIMEOUT_MS` | string | no | — | **read directly — not validated at startup** |
+| `EXTRACT_DB_POOL_MAX` | string | no | — | — |
+| `EXTRACT_DB_STATEMENT_TIMEOUT_MS` | string | no | — | — |
 | `FIGURE_DPI` | number | no | `300` | FIGURE_DPI — resolution figure crops are rendered at. (`figureDpi`) |
 | `FIGURE_PASS2_KINDS` | list | no | `bpmn,flowchart,ui_mask,technical_drawing,chart,table_image` | FIGURE_PASS2_KINDS — the figure kinds that get a structured Pass-2 transcription (design §5 S5, requirement 8.3/8.6). (`figurePass2Kinds`) |
 | `FIGURE_PASS2_MIN_AREA` | number | no | `0.02` | FIGURE_PASS2_MIN_AREA — the smallest figure, as a fraction of the page area, that is worth a Pass-2 call (requirement 8.6). (`figurePass2MinArea`) |
-| `FINALIZE_PASS` | string | no | — | **read directly — not validated at startup** |
-| `JOB_CONCURRENCY` | string | no | — | **read directly — not validated at startup** |
-| `JOB_HEARTBEAT_INTERVAL_MS` | string | no | — | **read directly — not validated at startup** |
+| `FINALIZE_PASS` | string | no | — | — |
+| `JOB_CONCURRENCY` | string | no | — | — |
+| `JOB_HEARTBEAT_INTERVAL_MS` | string | no | — | — |
 | `JOB_LEASE_SECONDS` | string | no | — | Lease/heartbeat/poll tunables for the persistent job worker loop. (`jobWorker`) |
-| `JOB_MAX_TRANSIENT_WAIT_MS` | string | no | — | **read directly — not validated at startup** |
-| `JOB_POLL_INTERVAL_MS` | string | no | — | **read directly — not validated at startup** |
-| `JOB_RETENTION_DAYS` | string | no | — | **read directly — not validated at startup** |
+| `JOB_MAX_TRANSIENT_WAIT_MS` | string | no | — | — |
+| `JOB_POLL_INTERVAL_MS` | string | no | — | — |
+| `JOB_RETENTION_DAYS` | number | no | `0` | JOB_RETENTION_DAYS — days a finished job (completed/failed/cancelled) is kept after its last change. (`jobRetentionDays`) |
 | `LABEL_COVERAGE_MIN` | number | no | `60` | LABEL_COVERAGE_MIN — the minimum percentage of a figure's `labels` that must appear in its Pass-2 transcription before the transcription is trusted (requirement 8.4). (`labelCoverageMin`) |
 | `LANG` | string | no | — | **read directly — not validated at startup** |
-| `LARGE_JOB_MAX_CONCURRENCY` | string | no | — | **read directly — not validated at startup** |
+| `LARGE_JOB_MAX_CONCURRENCY` | string | no | — | — |
 | `LARGE_JOB_PAGE_THRESHOLD` | string | no | — | Large-job lane threshold and bounded parallelism (requirement 6.6). (`queueLane`) |
 | `LC_ALL` | string | no | — | **read directly — not validated at startup** |
 | `LIBREOFFICE_BIN` | string | no | `libreoffice` | LIBREOFFICE_BIN — binary used to convert Word/Excel formats to PDF. (`libreofficeBin`) |
@@ -590,8 +590,8 @@ Source of truth: `apps/extract/src/config.ts`.
 | `NODE_ENV` | string | no | `development` | Read only when `ATF_PROFILE` is unset. (`nodeEnv`) |
 | `OCR_FALLBACK` | enum | no | `off` | one of `off`, `tesseract`; OCR_FALLBACK — what happens to a scanned page (no text layer) when the vision endpoint is down. (`ocrFallback`) |
 | `OCR_LANG` | string | no | `deu` | OCR_LANG — Tesseract language(s), e.g. (`ocrLang`) |
-| `OIDC_ALLOWED_EMAIL_DOMAINS` | string | no | — | **read directly — not validated at startup**; Comma-separated e-mail domains allowed to log in to the web UI |
-| `OIDC_ALLOWED_EMAILS` | string | no | — | **read directly — not validated at startup**; Comma-separated e-mail addresses allowed to log in to the web UI; empty allows any authenticated user unless a domain or group list applies |
+| `OIDC_ALLOWED_EMAIL_DOMAINS` | string | no | — | Comma-separated e-mail domains allowed to log in to the web UI |
+| `OIDC_ALLOWED_EMAILS` | string | no | — | Comma-separated e-mail addresses allowed to log in to the web UI; empty allows any authenticated user unless a domain or group list applies |
 | `OIDC_CLIENT_ID` | string | no | — | **read directly — not validated at startup**; OIDC client id of the web UI login |
 | `OIDC_CLIENT_SECRET` | string | no | — | **read directly — not validated at startup**; SECRET. OIDC client secret of the web UI login |
 | `OIDC_GROUPS_CLAIM` | string | no | — | **read directly — not validated at startup**; ID-token claim holding the user's groups (for UI_ALLOWED_GROUPS). Default `groups` |
@@ -599,7 +599,7 @@ Source of truth: `apps/extract/src/config.ts`.
 | `OIDC_REDIRECT_URI` | string | no | — | **read directly — not validated at startup**; Callback URL registered at the IdP for the web UI login |
 | `OIDC_SCOPES` | string | no | — | **read directly — not validated at startup**; Scopes requested by the web UI login. Default `openid profile email` |
 | `OIDC_SESSION_SECRET` | string | no | — | **read directly — not validated at startup**; SECRET (≥ 16 characters). HMAC key of the web UI session cookie; rotating it ends all sessions |
-| `OIDC_SESSION_TTL` | string | no | — | **read directly — not validated at startup**; Web UI session lifetime in seconds (≥ 60). Default 28800 (8 h) |
+| `OIDC_SESSION_TTL` | string | no | — | Web UI session lifetime in seconds (≥ 60). Default 28800 (8 h) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | string | no | — | OTEL_EXPORTER_OTLP_ENDPOINT — OTLP/HTTP collector URL; log-only when unset. — optional (`otelExporterOtlpEndpoint`) |
 | `OTEL_SERVICE_NAME` | string | no | `atf-extract` | OTEL_SERVICE_NAME — service.name resource attribute for exported spans. (`otelServiceName`) |
 | `PAGE_CONCURRENCY` | number | no | `4` | PAGE_CONCURRENCY — pages of one document in flight against the model. (`pageConcurrency`) |
@@ -617,27 +617,27 @@ Source of truth: `apps/extract/src/config.ts`.
 | `RENDER_MAX_PIXELS` | number | no | `40000000` | RENDER_MAX_PIXELS — hard ceiling on the output area of a `POST /v2/render` response, in pixels (design §9a.1, requirement 14.4). (`renderMaxPixels`) |
 | `RENDER_RATE_LIMIT` | number | no | `240, 0=disabled` | RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render` (requirement 14.4). (`renderRateLimit`) |
 | `REPLICAS` | number | no | `1` | REPLICAS — declared replica count for the production readiness gate. (`replicas`) |
-| `RETENTION_SWEEP_INTERVAL_MINUTES` | string | no | — | **read directly — not validated at startup** |
+| `RETENTION_SWEEP_INTERVAL_MINUTES` | number | no | `60` | RETENTION_SWEEP_INTERVAL_MINUTES — how often the retention sweep runs (default 60). (`retentionSweepIntervalMinutes`) |
 | `SEARCH_CA_CERT_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying Search's TLS certificate |
 | `SEARCH_COLLECTION` | string | no | — | **read directly — not validated at startup** |
-| `SEARCH_TIMEOUT_MS` | string | no | — | **read directly — not validated at startup** |
+| `SEARCH_TIMEOUT_MS` | string | no | — | — |
 | `SEARCH_TOKEN` | string | no | — | **read directly — not validated at startup**; SECRET. Bearer token Extract sends to Search when it forwards results to `/v1/ingest` |
 | `SEARCH_URL` | string | no | — | **read directly — not validated at startup** |
-| `SEGMENT_PAGES` | string | no | — | **read directly — not validated at startup** |
+| `SEGMENT_PAGES` | string | no | — | — |
 | `SOURCE_STORE_DIR` | string | no | — | Where finished sources are stored content-addressed by sha256, and the scratch directory an in-progress upload is streamed to first. (`sourceStore`) |
 | `SOURCE_URL_ALLOWED_HOSTS` | string | no | — | Config for pulling a source from a caller-supplied `source_url`. (`sourceUrl`) |
-| `SOURCE_URL_MAX_BYTES` | string | no | — | **read directly — not validated at startup** |
-| `SOURCE_URL_TIMEOUT_MS` | string | no | — | **read directly — not validated at startup** |
+| `SOURCE_URL_MAX_BYTES` | string | no | — | — |
+| `SOURCE_URL_TIMEOUT_MS` | string | no | — | — |
 | `SUBPROCESS_CPU_LIMIT_S` | number | no | `900, 0=disabled` | SUBPROCESS_CPU_LIMIT_S — `prlimit --cpu` ceiling in CPU-seconds, SIGKILL on breach (requirement 5.5). (`subprocessCpuLimitSeconds`) |
 | `SUBPROCESS_MEMORY_LIMIT_MB` | number | no | `0, 0=disabled` | SUBPROCESS_MEMORY_LIMIT_MB — `prlimit --as` ceiling applied to each converter subprocess on Linux (requirement 5.5). (`subprocessMemoryLimitMb`) |
 | `SUBPROCESS_TIMEOUT_MS` | number | no | `120000, 0=disabled` | SUBPROCESS_TIMEOUT_MS — wall-clock ceiling on a single poppler or LibreOffice invocation. (`subprocessTimeoutMs`) |
 | `SUMMARY_API_KEY` | string | no | — | **read directly — not validated at startup**; SECRET. API key of the summary LLM endpoint |
-| `SUMMARY_MAX_RETRIES` | string | no | — | **read directly — not validated at startup** |
-| `SUMMARY_MAX_TOKENS` | string | no | — | **read directly — not validated at startup** |
+| `SUMMARY_MAX_RETRIES` | string | no | — | — |
+| `SUMMARY_MAX_TOKENS` | string | no | — | — |
 | `SUMMARY_MODEL` | string | no | — | **read directly — not validated at startup** |
 | `SUMMARY_REASONING_EFFORT` | string | no | — | **read directly — not validated at startup** |
-| `SUMMARY_TEMPERATURE` | string | no | — | **read directly — not validated at startup** |
-| `SUMMARY_TIMEOUT_MS` | string | no | — | **read directly — not validated at startup** |
+| `SUMMARY_TEMPERATURE` | string | no | — | — |
+| `SUMMARY_TIMEOUT_MS` | string | no | — | — |
 | `SUMMARY_URL` | string | no | — | **read directly — not validated at startup** |
 | `TEMP_DIR` | string | no | `/tmp/atf-extract` | TEMP_DIR — scratch space for rendered pages and converted PDFs. (`tempDir`) |
 | `TENANT_ISOLATION_ENABLED` | boolean | no | `true` | Scope every request to the caller's tenant (from the token) instead of the single default tenant. Default `false` (`tenantIsolationEnabled`) |
@@ -652,12 +652,12 @@ Source of truth: `apps/extract/src/config.ts`.
 | `TLS_KEY_FILE` | string | no | — | **read directly — not validated at startup**; SECRET. Private key (PEM) of the HTTPS listener; with TLS_CERT_FILE switches the server to TLS |
 | `TRACING_ENABLED` | boolean | no | `false` | TRACING_ENABLED — export OTel spans via the shared @atf/observability tracer. (`tracingEnabled`) |
 | `TRUST_PROXY` | boolean | no | `false` | Trust `X-Forwarded-*` from a reverse proxy (client IP for rate limits, HTTPS detection for Secure cookies). Default `false`; enable only behind a proxy that sets them (`trustProxy`) |
-| `UI_ALLOWED_GROUPS` | string | no | — | **read directly — not validated at startup**; Groups allowed to use the web UI; empty allows any user that passed the e-mail checks |
+| `UI_ALLOWED_GROUPS` | string | no | — | Groups allowed to use the web UI; empty allows any user that passed the e-mail checks |
 | `UI_OPERATOR_GROUP` | string | no | — | **read directly — not validated at startup** |
-| `UI_SCOPES` | string | no | — | **read directly — not validated at startup**; Scopes granted to web UI sessions |
+| `UI_SCOPES` | string | no | — | Scopes granted to web UI sessions |
 | `UI_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Tenant of web UI sessions. Default DEFAULT_TENANT_ID |
 | `UPLOAD_MEMORY_THRESHOLD_BYTES` | number | no | `8388608` | UPLOAD_MEMORY_THRESHOLD_BYTES — a multipart upload larger than this is spooled to a scratch file under `TEMP_DIR/uploads` instead of the heap (requirement 5.9), so a document waiting for a conversion slot does not also hold its bytes there. (`uploadMemoryThresholdBytes`) |
-| `UPLOAD_SESSION_MAX_AGE_HOURS` | string | no | — | **read directly — not validated at startup** |
+| `UPLOAD_SESSION_MAX_AGE_HOURS` | number | no | `72, 0=forever` | UPLOAD_SESSION_MAX_AGE_HOURS — hours an unfinished resumable upload session (and its `.part` file) is kept after its last chunk. (`uploadSessionMaxAgeHours`) |
 | `UPLOAD_TMP_DIR` | string | no | — | **read directly — not validated at startup** |
 | `VISION_API_KEY` | string | no | — | VISION_API_KEY — optional, because a self-hosted vLLM behind the cluster network commonly has no auth. (`visionApiKey`) |
 | `VISION_BUDGET_PAGES_PER_DAY` | number | no | `0, 0=unlimited` | VISION_BUDGET_PAGES_PER_DAY — vision pages a single tenant may spend across all of its jobs per UTC day (requirement 5.8). (`visionBudgetPagesPerDay`) |
@@ -670,7 +670,7 @@ Source of truth: `apps/extract/src/config.ts`.
 | `VISION_SUPPORTS_JSON_SCHEMA` | boolean | no | `false` | VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces `response_format: json_schema` on chat completions (task 7.9, requirement 5.10). (`visionSupportsJsonSchema`) |
 | `VISION_TEMPERATURE` | number | no | `0.1` | Config member `visionTemperature` |
 | `VISION_TIMEOUT_MS` | number | no | `600000, 0=disabled` | VISION_TIMEOUT_MS — per-page timeout. (`visionTimeoutMs`) |
-| `VISION_TOKEN_ESTIMATE` | string | no | — | **read directly — not validated at startup** |
+| `VISION_TOKEN_ESTIMATE` | string | no | — | — |
 | `VISION_TOP_P` | number | no | `1.0` | Config member `visionTopP` |
 | `VISION_URL` | string | **yes** | — | VISION_URL — base URL of an OpenAI-compatible chat-completions API. (`visionUrl`) |
 | `ZIP_MAX_ENTRIES` | number | no | `10000` | ZIP_MAX_ENTRIES — largest entry count a ZIP-based container (XLSX, VSDX, DOCX, PPTX, DOCX embeddings) may declare. (`zipMaxEntries`) |

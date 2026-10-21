@@ -498,15 +498,50 @@ async function parseEnvReads(directories: string[]): Promise<Variable[]> {
 }
 
 /**
+ * Names read through a startup-validating accessor (`parseIntEnv("JOB_CONCURRENCY", …)`,
+ * `parseEnumEnv("TRANSACTION_ENFORCEMENT", …)`, …) under `directories`.
+ *
+ * Such reads belong to the startup validation pass even when no `Config`
+ * interface member documents them — the accessor parses and range-checks the
+ * value at boot. They therefore must not carry the "read directly — not
+ * validated at startup" label.
+ */
+async function collectValidatedNames(directories: string[]): Promise<Set<string>> {
+	const names = new Set<string>();
+	for (const directory of directories) {
+		const glob = new Bun.Glob("**/*.{ts,tsx}");
+		for await (const entry of glob.scan({ cwd: resolve(root, directory) })) {
+			if (/__tests__|\.test\.|\.spec\./.test(entry)) continue;
+			const text = await readFile(resolve(root, directory, entry), "utf8");
+			for (const match of text.matchAll(
+				/\bparse[A-Za-z]*Env\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
+			)) {
+				names.add(match[1]);
+			}
+		}
+	}
+	for (const name of NON_CONFIG_NAMES) names.delete(name);
+	for (const name of [...names]) {
+		if (NON_CONFIG_PREFIXES.some((p) => name.startsWith(p))) names.delete(name);
+	}
+	return names;
+}
+
+/**
  * Returns the variables read under `directories` that the service's primary
  * parser did not produce, marked as unvalidated.
  *
  * These are real operator-facing settings — they are simply not part of the
  * startup validation pass, which is a fact an operator needs, not one to hide.
+ *
+ * `validated` names the variables that a startup-validating accessor reads
+ * (see `collectValidatedNames`); they are listed without the warning because
+ * the accessor does check them at boot.
  */
 async function unvalidatedExtras(
 	directories: string[],
 	parsed: Variable[],
+	validated?: Set<string>,
 ): Promise<Variable[]> {
 	const known = new Set(parsed.map((variable) => variable.name));
 	const read = await collectEnvNames(directories);
@@ -517,7 +552,7 @@ async function unvalidatedExtras(
 			name,
 			type: "string",
 			required: false,
-			unvalidated: true,
+			unvalidated: validated?.has(name) ? false : true,
 		}));
 }
 
@@ -988,7 +1023,11 @@ const sections: Section[] = [
       "Retrieval, ingestion, chunking, embedding, and reranking. Search has its own environment contract and does not share Runtime's variables even where names coincide. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member, so they do not appear in the typed configuration object.",
     variables: [
       ...searchParsed,
-      ...(await unvalidatedExtras(["apps/search/src"], searchParsed)),
+      ...(await unvalidatedExtras(
+        ["apps/search/src"],
+        searchParsed,
+        await collectValidatedNames(["apps/search/src"]),
+      )),
     ],
   },
   {
@@ -998,7 +1037,11 @@ const sections: Section[] = [
       "Document-to-Markdown extraction against the `atf-extract` contract. Extract has its own environment contract; only the access-control block (`AUTHN_MODE`, `OIDC_*`, `UI_*`, …) is deliberately identical to Search's so SSO is configured once. `VISION_URL` and `VISION_MODEL` are the only required variables. `SEARCH_URL` and `CONVERTER_URL` are the two halves of the optional Search integration: without `SEARCH_URL` the `/v1/ingest` route is not mounted here, and without `CONVERTER_URL` the `/ingest-file` route is not mounted in Search. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member.",
     variables: [
       ...extractParsed,
-      ...(await unvalidatedExtras(["apps/extract/src"], extractParsed)),
+      ...(await unvalidatedExtras(
+        ["apps/extract/src"],
+        extractParsed,
+        await collectValidatedNames(["apps/extract/src"]),
+      )),
     ],
   },
   {

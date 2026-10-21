@@ -655,6 +655,7 @@ releases:
 - Runbooks reference existing endpoints and the Runtime audit chain; new runbooks cover a Redis outage and transaction-token rotation, and the incident runbook covers a compromised evidence key.
 - Documentation names the existing bundle verifier (`cli.ts verify-bundle`) instead of a non-existent `atf verify-bundle` command.
 - `docs/CAPABILITIES.md` lists the capabilities added in this release.
+- `docs/CONFIGURATION.md` shows defaults and descriptions for Search and Extract variables validated at startup, and `REVISION_TTL` in seconds (default 1209600).
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

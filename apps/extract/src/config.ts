@@ -714,14 +714,14 @@ export interface Config {
    * keeps them forever. Source bytes are NOT subject to it (see
    * jobs/job-retention.ts); they leave with DELETE /v2/documents or an erasure.
    */
-  jobRetentionDays: number;
+  jobRetentionDays: number; // JOB_RETENTION_DAYS (default: 0)
   /**
    * UPLOAD_SESSION_MAX_AGE_HOURS — hours an unfinished resumable upload session
    * (and its `.part` file) is kept after its last chunk. Default 72, 0 = forever.
    */
-  uploadSessionMaxAgeHours: number;
+  uploadSessionMaxAgeHours: number; // UPLOAD_SESSION_MAX_AGE_HOURS (default: 72, 0=forever)
   /** RETENTION_SWEEP_INTERVAL_MINUTES — how often the retention sweep runs (default 60). */
-  retentionSweepIntervalMinutes: number;
+  retentionSweepIntervalMinutes: number; // RETENTION_SWEEP_INTERVAL_MINUTES (default: 60)
   /** QUEUE_MAX_DEPTH — queued documents before new uploads get 503. */
   queueMaxDepth: number; // QUEUE_MAX_DEPTH (default: 32)
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
