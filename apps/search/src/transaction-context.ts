@@ -3,43 +3,32 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { TransactionEnvelopeConsumerV1Schema } from "@atf/transaction-contract";
 import { decodeProtectedHeader, jwtVerify, type JWTVerifyGetKey } from "jose";
 import * as z from "zod";
 import type { RequestPrincipal } from "./request-principal.js";
 
 export type TransactionEnforcement = "off" | "optional" | "required";
 
-const budgetSchema = z.object({
-  maxCostUsd: z.number().nonnegative().optional(),
-  maxTokens: z.number().int().nonnegative().optional(),
-  maxDurationMs: z.number().int().positive().optional(),
-  maxRetrievalDocuments: z.number().int().nonnegative().optional(),
-  maxToolCalls: z.number().int().nonnegative().optional(),
-}).strict();
-
-const traceSchema = z.object({
-  traceId: z.string().min(1).optional(),
-  spanId: z.string().min(1).optional(),
-  traceparent: z.string().min(1).optional(),
-  deadlineAt: z.union([z.string().datetime(), z.number().int().positive()]).optional(),
-}).strict();
-
-export const transactionEnvelopeSchema = z.object({
-  version: z.literal("v1"),
-  iss: z.string().min(1), aud: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
-  iat: z.number().int(), exp: z.number().int(), jti: z.string().min(1),
-  executionId: z.string().min(1), invocationId: z.string().min(1),
-  userId: z.string().min(1).optional(), tenantId: z.string().min(1).optional(),
-  agentId: z.string().min(1).optional(), sessionId: z.string().min(1).optional(),
+/**
+ * The shared consumer schema is the validation baseline, so an additive claim
+ * from the issuer never breaks Search on its own: unknown claims are stripped,
+ * not rejected. The two Search-specific rules ride on top: the contract hash
+ * fields accept either casing (the shared regex is lowercase-only; Search
+ * canonicalizes to lowercase below) and must agree with each other.
+ */
+export const transactionEnvelopeSchema = TransactionEnvelopeConsumerV1Schema.extend({
   /** Preferred v1 binding supplied by an orchestrator for the input action contract. */
-  actionContractHash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  actionContractHash: z.string().optional(),
   /** Compatibility alias for actionContractHash; never denotes a response evidence pack. */
-  evidenceContractHash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
-  scopes: z.array(z.string()), groups: z.array(z.string()), purpose: z.string().optional(),
-  policyVersion: z.string().optional(), decisionId: z.string().optional(),
-  dataClassification: z.string().optional(), budget: budgetSchema,
-  delegationChain: z.array(z.unknown()), trace: traceSchema,
-}).strict().superRefine((value, context) => {
+  evidenceContractHash: z.string().optional(),
+}).superRefine((value, context) => {
+  for (const field of ["actionContractHash", "evidenceContractHash"] as const) {
+    const hash = value[field];
+    if (hash !== undefined && !/^[a-f0-9]{64}$/i.test(hash)) {
+      context.addIssue({ code: "custom", path: [field], message: "must be a 64-character hex SHA-256" });
+    }
+  }
   if (value.actionContractHash && value.evidenceContractHash &&
       value.actionContractHash.toLowerCase() !== value.evidenceContractHash.toLowerCase()) {
     context.addIssue({

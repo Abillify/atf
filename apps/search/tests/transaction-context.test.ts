@@ -98,10 +98,22 @@ describe("Agent Transaction Fabric v1", () => {
       ...base(now), actionContractHash: hash, evidenceContractHash: stableHash("different"),
     }), config, principal), "TRANSACTION_ENVELOPE_INVALID");
   });
-  it("keeps evidencePackHash out of the strict transaction envelope", async () => {
+  it("strips unknown additional claims instead of rejecting them", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const context = await verifyTransactionToken(await token({
+      ...base(now), evidencePackHash: stableHash("response-only"), nbf: now,
+    }), config, principal);
+    expect(context.envelope).toMatchObject({ version: "v1" });
+    expect(context.envelope).not.toHaveProperty("evidencePackHash");
+    expect(context.envelope).not.toHaveProperty("nbf");
+  });
+  it("rejects a contract hash that is not a 64-character hex SHA-256", async () => {
     const now = Math.floor(Date.now() / 1000);
     await expectCode(verifyTransactionToken(await token({
-      ...base(now), evidencePackHash: stableHash("response-only"),
+      ...base(now), actionContractHash: "not-a-hash",
+    }), config, principal), "TRANSACTION_ENVELOPE_INVALID");
+    await expectCode(verifyTransactionToken(await token({
+      ...base(now), evidenceContractHash: stableHash("x").slice(0, 63),
     }), config, principal), "TRANSACTION_ENVELOPE_INVALID");
   });
   it("extracts neutral, header and legacy compatibility token locations", () => {

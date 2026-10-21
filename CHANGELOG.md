@@ -525,6 +525,9 @@ releases:
 - Search: `group_by_document` keeps at most `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT`
   (default 8) best-scoring chunks per document and marks the result `truncated` with
   `omitted_chunks`; previously the whole candidate pool became context.
+- Search validates transaction envelopes with the shared `@atf/transaction-contract`
+  consumer schema; additional issuer claims no longer make Search reject an otherwise
+  valid token.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
