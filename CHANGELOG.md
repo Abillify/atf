@@ -660,6 +660,7 @@ releases:
 - `docs/CAPABILITIES.md` lists the capabilities added in this release.
 - `docs/CONFIGURATION.md` shows defaults and descriptions for Search and Extract variables validated at startup, and `REVISION_TTL` in seconds (default 1209600).
 - Documentation describes the production profile through ATF_PROFILE, SECURITY.md covers evidence signing and content trust, and DEPLOYMENT.md shows how to verify the release bundle attestation.
+- UPGRADE.md: page ranges, media route and the compliance-policy behaviour are described correctly.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

@@ -306,7 +306,7 @@ configuration and clients. Do these **before** rolling out:
    Clients that depended on quoted phrases or exclusions must filter themselves.
 8. **Extract.** A v2 job that would process more than `MAX_PAGES` pages (default
    500, `0` = unlimited) now fails terminally; the limit counts the pages the job
-   covers (`pages.to`), not the raw file. `DERIVED_PDF_CACHE` (default on) keeps
+   covers (the last page of the requested range, e.g. `pages: "3-10"`), not the raw file. `DERIVED_PDF_CACHE` (default on) keeps
    converted PDFs under `TEMP_DIR/derived-pdf` — see below for its retention.
    `JOB_CONCURRENCY` (default 1) multiplies the model load: peak vision calls ≈
    `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas`.
@@ -502,15 +502,16 @@ deployment. With `REPLICAS > 1` they show up as warnings; plan around them.
 
 | Behaviour | What happens with several replicas | What to do now |
 | --- | --- | --- |
-| Runtime media store (`show_figure` links) | A link minted by one replica 404s on another | Pin figure traffic to one replica or route `/media` stickily |
+| Runtime media store (`show_figure` links) | A link minted by one replica 404s on another | Pin figure traffic to one replica or route `/v1/media/:id` stickily |
 | Runtime receipts transparency log | Each replica keeps its own log | Run receipts on one replica, or accept per-replica logs |
 | Gate pagination cursors | Signed with a per-process key unless `server.pagination.secret` is set | Set `server.pagination.secret` |
 | Gate approval / invocation stores | In memory without Redis | `MCPGATE_TRANSACTION_REDIS_URL` (already fatal in production for `> 1` replica) |
 
 Also decided and documented, not changed here:
 
-- **Compliance policy.** `COMPLIANCE_POLICY_REQUIRED` stays opt-in; the production
-  gate warns while no policy is configured. Making it fatal is planned for the
+- **Compliance policy.** `COMPLIANCE_POLICY_REQUIRED` stays opt-in. Without
+  `COMPLIANCE_POLICY_REQUIRED` the Runtime only logs at startup that no compliance policy is
+  loaded; with it, production refuses to start. A stricter default is planned for the
   next minor release, so set it now if you want the stricter behaviour early.
 - **Retention.** `JOB_RETENTION_DAYS` stays 0 (keep everything); the production
   gate warns. A default above 0 is a candidate for a later release; set it now to
@@ -571,7 +572,7 @@ new binary around for audits, or verify them offline with
 | Search start aborts: `EMBED_FALLBACK_MODEL … differs from EMBED_MODEL` | The fallback would put a second embedding space into the index | Same model for both, or `EMBED_FALLBACK_SAME_SPACE=true` when both names serve the same weights |
 | Gate refuses to start in production: playground / plaintext URL | `monitoring.playground.enabled` is on, or `server.publicUrl` / `monitoring.oidc.redirectUri` is `http://` | Disable the playground, use `https://` (or run `staging`) |
 | Search/Extract refuse to start: `REPLICAS` without shared rate limit | `REPLICAS > 1` in production and no `RATE_LIMIT_REDIS_URL` | Set `RATE_LIMIT_REDIS_URL` (and install `redis` in the image), or declare `REPLICAS=1` only if that is true |
-| Extract job `failed`, message `…the configured limit is N (MAX_PAGES)` | The job covers more pages than `MAX_PAGES` | Raise `MAX_PAGES`, request fewer pages (`pages.to`), or set `0` |
+| Extract job `failed`, message `…the configured limit is N (MAX_PAGES)` | The job covers more pages than `MAX_PAGES` | Raise `MAX_PAGES`, request fewer pages (narrow the requested range, e.g. `pages: "3-10"`), or set `0` |
 | Quoted phrases / `-term` in Search queries no longer behave as before | The lexical branch ORs plain terms; `websearch` syntax is not parsed | Filter client-side; use `filter`/identifier lookups for exact matches |
 | `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
