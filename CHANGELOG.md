@@ -650,6 +650,7 @@ releases:
 - `eval:run` against a server reads tool calls, finish reason and diagnostics from the execution's debug trace, so `toolCalled` assertions work outside the in-process runner.
 - Documentation no longer claims that the Helm chart carries no replica counts.
 - CI: negated grep assertions in the Helm rendering step now fail the job when the pattern is present.
+- `docs/THREAT-MODEL.md` matches the code again (approval separation, derived-PDF cache, converter gate, compliance policy, content-trust taint) and its tables render correctly; the Gate README no longer mentions a Runtime approval secret.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

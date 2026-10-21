@@ -210,8 +210,8 @@ accepted and while the audience is the example value `mcpgate`
 ([ADR-0035](../../docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md); order of
 the migration in [UPGRADE](../../docs/UPGRADE.md), item 20).
 
-`MCPGATE_APPROVAL_SECRET` must match Runtime's approval signing secret so an approval issued in
-Runtime is accepted here.
+`MCPGATE_APPROVAL_SECRET` signs the Gate's approval tokens. Runtime does not hold this secret:
+it obtains tokens through `approvals/resolve`.
 
 **Who resolves an approval.** The Gate records the resolver from the caller's verified identity;
 the `approver` a client sends is kept only as a label (`declaredApprover`), and an event notes
