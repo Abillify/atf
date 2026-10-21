@@ -88,6 +88,14 @@ describe("setGenAiRequestAttributes", () => {
     expect(attrs[GEN_AI_ATTRS.requestMaxTokens]).toBe(1024);
   });
 
+  it("sets gen_ai.provider.name with the same value as gen_ai.system", () => {
+    const { span, attrs } = recordingSpan();
+    setGenAiRequestAttributes(span, { provider: "openai", model: "gpt-4o" });
+    expect(GEN_AI_ATTRS.providerName).toBe("gen_ai.provider.name");
+    expect(attrs["gen_ai.provider.name"]).toBe("openai");
+    expect(attrs["gen_ai.provider.name"]).toBe(attrs["gen_ai.system"]);
+  });
+
   it("omits sampling params when unset", () => {
     const { span, attrs } = recordingSpan();
     setGenAiRequestAttributes(span, { provider: "ollama", model: "llama3.2" });

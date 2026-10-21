@@ -578,6 +578,7 @@ releases:
 - The Gate options `auth.oauth.allowAnyIssuer` and `allowAnyAudience` (also under `additionalIssuers`) are deprecated: they have had no effect since the issuer and audience became mandatory, and setting them to `true` now logs a startup warning.
 - `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` (string, OpenAI metadata format) and also marks `/v1/responses/{id}` and flows served as MCP tools.
 - `COMPLIANCE_POLICY_REQUIRED` is checked by the production-readiness gate and reported by readiness (`compliance_policy: missing`).
+- GenAI spans carry `gen_ai.provider.name` in addition to `gen_ai.system`.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

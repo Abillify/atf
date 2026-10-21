@@ -27,7 +27,10 @@ import { resolveProviderProtocol } from "../config/providers.js";
 
 /** Stable attribute keys from the OTel GenAI semantic conventions. */
 export const GEN_AI_ATTRS = {
+  /** Deprecated in the spec in favour of {@link GEN_AI_ATTRS.providerName}; both are emitted during the transition. */
   system: "gen_ai.system",
+  /** `gen_ai.provider.name`: the current name of the attribute `gen_ai.system` carried. */
+  providerName: "gen_ai.provider.name",
   operationName: "gen_ai.operation.name",
   requestModel: "gen_ai.request.model",
   requestTemperature: "gen_ai.request.temperature",
@@ -117,7 +120,9 @@ export function genAiSpanName(
 /** Sets the request-side `gen_ai.*` attributes on a span. */
 export function setGenAiRequestAttributes(span: Span, req: GenAiRequest): void {
   const operation = req.operation ?? "chat";
-  span.setAttribute(GEN_AI_ATTRS.system, genAiSystem(req.provider));
+  const system = genAiSystem(req.provider);
+  span.setAttribute(GEN_AI_ATTRS.system, system);
+  span.setAttribute(GEN_AI_ATTRS.providerName, system);
   span.setAttribute(GEN_AI_ATTRS.operationName, operation);
   span.setAttribute(GEN_AI_ATTRS.requestModel, req.model);
   if (req.temperature !== undefined) {
