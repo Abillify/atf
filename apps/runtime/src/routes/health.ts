@@ -64,10 +64,13 @@ export interface HealthDetail {
    */
   audit?: DependencyCheck;
   /**
-   * Flow files that fail to load: `degraded` while any does.
-   * Informational only (never 503). Present only when a ledger is wired.
+   * Flow files that fail to load: `degraded` while any does, with only the
+   * COUNT in `flow_load_failures`. This probe is unauthenticated, so file names
+   * and reasons stay out of it; they are in the reload log and the
+   * authenticated monitoring API. Informational only (never 503). Present only
+   * when a ledger is wired.
    */
-  flow_load?: DependencyCheck;
+  flow_load?: DependencyCheck & { flow_load_failures?: number };
   /**
    * Tool-Authorization-Policy health (Req 7.7, platform-hardening):
    * `degraded` (`policy_stale: true`) when the last `tool-authz.json` reload
@@ -342,18 +345,16 @@ export function createHealthRouter(
           : { status: "ok", policy_stale: false };
 
     const flowLoadFailures = options?.flowLoad?.() ?? [];
-    const flowLoadCheck: DependencyCheck | undefined =
+    const flowLoadCheck: HealthDetail["flow_load"] | undefined =
       options?.flowLoad === undefined
         ? undefined
         : flowLoadFailures.length > 0
           ? {
               status: "degraded",
-              reason: `${flowLoadFailures.length} flow file(s) fail to load: ${flowLoadFailures
-                .slice(0, 10)
-                .map((f) => f.file)
-                .join(", ")}${flowLoadFailures.length > 10 ? ", …" : ""} (see aiperator_flow_load_failures).`,
+              reason: `${flowLoadFailures.length} flow file(s) fail to load (see aiperator_flow_load_failures and the flow load log).`,
+              flow_load_failures: flowLoadFailures.length,
             }
-          : { status: "ok" };
+          : { status: "ok", flow_load_failures: 0 };
     const complianceCheck: HealthDetail["compliance_policy"] | undefined =
       options?.compliancePolicy?.required !== true
         ? undefined

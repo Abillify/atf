@@ -579,7 +579,7 @@ new binary around for audits, or verify them offline with
 | Quoted phrases / `-term` in Search queries no longer behave as before | The lexical branch ORs plain terms; `websearch` syntax is not parsed | Filter client-side; use `filter`/identifier lookups for exact matches |
 | `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering. Rows after the canonical cut-off must verify canonically |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
-| Flow missing after upgrade, `/health/ready` shows `flow_load: degraded` with "Unknown config keys" | Production profile rejects config keys the node type does not read | Fix the key or prefix it with `x-`; check with `cli.ts validate` |
+| Flow missing after upgrade, `/health/ready` shows `flow_load: degraded` (the file and the "Unknown config keys" reason are in the flow load log) | Production profile rejects config keys the node type does not read | Fix the key or prefix it with `x-`; check with `cli.ts validate` |
 
 ## Rollback
 

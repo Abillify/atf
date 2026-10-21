@@ -247,6 +247,7 @@ releases:
 - The egress guard blocks the documentation address ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) in addition to the private and reserved ranges it already refused.
 - The audit chain accepts the legacy hash form only for rows written before the first canonical row.
 - Eval regex assertions reject nested-quantifier patterns and match at most 100 000 characters.
+- `/health/ready` reports only the number of failed flow files (`flow_load_failures`); file names and reasons stay in the flow load log instead of the unauthenticated probe.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
@@ -803,6 +804,7 @@ what it returns, without any code change on your side:
 - The configuration preset variable is now `ATF_PRESET`; `PROFILE` keeps working as a deprecated alias and logs a warning. Setting both to different values stops startup.
 - Search MCP `search` results are compact JSON now; set `SEARCH_MCP_PRETTY_JSON=true` if a client relied on the 2-space indentation.
 - `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` as a string now; clients that compared with the boolean `true` must compare with the string.
+- `/health/ready` no longer lists the file names and reasons of flows that fail to load; alerting on `flow_load: degraded` keeps working, and the details are in the flow load log.
 ## [0.18.1] — 2026-10-18
 
 ### Security

@@ -124,7 +124,8 @@ need adaptation.
 - **Asynchronous jobs.** Long runs execute in the background and are polled by job id, with
   optional lease-based recovery after a replica restart.
 - **Flow load failures are visible.** `/health/ready` carries an informational `flow_load`
-  check (`degraded` with the file, reason and first-seen time; never a 503) and the gauge
+  check (`degraded` with only the number of failed files in `flow_load_failures`; never a 503;
+  file names and reasons are in the flow load log, not in the unauthenticated probe) and the gauge
   `aiperator_flow_load_failures` follows the same ledger. In the production profile a flow
   whose node `config` contains a key the node type does not read is not loaded at all;
   elsewhere the load logs a warning. `cli.ts validate` and `POST /flows/validate` report

@@ -557,7 +557,17 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
                 redis: { $ref: "#/components/schemas/DependencyCheck" },
                 flows: { $ref: "#/components/schemas/DependencyCheck" },
                 audit: { $ref: "#/components/schemas/DependencyCheck" },
-                flow_load: { $ref: "#/components/schemas/DependencyCheck" },
+                flow_load: {
+                  allOf: [
+                    { $ref: "#/components/schemas/DependencyCheck" },
+                    {
+                      type: "object",
+                      description:
+                        "Only the number of flow files that fail to load; file names and reasons are not part of the unauthenticated probe.",
+                      properties: { flow_load_failures: { type: "integer", minimum: 0 } },
+                    },
+                  ],
+                },
                 policy_stale: { $ref: "#/components/schemas/DependencyCheck" },
               },
             },

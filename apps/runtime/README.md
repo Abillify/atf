@@ -58,7 +58,7 @@ bun run --filter @atf/runtime build
 | `/monitoring/*` | Execution event stream, history, debug traces, explain cards, audit log, approvals, canary and shadow state, replay, limits, SLOs, provider and pool health, provider testing, usage |
 | `/optimizer/*` | Routing advice (cheaper candidate models) for loaded flows and for a posted definition, trace analysis, and the self-optimizing loop when `OPTIMIZER_ENABLED` |
 | `/autopilot/*` | Autopilot configuration and runs |
-| `/health`, `/health/live`, `/health/ready` | Health, liveness and readiness (`/health/ready` also reports `flow_load`: flow files that failed to load, and `"auth": "disabled"` when `AUTHN_MODE=disabled`) |
+| `/health`, `/health/live`, `/health/ready` | Health, liveness and readiness (`/health/ready` also reports `flow_load`: how many flow files failed to load (count only; names are in the log), and `"auth": "disabled"` when `AUTHN_MODE=disabled`) |
 | `/metrics` | Prometheus metrics |
 The complete, generated list of routes with their mount conditions is the router table in
 [`ARCHITECTURE.md`](../../ARCHITECTURE.md); the OpenAPI document is served at `/openapi.json`.

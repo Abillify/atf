@@ -216,12 +216,25 @@ describe("readiness hint and metric", () => {
     expect(status).toBe(200);
     expect(body.status).toBe("ready");
     expect(body.checks.flow_load?.status).toBe("degraded");
-    expect(body.checks.flow_load?.reason).toContain("broken.json");
+    expect(body.checks.flow_load?.flow_load_failures).toBe(1);
+  });
+
+  test("the public probe carries the count, never file names or reasons", async () => {
+    const { body } = await ready([
+      { file: "secret-customer-flow.json", reason: "Unknown config keys: n1.config.apiKey", since: new Date().toISOString() },
+      { file: "other.json", reason: "bad json", since: new Date().toISOString() },
+    ]);
+    const text = JSON.stringify(body);
+    expect(body.checks.flow_load?.flow_load_failures).toBe(2);
+    expect(text).not.toContain("secret-customer-flow");
+    expect(text).not.toContain("other.json");
+    expect(text).not.toContain("apiKey");
   });
 
   test("no failures: the check is ok", async () => {
     const { body } = await ready([]);
     expect(body.checks.flow_load?.status).toBe("ok");
+    expect(body.checks.flow_load?.flow_load_failures).toBe(0);
   });
 
   test("without a ledger wired there is no flow_load check at all", async () => {
