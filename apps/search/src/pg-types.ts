@@ -327,6 +327,13 @@ export interface SearchResult {
    * only the best-scoring one; read the others (or `get_thread`) for the rest.
    */
   group_members?: string[];
+  /**
+   * Set on a `group_by_document` result whose chunk list was capped: lower-
+   * scoring chunks were dropped from the merged content (`omitted_chunks`).
+   */
+  truncated?: boolean;
+  /** How many chunks of this document were dropped when `truncated` is set. */
+  omitted_chunks?: number;
 }
 
 /**

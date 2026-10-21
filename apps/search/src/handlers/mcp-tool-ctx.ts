@@ -53,6 +53,12 @@ export interface McpToolContext {
    * before this limit (query-limits.ts); the tools report `query_truncated`.
    */
   maxQueryChars?: number;
+  /**
+   * SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT: best-scoring chunks kept per
+   * document by `group_by_document`; a cut document reports `truncated`
+   * and `omitted_chunks`.
+   */
+  groupMaxChunksPerDocument?: number;
   chunkingOptions?: ChunkingOptions | null;
   summaryClient?: SummaryClient | null;
   transactionConfig: TransactionConfig;

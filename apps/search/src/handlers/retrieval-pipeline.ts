@@ -304,6 +304,11 @@ export interface RankingOptions {
 	limit: number;
 	/** Legacy MCP `group_by_document` collapse. */
 	legacyGroupByDocument: boolean;
+	/**
+	 * SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT: best-scoring chunks kept per
+	 * document by the legacy collapse; a cut document reports `truncated`.
+	 */
+	groupMaxChunksPerDocument?: number;
 	diversify: DiversifyMode;
 	/** v2 `group_by` merge (`"none"` is a passthrough). */
 	groupBy: GroupByMode;
@@ -334,7 +339,10 @@ export function rankResults(
 ): RankingResult {
 	let ranked = results;
 	if (opts.legacyGroupByDocument) {
-		ranked = groupResultsByDocument(ranked);
+		ranked = groupResultsByDocument(
+			ranked,
+			opts.groupMaxChunksPerDocument ?? 8,
+		);
 	}
 	if (opts.diversify === "default") ranked = diversifyResults(ranked);
 	else if (opts.diversify === "uncapped")
@@ -452,6 +460,11 @@ export interface RetrievalPipelineConfig {
 	/** Resolve e-mail-thread / attachment-parent groups for every hit. */
 	documentGroups: boolean;
 	legacyGroupByDocument: boolean;
+	/**
+	 * SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT: best-scoring chunks kept per
+	 * document by the legacy collapse (default 8).
+	 */
+	groupMaxChunksPerDocument?: number;
 	diversify: DiversifyMode;
 	groupBy: GroupByMode;
 	/** Server/per-request threshold; `null` disables the stage. */
@@ -556,6 +569,7 @@ export async function runRetrievalPipeline(
 	const ranking = rankResults(working, {
 		limit: cfg.limit,
 		legacyGroupByDocument: cfg.legacyGroupByDocument,
+		groupMaxChunksPerDocument: cfg.groupMaxChunksPerDocument,
 		diversify: cfg.diversify,
 		groupBy: cfg.groupBy,
 		minScore: cfg.minScore,

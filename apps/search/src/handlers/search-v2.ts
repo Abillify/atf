@@ -119,6 +119,12 @@ export interface SearchV2HandlerOptions {
    * `query_truncated: true`.
    */
   maxQueryChars?: number;
+  /**
+   * SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT: best-scoring chunks kept per
+   * document by the legacy `group_by_document` collapse (the v2 endpoint
+   * itself groups through `group_by`, which is not capped).
+   */
+  groupMaxChunksPerDocument?: number;
 }
 
 const GRANULARITIES: readonly Granularity[] = [
@@ -529,6 +535,7 @@ export function createSearchV2Handler(
             },
             documentGroups: groupBy === "document" || expandMode === "document",
             legacyGroupByDocument: false,
+            groupMaxChunksPerDocument: options.groupMaxChunksPerDocument,
             diversify: groupBy === "none" ? "default" : "uncapped",
             groupBy,
             minScore: {

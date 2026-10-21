@@ -62,6 +62,7 @@ export function registerSearchTool(opts: McpToolContext): void {
     candidateMultiplier = 4,
     minRerankScore = null,
     maxQueryChars = DEFAULT_MAX_QUERY_CHARS,
+    groupMaxChunksPerDocument = 8,
     authorize,
   } = opts;
 
@@ -520,6 +521,7 @@ export function registerSearchTool(opts: McpToolContext): void {
             rerank: { active: rerankActive, tokenCounter },
             documentGroups: true,
             legacyGroupByDocument: groupByDocument,
+            groupMaxChunksPerDocument,
             diversify: groupBySection
               ? "default"
               : groupByV2 !== undefined
@@ -646,6 +648,9 @@ export function registerSearchTool(opts: McpToolContext): void {
           effective_valid_from: r.effective_valid_from.toISOString(),
           ...(r.document_group ? { document_group: r.document_group } : {}),
           ...(r.group_members ? { group_members: r.group_members } : {}),
+          ...(r.truncated
+            ? { truncated: true, omitted_chunks: r.omitted_chunks }
+            : {}),
           ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
           // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
           ...(v2

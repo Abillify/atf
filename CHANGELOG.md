@@ -521,6 +521,9 @@ releases:
 - Search: the lexical list ranks chunks that contain all query terms first (then by score).
   On the synthetic golden set this restores lexical MRR@10 from 0.70 to 1.00 while keeping
   the recall gain of the OR list.
+- Search: `group_by_document` keeps at most `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT`
+  (default 8) best-scoring chunks per document and marks the result `truncated` with
+  `omitted_chunks`; previously the whole candidate pool became context.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

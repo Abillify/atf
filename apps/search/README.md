@@ -353,6 +353,7 @@ The v2 variables worth deciding deliberately:
 | `RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY` | 16, 2 | Candidates per rerank request, and requests in flight |
 | `HYDE_CACHE_TTL_SECONDS` | 600 | HyDE generation cache lifetime; 0 disables |
 | `SEARCH_MAX_QUERY_CHARS` | 400 | Longer queries are cut at the last space before the limit; responses carry `query_truncated` |
+| `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT` | 8 | Best-scoring chunks kept per document by `group_by_document` (1-64); a cut document reports `truncated` and `omitted_chunks` |
 | `EXPAND_CONCURRENCY` | 8 | Hits expanded in parallel per search |
 | `REVISION_TTL` | 1209600 (seconds, 14 days) | Lifetime of an uncommitted, un-heartbeated revision |
 | `REVISION_TTL_SWEEP_MS` | 3600000 | Cleaner interval; 0 disables |

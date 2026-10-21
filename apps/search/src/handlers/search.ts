@@ -68,6 +68,12 @@ export interface SearchHandlerOptions {
    * `X-Query-Truncated: true` header.
    */
   maxQueryChars?: number;
+  /**
+   * SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT: when `group_by_document` merges
+   * chunks, at most this many best-scoring chunks are kept per document; the
+   * merged result then carries `truncated: true` and `omitted_chunks`.
+   */
+  groupMaxChunksPerDocument?: number;
 }
 
 // ─── Header parsers ───────────────────────────────────────────────────────────
@@ -136,6 +142,7 @@ export function createSearchHandler(
   const queryCache = options.queryCache ?? null;
   const minRerankScore = options.minRerankScore ?? null;
   const maxQueryChars = options.maxQueryChars ?? DEFAULT_MAX_QUERY_CHARS;
+  const groupMaxChunksPerDocument = options.groupMaxChunksPerDocument ?? 8;
 
   return async (req, res, next) => {
     const log: Logger = (req as { log?: Logger }).log ?? logger;
@@ -681,7 +688,7 @@ export function createSearchHandler(
 
       // Group chunks into documents (best score wins, content merged dedup'd).
       if (groupByDocument) {
-        results = groupResultsByDocument(results);
+        results = groupResultsByDocument(results, groupMaxChunksPerDocument);
       }
 
       // Diversify (task 3.5, design §7.1 step 4): collapse same table/figure to
@@ -1051,9 +1058,15 @@ export function buildPostgresFilter(
  *   heuristic is applied).
  * - All other fields (reference, metadata, title, …) are taken from the
  *   highest-scoring chunk so the representative chunk "wins".
+ * - At most `maxChunksPerDocument` best-scoring chunks are kept per document;
+ *   a document that was cut short reports `truncated: true` and
+ *   `omitted_chunks` so a consumer knows the merged text is incomplete.
  * - The final array is sorted by document score descending.
  */
-export function groupResultsByDocument(results: SearchResult[]): SearchResult[] {
+export function groupResultsByDocument(
+  results: SearchResult[],
+  maxChunksPerDocument = 8,
+): SearchResult[] {
   // Group by document — or by the document's group, so an e-mail thread is one
   // result — preserving the order chunks were returned in.
   const groups = new Map<string, SearchResult[]>();
@@ -1069,10 +1082,20 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
 
   const docs: SearchResult[] = [];
 
-  for (const chunks of groups.values()) {
+  for (const groupChunks of groups.values()) {
+    // Cap: keep the best-scoring chunks of this document, so the merged
+    // context stays bounded no matter how large the candidate pool was.
+    const kept =
+      groupChunks.length > maxChunksPerDocument
+        ? [...groupChunks]
+            .sort((a, b) => b.score - a.score)
+            .slice(0, maxChunksPerDocument)
+        : groupChunks;
+    const omittedChunks = groupChunks.length - kept.length;
+
     // Sort chunks by chunk_index so we assemble content in document order
     // (a thread's messages chronologically first).
-    const sorted = [...chunks].sort((a, b) => {
+    const sorted = [...kept].sort((a, b) => {
       const byDocument = groupMemberOrder(a, b);
       if (byDocument !== 0) return byDocument;
       const ia = a.chunk?.chunk_index ?? 0;
@@ -1081,9 +1104,9 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
     });
 
     // Best score (max across all chunks of this document).
-    const bestScore = Math.max(...chunks.map((c) => c.score));
+    const bestScore = Math.max(...groupChunks.map((c) => c.score));
     // Representative chunk: the one with the highest score.
-    const rep = chunks.reduce((best, c) => (c.score > best.score ? c : best));
+    const rep = groupChunks.reduce((best, c) => (c.score > best.score ? c : best));
 
     // The documents merged into this result, in reading order (a thread's
     // messages chronologically). With more than one, each message's text is
@@ -1126,6 +1149,9 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
       score: bestScore,
       content: merged,
       ...(multi ? { group_members: members } : {}),
+      ...(omittedChunks > 0
+        ? { truncated: true, omitted_chunks: omittedChunks }
+        : {}),
     });
   }
 
