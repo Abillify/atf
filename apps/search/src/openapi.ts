@@ -3218,6 +3218,118 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
         },
       },
+      "/v2/retrieve": {
+        post: {
+          tags: ["Search"],
+          operationId: "retrieveV2",
+          summary: "Answer-ready retrieval (question → evidence within a token budget)",
+          description:
+            "The HTTP twin of the MCP tool `retrieve_for_answer`. The question is split into " +
+            "sub-questions by rule (no model; cut at `?`, `;`, ` und `, ` sowie `, ` and `, ` as well as ` where both " +
+            "sides have at least three words), each is searched, the ranked lists are fused by reciprocal rank " +
+            "(`Σ 1/(60+rank)`), repeated chunks and near-duplicate texts are removed, the top 50 are reranked " +
+            "against the original question when a reranker is configured, and the passages are packed into " +
+            "`budget_tokens` (at most 3 per document; a passage that does not fit is skipped, never cut). " +
+            "All text is untrusted data (`content_trust`, `injection_risk` per passage and overall).",
+          parameters: [
+            {
+              name: "X-Collection",
+              in: "header",
+              description: "Target collection name. Default: `documents`.",
+              schema: { type: "string", default: "documents" },
+            },
+            {
+              name: "X-Valid-At",
+              in: "header",
+              description:
+                "RFC 3339 instant with explicit timezone; the body field `valid_at` takes precedence.",
+              schema: { type: "string", format: "date-time" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["question"],
+                  properties: {
+                    question: {
+                      type: "string",
+                      example: "Welche Pflichtfelder hat die Maske M-2 und welche Rechte braucht der Benutzer dafür?",
+                    },
+                    budget_tokens: { type: "integer", minimum: 256, maximum: 32000, default: 4000 },
+                    max_subqueries: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 6,
+                      default: 4,
+                      description: "Maximum number of searches, the original question included.",
+                    },
+                    filter: { type: "object", description: "Metadata equality filter." },
+                    path_prefix: { type: "string" },
+                    valid_at: { type: "string", format: "date-time" },
+                    include_all_versions: { type: "boolean", default: false },
+                    collection: {
+                      type: "string",
+                      description: "Must equal the `X-Collection` header when given.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Evidence packed into the token budget",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      question: { type: "string" },
+                      subqueries: { type: "array", items: { type: "string" } },
+                      budget_tokens: { type: "integer" },
+                      used_tokens: { type: "integer" },
+                      truncated: {
+                        type: "boolean",
+                        description: "More candidates existed than fitted the budget.",
+                      },
+                      reranked: { type: "boolean" },
+                      content_trust: { type: "string", enum: ["untrusted"] },
+                      injection_risk: { type: "string", enum: ["none", "suspected"] },
+                      evidence: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            reference: { type: "string" },
+                            base_ref: { type: "string" },
+                            title: { type: "string" },
+                            section: { type: "string" },
+                            page_start: { type: "integer" },
+                            page_end: { type: "integer" },
+                            content: { type: "string" },
+                            score: { type: "number" },
+                            matched_subqueries: { type: "array", items: { type: "integer" } },
+                            content_trust: { type: "string", enum: ["untrusted"] },
+                            injection_risk: { type: "string", enum: ["none", "suspected"] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Invalid question, budget, filter or collection" },
+            "401": { description: "Unauthorized" },
+            "404": { description: "Collection not found" },
+            "502": { description: "Embedding or search backend failure" },
+          },
+        },
+      },
     }, // end paths
   };
 }

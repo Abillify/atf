@@ -81,6 +81,7 @@ import {
 } from "./handlers/ingest-file.js";
 import { createSearchHandler } from "./handlers/search.js";
 import { createSearchV2Handler } from "./handlers/search-v2.js";
+import { createRetrieveV2Handler } from "./handlers/retrieve-v2.js";
 import { createDeleteHandler } from "./handlers/delete.js";
 import { createErasureHandler } from "./handlers/erasure.js";
 import {
@@ -678,6 +679,20 @@ export function createApp(
       minRerankScore: config.minRerankScore,
       maxQueryChars: config.maxQueryChars,
       groupMaxChunksPerDocument: config.groupMaxChunksPerDocument,
+    },
+  );
+  const retrieveV2Handler = createRetrieveV2Handler(
+    embeddingClient,
+    postgresClient,
+    logger,
+    {
+      rerankerClient,
+      candidateMultiplier: config.rerankCandidateMultiplier,
+      hybridSearch: config.hybridSearch,
+      sparseClient,
+      queryCache,
+      tokenCounter: unitTokenCounter,
+      maxQueryChars: config.maxQueryChars,
     },
   );
   const deleteHandler = createDeleteHandler(postgresClient, logger);
@@ -1378,6 +1393,17 @@ export function createApp(
     metadataMiddleware,
     collectionAccessHeader,
     searchV2Handler,
+  );
+  // Answer-ready retrieval: the HTTP twin of the MCP tool `retrieve_for_answer`,
+  // behind the same chain as /v2/search.
+  app.post(
+    "/v2/retrieve",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    metadataMiddleware,
+    collectionAccessHeader,
+    retrieveV2Handler,
   );
   app.post(
     "/evaluations/retrieval",
