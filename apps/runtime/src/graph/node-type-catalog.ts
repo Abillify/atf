@@ -135,7 +135,7 @@ const TOOL_ARGS_FIELD: ConfigField = {
   kind: "json",
   label: "Forced tool arguments",
   description:
-    "Per tool ref, arguments fixed server-side: `{ \"server/tool\": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store.",
+    "Per tool ref, arguments fixed server-side: `{ \"server/tool\": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Keys may be an exact tool ref, \"<server>/*\" or \"*\". Merge order: \"*\", then \"<server>/*\", then the exact ref (later wins per argument). Wildcard arguments apply only to tools whose input schema declares them.",
   example: { "vectorsearch/search": { collection: "cases", tags: ["{{classification.clientTags}}"] } },
 };
 

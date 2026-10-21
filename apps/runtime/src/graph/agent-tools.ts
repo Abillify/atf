@@ -38,6 +38,7 @@ import type { OpenAITool, ToolChoice } from "../types/openai.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../types/monitoring.js";
 import type { ApprovalRegistry, PendingApproval } from "./approval-gate.js";
+import { resolveForcedToolArgs } from "./tool-args-merge.js";
 import type { ToolEgressGuardrail } from "./output-guardrails.js";
 import { hasFindings } from "./output-guardrails.js";
 import type { ToolOutputValidator } from "../mcp/tool-output-validator.js";
@@ -523,11 +524,35 @@ export async function buildAiTools(
     const parts = toolRef.split("/");
     const serverName = parts.length >= 2 ? (parts[0] ?? toolRef) : toolRef;
     const bareName = parts.length >= 2 ? parts.slice(1).join("/") : toolRef;
-    const configuredArgs = toolArgsCfg?.[toolRef];
-    const forcedArgs =
-      configuredArgs !== undefined
-        ? (substituteTemplates(configuredArgs) as Record<string, unknown>)
-        : undefined;
+
+    let filtered: Awaited<ReturnType<typeof mcpWrapper.getFilteredToolSchema>>;
+    try {
+      filtered = await mcpWrapper.getFilteredToolSchema(serverName, bareName, {
+        authToken: ctx.ssoToken,
+      });
+    } catch (err) {
+      // Skip tools whose schema cannot be fetched, but remember them (and why)
+      // so the caller can tell the model the tool is unavailable and record the
+      // cause for operators. Wrapper errors carry no token material.
+      unavailable.push(toolRef);
+      unavailableReasons[toolRef] = (
+        err instanceof Error ? err.message : String(err)
+      ).slice(0, 300);
+      continue;
+    }
+
+    // Forced arguments for THIS tool, merged over the `"*"` and `"<server>/*"`
+    // entries (see `tool-args-merge.ts`). Computed after the schema fetch
+    // because a wildcard may only set arguments the tool actually declares.
+    const forcedArgs = resolveForcedToolArgs(
+      toolArgsCfg,
+      toolRef,
+      filtered.inputSchema.properties === undefined ||
+        filtered.inputSchema.properties === null
+        ? undefined
+        : new Set(Object.keys(filtered.inputSchema.properties)),
+      substituteTemplates,
+    );
 
     // Hide Search navigation tools the pinned collection cannot serve
     // (`collection_stats.capabilities`, cached per server/collection,
@@ -561,22 +586,6 @@ export async function buildAiTools(
           continue;
         }
       }
-    }
-
-    let filtered: Awaited<ReturnType<typeof mcpWrapper.getFilteredToolSchema>>;
-    try {
-      filtered = await mcpWrapper.getFilteredToolSchema(serverName, bareName, {
-        authToken: ctx.ssoToken,
-      });
-    } catch (err) {
-      // Skip tools whose schema cannot be fetched, but remember them (and why)
-      // so the caller can tell the model the tool is unavailable and record the
-      // cause for operators. Wrapper errors carry no token material.
-      unavailable.push(toolRef);
-      unavailableReasons[toolRef] = (
-        err instanceof Error ? err.message : String(err)
-      ).slice(0, 300);
-      continue;
     }
 
     // Namespaced, collision-free, AI-SDK-valid tool key.
