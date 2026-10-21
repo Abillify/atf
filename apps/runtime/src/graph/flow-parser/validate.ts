@@ -371,6 +371,28 @@ const FigureEmbeddingConfigSchema = z.object({
 });
 
 /**
+ * Model cascade (`config.cascade`): a cheap model answers first and is replaced
+ * ONCE by `escalateTo` when the evidence is weak. `escalateTo` must be a
+ * complete model reference, so an unknown shortcut (left unexpanded by the
+ * loader) is a load error instead of a failure at run time. Defaults of `when`
+ * are applied by the runtime (`graph/cascade.ts`).
+ */
+export const CascadeConfigSchema = z
+	.object({
+		escalateTo: LlmConfigSchema,
+		when: z
+			.object({
+				minCitations: z.number().int().min(0).max(1_000).optional(),
+				sourcesCheckFailed: z.boolean().optional(),
+				maxTopScore: z.number().min(0).max(1).optional(),
+				finishReasonLength: z.boolean().optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
+
+/**
  * LLM node config remains extensible, but security-sensitive output framing is
  * validated explicitly. By default the runtime buffers all ordinary content;
  * the opt-in live mode starts emitting only after the start marker while
@@ -382,6 +404,7 @@ export const LlmNodeConfigSchema = z
 		maxOutputChars: z.number().int().min(1_000).max(1_000_000).optional(),
 		imageInspection: ImageInspectionConfigSchema.optional(),
 		figureEmbedding: FigureEmbeddingConfigSchema.optional(),
+		cascade: CascadeConfigSchema.optional(),
 		toolResultBudget: z
 			.object({
 				perResultChars: z.number().int().min(1_000).max(1_000_000).optional(),

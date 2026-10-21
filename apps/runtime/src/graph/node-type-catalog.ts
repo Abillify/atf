@@ -680,6 +680,66 @@ const LLM: NodeTypeDoc = {
       ],
     },
     {
+      key: "cascade",
+      kind: "object",
+      label: "Escalate weak answers to a stronger model",
+      description:
+        "Lets a cheap model answer first and regenerates the answer ONCE with `escalateTo` when the evidence is weak. The node runs again from the same input (tool loop included) with the stronger model, and the second answer replaces the first completely. It escalates when ANY condition in `when` holds: fewer distinct `[n]` citations than `minCitations` (default 1), a failed `sourcesCheck` (`sourcesCheckFailed`, default true), a best grounding score below `maxTopScore` (not checked unless set), or an answer cut off for length (`finishReasonLength`, default true). Only for nodes that do not stream to the client; with streaming `cascade` is ignored and the diagnostic `cascade_skipped_streaming` is reported. Tokens of both attempts count toward budgets.",
+      example: {
+        escalateTo: { shortcut: "pro" },
+        when: { minCitations: 1, sourcesCheckFailed: true, maxTopScore: 0.35, finishReasonLength: true },
+      },
+      fields: [
+        {
+          key: "escalateTo",
+          kind: "llm",
+          label: "Stronger model",
+          required: true,
+          description: `Model for the second attempt. ${LLM_REF_DESC}`,
+        },
+        {
+          key: "when",
+          kind: "object",
+          label: "Escalation conditions",
+          description: "Optional; the node escalates when ANY condition holds. Omitted conditions use their defaults.",
+          fields: [
+            {
+              key: "minCitations",
+              kind: "number",
+              label: "Minimum citations",
+              integer: true,
+              min: 0,
+              max: 1000,
+              default: 1,
+              description: "Escalate when the answer cites fewer distinct `[n]` sources than this. 0 switches the check off.",
+            },
+            {
+              key: "sourcesCheckFailed",
+              kind: "boolean",
+              label: "Escalate on a failed sources check",
+              default: true,
+              description: "Escalate when `sourcesCheck` reports a problem (for example an unregistered `[n]`).",
+            },
+            {
+              key: "maxTopScore",
+              kind: "number",
+              label: "Weak-evidence score",
+              min: 0,
+              max: 1,
+              description: "Escalate when the best grounding score of the run is below this value. Not checked when omitted or when no grounding score exists.",
+            },
+            {
+              key: "finishReasonLength",
+              kind: "boolean",
+              label: "Escalate on a length cut-off",
+              default: true,
+              description: "Escalate when the answer was cut off because it reached the output length limit.",
+            },
+          ],
+        },
+      ],
+    },
+    {
       key: "outputSchema",
       kind: "json",
       label: "Structured output schema",
