@@ -42,6 +42,7 @@ import {
 } from "./retrieval-pipeline.js";
 import { BadRequest, parseFilters } from "./search-v2.js";
 import { buildSearchDetail, buildSearchSummary } from "./search.js";
+import { clampQuery, DEFAULT_MAX_QUERY_CHARS } from "../query-limits.js";
 import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
@@ -60,6 +61,7 @@ export function registerSearchTool(opts: McpToolContext): void {
     hybridSearchDefault = true,
     candidateMultiplier = 4,
     minRerankScore = null,
+    maxQueryChars = DEFAULT_MAX_QUERY_CHARS,
     authorize,
   } = opts;
 
@@ -244,7 +246,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         ),
     },
     async ({
-      query,
+      query: rawQuery,
       collection,
       requesting_user,
       limit = 10,
@@ -275,6 +277,12 @@ export function registerSearchTool(opts: McpToolContext): void {
       offset = 0,
     }) => {
       const searchStartTime = Date.now();
+      // Query-cost bound: cut an over-long query before it reaches HyDE, the
+      // embedding, the lexical list, or the reranker.
+      const { query, truncated: queryTruncated } = clampQuery(
+        rawQuery,
+        maxQueryChars,
+      );
       const col = collection ?? defaultCollection;
       const secured = await authorize(col);
       if (requesting_user !== undefined) {
@@ -739,6 +747,7 @@ export function registerSearchTool(opts: McpToolContext): void {
               {
                 results: hits,
                 count: hits.length,
+                ...(queryTruncated ? { query_truncated: true } : {}),
                 ...aggregateTrustLabels(hits.map((h) => h.injection_risk)),
                 rerank: rerankStatus,
                 ...(rerankScoreHits.length > 0

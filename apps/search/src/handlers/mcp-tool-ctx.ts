@@ -48,6 +48,11 @@ export interface McpToolContext {
   hybridSearchDefault?: boolean;
   candidateMultiplier?: number;
   minRerankScore?: number | null;
+  /**
+   * SEARCH_MAX_QUERY_CHARS: over-long query texts are cut at the last space
+   * before this limit (query-limits.ts); the tools report `query_truncated`.
+   */
+  maxQueryChars?: number;
   chunkingOptions?: ChunkingOptions | null;
   summaryClient?: SummaryClient | null;
   transactionConfig: TransactionConfig;

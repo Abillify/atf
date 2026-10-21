@@ -352,6 +352,7 @@ The v2 variables worth deciding deliberately:
 | `BATCH_WORKER_EMBED_CONCURRENCY` | 4 | Chunks of one batch embedded in parallel |
 | `RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY` | 16, 2 | Candidates per rerank request, and requests in flight |
 | `HYDE_CACHE_TTL_SECONDS` | 600 | HyDE generation cache lifetime; 0 disables |
+| `SEARCH_MAX_QUERY_CHARS` | 400 | Longer queries are cut at the last space before the limit; responses carry `query_truncated` |
 | `EXPAND_CONCURRENCY` | 8 | Hits expanded in parallel per search |
 | `REVISION_TTL` | 1209600 (seconds, 14 days) | Lifetime of an uncommitted, un-heartbeated revision |
 | `REVISION_TTL_SWEEP_MS` | 3600000 | Cleaner interval; 0 disables |

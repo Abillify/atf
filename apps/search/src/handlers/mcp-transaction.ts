@@ -18,6 +18,7 @@ import { accessScopeForMcp, principalFingerprint } from "../access-scope.js";
 import { normalizePathPrefix } from "../postgres-client.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 import { canonicalActionContractHash, enforceRetrievalBudget, getTransactionContext, stableHash, transactionCorrelation } from "../transaction-context.js";
+import { clampQuery, DEFAULT_MAX_QUERY_CHARS } from "../query-limits.js";
 import { rerankResultsWithStatus } from "./search.js";
 import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
@@ -35,6 +36,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
     defaultCollection = "documents",
     hybridSearchDefault = true,
     candidateMultiplier = 4,
+    maxQueryChars = DEFAULT_MAX_QUERY_CHARS,
     authorize,
     emitQueryActivity,
   } = opts;
@@ -89,8 +91,9 @@ export function registerTransactionTools(opts: McpToolContext): void {
       include_all_versions: z.boolean().optional().describe("Return all eligible historical versions instead of one version per logical document"),
       valid_at: z.string().datetime({ offset: true }).optional().describe("RFC 3339 instant with timezone used for as-of version selection"),
     },
-    async ({ query, collection, limit = 10, filter, path_prefix, include_all_versions, valid_at }) => {
+    async ({ query: rawQuery, collection, limit = 10, filter, path_prefix, include_all_versions, valid_at }) => {
       const startTime = Date.now();
+      const { query } = clampQuery(rawQuery, maxQueryChars);
       const col = collection ?? defaultCollection;
       await authorize(col);
       enforceRetrievalBudget(limit);
@@ -164,7 +167,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
         .describe("Use the configured cross-encoder before selecting evidence. Default: false"),
     },
     async ({
-      query,
+      query: rawQuery,
       collection,
       limit = 10,
       hybrid,
@@ -177,6 +180,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
       rerank,
     }) => {
       const startTime = Date.now();
+      const { query } = clampQuery(rawQuery, maxQueryChars);
       const col = collection ?? defaultCollection;
       const secured = await authorize(col);
 

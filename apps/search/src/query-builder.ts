@@ -59,6 +59,7 @@
 
 import { resolveFigureKinds } from "./figure-kinds.js";
 import { deniesEmptyAcl } from "./acl-default.js";
+import { selectLexicalOperands } from "./query-limits.js";
 import type { AccessScope } from "./access-scope.js";
 import type { SearchFilter, SearchCursor } from "./postgres-client.js";
 import {
@@ -701,11 +702,14 @@ export function buildLexicalAndTsQuery(queryText: string): string {
  * (`A-009`, `DMS-50`) stay one token: the default text-search parser keeps
  * them as a single whole-word lexeme, so splitting them on the hyphen would
  * produce operands that can never match the indexed lexemes.
+ *
+ * At most LEXICAL_MAX_TERMS operands (longest first, a cheap proxy for
+ * rarity; ties by first occurrence) bound the cost of the OR list.
  */
 function lexicalOperands(queryText: string): string[] {
-  const tokens = [
+  const tokens = selectLexicalOperands([
     ...new Set(queryText.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? []),
-  ];
+  ]);
   return tokens.map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`);
 }
 

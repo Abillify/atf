@@ -748,6 +748,17 @@ describe("buildFtsQuery", () => {
       expect(buildLexicalOrTsQuery("   ")).toBe("");
       expect(buildLexicalOrTsQuery("?!&")).toBe("");
     });
+
+    it("caps the OR list at 32 operands for a 40-word query", () => {
+      // 40 distinct words; only the 32 longest (ties: earliest occurrence)
+      // survive, so the tsquery joins 32 quoted terms with 31 separators.
+      const words = Array.from(
+        { length: 40 },
+        (_, i) => `wort${String(i).padStart(2, "0")}`,
+      );
+      const tsquery = buildLexicalOrTsQuery(words.join(" "));
+      expect(tsquery.split(" | ").length).toBe(32);
+    });
   });
 
   // AND-first ranking: the lexical list puts chunks matching EVERY term first

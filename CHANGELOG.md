@@ -227,6 +227,7 @@ releases:
   the upgrade guide, with the two new THREAT-MODEL rows (the `show_figure` capability
   link and the trusted-writer ACL override), each backed by file and line.
 - With the production profile a flow whose node `config` contains a key the node type does not read is no longer loaded; it is reported as a flow load failure (readiness `flow_load: degraded`). Elsewhere the load logs a warning.
+- Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms (longest first).
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
@@ -711,6 +712,7 @@ what it returns, without any code change on your side:
 - **Transaction tokens:** optional move to Ed25519 with an audience per service, in the
   order of UPGRADE item 20.
 - Run `bun run scripts/cli.ts validate <flows-dir>` (in `apps/runtime`) before upgrading a production Runtime; every warning about an unknown config key becomes a flow load failure there. Rename typos or prefix annotation keys with `x-`.
+- Search queries longer than 400 characters are now cut. Flows that append large context to the query should raise `SEARCH_MAX_QUERY_CHARS` or move the context out of the query.
 ## [0.18.1] — 2026-10-18
 
 ### Security

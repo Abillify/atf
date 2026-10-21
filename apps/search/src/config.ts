@@ -132,6 +132,12 @@ export interface Config {
 
   hybridSearch: boolean; // HYBRID_SEARCH (default: true)
   bodyLimit: string; // BODY_LIMIT (default: "10mb")
+  /**
+   * Upper bound for the query text of /v1/search, /v2/search and the MCP
+   * search tools. Longer queries are cut at the last space before the limit;
+   * the response reports query_truncated.
+   */
+  maxQueryChars: number; // SEARCH_MAX_QUERY_CHARS (default: 400)
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
   /** Shared Redis URL for the rate limiter; without it the budget is per replica. */
   rateLimitRedisUrl: string | null; // RATE_LIMIT_REDIS_URL
@@ -1152,6 +1158,13 @@ export function loadConfig(): Config {
     max: 99,
   });
   const queryCacheSize = parseNonNegIntEnv("QUERY_CACHE_SIZE", 1000);
+  // Query-cost bound (docs/operations-and-retrieval.md): longer queries are
+  // cut at the last space before the limit, never rejected, so flows that
+  // append context keep working while the DB CPU cost stays bounded.
+  const maxQueryChars = parseIntEnv("SEARCH_MAX_QUERY_CHARS", 400, {
+    min: 50,
+    max: 10000,
+  });
   const pgPoolMax = parseIntEnv("PG_POOL_MAX", 20);
   const pgStatementTimeoutMs = parseNonNegIntEnv(
     "PG_STATEMENT_TIMEOUT_MS",
@@ -1629,6 +1642,7 @@ export function loadConfig(): Config {
     rerankFallbackDocumentsField,
     hybridSearch,
     bodyLimit,
+    maxQueryChars,
     rateLimit,
     rateLimitRedisUrl,
     replicas,

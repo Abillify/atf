@@ -44,6 +44,7 @@ import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { getUsageContext } from "../usage-context.js";
 import { responseTrustLabels } from "../content-trust.js";
+import { clampQuery, DEFAULT_MAX_QUERY_CHARS } from "../query-limits.js";
 import { getPrincipal } from "../request-principal.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 
@@ -61,6 +62,12 @@ export interface SearchHandlerOptions {
    * null / undefined = disabled (no filtering, no field).
    */
   minRerankScore?: number | null;
+  /**
+   * SEARCH_MAX_QUERY_CHARS: an over-long query body is cut at the last space
+   * before this limit (query-limits.ts); the response then carries the
+   * `X-Query-Truncated: true` header.
+   */
+  maxQueryChars?: number;
 }
 
 // ─── Header parsers ───────────────────────────────────────────────────────────
@@ -128,16 +135,24 @@ export function createSearchHandler(
   const sparseClient = options.sparseClient ?? null;
   const queryCache = options.queryCache ?? null;
   const minRerankScore = options.minRerankScore ?? null;
+  const maxQueryChars = options.maxQueryChars ?? DEFAULT_MAX_QUERY_CHARS;
 
   return async (req, res, next) => {
     const log: Logger = (req as { log?: Logger }).log ?? logger;
     try {
       const searchStartTime = Date.now();
       // 1. Body
-      const body = req.body as string;
+      let body = req.body as string;
       if (!body || body.trim() === "") {
         res.status(400).json({ error: "Request body must not be empty" });
         return;
+      }
+      // Query-cost bound (query-limits.ts): cut an over-long query at the
+      // last space before the limit; the response reports X-Query-Truncated.
+      {
+        const clamped = clampQuery(body, maxQueryChars);
+        body = clamped.query;
+        if (clamped.truncated) res.setHeader("X-Query-Truncated", "true");
       }
 
       // 2. X-Max-Results (default 10, max 100)

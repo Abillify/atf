@@ -627,6 +627,7 @@ export function createApp(
       sparseClient,
       queryCache,
       minRerankScore: config.minRerankScore,
+      maxQueryChars: config.maxQueryChars,
     },
   );
   // Token counter (task 3.1) used by the full multi-level unit builder to size
@@ -653,6 +654,7 @@ export function createApp(
       queryCache,
       tokenCounter: unitTokenCounter,
       minRerankScore: config.minRerankScore,
+      maxQueryChars: config.maxQueryChars,
     },
   );
   const deleteHandler = createDeleteHandler(postgresClient, logger);
@@ -858,6 +860,7 @@ export function createApp(
     hybridSearchDefault: config.hybridSearch,
     candidateMultiplier: config.rerankCandidateMultiplier,
     minRerankScore: config.minRerankScore,
+    maxQueryChars: config.maxQueryChars,
     chunkingOptions: mcpChunkingOptions,
     summaryClient,
     hydeClient,

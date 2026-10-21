@@ -84,6 +84,7 @@ import {
 } from "../expansion.js";
 import type { TokenCounter } from "../token-counter.js";
 import { readHeader } from "../header-utils.js";
+import { clampQuery, DEFAULT_MAX_QUERY_CHARS } from "../query-limits.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 import { responseTrustLabels } from "../content-trust.js";
 import { getPrincipal } from "../request-principal.js";
@@ -112,6 +113,12 @@ export interface SearchV2HandlerOptions {
    * null / undefined = disabled (no filtering, no field).
    */
   minRerankScore?: number | null;
+  /**
+   * SEARCH_MAX_QUERY_CHARS: an over-long query is cut at the last space
+   * before this limit (query-limits.ts); the response then carries
+   * `query_truncated: true`.
+   */
+  maxQueryChars?: number;
 }
 
 const GRANULARITIES: readonly Granularity[] = [
@@ -338,6 +345,7 @@ export function createSearchV2Handler(
 	const sparseClient = options.sparseClient ?? null;
 	const queryCache = options.queryCache ?? null;
 	const minRerankScore = options.minRerankScore ?? null;
+	const maxQueryChars = options.maxQueryChars ?? DEFAULT_MAX_QUERY_CHARS;
 
 	return async (req, res, next) => {
 		const log: Logger = (req as { log?: Logger }).log ?? logger;
@@ -350,6 +358,7 @@ export function createSearchV2Handler(
       }
 
       let query: string;
+      let queryTruncated = false;
       let limit: number;
       let granularity: Granularity | undefined;
       let expandMode: ExpandMode | null | undefined;
@@ -359,7 +368,14 @@ export function createSearchV2Handler(
       let identifier: string | undefined;
       let groupBy: GroupByMode;
       try {
-        query = requireString(body.query, "query");
+        // Query-cost bound (query-limits.ts): cut an over-long query at the
+        // last space before the limit; the response reports query_truncated.
+        const clampedQuery = clampQuery(
+          requireString(body.query, "query"),
+          maxQueryChars,
+        );
+        query = clampedQuery.query;
+        queryTruncated = clampedQuery.truncated;
         limit = parseLimit(body.limit);
         granularity = parseGranularity(body.granularity);
         budgetChars = parseBudget(
@@ -585,12 +601,14 @@ export function createSearchV2Handler(
               results: hits,
               score_scale: pipeline.scoreKind,
               ...trustFields,
+              ...(queryTruncated ? { query_truncated: true } : {}),
               abstention: pipeline.minScore.abstention,
             }
           : {
               results: hits,
               score_scale: pipeline.scoreKind,
               ...trustFields,
+              ...(queryTruncated ? { query_truncated: true } : {}),
             },
       );
     } catch (err) {

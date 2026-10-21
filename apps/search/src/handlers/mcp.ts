@@ -185,6 +185,11 @@ export interface McpHandlerOptions {
    * null / undefined = disabled (the tool keeps its per-request-only behavior).
    */
   minRerankScore?: number | null;
+  /**
+   * SEARCH_MAX_QUERY_CHARS: over-long query texts are cut at the last space
+   * before this limit (query-limits.ts); the tools report `query_truncated`.
+   */
+  maxQueryChars?: number;
   /** Chunking options forwarded from server config. null = no chunking. */
   chunkingOptions?: ChunkingOptions | null;
   /**
