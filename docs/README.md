@@ -35,6 +35,10 @@ Contract packages: [identity](../packages/identity-contract/README.md),
 [schema compatibility](../packages/schema-compatibility/README.md), and
 [contract adapter](../packages/contract-adapter/README.md).
 
+Shared implementation packages: [canonical JSON](../packages/canonical-json/README.md),
+[MCP 2026](../packages/mcp-2026/README.md), [security kit](../packages/security-kit/README.md), and
+[observability](../packages/observability/README.md).
+
 ## Reference
 
 | Document | Contents |

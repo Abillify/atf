@@ -392,6 +392,7 @@ releases:
 - Search checks at startup that the embedding fallback produces vectors in the same space (canary, cosine ≥ 0.99) and counts embeddings per source.
 - Search signs evidence packs with Ed25519 when `SEARCH_EVIDENCE_SIGNING_KEY` is set and publishes the key at `/.well-known/atf-search-evidence-jwks.json`.
 - `@atf/security-kit` 1.2.0: the JWT verifier accepts `allowedTypes` to enforce the JWT `typ` header; the Gate exposes it as `auth.oauth.allowedTokenTypes` and warns in production while it is empty.
+- READMEs for `@atf/canonical-json`, `@atf/mcp-2026`, `@atf/security-kit` and `@atf/observability`.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
