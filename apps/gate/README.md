@@ -67,7 +67,8 @@ well.
 - **Groups.** `monitoring.oidc.requiredGroups` limits dashboard logins to members of specific IdP
   groups, read from the fixed id_token claim `groups` (Keycloak needs a groups mapper, Entra emits
   object ids). With the list empty every authenticated IdP user may log in — set it whenever the
-  playground or the dashboard shows data you do not want every employee to see.
+  playground or the dashboard shows data you do not want every employee to see. In production the
+  Gate warns while `monitoring.oidc.requiredGroups` is empty.
 
 ## Tools from configuration
 

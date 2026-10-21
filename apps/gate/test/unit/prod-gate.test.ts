@@ -391,6 +391,67 @@ describe("monitoring findings", () => {
     ).toBe(true);
   });
 
+  test("an empty monitoring.oidc.requiredGroups warns in production", () => {
+    const cfg = goodConfig({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://id.example.com/",
+          clientId: "mcpgate-monitor",
+          clientSecret: "c".repeat(40),
+          redirectUri: "https://mcpgate.internal/monitor/callback",
+          sessionSecret: "s".repeat(40),
+        },
+      },
+    });
+    expect(
+      checkProductionReadiness(cfg, "production").warnings.some((m) =>
+        m.includes("requiredGroups"),
+      ),
+    ).toBe(true);
+  });
+
+  test("a non-empty monitoring.oidc.requiredGroups does not warn", () => {
+    const cfg = goodConfig({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://id.example.com/",
+          clientId: "mcpgate-monitor",
+          clientSecret: "c".repeat(40),
+          redirectUri: "https://mcpgate.internal/monitor/callback",
+          sessionSecret: "s".repeat(40),
+          requiredGroups: ["atf-ops"],
+        },
+      },
+    });
+    const report = checkProductionReadiness(cfg, "production");
+    expect(report.fatal).toEqual([]);
+    expect(
+      report.warnings.some((m) => m.includes("requiredGroups")),
+    ).toBe(false);
+  });
+
+  test("an empty monitoring.oidc.requiredGroups does not warn outside production", () => {
+    const cfg = goodConfig({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://id.example.com/",
+          clientId: "mcpgate-monitor",
+          clientSecret: "c".repeat(40),
+          redirectUri: "https://mcpgate.internal/monitor/callback",
+          sessionSecret: "s".repeat(40),
+        },
+      },
+    });
+    expect(
+      checkProductionReadiness(cfg, "development").warnings.some((m) =>
+        m.includes("requiredGroups"),
+      ),
+    ).toBe(false);
+  });
+
   test("a plaintext-HTTP monitor OIDC redirectUri is fatal in production", () => {
     const cfg = goodConfig({
       monitoring: {

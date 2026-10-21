@@ -230,6 +230,7 @@ releases:
 - Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms (longest first).
 - Search: the HyDE and query-embedding caches key entries by tenant and query, so cache hits no longer reveal across tenants which questions were asked.
 - Search verifies the `typ` header of transaction tokens (`at+jwt` or `txn+jwt`) and answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) when the JWKS is unreachable, instead of reporting an invalid token.
+- Gate warns in production while `monitoring.oidc.requiredGroups` is empty (every identity-provider user could open the monitor).
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

@@ -273,6 +273,18 @@ export function checkProductionReadiness(
       "Production monitoring requires monitoring.oidc; static-token-only dashboard authentication is forbidden.",
     );
   }
+  if (
+    isProd &&
+    config.monitoring.enabled &&
+    config.monitoring.oidc &&
+    config.monitoring.oidc.requiredGroups.length === 0
+  ) {
+    warnings.push(
+      "monitoring.oidc.requiredGroups is empty: every user of the identity " +
+        "provider can sign in to the monitor, which shows tool arguments and " +
+        "results. List the groups that may monitor.",
+    );
+  }
 
   // The playground executes tools out-of-band from any application session.
   // Even though runs now go through the full MCP dispatch pipeline, a
