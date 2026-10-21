@@ -44,6 +44,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
+import { buildGateConfigReference } from "./generate-gate-config-reference.ts";
 
 const root = process.cwd();
 const outputPath = resolve(root, "docs/CONFIGURATION.md");
@@ -1133,7 +1134,11 @@ if (undocumented.length > 0) {
 	process.exit(1);
 }
 
-const expected = render(sections);
+const gateSchemaSource = await readFile(
+	resolve(root, "apps/gate/src/config/schema.ts"),
+	"utf8",
+);
+const expected = `${render(sections)}\n${buildGateConfigReference(gateSchemaSource)}\n`;
 
 if (checkOnly) {
 	let actual = "";

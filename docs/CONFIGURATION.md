@@ -814,3 +814,500 @@ A profile is a starting point, not a compliance statement. `regulated` sets stri
 With the operational profile set to `production`, a service refuses to start under unsafe settings — open CORS, unverified JWTs, an unauthenticated monitoring or metrics endpoint, and similar. See `apps/runtime/src/config/prod-gate.ts` and [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 Every service (Runtime, Gate, Search, Extract) resolves its profile the same way through `@atf/security-kit` (`packages/security-kit/src/prod-gate/profile.ts`): the platform-wide `ATF_PROFILE` wins over the service variable (`APP_ENV`, `MCPGATE_ENV`, `NODE_ENV`); unset means `development`. The value set is closed (`development`, `staging`, `production`, `test`) and an unknown value aborts startup — a typo like `prod` can no longer silently disable the gates. `staging` runs the checks in warn mode: findings are reported, startup continues. `ATF_PROFILE` is unrelated to Runtime's `ATF_PRESET` preset variable above.
+
+## Gate configuration file (YAML)
+
+Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys are relative to the Gate's config.yaml.
+
+| Key (dotted) | Type | Default | Description |
+| --- | --- | --- | --- |
+| `apps` | array | — | — |
+| `apps[].description` | string | `""` | — |
+| `apps[].name` | string | — | — |
+| `apps[].requiredScopes` | array | — | — |
+| `apps[].resourceUri` | string | — | — |
+| `auth` | object | — | — |
+| `auth.mode` | "disabled" \| "static" \| "oauth" \| "both" | `"static"` | — |
+| `auth.oauth` | object | — | — |
+| `auth.oauth.actorPolicy` | object | — | Optional actor (RFC 8693 `act`) policy. Absent → actor audited, never gated. |
+| `auth.oauth.actorPolicy.actorClaim` | string | `"act"` | Claim carrying the actor. RFC 8693 uses `act`. |
+| `auth.oauth.actorPolicy.allowedActorSubjects` | array | — | When non-empty, the actor's subject must be one of these values; any other actor is rejected. Empty → any actor subject is accepted (still audited). |
+| `auth.oauth.actorPolicy.requireActor` | boolean | `false` | Reject tokens that carry NO actor (i.e. only allow delegated calls). |
+| `auth.oauth.additionalIssuers` | array | — | — |
+| `auth.oauth.additionalIssuers[].algorithms` | array | — | — |
+| `auth.oauth.additionalIssuers[].allowAnyAudience` | boolean | `false` | — |
+| `auth.oauth.additionalIssuers[].allowAnyIssuer` | boolean | `false` | — |
+| `auth.oauth.additionalIssuers[].audience` | string \| array | — | — |
+| `auth.oauth.additionalIssuers[].clockToleranceSec` | number | `5` | — |
+| `auth.oauth.additionalIssuers[].discoveryUrl` | string | — | Optional OIDC discovery document; its issuer must exactly match `issuer`. |
+| `auth.oauth.additionalIssuers[].issuer` | string | — | — |
+| `auth.oauth.additionalIssuers[].jwksUri` | string | — | Explicit JWKS endpoint. Optional when OIDC discovery is configured. |
+| `auth.oauth.algorithms` | array | — | — |
+| `auth.oauth.allowAnyAudience` | boolean | `false` | — |
+| `auth.oauth.allowAnyIssuer` | boolean | `false` | — |
+| `auth.oauth.audience` | string \| array | — | — |
+| `auth.oauth.clockToleranceSec` | number | `5` | — |
+| `auth.oauth.discoveryUrl` | string | — | Optional OIDC discovery document; its issuer must exactly match `issuer`. |
+| `auth.oauth.groupClaim` | string | `"groups"` | — |
+| `auth.oauth.groupScopes` | record | — | — |
+| `auth.oauth.issuer` | string | — | — |
+| `auth.oauth.jwksUri` | string | — | Explicit JWKS endpoint. Optional when OIDC discovery is configured. |
+| `auth.oauth.requiredScopes` | array | — | — |
+| `auth.oauth.resource` | string | — | — |
+| `auth.oauth.scopeClaim` | string | `"scope"` | — |
+| `auth.oauth.usernameClaim` | string | `"preferred_username"` | — |
+| `auth.static` | object | — | — |
+| `auth.static.tokens` | array | — | — |
+| `auth.static.tokens[].claims` | record | — | — |
+| `auth.static.tokens[].scopes` | array | — | — |
+| `auth.static.tokens[].subject` | string | — | — |
+| `auth.static.tokens[].token` | string | — | — |
+| `auth.static.tokens[].username` | string | — | — |
+| `authorization` | object | — | — |
+| `authorization.enabled` | boolean | `true` | — |
+| `databases` | record | — | — |
+| `databases.*.client` | string | — | — |
+| `databases.*.connection` | string \| record | — | — |
+| `databases.*.pool` | object | — | — |
+| `databases.*.pool.max` | number | `10` | — |
+| `databases.*.pool.min` | number | `0` | — |
+| `databases.*.searchPath` | string \| array | — | — |
+| `databases.*.statementTimeoutMs` | number | `30000` | Server-side statement timeout in milliseconds, applied per pooled connection when it is acquired. Without this a single pathological query (a missing index, a cartesian join in a hand-written tool query, a lock wait) holds a pool slot until the client goes away — and because tool calls arrive over long-lived MCP sessions, "the client goes away" can be never. The cap turns that from an availability incident into one failed tool call. Enforcement is dialect-specific and applied for `pg`/`mysql`/`mysql2`/ `mssql`. Dialects without an equivalent knob (e.g. sqlite3) ignore it. 0 disables the timeout. Default: 30 s. |
+| `instructions` | object | — | — |
+| `instructions.dynamic` | object | — | — |
+| `instructions.dynamic.enabled` | boolean | `false` | — |
+| `instructions.dynamic.refreshMinutes` | number | `15` | — |
+| `instructions.dynamic.sources` | array | — | — |
+| `instructions.dynamic.sources[].column` | string | — | — |
+| `instructions.dynamic.sources[].database` | string | — | — |
+| `instructions.dynamic.sources[].intro` | string | `""` | — |
+| `instructions.dynamic.sources[].maxRows` | number | `500` | — |
+| `instructions.dynamic.sources[].name` | string | — | — |
+| `instructions.dynamic.sources[].query` | string | — | — |
+| `instructions.dynamic.sources[].scopes` | array | — | — |
+| `instructions.dynamic.sources[].tool` | string | — | — |
+| `instructions.text` | string | `""` | — |
+| `mcpServers` | array | — | Remote MCP servers to import as a backend. Each is expanded into `mcp` proxy tools at load time — one per tool discovered via the downstream server's `tools/list` — and appended to `tools` (see config/mcp-import.ts). |
+| `mcpServers[].access` | "read" \| "write" | — | Default access class for imported tools (default: "read"). |
+| `mcpServers[].cache` | object | — | Result cache applied to every imported tool. |
+| `mcpServers[].cache.enabled` | boolean | `false` | — |
+| `mcpServers[].cache.maxEntries` | number | `1000` | — |
+| `mcpServers[].cache.scope` | "identity" \| "global" | `"identity"` | — |
+| `mcpServers[].cache.ttlSeconds` | number | `30` | — |
+| `mcpServers[].exclude` | array | — | Downstream tool names that are skipped. |
+| `mcpServers[].expose` | boolean | — | Default visibility for imported tools; per-tool `overrides[].expose` wins. |
+| `mcpServers[].include` | array | — | When set, only downstream tools with these names are imported. |
+| `mcpServers[].overrides` | array | — | Per-tool filtering / description / parameter overrides, keyed by downstream tool name. |
+| `mcpServers[].overrides[].access` | "read" \| "write" | — | Override the access class for this tool only. |
+| `mcpServers[].overrides[].description` | string | — | Replace the downstream description; omit to keep it as-is. |
+| `mcpServers[].overrides[].enabled` | boolean | — | Set to false to skip importing this tool (shorthand for `exclude`). |
+| `mcpServers[].overrides[].expose` | boolean | — | Override visibility for this tool only. |
+| `mcpServers[].overrides[].name` | string | — | Name of the tool as advertised by the downstream server. |
+| `mcpServers[].overrides[].removeOptions` | array | — | Remove these parameters from the advertised inputSchema. |
+| `mcpServers[].overrides[].replaceParams` | record | — | Fix these parameters to a constant value. They are removed from the advertised inputSchema (callers can no longer set them) and merged into every call to the downstream tool. |
+| `mcpServers[].prefix` | string | `""` | Prefix prepended to every imported tool name (e.g. "github_"). |
+| `mcpServers[].server` | object | — | Connection details for the downstream MCP server. |
+| `mcpServers[].server.forwardBearerToken` | boolean | `false` | When true, the caller's own bearer token is forwarded to the downstream server instead of the configured `token`. @deprecated Passthrough hands the downstream server a token minted for the gateway (confused deputy: wrong audience, replayable). Use McpServerConnectionSchema.tokenExchange so the downstream receives an audience-bound, minimally-scoped token. Kept for migration only; the production gate warns on every use and it is mutually exclusive with `tokenExchange`. |
+| `mcpServers[].server.timeoutMs` | number | `30000` | — |
+| `mcpServers[].server.token` | string | — | Bearer token sent to the downstream server. |
+| `mcpServers[].server.tokenExchange` | object | — | RFC 8693 Token Exchange for this server. When set, the caller's bearer is exchanged before every downstream call; a failed exchange fails the call (fail-closed — the un-exchanged token is never sent). |
+| `mcpServers[].server.tokenExchange.actor` | object | — | Actor for a delegation (OBO) exchange. Absent → impersonation. |
+| `mcpServers[].server.tokenExchange.actor.audience` | string | — | Optional audience for the actor token itself. |
+| `mcpServers[].server.tokenExchange.actor.clientAuth` | "client_secret_post" \| "client_secret_basic" | — | — |
+| `mcpServers[].server.tokenExchange.actor.clientId` | string | — | — |
+| `mcpServers[].server.tokenExchange.actor.clientSecret` | string | — | Resolved from `clientSecretEnv` by the loader. Never set in config files. |
+| `mcpServers[].server.tokenExchange.actor.clientSecretEnv` | string | — | Name of the environment variable holding the actor client secret. |
+| `mcpServers[].server.tokenExchange.actor.grant` | "client_credentials" | — | — |
+| `mcpServers[].server.tokenExchange.actor.scope` | string | — | Scope requested for the actor token, if the IdP requires one. |
+| `mcpServers[].server.tokenExchange.actor.tokenEndpoint` | string | — | Token endpoint issuing the actor token. Defaults to the exchange endpoint. |
+| `mcpServers[].server.tokenExchange.audience` | string | — | Target provider's `client_id` (RFC 8693 `audience`). |
+| `mcpServers[].server.tokenExchange.clientAuth` | "client_secret_post" \| "client_secret_basic" | — | — |
+| `mcpServers[].server.tokenExchange.clientId` | string | — | — |
+| `mcpServers[].server.tokenExchange.clientSecret` | string | — | Resolved from `clientSecretEnv` by the loader. Never set in config files. |
+| `mcpServers[].server.tokenExchange.clientSecretEnv` | string | — | Name of the environment variable holding the client secret. |
+| `mcpServers[].server.tokenExchange.issuer` | string | — | OIDC issuer whose discovery yields the token endpoint. |
+| `mcpServers[].server.tokenExchange.requestedTokenType` | string | — | `requested_token_type`. Optional; IdP default is access_token. |
+| `mcpServers[].server.tokenExchange.scope` | string | — | Space-delimited scopes to request, sent verbatim. |
+| `mcpServers[].server.tokenExchange.timeoutMs` | number | — | — |
+| `mcpServers[].server.tokenExchange.tokenEndpoint` | string | — | Token endpoint performing the exchange. Required unless `issuer` is set. |
+| `mcpServers[].server.url` | string | — | Full URL of the downstream MCP server (Streamable HTTP endpoint). |
+| `monitoring` | object | — | — |
+| `monitoring.audit` | object | — | Persistent audit log. When enabled, every monitor event (or the subset listed in `events`) is written as one JSON object per line to `file`, giving a durable record beyond the in-memory ring buffer. Subject-related erasure (`POST /v1/erasure`) rewrites the file unless `appendOnly` commits it to retention. |
+| `monitoring.audit.appendOnly` | boolean | `false` | Compliance escape hatch: when true the sink is committed to append-only retention and `POST /v1/erasure` honestly reports `not_configured` instead of rewriting the file. |
+| `monitoring.audit.enabled` | boolean | `false` | — |
+| `monitoring.audit.events` | array | — | Optional whitelist of event types to record; omit to record all. |
+| `monitoring.audit.file` | string | — | Path to the JSONL audit file (required when enabled). |
+| `monitoring.audit.redact` | object | — | Sink-level redaction applied to every event right before it is persisted — the second layer behind the MonitorBus choke point. The bus redacts by key name, so positional array VALUES (e.g. SQL bind parameters in `meta.query.bindings`) survive it and can still carry personal data under a non-sensitive name. `paths` replaces the value at a dotted `meta` path wholesale; `extraKeys` extends the denylist for this sink only. |
+| `monitoring.audit.redact.enabled` | boolean | `true` | — |
+| `monitoring.audit.redact.extraKeys` | array | — | Extra key fragments redacted in addition to the bus-level denylist. |
+| `monitoring.audit.redact.paths` | array | — | Dotted `meta` paths replaced wholesale, e.g. `query.bindings`. |
+| `monitoring.bufferSize` | number | `200` | — |
+| `monitoring.cluster` | object | — | Optional multi-instance monitor bridge (see monitor/cluster-bridge.ts). MCP sessions themselves still require sticky routing across instances - this only makes the dashboard/SSE feed/audit log cluster-wide by sharing MonitorBus events over Redis pub/sub. Entirely optional; a no-op unless `redisUrl` is set (and the optional `redis` package is installed). |
+| `monitoring.cluster.channel` | string | `"mcpgate:monitor"` | — |
+| `monitoring.cluster.redisUrl` | string | — | — |
+| `monitoring.enabled` | boolean | `true` | — |
+| `monitoring.includeToolContent` | boolean | `false` | Whether the monitor stream may carry the full tool result in `meta.content`. Default `false`: the result is replaced by `meta.contentDigest` (SHA-256 hex over its JSON plus the UTF-8 byte length), so the dashboard shows that a tool returned data and of what size without leaking the data itself. |
+| `monitoring.oidc` | object | — | Alternative/additional login for human operators: OAuth2/OIDC against an external provider (e.g. Authentik). When set, `GET /monitor/login` starts the authorization-code flow and a signed session cookie is accepted everywhere `monitoring.token` would be. Both can be configured together — either one is sufficient to authorize a request. `config.yaml` substitutes unset `${VAR:-}` env vars with `""`, not `undefined` — so the preprocess below treats an object whose required fields are all blank as "not configured" rather than failing validation. |
+| `monitoring.oidc.clientId` | string | — | — |
+| `monitoring.oidc.clientSecret` | string | — | — |
+| `monitoring.oidc.issuer` | string | — | — |
+| `monitoring.oidc.redirectUri` | string | — | Must exactly match the redirect URI registered with the provider. |
+| `monitoring.oidc.requiredGroups` | array | — | Group names (from the id_token `groups` claim) that grant monitor access. Empty = every authenticated user of the provider may log in; non-empty = the callback rejects anyone who is not a member of at least one listed group, so a shared IdP cannot hand its whole user base a dashboard that shows tool arguments and results. |
+| `monitoring.oidc.scopes` | array | — | — |
+| `monitoring.oidc.sessionMaxAge` | number | `28800` | Session lifetime in seconds. |
+| `monitoring.oidc.sessionSecret` | string | — | Secret used to HMAC-sign the session/state cookies. |
+| `monitoring.playground` | object | — | Tool Playground (execute tools from the dashboard). Disabled by default because it runs tools out-of-band from a normal MCP session. When enabled it requires `monitoring.token` to be set, and write-access tools stay blocked unless `allowWrite` is also enabled. |
+| `monitoring.playground.allowWrite` | boolean | `false` | — |
+| `monitoring.playground.enabled` | boolean | `false` | — |
+| `monitoring.redact` | object | — | See MonitorRedactSchema. |
+| `monitoring.redact.claimAllowlist` | array | — | Token claims kept verbatim; all others are dropped and counted. |
+| `monitoring.redact.enabled` | boolean | `true` | — |
+| `monitoring.redact.extraKeys` | array | — | Additional lower-cased key fragments to redact, merged with the built-in denylist. Matching is "key contains fragment". |
+| `monitoring.redact.keys` | array | — | Replace the built-in denylist entirely instead of extending it. |
+| `monitoring.redact.maxArrayLength` | number | `100` | — |
+| `monitoring.redact.maxDepth` | number | `8` | — |
+| `monitoring.redact.maxStringLength` | number | `2048` | — |
+| `monitoring.tenantScope` | "session" \| "all" | `"session"` | Which events the SSE monitor stream shows an OIDC-logged-in viewer. `"session"` (default) sends only events whose `tenantId` matches the viewer's session tenant; events without a tenant are withheld. `"all"` sends everything, like the static monitor token does. The token viewer is the operator and always sees all events. |
+| `monitoring.token` | string | — | — |
+| `mqtt` | object | — | Global MQTT broker configuration. Individual mqtt-type tools may override this with a per-tool `broker` section, or reference it implicitly by omitting their own broker config. |
+| `mqtt.cacheTtlSeconds` | number | — | Optional cache-level TTL (seconds). Cached messages older than this are dropped during periodic sweeps to bound memory for rarely-updated topics. This is independent of a tool's own `ttlSeconds` freshness check. |
+| `mqtt.clean` | boolean | `true` | — |
+| `mqtt.clientId` | string | — | MQTT client identifier (default: "mcpgate-<hostname>"). |
+| `mqtt.connectTimeout` | number | `30000` | — |
+| `mqtt.keepalive` | number | `60` | — |
+| `mqtt.maxCachedTopics` | number | `10000` | Upper bound on the number of distinct topics cached per broker connection. Protects memory when subscribing to high-cardinality wildcards (e.g. `#`): once exceeded, the least-recently-updated topic is evicted (LRU). |
+| `mqtt.password` | string | — | — |
+| `mqtt.protocolVersion` | number | — | MQTT protocol version: 4 = 3.1.1 (default), 5 = 5.0 |
+| `mqtt.reconnectPeriod` | number | `5000` | — |
+| `mqtt.url` | string | — | Broker connection URL. Supported schemes: mqtt:// plain MQTT over TCP mqtts:// MQTT over TLS ws:// MQTT over WebSocket wss:// MQTT over secure WebSocket |
+| `mqtt.username` | string | — | — |
+| `openapi` | array | — | OpenAPI specs to import. Each is expanded into `http` tools at load time and appended to `tools` (see config/openapi.ts). |
+| `openapi[].access` | "read" \| "write" | — | Force the access class of generated tools; default infers from HTTP method. |
+| `openapi[].baseUrl` | string | — | Base URL for generated requests; overrides the spec's `servers[0].url`. |
+| `openapi[].exclude` | array | — | Operations with these operationIds are skipped. |
+| `openapi[].expose` | boolean | — | Whether generated tools are advertised to MCP clients. |
+| `openapi[].headers` | record | — | Extra headers added to every generated tool (may use ${ENV} / :ctx.* tokens). |
+| `openapi[].include` | array | — | When set, only operations with these operationIds are imported. |
+| `openapi[].prefix` | string | `""` | Prefix prepended to every generated tool name (e.g. "petstore_"). |
+| `openapi[].spec` | string | — | Path to an OpenAPI 3.x document, relative to the config dir, OR an http(s) URL. |
+| `openapi[].specHeaders` | record | — | Headers used only when fetching a remote spec URL (e.g. auth for the spec). |
+| `openapi[].timeoutMs` | number | `30000` | Request timeout for generated tools. |
+| `policies` | object | — | — |
+| `policies.approval` | object | — | — |
+| `policies.approval.approverScope` | string | `"approvals:resolve"` | Scope a resolver needs when `requireDifferentApprover` is on. |
+| `policies.approval.maxPending` | number | `1000` | — |
+| `policies.approval.requireDifferentApprover` | boolean | `false` | Separation of duties for `approvals/resolve`. Off (default): the caller that asked for an approval resolves it itself — the human decision is taken by the client in front of it (e.g. Runtime's approval queue), and the Gate records WHO resolved it from the verified identity. On: the requester can NOT resolve its own request; a different principal of the same tenant holding `approverScope` must. |
+| `policies.approval.secret` | string | — | — |
+| `policies.approval.ttlMs` | number | `300000` | — |
+| `policies.defaultEffect` | "allow" \| "deny" \| "approval" | `"allow"` | — |
+| `policies.rules` | array | — | — |
+| `policies.rules[].approval` | object | — | — |
+| `policies.rules[].approval.fields` | array | — | — |
+| `policies.rules[].approval.fields[].label` | string | — | — |
+| `policies.rules[].approval.fields[].name` | string | — | — |
+| `policies.rules[].approval.fields[].value` | string | — | — |
+| `policies.rules[].approval.lookup` | object | — | — |
+| `policies.rules[].approval.lookup.arguments` | record | — | — |
+| `policies.rules[].approval.lookup.tool` | string | — | — |
+| `policies.rules[].approval.message` | string | — | — |
+| `policies.rules[].approval.title` | string | — | — |
+| `policies.rules[].effect` | "allow" \| "deny" \| "approval" | — | — |
+| `policies.rules[].match` | object | — | — |
+| `policies.rules[].match.access` | "read" \| "write" | — | — |
+| `policies.rules[].match.argumentEquals` | record | — | — |
+| `policies.rules[].match.groups` | array | — | — |
+| `policies.rules[].match.requiredScopes` | array | — | — |
+| `policies.rules[].match.subjects` | array | — | — |
+| `policies.rules[].match.tool` | string | — | — |
+| `policies.rules[].requireEvidenceContract` | boolean | `false` | Fail closed when this matching rule receives a call without a valid Evidence-Bound Action Contract. This is enforced by mcpgate for every client; it is not an Aiperator-side approval or UI policy. |
+| `prompts` | array | — | — |
+| `prompts[].arguments` | array | — | — |
+| `prompts[].arguments[].description` | string | — | — |
+| `prompts[].arguments[].name` | string | — | — |
+| `prompts[].arguments[].required` | boolean | `false` | — |
+| `prompts[].description` | string | `""` | — |
+| `prompts[].message` | string | — | — |
+| `prompts[].name` | string | — | — |
+| `prompts[].requiredScopes` | array | — | — |
+| `resources` | array | — | — |
+| `resources[].description` | string | `""` | — |
+| `resources[].mimeType` | string | `"text/plain"` | — |
+| `resources[].name` | string | — | — |
+| `resources[].requiredScopes` | array | — | — |
+| `resources[].text` | string | — | — |
+| `resources[].uri` | string | — | — |
+| `router` | object | — | — |
+| `router.cache` | object | — | Cache routing decisions (prompt → chosen tool + arguments) so repeated identical prompts skip the LLM call. Keyed on the prompt and — unless scope is `global` — the caller identity. |
+| `router.cache.enabled` | boolean | `false` | — |
+| `router.cache.maxEntries` | number | `1000` | — |
+| `router.cache.scope` | "identity" \| "global" | `"identity"` | — |
+| `router.cache.ttlSeconds` | number | `30` | — |
+| `router.description` | string | `"Natural-language entry point for read-only requests: describe what you want to look up and the right underlying tool is selected and called automatically."` | — |
+| `router.enabled` | boolean | `false` | — |
+| `router.interpretResults` | boolean | `false` | — |
+| `router.llm` | object | — | — |
+| `router.llm.accessKeyId` | string | — | — |
+| `router.llm.apiKey` | string | `""` | — |
+| `router.llm.baseUrl` | string | — | — |
+| `router.llm.forwardBearerToken` | boolean | `false` | — |
+| `router.llm.maxTokens` | number | — | — |
+| `router.llm.model` | string | `"qwen/qwen3-4b-2507"` | — |
+| `router.llm.provider` | "openai" \| "bedrock" | `"openai"` | — |
+| `router.llm.region` | string | — | — |
+| `router.llm.secretAccessKey` | string | — | — |
+| `router.llm.sessionToken` | string | — | — |
+| `router.llm.temperature` | number | `0` | — |
+| `router.llm.timeoutMs` | number | `60000` | — |
+| `router.mode` | "augment" \| "replace" | `"augment"` | — |
+| `router.name` | string | `"ask"` | — |
+| `router.systemPrompt` | object | — | — |
+| `router.systemPrompt.dynamic` | object | — | — |
+| `router.systemPrompt.dynamic.enabled` | boolean | `false` | — |
+| `router.systemPrompt.dynamic.refreshMinutes` | number | `15` | — |
+| `router.systemPrompt.dynamic.sources` | array | — | — |
+| `router.systemPrompt.dynamic.sources[].column` | string | — | — |
+| `router.systemPrompt.dynamic.sources[].database` | string | — | — |
+| `router.systemPrompt.dynamic.sources[].intro` | string | `""` | — |
+| `router.systemPrompt.dynamic.sources[].maxRows` | number | `500` | — |
+| `router.systemPrompt.dynamic.sources[].name` | string | — | — |
+| `router.systemPrompt.dynamic.sources[].query` | string | — | — |
+| `router.systemPrompt.dynamic.sources[].scopes` | array | — | — |
+| `router.systemPrompt.dynamic.sources[].tool` | string | — | — |
+| `router.systemPrompt.text` | string | `""` | — |
+| `router.write` | object | — | — |
+| `router.write.description` | string | `"Natural-language entry point for operations that change data (create, update, cancel, delete): describe what you want to do and the right underlying tool is selected and called automatically."` | — |
+| `router.write.name` | string | `"act"` | — |
+| `router.write.systemPrompt` | object | — | — |
+| `router.write.systemPrompt.dynamic` | object | — | — |
+| `router.write.systemPrompt.dynamic.enabled` | boolean | `false` | — |
+| `router.write.systemPrompt.dynamic.refreshMinutes` | number | `15` | — |
+| `router.write.systemPrompt.dynamic.sources` | array | — | — |
+| `router.write.systemPrompt.dynamic.sources[].column` | string | — | — |
+| `router.write.systemPrompt.dynamic.sources[].database` | string | — | — |
+| `router.write.systemPrompt.dynamic.sources[].intro` | string | `""` | — |
+| `router.write.systemPrompt.dynamic.sources[].maxRows` | number | `500` | — |
+| `router.write.systemPrompt.dynamic.sources[].name` | string | — | — |
+| `router.write.systemPrompt.dynamic.sources[].query` | string | — | — |
+| `router.write.systemPrompt.dynamic.sources[].scopes` | array | — | — |
+| `router.write.systemPrompt.dynamic.sources[].tool` | string | — | — |
+| `router.write.systemPrompt.text` | string | `""` | — |
+| `schemaCompatibility` | object | — | — |
+| `schemaCompatibility.mode` | "report" \| "strict" | `"report"` | — |
+| `server` | object | — | — |
+| `server.allowedHosts` | array | — | DNS-rebinding protection: list of hostnames (without port) that are allowed in the incoming Host header. Requests with a different hostname are rejected with 403. Typical values: ["localhost", "myserver.internal"]. Leave empty (default) to skip the check. |
+| `server.cors` | object | — | CORS configuration for the MCP and monitoring endpoints. |
+| `server.cors.enabled` | boolean | `false` | — |
+| `server.cors.origins` | array | — | Origins allowed in CORS pre-flight. "*" allows any origin. |
+| `server.host` | string | `"0.0.0.0"` | — |
+| `server.mcp2026` | object | — | Native stateless MCP 2026-07-28 HTTP endpoint (kept separate from mcpPath). |
+| `server.mcp2026.enabled` | boolean | `true` | — |
+| `server.mcp2026.path` | string | `"/mcp/v2026"` | — |
+| `server.mcpPath` | string | `"/mcp"` | — |
+| `server.messagePath` | string | `"/messages"` | — |
+| `server.metrics` | object | — | Prometheus metrics endpoint (text exposition aggregated from monitor events). The exposition is not neutral data: it carries tool names, per-tool call and error counts and latency buckets, i.e. a usage profile of the deployment. It is therefore gated behind a bearer token by default rather than served openly. `token` accepts the scrape credential. When it is unset the endpoint is only reachable from a loopback address (typical sidecar/`localhost` scrape) — a remote scrape without a token gets 401. Setting `allowUnauthenticated: true` restores the old wide-open behaviour and is rejected by the production readiness gate. |
+| `server.metrics.allowUnauthenticated` | boolean | `false` | Escape hatch: serve metrics to anyone. Fatal in production. |
+| `server.metrics.enabled` | boolean | `true` | — |
+| `server.metrics.path` | string | `"/metrics"` | — |
+| `server.metrics.token` | string | — | Bearer token required to scrape. Unset → loopback-only access. |
+| `server.name` | string | `"mcpgate"` | — |
+| `server.outbound` | object | — | Restrict the hosts that `http` and `mcp` tools may call outbound. When non-empty, any tool request whose target hostname is not listed is refused before a connection is opened (SSRF guard). Empty (default) allows any host. |
+| `server.outbound.allowedHosts` | array | — | — |
+| `server.pagination` | object | — | Signing key for database-tool pagination cursors (Req 6.6). Cursors are HMAC-SHA256 over tool name + payload and bound to the caller's principal and argument fingerprint. When unset, a random per-process secret is used: cursors then survive only until the next restart and are not shared across instances. Set a stable secret (>= 16 chars) in production, especially behind a load balancer. |
+| `server.pagination.secret` | string | — | — |
+| `server.port` | number | `3000` | — |
+| `server.publicUrl` | string | — | Externally-visible base URL of this server (scheme + host, no trailing slash), e.g. "https://mcpgate.example.com". Required to advertise MCP Authorization ("RFC 9728") protected-resource metadata at `/.well-known/oauth-protected-resource` and the `resource_metadata` link in `WWW-Authenticate` on 401s, since `host`/`port` alone (e.g. "0.0.0.0") are not a usable public identifier. Only meaningful when `auth.mode` is `oauth` or `both`; ignored otherwise. |
+| `server.rateLimit` | object | — | Rate-limiting on all MCP and authentication endpoints. Uses a sliding-window counter keyed on the client IP. |
+| `server.rateLimit.enabled` | boolean | `true` | — |
+| `server.rateLimit.max` | number | `200` | Maximum requests per IP per window (default: 200). |
+| `server.rateLimit.perIdentity` | object | — | Additional rate limit keyed on the caller's identity (auth subject) rather than IP, applied to MCP tool calls after authentication. Useful for multi-tenant deployments where many callers share one egress IP (or one caller uses many IPs). Independent of the IP-based limit above - both apply when enabled. Backed by an in-process TTL counter by default; set `store.type: redis` to share it across instances (reuses the same optional `redis` + `rate-limit-redis` packages). |
+| `server.rateLimit.perIdentity.enabled` | boolean | `false` | — |
+| `server.rateLimit.perIdentity.failMode` | "open" \| "closed" | `"closed"` | What to do when the backing store (Redis) fails: `closed` (default) rejects requests — protection first; `open` lets them through — availability first. Ignored by the memory backend. |
+| `server.rateLimit.perIdentity.max` | number | `120` | — |
+| `server.rateLimit.perIdentity.store` | object | — | — |
+| `server.rateLimit.perIdentity.store.prefix` | string | `"mcpgate:rl:identity:"` | — |
+| `server.rateLimit.perIdentity.store.redisUrl` | string | — | — |
+| `server.rateLimit.perIdentity.store.type` | "memory" \| "redis" | `"memory"` | — |
+| `server.rateLimit.perIdentity.windowMs` | number | `60000` | — |
+| `server.rateLimit.store` | object | — | Backing store for the counter. `memory` (default) is per-instance and fine for a single process; `redis` shares the counter across instances for correct limiting behind a load balancer (requires the optional `redis` + `rate-limit-redis` packages to be installed). |
+| `server.rateLimit.store.prefix` | string | `"mcpgate:rl:"` | Key prefix for rate-limit entries in the shared store. |
+| `server.rateLimit.store.redisUrl` | string | — | Redis connection URL, e.g. redis://localhost:6379. |
+| `server.rateLimit.store.type` | "memory" \| "redis" | `"memory"` | — |
+| `server.rateLimit.windowMs` | number | `60000` | Duration of the window in milliseconds (default: 60 s). |
+| `server.reload` | object | — | Hot-reload of tool definitions. When enabled, the config directory is watched and the in-memory tool set is rebuilt on change without dropping sessions. Only tools (and their queries/conditions) reload live; server, auth, databases, router and MQTT changes still require a restart. |
+| `server.reload.debounceMs` | number | `300` | — |
+| `server.reload.enabled` | boolean | `false` | — |
+| `server.sessions` | object | — | Bounds on concurrently held MCP sessions (Streamable HTTP and SSE). Sessions live in the process that served `initialize`, so they are inherently instance-local: horizontal scaling requires sticky routing on `Mcp-Session-Id`. Without the bounds below an abandoned client (one that never sends `DELETE` and whose socket never errors) would leave its session — and its Server instance and captured AuthContext — resident forever, so a loop of `initialize` calls is an unauthenticated-shaped memory exhaustion. |
+| `server.sessions.idleTimeoutMs` | number | `1800000` | Evict a session after this long without any request on it. 0 disables the idle sweep. Default: 30 min. |
+| `server.sessions.max` | number | `2000` | Hard cap on concurrent sessions per transport per instance. When the cap is reached a new `initialize` is refused with 503 rather than silently evicting somebody else's live session. 0 disables the cap. |
+| `server.sessions.sweepIntervalMs` | number | `60000` | How often the idle sweep runs. Default: 60 s. |
+| `server.ssePath` | string | `"/sse"` | — |
+| `server.trustProxy` | boolean \| number | `1` | Value for Express' `trust proxy` setting (Req 6.12). Determines how the real client IP is derived from `X-Forwarded-For`, which the per-IP rate limiter keys on. - `false` / `0`: trust no proxy — direct exposure, `req.ip` is the socket address (spoofable `X-Forwarded-For` headers are ignored). - `1` (default): trust exactly one proxy hop, as before this was configurable. - `N`: trust the N outermost hops when behind a chain of N proxies. - `true`: trust all hops — only safe when every upstream is trusted; express-rate-limit warns about the permissive setting. Env override: `TRUST_PROXY` (same contract as the search app). |
+| `server.version` | string | `"0.18.1"` | — |
+| `skills` | array | — | — |
+| `skills[].description` | string | `""` | — |
+| `skills[].instructions` | string | — | — |
+| `skills[].name` | string | — | — |
+| `skills[].requiredScopes` | array | — | — |
+| `tasks` | object | — | — |
+| `tasks.asyncTools` | array | — | — |
+| `tasks.maxEntries` | number | `1000` | — |
+| `tasks.ttlMs` | number | `300000` | — |
+| `tenantIsolation` | object | — | — |
+| `tenantIsolation.claimNames` | array | — | Ordered verified JWT/static claim names accepted as tenant authority. |
+| `tenantIsolation.defaultTenantId` | string | `"default"` | — |
+| `tenantIsolation.enabled` | boolean | `false` | — |
+| `tenantIsolation.isolatedDatabases` | array | — | Databases whose connection is physically dedicated to one tenant. |
+| `tenantIsolation.issuerTenants` | record | — | Issuer → tenants binding (the Gate's counterpart of the Runtime's `JWT_ISSUER_TENANTS`). Keys are token issuers (`iss`), values the tenants a token of that issuer may act for (`"*"` = any). Without it, ANY trusted issuer can assert ANY tenant through the tenant claim, so one compromised or over-broad issuer reaches every tenant. When non-empty, a token whose issuer is not listed, or whose tenant is not allowed for it, is refused. Only enforced with `enabled: true`. |
+| `tenantIsolation.sqlValidationMode` | "report" \| "strict" | `"report"` | Semantic SQL tenant-binding diagnostics: report findings or fail readiness. |
+| `tools` | array | — | — |
+| `tools[].access` | "read" \| "write" | `"read"` | — |
+| `tools[].allowPrivateAddress` | boolean | `false` | Permit only this tool's exact configured API hostname to resolve privately (split DNS). |
+| `tools[].annotations` | object | — | — |
+| `tools[].annotations.destructiveHint` | boolean | — | — |
+| `tools[].annotations.idempotentHint` | boolean | — | — |
+| `tools[].annotations.openWorldHint` | boolean | — | — |
+| `tools[].annotations.readOnlyHint` | boolean | — | — |
+| `tools[].annotations.title` | string | — | — |
+| `tools[].apiBaseUrl` | string | — | — |
+| `tools[].authentication` | object | — | — |
+| `tools[].authentication.algorithm` | string | `"sha256"` | HMAC algorithm (default: sha256). |
+| `tools[].authentication.header` | string | `"x-webhook-signature"` | Header carrying the HMAC signature (default: x-webhook-signature). |
+| `tools[].authentication.secret` | string | — | Required for type: hmac — the shared secret used to sign payloads. |
+| `tools[].authentication.token` | string | — | Required for type: bearer. |
+| `tools[].authentication.type` | "none" \| "bearer" \| "hmac" | `"none"` | none — accept any POST to the webhook path. bearer — require Authorization: Bearer <token> matching `token`. hmac — verify a signature header (HMAC-SHA256 by default) against `secret`. |
+| `tools[].autoLimit` | boolean | `true` | When true (default), the query is wrapped in a subquery with LIMIT rowLimit+1 so the database returns at most rowLimit+1 rows instead of fetching the entire result set into memory. Disable only if your SQL already contains its own LIMIT or if the wrapping causes issues with a specific dialect / CTE. |
+| `tools[].broker` | object | — | Per-tool broker override. When omitted the global `mqtt` broker from the top-level config is used. |
+| `tools[].broker.cacheTtlSeconds` | number | — | Optional cache-level TTL (seconds). Cached messages older than this are dropped during periodic sweeps to bound memory for rarely-updated topics. This is independent of a tool's own `ttlSeconds` freshness check. |
+| `tools[].broker.clean` | boolean | `true` | — |
+| `tools[].broker.clientId` | string | — | MQTT client identifier (default: "mcpgate-<hostname>"). |
+| `tools[].broker.connectTimeout` | number | `30000` | — |
+| `tools[].broker.keepalive` | number | `60` | — |
+| `tools[].broker.maxCachedTopics` | number | `10000` | Upper bound on the number of distinct topics cached per broker connection. Protects memory when subscribing to high-cardinality wildcards (e.g. `#`): once exceeded, the least-recently-updated topic is evicted (LRU). |
+| `tools[].broker.password` | string | — | — |
+| `tools[].broker.protocolVersion` | number | — | MQTT protocol version: 4 = 3.1.1 (default), 5 = 5.0 |
+| `tools[].broker.reconnectPeriod` | number | `5000` | — |
+| `tools[].broker.url` | string | — | Broker connection URL. Supported schemes: mqtt:// plain MQTT over TCP mqtts:// MQTT over TLS ws:// MQTT over WebSocket wss:// MQTT over secure WebSocket |
+| `tools[].broker.username` | string | — | — |
+| `tools[].cache` | object | — | — |
+| `tools[].cache.enabled` | boolean | `false` | — |
+| `tools[].cache.maxEntries` | number | `1000` | — |
+| `tools[].cache.scope` | "identity" \| "global" | `"identity"` | — |
+| `tools[].cache.ttlSeconds` | number | `30` | — |
+| `tools[].conditions` | record | — | — |
+| `tools[].conditions.*.all` | array | — | — |
+| `tools[].conditions.*.all[].containsAll` | array | — | Match every requested string in an array-valued context path. |
+| `tools[].conditions.*.all[].containsAny` | array | — | Match at least one requested string in an array-valued context path. |
+| `tools[].conditions.*.all[].context` | string | — | — |
+| `tools[].conditions.*.all[].equals` | string \| number \| boolean | — | — |
+| `tools[].conditions.*.all[].exists` | boolean | — | — |
+| `tools[].conditions.*.all[].in` | array | — | — |
+| `tools[].conditions.*.any` | array | — | — |
+| `tools[].conditions.*.any[].containsAll` | array | — | Match every requested string in an array-valued context path. |
+| `tools[].conditions.*.any[].containsAny` | array | — | Match at least one requested string in an array-valued context path. |
+| `tools[].conditions.*.any[].context` | string | — | — |
+| `tools[].conditions.*.any[].equals` | string \| number \| boolean | — | — |
+| `tools[].conditions.*.any[].exists` | boolean | — | — |
+| `tools[].conditions.*.any[].in` | array | — | — |
+| `tools[].database` | string | — | — |
+| `tools[].defaultValue` | unknown | — | Default value when no message has been received yet (or TTL expired). |
+| `tools[].description` | string | `""` | — |
+| `tools[].enabled` | boolean | `true` | — |
+| `tools[].expose` | boolean | `true` | — |
+| `tools[].fixedParams` | record | — | Parameter values fixed by the gateway operator. Merged into every call to the downstream tool (overriding any caller-supplied value of the same name) and not part of the advertised `inputSchema` — callers cannot see or change them. |
+| `tools[].handler` | string | — | — |
+| `tools[].hardPayloadLimitBytes` | number | `0` | Hard cap for the complete JSON-serialized downstream result, including structured and non-text content. 0 keeps this additive guard disabled. |
+| `tools[].inputSchema` | object | — | — |
+| `tools[].inputSchema.additionalProperties` | boolean | — | — |
+| `tools[].inputSchema.properties` | record | — | — |
+| `tools[].inputSchema.required` | array | — | — |
+| `tools[].inputSchema.type` | "object" | `"object"` | — |
+| `tools[].maxResponseBytes` | number | — | Maximum size (bytes) of the response body read from the backend before the request is aborted with an error. Guards against unbounded memory use from a large or misbehaving downstream response. Default: 10 MiB. |
+| `tools[].name` | string | — | — |
+| `tools[].operation` | "task_create" \| "task_update" \| "story_points_update" | — | — |
+| `tools[].options` | record | — | — |
+| `tools[].output` | string | — | What the composite returns. A token (e.g. `:steps.final` or `:steps.final.rows`) resolved against the step outputs. Omit to return the last step's raw result. |
+| `tools[].outputSchema` | object | — | — |
+| `tools[].outputSchema.additionalProperties` | boolean | — | — |
+| `tools[].outputSchema.properties` | record | — | — |
+| `tools[].outputSchema.required` | array | — | — |
+| `tools[].outputSchema.type` | "object" | `"object"` | — |
+| `tools[].pagination` | object | — | Opt-in cursor-based pagination. When enabled, the tool advertises a `cursor` input parameter (an opaque, HMAC-signed token bound to tool, arguments and principal) and returns `meta.nextCursor` when more rows remain, instead of only truncating at `rowLimit`. Requires a stable `orderBy` (Req 6.6); the tool's SQL must not already page itself with a top-level `LIMIT`/`TOP`/`OFFSET`/`FETCH FIRST` (Req 6.5, enforced by the loader). Disabled by default to keep existing tool behaviour unchanged. |
+| `tools[].pagination.enabled` | boolean | `false` | — |
+| `tools[].pagination.keyset` | array | — | Optional keyset ("seek") pagination: the `orderBy` columns used for a `WHERE (a,b) > (:cursor)`-style comparison instead of an offset (`<` for `DESC` columns). Must list every `orderBy` column as a bare name, in the same order, and must not name a redacted column. |
+| `tools[].pagination.maxPageSize` | number | `1000` | Upper bound for a caller-supplied `pageSize`. |
+| `tools[].pagination.orderBy` | array | — | Deterministic sort for paging, e.g. `["created_at DESC", "id"]`. Required when `enabled` is true — without a stable order, pages can skip or repeat rows (Req 6.6). Only plain column references with an optional `ASC`/`DESC` direction are accepted (no expressions). |
+| `tools[].pagination.pageSize` | number | `100` | Default page size when the caller does not supply `pageSize`. |
+| `tools[].path` | string | — | Express path where the webhook receiver is registered. |
+| `tools[].pipeline` | array | — | Optional post-processing pipeline applied to the parsed response body before returning it to the MCP client. Supported step types: { type: "jsonPath", expression: "$.data" } — extract by JSONPath { type: "field", path: "result.items" } — dot-notation field pick |
+| `tools[].query` | string | — | — |
+| `tools[].queryFile` | string | — | — |
+| `tools[].redact` | array | — | Field-level redaction applied to each returned row after the query runs. Rules are matched by `column`; a rule with no `when` applies to every caller, otherwise only when the named condition evaluates to true for the current AuthContext. Runs identically whether autoLimit/pagination is used. |
+| `tools[].redact[].column` | string | — | Row field (JSON key) this rule applies to. |
+| `tools[].redact[].placeholder` | string | `"***"` | Placeholder used by the `mask` strategy (default: "***"). |
+| `tools[].redact[].strategy` | "mask" \| "hash" \| "omit" | `"mask"` | mask — replace with a fixed placeholder (default "***") hash — replace with a short SHA-256 hex digest of the original value omit — remove the key from the row entirely |
+| `tools[].redact[].when` | string | — | Name of a condition (see `conditions`) that must be true for this rule to apply. Omit to apply the rule unconditionally to every caller. |
+| `tools[].replayProtection` | object | — | Mandatory timestamp/nonce protocol settings for every HMAC webhook. |
+| `tools[].replayProtection.cacheTtlSeconds` | number | `330` | TTL for consumed nonces in the atomic replay store. |
+| `tools[].replayProtection.clockSkewSeconds` | number | `30` | Allowed future/past clock skew. |
+| `tools[].replayProtection.maxAgeSeconds` | number | `300` | Maximum accepted delivery age, excluding clock skew. |
+| `tools[].replayProtection.nonceHeader` | string | `"x-webhook-nonce"` | Unique per-delivery nonce header; mandatory for HMAC webhooks. |
+| `tools[].replayProtection.timestampHeader` | string | `"x-webhook-timestamp"` | Unix-seconds timestamp header; mandatory for HMAC webhooks. |
+| `tools[].request` | object | — | — |
+| `tools[].request.body` | unknown | — | Optional request body. May be any JSON-serialisable value; nested string values containing :param.* / :ctx.* tokens are substituted. A whole-value token (e.g. ":param.id") preserves the original type. Content-Type defaults to application/json when a body is present. |
+| `tools[].request.headers` | record | — | Headers map. Values may contain :param.* / :ctx.* tokens (raw string substitution — no encoding). Environment variables (${VAR}) are interpolated at config load time; identity tokens at request time. |
+| `tools[].request.method` | "GET" \| "POST" \| "PUT" \| "PATCH" \| "DELETE" | `"GET"` | — |
+| `tools[].request.timeoutMs` | number | `30000` | — |
+| `tools[].request.url` | string | — | URL with optional :param.* / :ctx.* tokens (URL-encoded on substitution). |
+| `tools[].requiredScopes` | array | — | — |
+| `tools[].rowLimit` | number | `1000` | — |
+| `tools[].server` | object | — | — |
+| `tools[].server.forwardBearerToken` | boolean | `false` | When true, the caller's own bearer token is forwarded to the downstream server instead of the configured `token`. @deprecated Passthrough hands the downstream server a token minted for the gateway (confused deputy: wrong audience, replayable). Use McpServerConnectionSchema.tokenExchange so the downstream receives an audience-bound, minimally-scoped token. Kept for migration only; the production gate warns on every use and it is mutually exclusive with `tokenExchange`. |
+| `tools[].server.timeoutMs` | number | `30000` | — |
+| `tools[].server.token` | string | — | Bearer token sent to the downstream server. |
+| `tools[].server.tokenExchange` | object | — | RFC 8693 Token Exchange for this server. When set, the caller's bearer is exchanged before every downstream call; a failed exchange fails the call (fail-closed — the un-exchanged token is never sent). |
+| `tools[].server.tokenExchange.actor` | object | — | Actor for a delegation (OBO) exchange. Absent → impersonation. |
+| `tools[].server.tokenExchange.actor.audience` | string | — | Optional audience for the actor token itself. |
+| `tools[].server.tokenExchange.actor.clientAuth` | "client_secret_post" \| "client_secret_basic" | — | — |
+| `tools[].server.tokenExchange.actor.clientId` | string | — | — |
+| `tools[].server.tokenExchange.actor.clientSecret` | string | — | Resolved from `clientSecretEnv` by the loader. Never set in config files. |
+| `tools[].server.tokenExchange.actor.clientSecretEnv` | string | — | Name of the environment variable holding the actor client secret. |
+| `tools[].server.tokenExchange.actor.grant` | "client_credentials" | — | — |
+| `tools[].server.tokenExchange.actor.scope` | string | — | Scope requested for the actor token, if the IdP requires one. |
+| `tools[].server.tokenExchange.actor.tokenEndpoint` | string | — | Token endpoint issuing the actor token. Defaults to the exchange endpoint. |
+| `tools[].server.tokenExchange.audience` | string | — | Target provider's `client_id` (RFC 8693 `audience`). |
+| `tools[].server.tokenExchange.clientAuth` | "client_secret_post" \| "client_secret_basic" | — | — |
+| `tools[].server.tokenExchange.clientId` | string | — | — |
+| `tools[].server.tokenExchange.clientSecret` | string | — | Resolved from `clientSecretEnv` by the loader. Never set in config files. |
+| `tools[].server.tokenExchange.clientSecretEnv` | string | — | Name of the environment variable holding the client secret. |
+| `tools[].server.tokenExchange.issuer` | string | — | OIDC issuer whose discovery yields the token endpoint. |
+| `tools[].server.tokenExchange.requestedTokenType` | string | — | `requested_token_type`. Optional; IdP default is access_token. |
+| `tools[].server.tokenExchange.scope` | string | — | Space-delimited scopes to request, sent verbatim. |
+| `tools[].server.tokenExchange.timeoutMs` | number | — | — |
+| `tools[].server.tokenExchange.tokenEndpoint` | string | — | Token endpoint performing the exchange. Required unless `issuer` is set. |
+| `tools[].server.url` | string | — | Full URL of the downstream MCP server (Streamable HTTP endpoint). |
+| `tools[].steps` | array | — | — |
+| `tools[].steps[].arguments` | record | — | Argument template for the step. String values may contain tokens: :param.<path> the composite tool's own call arguments :ctx.<path> the caller's auth context :steps.<id>.<path> a previous step's (JSON-parsed) output A whole-string token preserves the resolved value's type. |
+| `tools[].steps[].condition` | string | — | Optional gate: a token (`:param.*` / `:ctx.*` / `:steps.<id>.*`) that must resolve to a truthy value for the step to run. When falsy, the step is skipped (its `:steps.<id>.*` output is `null`) and execution continues with the next step. |
+| `tools[].steps[].id` | string | — | Identifier used to reference this step's output as `:steps.<id>.*`. |
+| `tools[].steps[].parallelGroup` | string | — | Steps sharing the same non-empty `parallelGroup` value run concurrently (via `Promise.all`) once every step that precedes the group (in declaration order) has completed. Steps without a group run strictly sequentially, in declaration order, exactly as before. |
+| `tools[].steps[].retries` | number | `0` | Number of additional attempts after a failing call (0 = no retry). |
+| `tools[].steps[].retryDelayMs` | number | `200` | Delay between retry attempts, in milliseconds. |
+| `tools[].steps[].timeoutMs` | number | — | Per-step timeout in milliseconds. Omit to run with no explicit timeout. |
+| `tools[].steps[].tool` | string | — | Name of the tool to run (may be `expose: false`). |
+| `tools[].targetTool` | string | — | Name of the tool to call on the downstream server. |
+| `tools[].tenantId` | string | — | Trusted, operator-configured tenant for both inbound storage and reads. |
+| `tools[].timeoutMs` | number | `30000` | — |
+| `tools[].tokenCacheTtlMs` | number | `300000` | — |
+| `tools[].topic` | string | — | Single-topic mode — returns the raw (transformed) value directly. Mutually exclusive with `topics`. Exactly one of `topic` / `topics` must be set; this is enforced at config load time (see loader.ts). |
+| `tools[].topics` | array | — | Multi-topic mode — returns a JSON object with one key per mapping. Use when you need several values in a single tool call. |
+| `tools[].topics[].defaultValue` | unknown | — | Value returned when no message has been received on this topic yet. |
+| `tools[].topics[].path` | string | — | Key in the returned JSON object. |
+| `tools[].topics[].topic` | string | — | MQTT topic to subscribe to (wildcards + / # supported). |
+| `tools[].topics[].transform` | "auto" \| "json" \| "string" \| "number" \| "boolean" | `"auto"` | How the raw payload bytes are converted before returning: auto — try JSON parse; fall back to utf-8 string (default) json — always JSON.parse; error if invalid string — always return as utf-8 string number — parseFloat boolean — "true"/"1"/"yes"/"on" → true, everything else → false |
+| `tools[].transform` | "auto" \| "json" \| "string" \| "number" \| "boolean" | `"auto"` | Transform applied in single-topic mode. |
+| `tools[].ttlSeconds` | number | — | Payload freshness bound. Required by the production gate. |
+| `tools[].type` | "database" \| "http" \| "taigaApi" \| "inline" \| "webhook" \| "mcp" \| "mqtt" \| "composite" | — | — |
+| `tracing` | object | — | — |
+| `tracing.enabled` | boolean | `false` | — |
+| `tracing.otlpEndpoint` | string | — | OTLP/HTTP exporter endpoint, e.g. http://localhost:4318. |
+| `tracing.serviceName` | string | `"mcpgate"` | — |
