@@ -61,18 +61,25 @@ function collectProviderRefs(value: unknown, out: Set<string>): void {
  * and calls `process.exit(1)`.
  */
 export function loadConfig(): AppConfig {
-  // Apply a PROFILE preset (if any) BEFORE parsing, so its defaults fill only
-  // unset variables and Zod coercion/validation sees the effective values.
-  // Explicit env vars always win over the profile (see ./profiles.ts).
+  // Apply an ATF_PRESET preset (if any) BEFORE parsing, so its defaults fill
+  // only unset variables and Zod coercion/validation sees the effective
+  // values. Explicit env vars always win over the preset (see ./profiles.ts).
+  // PROFILE is a deprecated alias of ATF_PRESET.
   const {
     env: mergedEnv,
     profile,
     applied,
+    deprecatedAlias,
     error: profileError,
   } = applyProfile(process.env as RawEnv);
   if (profileError !== undefined) {
     process.stderr.write(`[Config] ${profileError}\n`);
     process.exit(1);
+  }
+  if (deprecatedAlias) {
+    process.stderr.write(
+      "[Config] PROFILE is deprecated; use ATF_PRESET (same values). PROFILE still works in this release.\n",
+    );
   }
 
   // Resolve the effective operational profile (Betriebsprofil): the explicit,

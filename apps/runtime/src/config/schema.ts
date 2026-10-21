@@ -870,6 +870,12 @@ export const EnvSchema = z.object({
    * variables (explicit env vars always win). See `src/config/profiles.ts` for
    * the valid names (`dev`, `secure`, `regulated`, `regulated-multitenant`,
    * `performance`). Applied before parsing, so it is validated there, not here.
+   * `PROFILE` is a deprecated alias.
+   */
+  ATF_PRESET: z.string().optional(),
+  /**
+   * Deprecated alias of `ATF_PRESET` (same values). Setting both to different
+   * values stops startup; using only `PROFILE` logs a deprecation warning.
    */
   PROFILE: z.string().optional(),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -910,7 +916,7 @@ export const EnvSchema = z.object({
     .default("development"),
   /**
    * Explicit operational profile, shared with every other ATF service. Wins
-   * over `APP_ENV`. Distinct from `PROFILE` above, which selects a config
+   * over `APP_ENV`. Distinct from `ATF_PRESET` above, which selects a config
    * *preset* (dev/secure/regulated/…) — an unrelated concept.
    */
   ATF_PROFILE: z.string().optional(),

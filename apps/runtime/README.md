@@ -82,8 +82,9 @@ startup error.
 - [`.env.example`](.env.example) — annotated starting point
 - [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) — the current generated reference;
   avoid copying variable counts into hand-written documents because the schema evolves
-- `PROFILE` applies a bundle of defaults (`dev`, `secure`, `regulated`,
-  `regulated-multitenant`, `performance`); explicit variables always win
+- `ATF_PRESET` applies a bundle of defaults (`dev`, `secure`, `regulated`,
+  `regulated-multitenant`, `performance`); explicit variables always win.
+  `PROFILE` is a deprecated alias of it
 - With `APP_ENV=production` a readiness gate refuses to start under unsafe settings such as
   open CORS or unverified JWTs (`src/config/prod-gate.ts`)
 

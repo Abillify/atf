@@ -679,7 +679,7 @@ function render(sections: Section[]): string {
     "",
     "## Profiles",
     "",
-    "`PROFILE` applies a curated bundle of defaults before validation. Explicit variables always win over a profile. Available profiles: `dev`, `secure`, `regulated`, `regulated-multitenant`, `performance`. See `apps/runtime/src/config/profiles.ts`.",
+    "`ATF_PRESET` applies a curated bundle of defaults before validation. Explicit variables always win over a preset. Available presets: `dev`, `secure`, `regulated`, `regulated-multitenant`, `performance`. See `apps/runtime/src/config/profiles.ts`. `PROFILE` is a deprecated alias of `ATF_PRESET` (same values); setting both to different values stops startup.",
     "",
     "A profile is a starting point, not a compliance statement. `regulated` sets stricter defaults; it does not make a deployment compliant on its own.",
     "",
@@ -687,7 +687,7 @@ function render(sections: Section[]): string {
     "",
     "With the operational profile set to `production`, a service refuses to start under unsafe settings — open CORS, unverified JWTs, an unauthenticated monitoring or metrics endpoint, and similar. See `apps/runtime/src/config/prod-gate.ts` and [DEPLOYMENT.md](../DEPLOYMENT.md).",
     "",
-    "Every service (Runtime, Gate, Search, Extract) resolves its profile the same way through `@atf/security-kit` (`packages/security-kit/src/prod-gate/profile.ts`): the platform-wide `ATF_PROFILE` wins over the service variable (`APP_ENV`, `MCPGATE_ENV`, `NODE_ENV`); unset means `development`. The value set is closed (`development`, `staging`, `production`, `test`) and an unknown value aborts startup — a typo like `prod` can no longer silently disable the gates. `staging` runs the checks in warn mode: findings are reported, startup continues. `ATF_PROFILE` is unrelated to Runtime's `PROFILE` preset variable above.",
+    "Every service (Runtime, Gate, Search, Extract) resolves its profile the same way through `@atf/security-kit` (`packages/security-kit/src/prod-gate/profile.ts`): the platform-wide `ATF_PROFILE` wins over the service variable (`APP_ENV`, `MCPGATE_ENV`, `NODE_ENV`); unset means `development`. The value set is closed (`development`, `staging`, `production`, `test`) and an unknown value aborts startup — a typo like `prod` can no longer silently disable the gates. `staging` runs the checks in warn mode: findings are reported, startup continues. `ATF_PROFILE` is unrelated to Runtime's `ATF_PRESET` preset variable above.",
     "",
   );
 	return `${lines.join("\n").trimEnd()}\n`;

@@ -109,6 +109,45 @@ describe("applyProfile", () => {
     expect(applyProfile({ PROFILE: "  regulated " }).profile).toBe("regulated");
   });
 
+  it("ATF_PRESET applies the preset without the deprecated alias", () => {
+    const r = applyProfile({ ATF_PRESET: "regulated" });
+    expect(r.profile).toBe("regulated");
+    expect(r.deprecatedAlias).toBe(false);
+    expect(r.env.TAINT_MODE).toBe("on-untrusted-source");
+    expect(r.error).toBeUndefined();
+  });
+
+  it("PROFILE is the deprecated alias and reports itself as such", () => {
+    const r = applyProfile({ PROFILE: "regulated" });
+    expect(r.profile).toBe("regulated");
+    expect(r.deprecatedAlias).toBe(true);
+    expect(r.env.TAINT_MODE).toBe("on-untrusted-source");
+  });
+
+  it("both variables set to the same value is fine", () => {
+    const r = applyProfile({ ATF_PRESET: "secure", PROFILE: "secure" });
+    expect(r.profile).toBe("secure");
+    expect(r.deprecatedAlias).toBe(false);
+    expect(r.error).toBeUndefined();
+  });
+
+  it("both variables set to different values is an error", () => {
+    const r = applyProfile({ ATF_PRESET: "regulated", PROFILE: "secure" });
+    expect(r.error).toBe(
+      'ATF_PRESET="regulated" and PROFILE="secure" disagree; set only ATF_PRESET.',
+    );
+    expect(r.profile).toBeUndefined();
+    expect(r.applied).toEqual([]);
+  });
+
+  it("an unknown ATF_PRESET names the new variable", () => {
+    const r = applyProfile({ ATF_PRESET: "regulateed" }); // typo
+    expect(r.error).toContain("Unknown ATF_PRESET");
+    expect(r.error).toContain("Valid presets");
+    expect(r.error).toContain("regulated-multitenant");
+    expect(r.deprecatedAlias).toBe(false);
+  });
+
   it("every shipped profile only contains keys that are strings", () => {
     for (const name of listProfiles()) {
       const profile = PROFILES[name];

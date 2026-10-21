@@ -9,8 +9,8 @@
  * concert (guardrails, PII vault, retention, RLS, monitoring auth, …) — the
  * single biggest source of misconfiguration risk.
  *
- * A `PROFILE` picks a curated bundle of *defaults* for those flags. The rule is
- * strict and intentional:
+ * `ATF_PRESET` picks a curated bundle of *defaults* for those flags (`PROFILE`
+ * is a deprecated alias of it). The rule is strict and intentional:
  *
  *   explicit environment variable  >  profile default  >  built-in schema default
  *
@@ -127,23 +127,40 @@ export interface ApplyProfileResult {
   profile?: string;
   /** Keys the profile actually filled (were unset in the input env). */
   applied: string[];
-  /** Set when `PROFILE` names an unknown profile — caller should fail fast. */
+  /** True when the preset was requested through the deprecated `PROFILE` alias. */
+  deprecatedAlias: boolean;
+  /** Set when the requested preset is unknown or the two variables disagree — caller should fail fast. */
   error?: string;
 }
 
 /**
- * Merges the profile named by `env.PROFILE` into a COPY of `env`, filling only
- * keys the caller has not already set (explicit env wins). Returns the merged
- * env plus a report of what was applied. Never mutates the input.
+ * Merges the preset named by `env.ATF_PRESET` into a COPY of `env`, filling
+ * only keys the caller has not already set (explicit env wins). Returns the
+ * merged env plus a report of what was applied. Never mutates the input.
  *
- * When `PROFILE` is unset, returns the env unchanged. When `PROFILE` names an
- * unknown profile, returns `error` set (and the env unchanged) so the loader
- * can fail fast with a clear message rather than silently ignoring a typo.
+ * `PROFILE` is a deprecated alias of `ATF_PRESET` (same values): when only the
+ * alias is set the preset still applies and `deprecatedAlias` is set so the
+ * loader can warn. When both are set to different values `error` is returned.
+ *
+ * When no preset is requested, returns the env unchanged. When the name is
+ * unknown, returns `error` set (and the env unchanged) so the loader can fail
+ * fast with a clear message rather than silently ignoring a typo.
  */
 export function applyProfile(env: RawEnv): ApplyProfileResult {
-  const requested = env.PROFILE?.trim();
-  if (requested === undefined || requested === "") {
-    return { env, applied: [] };
+  const preset = env.ATF_PRESET?.trim() || undefined;
+  const legacy = env.PROFILE?.trim() || undefined;
+  if (preset !== undefined && legacy !== undefined && preset !== legacy) {
+    return {
+      env,
+      applied: [],
+      deprecatedAlias: false,
+      error: `ATF_PRESET="${preset}" and PROFILE="${legacy}" disagree; set only ATF_PRESET.`,
+    };
+  }
+  const requested = preset ?? legacy;
+  const deprecatedAlias = preset === undefined && legacy !== undefined;
+  if (requested === undefined) {
+    return { env, applied: [], deprecatedAlias };
   }
 
   const defaults = PROFILES[requested];
@@ -151,8 +168,10 @@ export function applyProfile(env: RawEnv): ApplyProfileResult {
     return {
       env,
       applied: [],
-      error:
-        `Unknown PROFILE "${requested}". Valid profiles: ${listProfiles().join(", ")}.`,
+      deprecatedAlias,
+      error: deprecatedAlias
+        ? `Unknown PROFILE "${requested}". Valid profiles: ${listProfiles().join(", ")}.`
+        : `Unknown ATF_PRESET "${requested}". Valid presets: ${listProfiles().join(", ")}.`,
     };
   }
 
@@ -166,5 +185,5 @@ export function applyProfile(env: RawEnv): ApplyProfileResult {
     }
   }
 
-  return { env: merged, profile: requested, applied };
+  return { env: merged, profile: requested, applied, deprecatedAlias };
 }

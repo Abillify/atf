@@ -479,13 +479,18 @@ configuration and clients. Do these **before** rolling out:
     (`monitoring.includeToolContent: false`). Set `tenantScope: all` and/or
     `includeToolContent: true` to restore the previous view. The static monitor
     token keeps the operator view (all events) either way.
-26. **Runtime: `regulated` presets.** `PROFILE=regulated` (and
+26. **Runtime: `regulated` presets.** `ATF_PRESET=regulated` (and
     `regulated-multitenant`) now also set `TAINT_MODE=on-untrusted-source`,
     `AI_DISCLOSURE=header` and `COMPLIANCE_POLICY_REQUIRED=true`, and in the
     production Betriebsprofil they turn a missing `AUDIT_ANCHOR_FILE`, an empty
     `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` from warnings
     into start aborts. Set those four before upgrading, or override the preset
     values explicitly — an explicit environment variable always wins.
+27. **Runtime: `PROFILE` is renamed to `ATF_PRESET`.** The preset variable was
+    easily confused with the operational profile `ATF_PROFILE`. `PROFILE` still
+    works in this release as a deprecated alias (same values) and logs a
+    warning; rename it to `ATF_PRESET`. Setting both to different values stops
+    startup.
 
 ### Not yet shared between replicas (roadmap)
 
