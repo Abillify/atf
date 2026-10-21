@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
 // Single source of truth for agent-harness status and task-label texts.
 //
 // The harness grew its wording call site by call site, so a single run mixed

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
 /**
  * Search exposes a `capabilities` object in its `collection_stats` tool result
  * (`apps/search/src/pg-methods-collections.ts`) telling consumers which
