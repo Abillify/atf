@@ -124,6 +124,75 @@ function resolvePromptIncludes(
  */
 interface FlowIncludeDirective {
   subflows?: string[];
+  /**
+   * `{ <nodeId>: <partial node> }`: deep-merged into the included node of that
+   * id (objects recursively, arrays replaced, `null` deletes the key). The
+   * parent keeps changing only what it names, instead of replacing the whole
+   * node by redefining its id.
+   */
+  patches?: Record<string, unknown>;
+}
+
+/** A flow's include directive is wrong in a way that stops the flow from loading. */
+export class FlowIncludeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FlowIncludeError";
+  }
+}
+
+/** Source-form-only bookkeeping key holding `$include.patches` between load and save. */
+export const INCLUDE_PATCHES_KEY = "$includePatches";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Deep-merges `patch` into `target` (in place): plain objects recursively,
+ * arrays and scalars replace, `null` deletes the key.
+ */
+export function deepMergePatch(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete target[key];
+    } else if (isPlainObject(value) && isPlainObject(target[key])) {
+      deepMergePatch(target[key] as Record<string, unknown>, value);
+    } else {
+      target[key] = isPlainObject(value) ? structuredClone(value) : value;
+    }
+  }
+}
+
+/**
+ * Applies `$include.patches` to the nodes of `raw`. Throws a
+ * {@link FlowIncludeError} for a malformed patch set, an id that matches no
+ * node, or a patch that would change a node's id (its edges would dangle).
+ */
+export function applyIncludePatches(
+  raw: Record<string, unknown>,
+  patches: unknown,
+): void {
+  if (!isPlainObject(patches)) {
+    throw new FlowIncludeError("$include.patches must map node ids to partial nodes");
+  }
+  const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
+  for (const [nodeId, patch] of Object.entries(patches)) {
+    if (!isPlainObject(patch)) {
+      throw new FlowIncludeError(`patch for node ${nodeId} must be an object`);
+    }
+    const node = nodes.find((n): n is Record<string, unknown> => isPlainObject(n) && n.id === nodeId);
+    if (node === undefined) {
+      throw new FlowIncludeError(`patch targets unknown node ${nodeId}`);
+    }
+    if ("id" in patch && patch.id !== nodeId) {
+      throw new FlowIncludeError(`patch for node ${nodeId} must not change its id`);
+    }
+    deepMergePatch(node, patch);
+  }
 }
 
 /**
@@ -242,6 +311,7 @@ function resolveSubflowIncludes(
 
   const directive = includeDirective as FlowIncludeDirective;
   const subflowPaths = directive.subflows;
+  const patches = directive.patches;
 
   delete meta.$include;
 
@@ -266,6 +336,8 @@ function resolveSubflowIncludes(
       .filter((id): id is string => typeof id === "string"),
   );
 
+  /** Nodes this call merged in: the only ones `patches` may address. */
+  const mergedNodes: Record<string, unknown>[] = [];
   for (const relPath of subflowPaths) {
     if (typeof relPath !== "string") continue;
     const absPath = path.resolve(flowsDir, relPath.trim());
@@ -299,6 +371,7 @@ function resolveSubflowIncludes(
       }
       existingNodeIds.add(id);
       parentNodes.push(node);
+      mergedNodes.push(n);
       if (depth === 0 && origins !== undefined) {
         origins[id] = relPath.trim();
       }
@@ -310,6 +383,19 @@ function resolveSubflowIncludes(
         const key = includeEdgeKey(edge);
         if (key !== undefined) edgeOrigins[key] = relPath.trim();
       }
+    }
+  }
+
+  if (patches !== undefined) {
+    if (depth === 0 && !resolvePrompts) {
+      // Editable source form: the sub-flow nodes stay as the sub-flow file has
+      // them (saving writes them back there), and the patches wait in
+      // bookkeeping until the runtime form is materialized. Checked now so a
+      // wrong id is reported when the flow loads, not when it is first run.
+      applyIncludePatches({ nodes: structuredClone(mergedNodes) }, patches);
+      meta[INCLUDE_PATCHES_KEY] = patches;
+    } else {
+      applyIncludePatches({ nodes: mergedNodes }, patches);
     }
   }
 }

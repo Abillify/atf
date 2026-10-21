@@ -354,11 +354,14 @@ export async function splitByIncludeOrigin(
     $includeOrigins: _omit,
     $includeEdgeOrigins: _omitEdges,
     $subflowVersions: _omitVersions,
+    $includePatches: _omitPatches,
     ...restMetadata
   } = (definition.metadata ?? {}) as Record<string, unknown>;
   void _omit;
   void _omitEdges;
   void _omitVersions;
+  // The patches live on in the parent's own `$include` directive (kept below).
+  void _omitPatches;
 
   // Keep the parent's existing `$include` directive (its other keys such as a
   // `_comment`, and its order — the merge order matters) and only reconcile

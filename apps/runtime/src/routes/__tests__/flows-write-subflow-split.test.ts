@@ -123,6 +123,53 @@ describe("POST /flows/write — $includeOrigins split", () => {
     expect(parentRaw).not.toContain("subflowVersions");
   });
 
+  test("$include.patches survive a save; $includePatches bookkeeping and patched values never reach a file", async () => {
+    fs.mkdirSync(path.join(tmpDir, "subflows"));
+    fs.writeFileSync(
+      path.join(tmpDir, "parent.yaml"),
+      [
+        "id: parent",
+        "name: Parent",
+        "metadata:",
+        "  $include:",
+        "    subflows:",
+        "      - subflows/guard.yaml",
+        "    patches:",
+        "      guard-node:",
+        "        config:",
+        "          maxToolSteps: 99",
+        "nodes:",
+        "  - id: router",
+        "    type: router",
+        "edges: []",
+        "",
+      ].join("\n"),
+    );
+    const app = buildApp(tmpDir);
+    // The editor holds the UNPATCHED sub-flow node plus the patches in bookkeeping.
+    const withBookkeeping: FlowDefinition = {
+      ...composedFlow,
+      metadata: {
+        ...composedFlow.metadata,
+        $includePatches: { "guard-node": { config: { maxToolSteps: 99 } } },
+      },
+    };
+    const res = await app.request(
+      "/flows/write",
+      writeRequest({ id: "parent", format: "yaml", definition: withBookkeeping }),
+    );
+    expect(res.status).toBe(200);
+    const parentRaw = fs.readFileSync(path.join(tmpDir, "parent.yaml"), "utf-8");
+    const parent = parseYaml(parentRaw) as FlowDefinition;
+    expect(parent.metadata?.$include).toEqual({
+      subflows: ["subflows/guard.yaml"],
+      patches: { "guard-node": { config: { maxToolSteps: 99 } } },
+    });
+    expect(parentRaw).not.toContain("includePatches");
+    const subflowRaw = fs.readFileSync(path.join(tmpDir, "subflows", "guard.yaml"), "utf-8");
+    expect(subflowRaw).not.toContain("maxToolSteps");
+  });
+
   test("a flow without $includeOrigins writes exactly as before (no split)", async () => {
     const app = buildApp(tmpDir);
     const plain: FlowDefinition = {

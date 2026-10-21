@@ -27,18 +27,30 @@ import {
   validateFlowSource,
 } from "./validate.js";
 import {
+  applyIncludePatches,
+  FlowIncludeError,
   resolveFlowIncludes,
   resolveFlowSourceIncludes,
   resolveRawFlowVariables,
   INCLUDE_EDGE_ORIGINS_KEY,
+  INCLUDE_PATCHES_KEY,
 } from "./normalize.js";
 
-/** Drops source-form-only bookkeeping from a clone headed for the runtime. */
-function stripSourceBookkeeping(raw: Record<string, unknown>): void {
+/**
+ * Drops source-form-only bookkeeping from a clone headed for the runtime and
+ * returns the `$include.patches` it carried, which the runtime form must apply
+ * to the merged sub-flow nodes.
+ */
+function stripSourceBookkeeping(raw: Record<string, unknown>): unknown {
   const meta = raw.metadata;
   if (typeof meta === "object" && meta !== null && !Array.isArray(meta)) {
-    delete (meta as Record<string, unknown>)[INCLUDE_EDGE_ORIGINS_KEY];
+    const record = meta as Record<string, unknown>;
+    delete record[INCLUDE_EDGE_ORIGINS_KEY];
+    const patches = record[INCLUDE_PATCHES_KEY];
+    delete record[INCLUDE_PATCHES_KEY];
+    return patches;
   }
+  return undefined;
 }
 import type { ValidationResult } from "./validate.js";
 import {
@@ -137,8 +149,16 @@ export function expandFlowSource(
 ): unknown {
   if (typeof source !== "object" || source === null) return source;
   const clone = structuredClone(source) as Record<string, unknown>;
-  stripSourceBookkeeping(clone);
+  const patches = stripSourceBookkeeping(clone);
   resolveFlowIncludes(clone, flowsDir, fileName);
+  if (patches !== undefined) {
+    try {
+      applyIncludePatches(clone, patches);
+    } catch (error) {
+      // The load already reported this flow; expansion stays usable for the editor.
+      if (!(error instanceof FlowIncludeError)) throw error;
+    }
+  }
   makeFlowValueResolver(flowsDir)(clone, undefined, fileName);
   return clone;
 }
@@ -161,8 +181,16 @@ export function materializeFlowSource(
     );
   }
   const clone = structuredClone(source) as Record<string, unknown>;
-  stripSourceBookkeeping(clone);
-  resolveFlowIncludes(clone, flowsDir, fileName);
+  const patches = stripSourceBookkeeping(clone);
+  try {
+    resolveFlowIncludes(clone, flowsDir, fileName);
+    if (patches !== undefined) applyIncludePatches(clone, patches);
+  } catch (error) {
+    if (error instanceof FlowIncludeError) {
+      return { success: false, error: { fileName, reason: error.message } };
+    }
+    throw error;
+  }
   return validateFlowSource(
     clone,
     makeFlowValueResolver(flowsDir),
@@ -380,13 +408,23 @@ function registerParsedFlow(  raw: unknown,
 ): void {
   let source: Record<string, unknown> | undefined;
   if (typeof raw === "object" && raw !== null) {
-    source = structuredClone(raw) as Record<string, unknown>;
-    resolveFlowSourceIncludes(source, path.dirname(filePath), fileName);
-    resolveFlowIncludes(
-      raw as Record<string, unknown>,
-      path.dirname(filePath),
-      fileName,
-    );
+    try {
+      source = structuredClone(raw) as Record<string, unknown>;
+      resolveFlowSourceIncludes(source, path.dirname(filePath), fileName);
+      resolveFlowIncludes(
+        raw as Record<string, unknown>,
+        path.dirname(filePath),
+        fileName,
+      );
+    } catch (error) {
+      // A wrong `$include` (for example a patch for a node that does not
+      // exist) keeps the flow from loading, like any other validation error.
+      if (error instanceof FlowIncludeError) {
+        logValidationError(fileName, error.message);
+        return;
+      }
+      throw error;
+    }
   }
 
   const result = validateFlowSource(

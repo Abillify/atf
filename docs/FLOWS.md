@@ -38,7 +38,7 @@ Everything lives in `FLOWS_DIR`:
 | `model-shortcuts.yaml` | Engines (named `PROVIDERS` instances), model presets (model id + parameters) and shortcuts — single engine/model pairs or pools with a selection strategy. Referenced as `llm.shortcut`. A change reloads all flows. |
 | `constants.yaml` | `constants: { name: value }` shared by all flows, read as `{{const.<name>}}` in variable values. No secrets. A change reloads all flows. |
 | `prompts/` | Prompt files included with `#[[file:prompts/<name>.md]]` in a `systemPrompt` (node or override); includes may nest up to 5 levels. |
-| `subflows/` | Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them. |
+| `subflows/` | Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them. `metadata.$include.patches` changes included nodes from the parent without redefining them. |
 | `*.example.yaml` | Documentation templates; never loaded. |
 | `dispatch, access, canary, guardrails, experiments, mcp, tool-authz, compliance-policy, shadow (.yaml)` | Reserved configuration files of other subsystems, never loaded as flows. |
 
@@ -69,7 +69,7 @@ edges: []
 | `budgets` | object | no | Per-execution budgets: once a limit is reached the execution stops before the next model or tool call and finishes with `finishReason: budget_exceeded`. |
 | `nodes` | list of object 1–100 | no | The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows. |
 | `edges` | list of object (≤ 500) | no | Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in. |
-| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |
+| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files) with optional `$include.patches` (`{ <nodeId>: <partial node> }`, deep-merged into the included node: objects merge, arrays replace, `null` deletes a key; an unknown node id is a load error), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |
 
 Keys starting with `_` (`_comment`, `_comment_tools`, …) are annotations on flows, nodes, edges and overrides; the parser ignores them. Any other unknown key is an error in `schemas/flow.schema.json`, which editors can use to validate flow files as you type (it describes the file form, including `llm.shortcut` and flows whose nodes come from `metadata.$include`).
 

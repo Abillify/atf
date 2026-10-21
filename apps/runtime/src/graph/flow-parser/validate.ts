@@ -1157,7 +1157,7 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
 		.record(z.string(), z.unknown())
 		.optional()
 		.describe(
-			"Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable).",
+			"Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files) with optional `$include.patches` (`{ <nodeId>: <partial node> }`, deep-merged into the included node: objects merge, arrays replace, `null` deletes a key; an unknown node id is a load error), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable).",
 		),
 });
 

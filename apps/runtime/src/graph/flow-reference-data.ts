@@ -358,7 +358,7 @@ export const FLOWS_DIR_ENTRIES: ReferenceField[] = [
   { key: "prompts/", description: "Prompt files included with `#[[file:prompts/<name>.md]]` in a `systemPrompt` (node or override); includes may nest up to 5 levels." },
   {
     key: "subflows/",
-    description: "Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them.",
+    description: "Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them. `metadata.$include.patches` changes included nodes from the parent without redefining them.",
   },
   {
     key: "*.example.yaml",
