@@ -89,6 +89,41 @@ The response is `{ results: [...] }`. Each hit carries `score`, `unit_id`, `unit
 - `revision_state: "partial"` with `pages_available` when the hit comes from a still-growing
   progressive revision, and `group` when `group_by` merged hits.
 
+### Answer-ready retrieval
+
+`retrieve_for_answer` (MCP) and `POST /v2/retrieve` (HTTP) turn a question into the evidence that
+fits a model's context in one call. No model takes part, so the same question over the same index
+gives the same answer.
+
+| Field | Meaning |
+| --- | --- |
+| `question` | Required. Cut at `SEARCH_MAX_QUERY_CHARS` like any query (`query_truncated`). |
+| `budget_tokens` | 256–32000, default 4000. Counted with the tokenizer of the embedding model (character heuristic when unavailable). |
+| `max_subqueries` | 1–6, default 4; the original question counts. |
+| `filter`, `path_prefix`, `valid_at`, `include_all_versions` | As on `search`. HTTP also takes the collection from `X-Collection` (default `documents`) and `X-Valid-At`. |
+
+How it works: the question is cut at `?`, `;` and the conjunctions ` und `, ` sowie `, ` and `,
+` as well as ` where both sides have at least three words, and duplicates are dropped; the
+original always comes first. Each part is searched (hybrid, 20 hits, up to 4 at a time, no
+rerank, no grouping), and the ranked lists are fused by reciprocal rank (`Σ 1/(60+rank)`). A
+repeated chunk and a near-duplicate text (equal first 512 characters after case and whitespace
+folding) collapse to the higher-fused one. When a reranker is configured the top 50 are reranked
+against the original question. Passages are packed greedily into `budget_tokens`, at most 3 per
+document; one that does not fit is skipped, never cut, and packing stops looking once fewer than
+64 tokens remain after a skip.
+
+The answer carries `question`, `subqueries`, `budget_tokens`, `used_tokens`, `truncated` (candidates
+were left out because they did not fit), `reranked`, `content_trust: "untrusted"`, `injection_risk`
+and `evidence[]` with `id`, `reference`, `base_ref`, `title`, `section`, `page_start`/`page_end`,
+`content`, `score`, `matched_subqueries` and the same labels per passage. A failing sub-question only
+narrows the recall; a failing original question fails the call.
+
+```bash
+curl -s -X POST http://localhost:8080/v2/retrieve \
+  -H "Authorization: Bearer $API_TOKEN" -H "X-Collection: handbuch" -H "Content-Type: application/json" \
+  -d '{"question": "Welche Pflichtfelder hat die Maske M-2 und welche Rechte braucht der Benutzer dafür?", "budget_tokens": 3000}'
+```
+
 ### v2 revision hand-off
 
 Extract's emitter writes documents through these routes (the OpenAPI document has the shapes):
@@ -248,6 +283,7 @@ could not retrieve through search:
 | `get_table` | A logical table reassembled across pages (`table_id`, `rows`) |
 | `find_identifier` | Exact occurrences of an identifier across the collection or beneath `path_prefix`, paginated |
 | `follow_ref` | Resolve the figures a unit references |
+| `retrieve_for_answer` | Question → evidence within a token budget (see *Answer-ready retrieval*) |
 | `get_thread` | A whole e-mail thread chronologically (`reference` = a message's ref or `document_group.id`; `max_chars`, `offset`/`next_offset`, `path_prefix`) |
 
 Every tool also accepts `collection`. The read tools (`get_outline`, `get_section`, `get_pages`,

@@ -245,6 +245,10 @@ vector database is required.
   synchronously or streamed, with an optional fallback reranker.
 - **Retrieval quality techniques.** HyDE, semantic chunking, late chunking, and contextual
   retrieval prefixes, each independently configurable.
+- **Answer-ready retrieval.** `retrieve_for_answer` (MCP) and `POST /v2/retrieve` split a question
+  into sub-questions by rule, search each, fuse the lists by reciprocal rank, remove duplicates,
+  optionally rerank against the original question and pack the passages into a token budget
+  (`budget_tokens`), with every passage labelled as untrusted data.
 - **Optional sparse vectors.** SPLADE-style sparse retrieval as a third signal.
 - **Collections and versioning.** Multiple collections with their own language configuration,
   document versioning, and score-keyset pagination that stays stable across pages.

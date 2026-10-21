@@ -407,6 +407,7 @@ releases:
 - LLM nodes accept `stickyArgs`: an argument the model sets once (e.g. `valid_at`) is reused for later tool calls of the execution.
 - Sub-flow includes accept `patches` that deep-merge into included nodes.
 - Search groups documents ingested with the same `split_of` metadata as `split_document` and lists siblings in `get_documents`.
+- Search `retrieve_for_answer` (MCP) and `POST /v2/retrieve`: rule-based question decomposition, multi-query reciprocal-rank fusion, optional rerank against the original question, de-duplication and packing into a token budget.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
