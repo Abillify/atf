@@ -44,6 +44,7 @@ import { logger } from "./logger.ts";
 import { randomBytes } from "node:crypto";
 import { resolveEnvironment } from "./config/prod-gate.ts";
 import { createApprovalConsumptionStore } from "./mcp/approval-store.ts";
+import { createPendingApprovalStore } from "./mcp/pending-approval-store.ts";
 import {
   GovernancePolicy,
   compilePolicy,
@@ -142,6 +143,16 @@ export async function buildApp(
     ? await createApprovalConsumptionStore(
         transactionRedisUrl,
         resolveEnvironment(),
+      )
+    : undefined;
+  // Pending approvals of the 2026 endpoint follow the same rule: Redis-backed
+  // when a Redis URL is configured so the request and the resolve may land on
+  // different replicas, otherwise the process-local memory store.
+  const pendingApprovalStore = config.server.mcp2026.enabled
+    ? await createPendingApprovalStore(
+        transactionRedisUrl,
+        config.policies.approval.ttlMs,
+        config.policies.approval.maxPending,
       )
     : undefined;
   // Governance is compiled exactly once per configuration version (Req 6.3):
@@ -472,6 +483,9 @@ export async function buildApp(
         policies: config.policies,
         policyRef,
         ...(approvalStore !== undefined ? { approvalStore } : {}),
+        ...(pendingApprovalStore !== undefined
+          ? { pendingApprovalStore }
+          : {}),
         resources: config.resources,
         prompts: config.prompts,
         skills: config.skills,
@@ -537,6 +551,7 @@ export async function buildApp(
         transactionLedger.close?.(),
         webhookReplayStore?.close?.(),
         approvalStore?.close?.(),
+        pendingApprovalStore?.close?.(),
         clusterBridge?.close(),
       ]);
     },

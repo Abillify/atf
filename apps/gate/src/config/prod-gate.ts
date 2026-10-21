@@ -558,9 +558,10 @@ export function checkProductionReadiness(
     if (isProd) fatal.push(message);
     else warnings.push(message);
   }
-  // Pending approvals of the 2026 endpoint live in the process memory store;
+  // Pending approvals of the 2026 endpoint are Redis-backed as soon as a Redis
+  // URL is configured; without one they stay in the process memory store, so
   // with more than one replica `approvals/resolve` can hit a replica that
-  // never saw the request (shared store planned once Redis is configured).
+  // never saw the request.
   if (!Number.isNaN(replicas) && replicas > 1 && !transactionRedis) {
     warnings.push(
       `MCPGATE_REPLICAS=${replicas}: pending approvals of the 2026 endpoint are ` +

@@ -367,6 +367,7 @@ releases:
 - Search: a PostgreSQL integration test pins lexical MRR@10 on the synthetic golden set (all-terms-first ranking at least 0.9 and never below the plain OR ranking).
 - Runtime hides Search navigation tools that the pinned collection cannot serve, based on `collection_stats.capabilities` (cached, `COLLECTION_CAPABILITY_TTL_MS`, fail-open).
 - Gate 2026 endpoint: `approvals/list` (own requests, or the tenant's requests for holders of `approverScope` when `requireDifferentApprover` is on) and `approvals/get` (status and, once approved, the one-shot approval token for the requester).
+- Gate keeps pending approvals of the 2026 endpoint in Redis when a Redis URL is configured (`MCPGATE_TRANSACTION_REDIS_URL`, `server.rateLimit.store`, or `monitoring.cluster`), so request and resolve may hit different replicas.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

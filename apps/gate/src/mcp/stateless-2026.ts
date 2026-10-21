@@ -28,12 +28,16 @@ import type { ApprovalConsumptionStore } from "./approval-store.ts";
 import {
   APPROVAL_TOKEN_META_KEY,
   GovernancePolicy,
-  approvalArgsFingerprint,
   approvalOwner,
   mintApprovalToken,
   type GovernancePolicyRef,
 } from "./governance.ts";
 import { evidenceActionContractHash } from "./evidence-contract.ts";
+import {
+  MemoryPendingApprovalStore,
+  type PendingApproval,
+  type PendingApprovalStoreLike,
+} from "./pending-approval-store.ts";
 import { MemoryTaskStore, TaskCapacityError } from "./tasks.ts";
 
 export { MCP_2026_PROTOCOL_VERSION };
@@ -70,6 +74,12 @@ interface StatelessDeps {
   policyRef?: GovernancePolicyRef;
   /** Shared redeemed-JTI store for approval tokens (Req 6.1). */
   approvalStore?: ApprovalConsumptionStore;
+  /**
+   * Shared pending-approval store of the 2026 endpoint. Redis-backed when a
+   * Redis URL is configured so `approvals/resolve` may hit any replica; the
+   * process-local memory store is the fallback for single-replica setups.
+   */
+  pendingApprovalStore?: PendingApprovalStoreLike;
   resources: Array<Primitive & { uri: string; name: string; text: string }>;
   prompts: Array<Primitive & { name: string; message: string }>;
   skills: Array<Primitive & { name: string }>;
@@ -131,129 +141,6 @@ const renderValue = (value: unknown, values: Record<string, unknown>): unknown =
   return value;
 };
 
-interface PendingApproval {
-  requestState: string;
-  owner: string;
-  tenantId: string;
-  tool: string;
-  args: Record<string, unknown>;
-  fingerprint: string;
-  evidenceContractHash?: string;
-  createdAt: number;
-  expiresAt: number;
-  status: "pending" | "approved" | "denied";
-  /** Minted one-shot token, kept for the requester until `expiresAt`. */
-  token?: string;
-}
-
-/** Cursor for `approvals/list`: base64url of `createdAt|requestState`. */
-const encodeApprovalCursor = (entry: { createdAt: number; requestState: string }): string =>
-  Buffer.from(`${entry.createdAt}|${entry.requestState}`, "utf8").toString("base64url");
-
-const decodeApprovalCursor = (cursor: string): { createdAt: number; requestState: string } | undefined => {
-  const text = Buffer.from(cursor, "base64url").toString("utf8");
-  const sep = text.indexOf("|");
-  if (sep <= 0) return undefined;
-  const createdAt = Number(text.slice(0, sep));
-  if (!Number.isFinite(createdAt)) return undefined;
-  return { createdAt, requestState: text.slice(sep + 1) };
-};
-
-const APPROVAL_PAGE_SIZE = 50;
-
-class PendingApprovalStore {
-  private readonly entries = new Map<string, PendingApproval>();
-  constructor(private readonly ttlMs: number, private readonly maxEntries: number) {}
-  private sweep(now = Date.now()) {
-    for (const [id, entry] of this.entries) if (entry.expiresAt <= now) this.entries.delete(id);
-  }
-  create(
-    owner: string,
-    tenantId: string,
-    tool: string,
-    args: Record<string, unknown>,
-    evidenceContractHash?: string,
-  ): PendingApproval {
-    this.sweep();
-    if (this.entries.size >= this.maxEntries) throw new TaskCapacityError();
-    const now = Date.now();
-    const entry = {
-      requestState: randomUUID(), owner, tenantId, tool,
-      args: structuredClone(args),
-      fingerprint: approvalArgsFingerprint(args),
-      ...(evidenceContractHash !== undefined ? { evidenceContractHash } : {}),
-      createdAt: now,
-      expiresAt: now + this.ttlMs,
-      status: "pending" as const,
-    };
-    this.entries.set(entry.requestState, entry);
-    return entry;
-  }
-  /**
-   * Consume a pending request for resolution: the entry survives (status and
-   * minted token) until `expiresAt` so the requester can poll it via
-   * `approvals/get`, but a second resolution attempt no longer succeeds.
-   */
-  take(requestState: string, owner: string): PendingApproval | undefined {
-    this.sweep();
-    const entry = this.entries.get(requestState);
-    if (!entry || entry.owner !== owner || entry.status !== "pending") return undefined;
-    return entry;
-  }
-  /** Look at a pending request without consuming it (separation-of-duties checks). */
-  peek(requestState: string): PendingApproval | undefined {
-    this.sweep();
-    return this.entries.get(requestState);
-  }
-  /** Look at an entry without sweeping, so `approvals/get` can report `expired`. */
-  lookup(requestState: string): PendingApproval | undefined {
-    return this.entries.get(requestState);
-  }
-  /** Consume a pending request on behalf of a resolver other than its owner. */
-  takeForeign(requestState: string): PendingApproval | undefined {
-    this.sweep();
-    const entry = this.entries.get(requestState);
-    if (entry?.status !== "pending") return undefined;
-    return entry;
-  }
-  /** Record the outcome of a resolution; the entry is kept until `expiresAt`. */
-  markResolved(requestState: string, status: "approved" | "denied", token?: string) {
-    const entry = this.entries.get(requestState);
-    if (!entry) return;
-    entry.status = status;
-    if (token !== undefined) entry.token = token;
-  }
-  /**
-   * Open (still pending) approvals of one tenant, oldest first, max `limit`
-   * per page. `filter` decides which of the caller's tenant entries are
-   * visible to them.
-   */
-  list(
-    tenantId: string,
-    filter: (entry: PendingApproval) => boolean,
-    cursor?: string,
-    limit = APPROVAL_PAGE_SIZE,
-  ): { approvals: PendingApproval[]; nextCursor?: string } {
-    this.sweep();
-    let open = [...this.entries.values()]
-      .filter((entry) => entry.tenantId === tenantId && entry.status === "pending" && filter(entry))
-      .sort((a, b) => (a.createdAt === b.createdAt ? a.requestState.localeCompare(b.requestState) : a.createdAt - b.createdAt));
-    if (cursor !== undefined && cursor !== "") {
-      const after = decodeApprovalCursor(cursor);
-      if (!after) return { approvals: [] };
-      open = open.filter((entry) => entry.createdAt > after.createdAt
-        || (entry.createdAt === after.createdAt && entry.requestState > after.requestState));
-    }
-    const page = open.slice(0, limit);
-    const last = page[page.length - 1];
-    return {
-      approvals: page,
-      ...(open.length > limit && last ? { nextCursor: encodeApprovalCursor(last) } : {}),
-    };
-  }
-  clear() { this.entries.clear(); }
-}
-
 function taskOwner(ctx: {
   method: string;
   subject: string;
@@ -273,10 +160,12 @@ function taskOwner(ctx: {
 export function createStateless2026Router(deps: StatelessDeps): Router {
   const { serverConfig, authenticator, bus } = deps;
   const store = new MemoryTaskStore(deps.tasks.ttlMs, deps.tasks.maxEntries);
-  const approvalStore = new PendingApprovalStore(
-    deps.policies?.approval.ttlMs ?? 300_000,
-    deps.policies?.approval.maxPending ?? 1000,
-  );
+  const pendingStore: PendingApprovalStoreLike =
+    deps.pendingApprovalStore ??
+    new MemoryPendingApprovalStore(
+      deps.policies?.approval.ttlMs ?? 300_000,
+      deps.policies?.approval.maxPending ?? 1000,
+    );
   const prepareApproval = async (
     ctx: AuthContext,
     tool: string,
@@ -307,7 +196,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         throw new Error("Approval lookup returned no matching result");
       lookup = (rows?.[0] as Record<string, unknown> | undefined) ?? lookupResult.structuredContent ?? {};
     }
-    const pending = approvalStore.create(approvalOwner(ctx), ctx.tenantId, tool, args, evidenceContractHash);
+    const pending = await pendingStore.create(approvalOwner(ctx), ctx.tenantId, tool, args, evidenceContractHash);
     bus.publish({
       tenantId: ctx.tenantId,
       type: "approval_requested",
@@ -549,7 +438,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         const requestState = String(params.requestState);
         let pending: PendingApproval | undefined;
         if (deps.policies?.approval.requireDifferentApprover === true) {
-          const candidate = approvalStore.peek(requestState);
+          const candidate = await pendingStore.peek(requestState);
           if (!candidate || candidate.tenantId !== ctx.tenantId)
             return error(res, 404, body.id, -32004, "Approval request not found or expired");
           if (candidate.owner === approvalOwner(ctx))
@@ -563,9 +452,9 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           const approverScope = deps.policies.approval.approverScope;
           if (!ctx.scopes.includes(approverScope))
             return error(res, 403, body.id, -32003, `Resolving approvals requires the scope ${approverScope}`);
-          pending = approvalStore.takeForeign(requestState);
+          pending = await pendingStore.takeForeign(requestState);
         } else {
-          pending = approvalStore.take(requestState, approvalOwner(ctx));
+          pending = await pendingStore.take(requestState, approvalOwner(ctx));
         }
         if (!pending) return error(res, 404, body.id, -32004, "Approval request not found or expired");
         bus.publish({
@@ -585,7 +474,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           },
         });
         if (decision === "denied") {
-          approvalStore.markResolved(pending.requestState, "denied");
+          await pendingStore.markResolved(pending.requestState, "denied");
           result = envelope(serverInfo, { requestState: pending.requestState, decision: "denied" });
         } else {
           if (!secret) throw new Error("Approval service is not configured");
@@ -603,7 +492,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           });
           // The requester can pick the one-shot token up via approvals/get;
           // the response to the approver stays as-is (backwards compatible).
-          approvalStore.markResolved(pending.requestState, "approved", approvalToken);
+          await pendingStore.markResolved(pending.requestState, "approved", approvalToken);
           result = envelope(serverInfo, {
             requestState: pending.requestState,
             decision: "approved",
@@ -620,7 +509,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           && approverScope !== undefined
           && ctx.scopes.includes(approverScope);
         const caller = approvalOwner(ctx);
-        const page = approvalStore.list(
+        const page = await pendingStore.list(
           ctx.tenantId,
           (entry) => entry.owner === caller || isApprover,
           params.cursor === undefined ? undefined : String(params.cursor),
@@ -640,7 +529,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         deps.authorizationEnabled !== false
       ) {
         const requestState = String(params.requestState ?? "");
-        const entry = approvalStore.lookup(requestState);
+        const entry = await pendingStore.lookup(requestState);
         // Foreign tenant or missing permission: no existence disclosure.
         if (!entry || entry.tenantId !== ctx.tenantId || entry.owner !== approvalOwner(ctx))
           return error(res, 404, body.id, -32003, "approval not found");
@@ -765,7 +654,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
   router.delete(path, (_req, res) => error(res, 405, null, -32600, "Method not allowed"));
   (router as Router & { clearTasks?: () => void }).clearTasks = () => {
     store.clear();
-    approvalStore.clear();
+    pendingStore.clear?.();
   };
   return router;
 }

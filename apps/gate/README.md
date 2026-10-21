@@ -226,7 +226,8 @@ or a separate service decide.
 approvals of the caller's tenant — their own requests, and with `requireDifferentApprover: true`
 every request of the tenant for holders of `approverScope`. It is paginated (`cursor`, at most 50
 per page, ordered by `createdAt`) and never exposes tool arguments. `io.modelcontextprotocol/approvals/get`
-is for the owner of a request only and answers the status (`pending`, `approved`, `denied`, `expired`);
+is for the owner of a request only and answers the status (`pending`, `approved`, `denied`, `expired`;
+on Redis an expired request is already gone from the key space and answers as not found);
 once approved it also carries the one-shot `approvalToken`, so the requester can pick it up without
 the approver forwarding it. Anything the caller may not see answers `-32003 approval not found`,
 which keeps the existence of another principal's request private.
@@ -253,7 +254,12 @@ output is data from outside the platform, so a client that taints on untrusted i
 `TAINT_MODE=on-untrusted-source`) can act on it. Denials Gate produces itself carry no label.
 
 `MCPGATE_TRANSACTION_REDIS_URL` is needed only when several replicas must share transaction and
-session state.
+session state. With such a URL — or an existing Redis-backed `server.rateLimit.store` or
+`monitoring.cluster` — the pending approvals of the 2026 endpoint are kept in Redis too
+(`mcpgate:approval:pending:<requestState>` plus a per-tenant index), so the request and its
+`approvals/resolve` may be handled by different replicas; without one they live in the process
+memory of a single replica. A Redis outage fails closed: the request is rejected with
+`-32603 approval store unavailable` rather than approved unchecked.
 
 ## Tenants and issuers
 With several trusted OAuth issuers and tenant isolation on, `tenantIsolation.issuerTenants` maps
