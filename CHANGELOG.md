@@ -609,6 +609,9 @@ releases:
 - Flow files expand YAML merge keys (`<<: *anchor`); previously the key stayed literal and the
   merged settings were silently missing. A merge key that cannot be expanded is now a load
   error naming the file and the path.
+- **Search: lexical query operands split hyphenated words.** `A-009` became the operands
+  `'A' | '009'`, which never match the whole-word lexeme `to_tsvector` indexes for it; the
+  tokenizer now keeps hyphenated words intact, so identifier questions match and rank again.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

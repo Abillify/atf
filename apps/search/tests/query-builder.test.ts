@@ -732,6 +732,17 @@ describe("buildFtsQuery", () => {
       );
     });
 
+    it("keeps hyphenated words intact so operands match whole-word lexemes", () => {
+      // to_tsvector keeps `A-009` as one whole-word lexeme; a split operand
+      // `'A' | '009'` could never match it.
+      expect(buildLexicalOrTsQuery("Was regelt A-009 in DMS-50?")).toBe(
+        "'Was' | 'regelt' | 'A-009' | 'in' | 'DMS-50'",
+      );
+      expect(buildLexicalAndTsQuery("Was regelt A-009 in DMS-50?")).toBe(
+        "'Was' & 'regelt' & 'A-009' & 'in' & 'DMS-50'",
+      );
+    });
+
     it("yields an empty tsquery for a query without word tokens", () => {
       expect(buildLexicalOrTsQuery("")).toBe("");
       expect(buildLexicalOrTsQuery("   ")).toBe("");

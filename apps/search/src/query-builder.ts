@@ -697,10 +697,15 @@ export function buildLexicalAndTsQuery(queryText: string): string {
 /**
  * Quoted tsquery operands for `queryText`: every word token, de-duplicated,
  * quoted per tsquery rules (see buildLexicalOrTsQuery). Shared by the OR and
- * AND query builders so both lists tokenise identically.
+ * AND query builders so both lists tokenise identically. Hyphenated words
+ * (`A-009`, `DMS-50`) stay one token: the default text-search parser keeps
+ * them as a single whole-word lexeme, so splitting them on the hyphen would
+ * produce operands that can never match the indexed lexemes.
  */
 function lexicalOperands(queryText: string): string[] {
-  const tokens = [...new Set(queryText.match(/[\p{L}\p{N}]+/gu) ?? [])];
+  const tokens = [
+    ...new Set(queryText.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? []),
+  ];
   return tokens.map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`);
 }
 
