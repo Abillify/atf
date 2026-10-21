@@ -36,6 +36,7 @@ deployment system (not back into the product repository).
   `DERIVED_PDF_CACHE_MAX_MB`/`_MAX_AGE_HOURS`; source documents until
   `DELETE /v2/documents/{reference}` or an erasure removes them.
 - **Retention targets** beyond the above (conversation checkpoints, assistant data, workspaces, cost ledger, analysis artifacts) are listed in `docs/CAPABILITIES.md` and purge by age.
+- **Erasure receipts** contain sha256(tenant id | identifier); they are pseudonymous personal data (Art. 4(5) GDPR), not anonymous, because anyone who knows a candidate identifier can recompute the hash.
 - **Employee data**: evaluating monitoring or audit data can amount to
   employee monitoring — check the works agreement (Germany).
 - Version changes to this record with date and author (git in the

@@ -86,7 +86,7 @@ when you ask for it, is flag the response as AI-generated for the systems downst
 | What was deployed when | `flow_version`, `flow_digest`, `subflow_versions` in the execution debug trace; flow publishing is a regulated, audited action |
 | Who approved what | Audit log entries for approvals (`actor`, `target`, `outcome`), hash-chained |
 | Was the log altered | Chain verification and the anchor file; `EVIDENCE_SIGNING_KEY` (Ed25519) makes anchors and bundles verifiable offline via `/.well-known/atf-evidence-jwks.json` |
-| Was personal data erased | Signed erasure receipts (`GET /v1/me/data/erasures/{id}`); receipts carry salted hashes, never the identifier |
+| Was personal data erased | Signed erasure receipts (`GET /v1/me/data/erasures/{id}`); receipts carry pseudonymous hashes (SHA-256 of tenant id and identifier — pseudonymous personal data, not anonymous), never the identifier |
 | How good is the flow | Eval run history per dataset, shown in the dossier |
 | Everything in one place | `GET /admin/compliance/dossier?format=json\|markdown` |
 

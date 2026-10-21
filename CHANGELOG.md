@@ -164,7 +164,9 @@ releases:
   data subject in clear text forever, no longer leaves a crashed operation
   looking finished, and no longer calls an erasure that addressed nothing
   `complete`. The cleartext identifiers are removed from the stored operation as
-  soon as it is `complete` (the signed receipt carries only salted hashes);
+  soon as it is `complete` (the signed receipt carries only pseudonymous hashes
+  — SHA-256 of tenant id and identifier, pseudonymous personal data, not
+  anonymous);
   an operation is stored as `in_progress` with a lease (`updated_at`, 15 min) and
   a replay or retry after the lease takes the zombie over atomically; a request
   that reached no store at all is `failed` with a synthetic

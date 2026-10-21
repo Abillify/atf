@@ -52,6 +52,10 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 | Erasure (Art. 17) | Runtime erasure orchestrator (`DELETE /v1/me/data`, operator DSAR `POST /admin/compliance/forget`) fans out to the `POST /v1/erasure` endpoints of Search, Extract and Gate; the aggregate status is honest about partial results | Every erasure is audited; signed erasure receipt (`GET /v1/me/data/erasures/{id}`). Self-service erasure is keyed on the token's `iss` and `sub` (an `email` only when `email_verified` is true), requires a tenant claim, and covers executions, usage log, checkpoints, assistant data and other runtime stores; a store that cannot be erased automatically turns the result into `partial` |
 | Objection (Art. 21) | Disable the flow per tenant | — |
 
+Erasure receipts contain sha256(tenant id | identifier). Whoever knows a
+candidate identifier can recompute the hash, so receipts are pseudonymous
+personal data in the sense of Art. 4(5) GDPR.
+
 - [ ] Deletion concept documented (periods per data category)
 - [ ] Erasure test run documented (date, sample, result)
 
