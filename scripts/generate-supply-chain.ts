@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { isLocked, parseLockedPackages } from "./bun-lock-identities.ts";
 
 const PROJECT_LICENSE = "Elastic-2.0";
 const PROJECT_AUTHOR = "Abillify Technology GmbH <info@abillify.me>";
@@ -949,6 +950,13 @@ async function loadComponents(
 	repoRoot: string,
 ): Promise<Component[]> {
 	const byIdentity = new Map<string, Component>();
+	// bun.lock decides what the product ships: an installed package it does not
+	// lock (a removed dependency whose store directory survived) is not part of
+	// the inventory.
+	const locked = parseLockedPackages(
+		await readFile(join(repoRoot, "bun.lock"), "utf8"),
+	);
+	const notLocked = new Set<string>();
 	const discovery = await packageRoots(
 		join(options.inventoryRoot, "node_modules", ".bun"),
 	);
@@ -978,6 +986,10 @@ async function loadComponents(
 			continue;
 		}
 		const identity = `${manifest.name}@${manifest.version}`;
+		if (!isLocked(locked, manifest.name, manifest.version)) {
+			notLocked.add(identity);
+			continue;
+		}
 		if (byIdentity.has(identity)) continue;
 		const noticeTexts: NoticeText[] = [];
 		let packageEntries: Dirent[];
@@ -1030,6 +1042,11 @@ async function loadComponents(
 			),
 			ecosystem: "npm",
 		});
+	}
+	if (notLocked.size > 0) {
+		console.warn(
+			`ignored ${notLocked.size} installed packages not in bun.lock`,
+		);
 	}
 	if (discoveryErrors.length > 0) {
 		throw new Error(
