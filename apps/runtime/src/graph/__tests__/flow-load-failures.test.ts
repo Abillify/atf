@@ -29,6 +29,13 @@ let dir: string;
 const flow = (id: string) =>
   JSON.stringify({ id, name: id, nodes: [{ id: "n", type: "llm" }], edges: [] });
 
+// The profile is resolved from the environment when a flow file is registered,
+// so the env of these tests is saved and restored around every test.
+const SAVED_ENV: Record<string, string | undefined> = {};
+for (const key of ["ATF_PROFILE", "APP_ENV"]) {
+  SAVED_ENV[key] = process.env[key];
+}
+
 beforeEach(() => {
   resetFlowLoadFailures();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-load-"));
@@ -37,6 +44,10 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   resetFlowLoadFailures();
+  for (const key of Object.keys(SAVED_ENV)) {
+    if (SAVED_ENV[key] === undefined) delete process.env[key];
+    else process.env[key] = SAVED_ENV[key];
+  }
 });
 
 describe("load-failure ledger", () => {
@@ -88,6 +99,40 @@ describe("load-failure ledger", () => {
     expect(getFlowLoadFailures()[0]).toMatchObject({ reason: "second", since });
     clearFlowLoadFailure("x.json");
     expect(getFlowLoadFailures()).toEqual([]);
+  });
+});
+
+describe("unknown node config keys", () => {
+  const flowWithTypo = (id: string) =>
+    JSON.stringify({
+      id,
+      name: id,
+      nodes: [{ id: "n", type: "llm", config: { toolArgz: {} } }],
+      edges: [],
+    });
+
+  test("outside production the flow loads and the ledger stays empty", async () => {
+    delete process.env.ATF_PROFILE;
+    process.env.APP_ENV = "development";
+    fs.writeFileSync(path.join(dir, "typo.json"), flowWithTypo("typo"));
+    const service = createFlowParserService(dir);
+    await service.start();
+    await service.stop();
+    expect(service.getRegistry().get("typo")).toBeDefined();
+    expect(getFlowLoadFailures()).toEqual([]);
+  });
+
+  test("with the production profile the flow is not registered and the ledger names the key", async () => {
+    process.env.ATF_PROFILE = "production";
+    delete process.env.APP_ENV;
+    fs.writeFileSync(path.join(dir, "typo.json"), flowWithTypo("typo"));
+    const service = createFlowParserService(dir);
+    await service.start();
+    await service.stop();
+    expect(service.getRegistry().get("typo")).toBeUndefined();
+    const failures = getFlowLoadFailures();
+    expect(failures.map((f) => f.file)).toEqual(["typo.json"]);
+    expect(failures[0]?.reason).toContain("toolArgz");
   });
 });
 

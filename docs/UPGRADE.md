@@ -466,6 +466,10 @@ configuration and clients. Do these **before** rolling out:
     relied on the old behaviour (merged keys silently missing) now receives those
     keys. Run `bun run scripts/cli.ts validate <flows-dir>` in `apps/runtime`
     before the upgrade and review flows that use `<<`.
+24. **Unknown node `config` keys.** Run `bun run scripts/cli.ts validate <flows-dir>`
+    (in `apps/runtime`) before upgrading a production Runtime; every warning about an
+    unknown config key becomes a flow load failure there. Rename typos or prefix
+    annotation keys with `x-`.
 
 ### Not yet shared between replicas (roadmap)
 
@@ -546,6 +550,7 @@ new binary around for audits, or verify them offline with `atf verify-bundle
 | Quoted phrases / `-term` in Search queries no longer behave as before | The lexical branch ORs plain terms; `websearch` syntax is not parsed | Filter client-side; use `filter`/identifier lookups for exact matches |
 | `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
+| Flow missing after upgrade, `/health/ready` shows `flow_load: degraded` with "Unknown config keys" | Production profile rejects config keys the node type does not read | Fix the key or prefix it with `x-`; check with `cli.ts validate` |
 
 ## Rollback
 

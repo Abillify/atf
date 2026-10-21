@@ -307,7 +307,7 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 
 **Notes**
 
-- Unknown config keys are kept and ignored by the runtime — a typo silently does nothing. The Studio lists them under “Other keys”.
+- Unknown config keys are reported as warnings by `cli.ts validate` and the flow editor and logged when the flow loads; with the production profile (`ATF_PROFILE=production`, or `APP_ENV=production`) a flow with an unknown config key is not loaded and appears as a flow load failure. Keys starting with `x-` are annotations and never reported. The Studio lists unknown keys under “Other keys”.
 - Tool refs of MCP servers the runtime isn't connected to only produce a warning; the node works where the server is available.
 
 ### `tool` — Tool

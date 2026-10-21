@@ -12,7 +12,9 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { resolveOperationalProfile } from "@atf/security-kit";
 import type { FlowDefinition } from "../../types/flow.js";
+import { findUnknownConfigKeys } from "../flow-config-keys.js";
 import {
   parseFlowFile,
   parseFlowFileAsync,
@@ -351,12 +353,26 @@ function loadFlowFile(
 }
 
 /**
+ * Effective operational profile of the process: `ATF_PROFILE` wins over
+ * `APP_ENV` (resolved like `apps/runtime/src/config/load.ts`). An unknown
+ * value is treated as non-production here — startup validation of the same
+ * variable happens in the config loader and must not be duplicated (or
+ * crash) inside the parser.
+ */
+function isProductionProfile(env: Record<string, string | undefined> = process.env): boolean {
+  try {
+    return resolveOperationalProfile(env, ["APP_ENV"]).isProduction;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Shared post-parse step of the sync and async loaders: builds the editable
  * source form from a pristine copy, expands the runtime form, validates and
  * registers both.
  */
-function registerParsedFlow(
-  raw: unknown,
+function registerParsedFlow(  raw: unknown,
   filePath: string,
   fileName: string,
   registry: FlowRegistryImpl,
@@ -384,6 +400,32 @@ function registerParsedFlow(
   }
 
   const flow = result.data;
+
+  // Unknown node `config` keys: outside production a warning; with the
+  // production profile the flow is not registered and lands in the load-
+  // failure ledger (readiness `flow_load: degraded`).
+  const unknownKeys = findUnknownConfigKeys(flow.nodes);
+  if (unknownKeys.length > 0) {
+    const summary = unknownKeys.map((u) => `${u.nodeId}.config.${u.key}`).join(", ");
+    if (isProductionProfile()) {
+      logValidationError(
+        fileName,
+        `Unknown config keys (not loaded in production): ${summary}`,
+        { unknownConfigKeys: unknownKeys },
+      );
+      return;
+    }
+    process.stderr.write(
+      `${JSON.stringify({
+        level: "warn",
+        component: "flow-parser",
+        file: fileName,
+        unknownConfigKeys: unknownKeys,
+        msg: `Flow ${flow.id} has unknown config keys that the runtime ignores: ${summary}`,
+      })}\n`,
+    );
+  }
+
   const existingOwner = fileOwner.get(flow.id);
 
   if (existingOwner !== undefined && existingOwner !== fileName) {
