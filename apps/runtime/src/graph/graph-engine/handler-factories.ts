@@ -987,6 +987,8 @@ class GraphEngineServiceImpl implements GraphEngineService {
       // `inspect_image` tool, never served to a browser.
       ...(runImageRefs !== undefined ? { imageRefs: runImageRefs } : {}),
       ...(refHandles !== undefined ? { refHandles } : {}),
+      // Memory of config.stickyArgs for this execution.
+      stickyArgs: new Map<string, unknown>(),
       metrics: this.metrics,
       authorizationEnabled: this.appConfig.authzEnabled ?? true,
       ...(this.costTracker !== undefined

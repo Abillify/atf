@@ -139,6 +139,15 @@ const TOOL_ARGS_FIELD: ConfigField = {
   example: { "vectorsearch/search": { collection: "cases", tags: ["{{classification.clientTags}}"] } },
 };
 
+const STICKY_ARGS_FIELD: ConfigField = {
+  key: "stickyArgs",
+  kind: "string-list",
+  label: "Sticky tool arguments",
+  description:
+    "Argument names (e.g. `valid_at`) that stay fixed once the model has set them. The first value the model supplies for such an argument is remembered for the rest of the execution and enforced on every later call of a tool whose input schema declares it; a different value the model sends later is overridden. `toolArgs` still win over a sticky value. Use it so a run answers about one point in time or one scope throughout, even when the model drifts in later calls.",
+  example: ["valid_at"],
+};
+
 const STREAM_TOOL_DETAILS_FIELD: ConfigField = {
   key: "streamToolResultDetails",
   kind: "boolean",
@@ -354,6 +363,7 @@ const LLM: NodeTypeDoc = {
         "Upper bound on model↔tool round trips in one turn. Raise it for agentic nodes that read many documents; invalid values fall back to the global setting.",
     },
     TOOL_ARGS_FIELD,
+    STICKY_ARGS_FIELD,
     {
       key: "toolSelection",
       kind: "object",

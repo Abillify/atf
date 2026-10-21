@@ -465,6 +465,13 @@ export interface ExecRuntime {
    * unchanged.
    */
   refHandles?: import("./ref-handles.js").RefHandleRegistry;
+  /**
+   * Run-scoped memory of `config.stickyArgs`: the first value the model sets
+   * for a listed argument, enforced on later calls of tools that declare it
+   * (see `applyStickyArgs`). One map for the whole execution, so it carries
+   * across nodes.
+   */
+  stickyArgs?: Map<string, unknown>;
   /** Metrics sink — defaults to a no-op when metrics are disabled. */
   metrics: Metrics;
   /**

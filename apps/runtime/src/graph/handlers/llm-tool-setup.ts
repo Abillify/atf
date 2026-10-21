@@ -192,6 +192,7 @@ export async function setupLlmTools(params: {
         // hooks to every tool the model may call.
         {
           templateContext: toolTemplateContext,
+          ...(runtime.stickyArgs !== undefined ? { stickyArgs: runtime.stickyArgs } : {}),
           ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
           ...(assistantToolJournal !== undefined
             ? { journal: assistantToolJournal }

@@ -354,3 +354,120 @@ describe("buildAiTools — token-bound MCP schema discovery", () => {
     expect(receivedAuthToken).toBe(CTX.ssoToken);
   });
 });
+describe("buildAiTools — config.stickyArgs", () => {
+  function schemaMcp(
+    onCall: (toolName: string, args: unknown) => void,
+    declared: Record<string, string[]> = { search: ["query", "valid_at"], other: ["query", "valid_at"] },
+  ): McpWrapperService {
+    return {
+      connect: async () => {},
+      reconnect: async () => {},
+      listTools: async () => Object.keys(declared),
+      getFilteredToolSchema: async (_s, t) => ({
+        name: t,
+        inputSchema: {
+          type: "object",
+          properties: Object.fromEntries((declared[t] ?? []).map((name) => [name, { type: "string" }])),
+        },
+      }),
+      refreshSchemaIfChanged: async () => false,
+      callTool: async (_server: string, toolName: string, args: unknown) => {
+        onCall(toolName, args);
+        return { content: "ok" };
+      },
+      getInstructions: () => undefined,
+    };
+  }
+
+  async function run(
+    node: FlowNode,
+    calls: Array<[string, Record<string, unknown>]>,
+    stickyArgs?: Map<string, unknown>,
+  ): Promise<Array<{ tool: string; args: unknown }>> {
+    const seen: Array<{ tool: string; args: unknown }> = [];
+    const { tools, keyByRef } = await buildAiTools(
+      node,
+      schemaMcp((tool, args) => seen.push({ tool, args })),
+      CTX,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      stickyArgs !== undefined ? { stickyArgs } : undefined,
+    );
+    for (const [ref, args] of calls) {
+      const key = keyByRef[ref];
+      const entry = key === undefined ? undefined : tools[key];
+      if (entry?.execute === undefined) throw new Error(`no tool for ${ref}`);
+      await entry.execute(args, { toolCallId: `call-${seen.length}` } as never);
+    }
+    return seen;
+  }
+
+  const node = (config: Record<string, unknown>): FlowNode => ({
+    id: "n1",
+    type: "llm",
+    tools: ["vectorsearch/search", "vectorsearch/other"],
+    config,
+  });
+  /** `valid_at` of the n-th recorded call. */
+  const validAtOf = (calls: Array<{ tool: string; args: unknown }>, index: number): unknown =>
+    (calls[index]?.args as Record<string, unknown> | undefined)?.valid_at;
+
+  it("applies a value the model set once to later calls, across tools", async () => {
+    const seen = await run(node({ stickyArgs: ["valid_at"] }), [
+      ["vectorsearch/search", { query: "a", valid_at: "2024-01-01" }],
+      ["vectorsearch/other", { query: "b" }],
+      ["vectorsearch/search", { query: "c", valid_at: "2030-05-05" }],
+    ]);
+    expect([0, 1, 2].map((i) => validAtOf(seen, i))).toEqual(["2024-01-01", "2024-01-01", "2024-01-01"]);
+  });
+
+  it("does nothing without stickyArgs", async () => {
+    const seen = await run(node({}), [
+      ["vectorsearch/search", { query: "a", valid_at: "2024-01-01" }],
+      ["vectorsearch/other", { query: "b" }],
+    ]);
+    expect(validAtOf(seen, 1)).toBeUndefined();
+  });
+
+  it("toolArgs win over a sticky value", async () => {
+    const seen = await run(
+      node({
+        stickyArgs: ["valid_at"],
+        toolArgs: { "vectorsearch/other": { valid_at: "2020-02-02" } },
+      }),
+      [
+        ["vectorsearch/search", { query: "a", valid_at: "2024-01-01" }],
+        ["vectorsearch/other", { query: "b" }],
+      ],
+    );
+    expect(validAtOf(seen, 1)).toBe("2020-02-02");
+    expect(validAtOf(seen, 0)).toBe("2024-01-01");
+  });
+
+  it("is shared through the per-execution map, so another node sees it", async () => {
+    const shared = new Map<string, unknown>();
+    await run(node({ stickyArgs: ["valid_at"] }), [["vectorsearch/search", { query: "a", valid_at: "2024-01-01" }]], shared);
+    const later = await run(node({ stickyArgs: ["valid_at"] }), [["vectorsearch/other", { query: "b" }]], shared);
+    expect(validAtOf(later, 0)).toBe("2024-01-01");
+  });
+
+  it("stays empty for a tool that does not declare the argument", async () => {
+    const seen: Array<{ tool: string; args: unknown }> = [];
+    const mcp = schemaMcp((tool, args) => seen.push({ tool, args }), {
+      search: ["query", "valid_at"],
+      other: ["query"],
+    });
+    const { tools, keyByRef } = await buildAiTools(node({ stickyArgs: ["valid_at"] }), mcp, CTX);
+    const call = async (ref: string, args: Record<string, unknown>, id: string) => {
+      const entry = tools[keyByRef[ref] ?? ""];
+      if (entry?.execute === undefined) throw new Error(`no tool for ${ref}`);
+      await entry.execute(args, { toolCallId: id } as never);
+    };
+    await call("vectorsearch/search", { query: "a", valid_at: "2024-01-01" }, "1");
+    await call("vectorsearch/other", { query: "b" }, "2");
+    expect(seen[1]?.args).toEqual({ query: "b" });
+  });
+});

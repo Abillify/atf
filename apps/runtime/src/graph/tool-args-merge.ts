@@ -17,6 +17,40 @@
 
 export type ToolArgsConfig = Record<string, Record<string, unknown>>;
 
+/** A model-supplied value that counts as "set" (not omitted, null or blank). */
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+/**
+ * Sticky arguments (`config.stickyArgs`): an argument the model sets once —
+ * e.g. `valid_at` — is remembered for the rest of the execution and enforced on
+ * every later call of a tool whose input schema declares it. The FIRST value
+ * set sticks; a later different value from the model is overridden, so a
+ * model that drifts cannot silently change the point in time or the scope a
+ * whole run was asked about.
+ *
+ * `store` is the per-execution memory (shared by the nodes that list the same
+ * name). Returns the sticky values to merge into this call: after the model's
+ * arguments and before `toolArgs`, which always win. Only names the tool
+ * declares are recorded and applied.
+ */
+export function applyStickyArgs(
+  names: readonly string[] | undefined,
+  store: Map<string, unknown>,
+  modelArgs: Record<string, unknown>,
+  declaredProps: ReadonlySet<string> | undefined,
+): Record<string, unknown> {
+  const sticky: Record<string, unknown> = {};
+  if (names === undefined || declaredProps === undefined) return sticky;
+  for (const name of names) {
+    if (!declaredProps.has(name)) continue;
+    if (!store.has(name) && isSet(modelArgs[name])) store.set(name, modelArgs[name]);
+    if (store.has(name)) sticky[name] = store.get(name);
+  }
+  return sticky;
+}
+
 /** Server part of a tool ref, mirroring `agent-tools.ts` (`server/tool` → `server`). */
 function serverOf(toolRef: string): string {
   const parts = toolRef.split("/");

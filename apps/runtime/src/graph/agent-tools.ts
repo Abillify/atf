@@ -38,7 +38,7 @@ import type { OpenAITool, ToolChoice } from "../types/openai.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../types/monitoring.js";
 import type { ApprovalRegistry, PendingApproval } from "./approval-gate.js";
-import { resolveForcedToolArgs } from "./tool-args-merge.js";
+import { applyStickyArgs, resolveForcedToolArgs } from "./tool-args-merge.js";
 import type { ToolEgressGuardrail } from "./output-guardrails.js";
 import { hasFindings } from "./output-guardrails.js";
 import type { ToolOutputValidator } from "../mcp/tool-output-validator.js";
@@ -400,6 +400,12 @@ export async function buildAiTools(
    */
   opts?: {
     signal?: AbortSignal;
+    /**
+     * Per-execution memory of `config.stickyArgs` (see `applyStickyArgs`). The
+     * engine passes one map for the whole run, so a value the model sets in one
+     * node still applies in the next; absent, this builder keeps its own.
+     */
+    stickyArgs?: Map<string, unknown>;
     /** Runtime graph state exposed to forced tool-argument templates. */
     templateContext?: Record<string, unknown>;
     journal?: AgentToolJournalHooks;
@@ -516,6 +522,13 @@ export async function buildAiTools(
     }
     return value;
   };
+  const stickyNames = (() => {
+    const raw = (node.config as { stickyArgs?: unknown } | undefined)?.stickyArgs;
+    return Array.isArray(raw)
+      ? raw.filter((name): name is string => typeof name === "string" && name !== "")
+      : undefined;
+  })();
+  const stickyStore = opts?.stickyArgs ?? new Map<string, unknown>();
   const toolContext = parseToolContextConfig(
     node.config as Record<string, unknown> | undefined,
   );
@@ -544,13 +557,15 @@ export async function buildAiTools(
     // Forced arguments for THIS tool, merged over the `"*"` and `"<server>/*"`
     // entries (see `tool-args-merge.ts`). Computed after the schema fetch
     // because a wildcard may only set arguments the tool actually declares.
+    const declaredProps =
+      filtered.inputSchema.properties === undefined ||
+      filtered.inputSchema.properties === null
+        ? undefined
+        : new Set(Object.keys(filtered.inputSchema.properties));
     const forcedArgs = resolveForcedToolArgs(
       toolArgsCfg,
       toolRef,
-      filtered.inputSchema.properties === undefined ||
-        filtered.inputSchema.properties === null
-        ? undefined
-        : new Set(Object.keys(filtered.inputSchema.properties)),
+      declaredProps,
       substituteTemplates,
     );
 
@@ -624,9 +639,18 @@ export async function buildAiTools(
         // else touches them, so the required-params guard, the approval-gate
         // audit record, and egress scrubbing all see (and log) the final,
         // enforced values — never the model's un-overridden originals.
+        // Order: model < sticky < toolArgs. A value the model set earlier in
+        // this execution (config.stickyArgs) is enforced on later calls;
+        // flow-author `toolArgs` still win over it.
+        const stickyApplied = applyStickyArgs(
+          stickyNames,
+          stickyStore,
+          modelArgs,
+          declaredProps,
+        );
         let args =
-          forcedArgs !== undefined
-            ? { ...modelArgs, ...forcedArgs }
+          forcedArgs !== undefined || Object.keys(stickyApplied).length > 0
+            ? { ...modelArgs, ...stickyApplied, ...forcedArgs }
             : modelArgs;
         // Ref-handle indirection (config.refHandles): the model quotes short
         // handles (K3NQ) where a long document reference belongs, because

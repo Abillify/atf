@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { resolveForcedToolArgs, type ToolArgsConfig } from "../tool-args-merge.js";
+import { applyStickyArgs, resolveForcedToolArgs, type ToolArgsConfig } from "../tool-args-merge.js";
 
 const noSubstitute = (value: unknown) => value;
 const resolve = (
@@ -140,5 +140,52 @@ describe("resolveForcedToolArgs", () => {
   test("an empty entry forces nothing", () => {
     expect(resolve({ "vectorsearch/search": {} }, "vectorsearch/search", ["collection"])).toBeUndefined();
     expect(resolve({ "*": {} }, "vectorsearch/search", ["collection"])).toBeUndefined();
+  });
+});
+
+describe("applyStickyArgs", () => {
+  const declared = new Set(["query", "valid_at"]);
+
+  test("remembers the first value the model sets and applies it from then on", () => {
+    const store = new Map<string, unknown>();
+    expect(applyStickyArgs(["valid_at"], store, { query: "a", valid_at: "2024-01-01" }, declared)).toEqual({
+      valid_at: "2024-01-01",
+    });
+    // A later call without the argument gets the remembered value.
+    expect(applyStickyArgs(["valid_at"], store, { query: "b" }, declared)).toEqual({ valid_at: "2024-01-01" });
+    // A drifting model value is overridden: the first one sticks.
+    expect(applyStickyArgs(["valid_at"], store, { valid_at: "2030-05-05" }, declared)).toEqual({
+      valid_at: "2024-01-01",
+    });
+  });
+
+  test("nothing is applied before the model has set the argument", () => {
+    const store = new Map<string, unknown>();
+    expect(applyStickyArgs(["valid_at"], store, { query: "a" }, declared)).toEqual({});
+    expect(store.size).toBe(0);
+  });
+
+  test("null, empty and undefined do not count as set", () => {
+    const store = new Map<string, unknown>();
+    for (const blank of [undefined, null, ""]) {
+      expect(applyStickyArgs(["valid_at"], store, { valid_at: blank }, declared)).toEqual({});
+    }
+    expect(store.size).toBe(0);
+  });
+
+  test("only arguments the tool declares are recorded or applied", () => {
+    const store = new Map<string, unknown>();
+    applyStickyArgs(["valid_at"], store, { valid_at: "2024-01-01" }, new Set(["query"]));
+    expect(store.size).toBe(0);
+    store.set("valid_at", "2024-01-01");
+    expect(applyStickyArgs(["valid_at"], store, {}, new Set(["query"]))).toEqual({});
+    expect(applyStickyArgs(["valid_at"], store, {}, undefined)).toEqual({});
+  });
+
+  test("without configured names nothing happens", () => {
+    const store = new Map<string, unknown>();
+    expect(applyStickyArgs(undefined, store, { valid_at: "x" }, declared)).toEqual({});
+    expect(applyStickyArgs([], store, { valid_at: "x" }, declared)).toEqual({});
+    expect(store.size).toBe(0);
   });
 });
