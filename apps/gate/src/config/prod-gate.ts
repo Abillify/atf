@@ -160,6 +160,13 @@ export function checkProductionReadiness(
         );
       }
     }
+    if (oauth && oauth.allowedTokenTypes.length === 0) {
+      warnings.push(
+        "auth.oauth.allowedTokenTypes is empty: access tokens are not type-checked " +
+          '(RFC 9068 recommends typ "at+jwt"). Set it once your identity provider issues ' +
+          "at+jwt tokens.",
+      );
+    }
   }
 
   // ── Transport exposure ────────────────────────────────────────────────────

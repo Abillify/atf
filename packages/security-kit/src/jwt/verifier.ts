@@ -54,6 +54,11 @@ export interface IssuerConfig {
   clockToleranceSec?: number;
 }
 
+/** Normalize a JWT `typ` header value: lowercase, without an `application/` prefix. */
+function normalizeTokenType(typ: string): string {
+  return typ.toLowerCase().replace(/^application\//, "");
+}
+
 export interface JwtVerifierOptions {
   issuers: readonly IssuerConfig[];
   /** Allowed JWS algorithms (default RS256, ES256, EdDSA — never HS*, never none). */
@@ -62,6 +67,14 @@ export interface JwtVerifierOptions {
   clockToleranceSec?: number;
   /** Require an `exp` claim (default true). */
   requireExpiry?: boolean;
+  /**
+   * Accepted JWT `typ` header values (RFC 9068 recommends `at+jwt` for access
+   * tokens). Values are compared after normalization: lowercased and with a
+   * leading `application/` removed, so `at+jwt` and `application/at+jwt` are
+   * equivalent. Undefined or empty → the `typ` header is not checked, which
+   * keeps identity providers that send `typ: JWT` working.
+   */
+  allowedTypes?: readonly string[];
 }
 
 export type JwtRejectionReason =
@@ -133,6 +146,10 @@ export function createJwtVerifier(options: JwtVerifierOptions): JwtVerifier {
     throw new Error('the algorithm allowlist must never include "none"');
   }
   const requireExpiry = options.requireExpiry ?? true;
+  const allowedTypes =
+    options.allowedTypes && options.allowedTypes.length > 0
+      ? new Set(options.allowedTypes.map(normalizeTokenType))
+      : undefined;
   const byIssuer = new Map<string, IssuerConfig>();
   for (const config of options.issuers) {
     if (byIssuer.has(config.issuer)) {
@@ -195,9 +212,25 @@ export function createJwtVerifier(options: JwtVerifierOptions): JwtVerifier {
         : {}),
     };
     try {
-      const { payload } = await jwtVerify(token, keyProvider, verifyOptions);
+      const { payload, protectedHeader } = await jwtVerify(
+        token,
+        keyProvider,
+        verifyOptions,
+      );
       if (requireExpiry && typeof payload.exp !== "number") {
         throw new JwtVerificationError("missing_claim", "token is missing an expiry claim");
+      }
+      if (allowedTypes !== undefined) {
+        const typ =
+          typeof protectedHeader.typ === "string"
+            ? normalizeTokenType(protectedHeader.typ)
+            : undefined;
+        if (typ === undefined || !allowedTypes.has(typ)) {
+          throw new JwtVerificationError(
+            "invalid_token",
+            `token typ "${typ ?? "missing"}" is not accepted`,
+          );
+        }
       }
       return { payload, issuer: config.issuer };
     } catch (err) {

@@ -350,6 +350,13 @@ export const OAuthAuthSchema = OAuthVerificationTargetSchema.and(
     requiredScopes: z.array(z.string()).default([]),
     additionalIssuers: z.array(AdditionalIssuerSchema).default([]),
     resource: z.string().url().optional(),
+    /**
+     * Accepted JWT `typ` header values for access tokens (RFC 9068 recommends
+     * `at+jwt`). Compared lowercased and without an `application/` prefix.
+     * Empty → the `typ` header is not checked, so identity providers sending
+     * `typ: JWT` keep working.
+     */
+    allowedTokenTypes: z.array(z.string()).default([]),
     /** Optional actor (RFC 8693 `act`) policy. Absent → actor audited, never gated. */
     actorPolicy: ActorPolicySchema.optional(),
   }),

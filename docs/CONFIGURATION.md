@@ -848,6 +848,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `auth.oauth.algorithms` | array | — | — |
 | `auth.oauth.allowAnyAudience` | boolean | `false` | — |
 | `auth.oauth.allowAnyIssuer` | boolean | `false` | — |
+| `auth.oauth.allowedTokenTypes` | array | — | Accepted JWT `typ` header values for access tokens (RFC 9068 recommends `at+jwt`). Compared lowercased and without an `application/` prefix. Empty → the `typ` header is not checked, so identity providers sending `typ: JWT` keep working. |
 | `auth.oauth.audience` | string \| array | — | — |
 | `auth.oauth.clockToleranceSec` | number | `5` | — |
 | `auth.oauth.discoveryUrl` | string | — | Optional OIDC discovery document; its issuer must exactly match `issuer`. |

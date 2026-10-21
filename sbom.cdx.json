@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "56acbbf607d094e81cdaced6405fed2bd6aef58596cd5f70c87487e48d8e6d94"
+        "value": "41957ef3d1bffa360db9053851834e4528d28a285bc4c333443b318d252af4cc"
       },
       {
         "name": "atf:cargo-lock:sha256",

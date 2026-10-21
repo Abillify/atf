@@ -1,6 +1,6 @@
 {
     "name": "@atf/security-kit",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "private": true,
     "description": "Shared security building blocks for ATF services: constant-time comparison, base64url, SSRF-safe egress guard, multi-issuer JWT/OIDC verification, GCRA rate limiting and production-gate rule primitives",
     "author": "Abillify Technology GmbH <info@abillify.me>",

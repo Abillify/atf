@@ -391,6 +391,7 @@ releases:
 - `docs/METRICS-AND-RETENTION.md` lists the exported metrics with suggested alerts and every retention location with its setting.
 - Search checks at startup that the embedding fallback produces vectors in the same space (canary, cosine ≥ 0.99) and counts embeddings per source.
 - Search signs evidence packs with Ed25519 when `SEARCH_EVIDENCE_SIGNING_KEY` is set and publishes the key at `/.well-known/atf-search-evidence-jwks.json`.
+- `@atf/security-kit` 1.2.0: the JWT verifier accepts `allowedTypes` to enforce the JWT `typ` header; the Gate exposes it as `auth.oauth.allowedTokenTypes` and warns in production while it is empty.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

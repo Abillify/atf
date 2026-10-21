@@ -221,6 +221,30 @@ describe("authentication findings", () => {
       fatalsIn(cfg).some((m) => m.includes("additionalIssuers[0].allowAnyAudience")),
     ).toBe(true);
   });
+
+  test("oauth without allowedTokenTypes warns that tokens are not type-checked", () => {
+    const cfg = goodConfig();
+    expect(
+      warningsIn(cfg).some((m) => m.includes("allowedTokenTypes is empty")),
+    ).toBe(true);
+  });
+
+  test("oauth with an allowedTokenTypes allow-list does not warn", () => {
+    const cfg = goodConfig({
+      auth: {
+        mode: "oauth",
+        oauth: {
+          jwksUri: "https://id.example.com/jwks",
+          issuer: "https://id.example.com/",
+          audience: "mcpgate",
+          allowedTokenTypes: ["at+jwt"],
+        },
+      },
+    });
+    expect(
+      warningsIn(cfg).some((m) => m.includes("allowedTokenTypes is empty")),
+    ).toBe(false);
+  });
 });
 
 describe("exposure findings", () => {

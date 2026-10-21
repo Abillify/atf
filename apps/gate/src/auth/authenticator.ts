@@ -176,7 +176,10 @@ export class Authenticator {
             : {}),
         };
       });
-      this.jwtVerifier = createJwtVerifier({ issuers });
+      this.jwtVerifier = createJwtVerifier({
+        issuers,
+        allowedTypes: config.oauth.allowedTokenTypes,
+      });
     }
   }
 

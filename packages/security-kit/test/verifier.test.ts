@@ -244,3 +244,80 @@ describe("verification", () => {
 		expect((err as Error).message).not.toMatch(/jose|JWS|JWT/i);
 	});
 });
+
+describe("typ allow-list", () => {
+  test("without the option a typ: JWT token is accepted (backwards compatible)", async () => {
+    const { privateKey, jwk } = await makeKeys();
+    const verifier = createJwtVerifier({
+      issuers: [{ issuer: ISS_A, jwks: { keys: [jwk] } }],
+    });
+    const token = await new SignJWT({ iss: ISS_A, sub: "x" })
+      .setProtectedHeader({ alg: "RS256", kid: "key-a", typ: "JWT" })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const result = await verifier.verify(token);
+    expect(result.payload.sub).toBe("x");
+  });
+
+  test("with allowedTypes a typ: JWT token is rejected", async () => {
+    const { privateKey, jwk } = await makeKeys();
+    const verifier = createJwtVerifier({
+      issuers: [{ issuer: ISS_A, jwks: { keys: [jwk] } }],
+      allowedTypes: ["at+jwt"],
+    });
+    const token = await new SignJWT({ iss: ISS_A, sub: "x" })
+      .setProtectedHeader({ alg: "RS256", kid: "key-a", typ: "JWT" })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    await expect(verifier.verify(token)).rejects.toThrow(
+      /typ "jwt" is not accepted/,
+    );
+  });
+
+  test("typ: at+jwt is accepted when allowed", async () => {
+    const { privateKey, jwk } = await makeKeys();
+    const verifier = createJwtVerifier({
+      issuers: [{ issuer: ISS_A, jwks: { keys: [jwk] } }],
+      allowedTypes: ["at+jwt"],
+    });
+    const token = await new SignJWT({ iss: ISS_A, sub: "x" })
+      .setProtectedHeader({ alg: "RS256", kid: "key-a", typ: "at+jwt" })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const result = await verifier.verify(token);
+    expect(result.payload.sub).toBe("x");
+  });
+
+  test("application/at+jwt is treated as at+jwt", async () => {
+    const { privateKey, jwk } = await makeKeys();
+    const verifier = createJwtVerifier({
+      issuers: [{ issuer: ISS_A, jwks: { keys: [jwk] } }],
+      allowedTypes: ["at+jwt"],
+    });
+    const token = await new SignJWT({ iss: ISS_A, sub: "x" })
+      .setProtectedHeader({
+        alg: "RS256",
+        kid: "key-a",
+        typ: "application/at+jwt",
+      })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const result = await verifier.verify(token);
+    expect(result.payload.sub).toBe("x");
+  });
+
+  test("a missing typ is rejected when an allow-list is active", async () => {
+    const { privateKey, jwk } = await makeKeys();
+    const verifier = createJwtVerifier({
+      issuers: [{ issuer: ISS_A, jwks: { keys: [jwk] } }],
+      allowedTypes: ["at+jwt"],
+    });
+    const token = await new SignJWT({ iss: ISS_A, sub: "x" })
+      .setProtectedHeader({ alg: "RS256", kid: "key-a" })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    await expect(verifier.verify(token)).rejects.toThrow(
+      /typ "missing" is not accepted/,
+    );
+  });
+});
