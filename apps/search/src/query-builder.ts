@@ -642,13 +642,13 @@ export function buildBinaryDenseQuery(
 // ─── Lexical ranking (task 6.9, Requirement 4.7) ─────────────────────────────
 
 export type LexicalRankerName = "ts_rank" | "ts_rank_cd" | "bm25";
-export type Bm25EngineName = "pg_search" | "vchord_bm25";
+export type Bm25EngineName = "pg_search";
 
 /**
  * Which ranker the lexical (FTS) list uses. `bm25` is only honoured when a
  * BM25 extension was actually detected (`bm25Engine` non-null) — Requirement
- * 4.7 makes BM25 conditional on `pg_search`/VectorChord-bm25 being available;
- * without one the builder falls back to `ts_rank_cd` with length
+ * 4.7 makes BM25 conditional on ParadeDB `pg_search` being available;
+ * without it the builder falls back to `ts_rank_cd` with length
  * normalisation, which is the default ranker anyway.
  */
 export interface LexicalRanker {
@@ -723,9 +723,8 @@ function lexicalOperands(queryText: string): string[] {
  * with `ts_rank_cd(..., 32)`, matching ANY query term (see
  * `buildLexicalOrTsQuery`). `ts_rank` keeps the legacy un-normalised score
  * expression. `bm25` (extension detected): ParadeDB pg_search scores via
- * `paradedb.score(id)` over its `bm25` index, VectorChord-bm25 via
- * `bm25_score(id)`; both match with the `|||` operator on `content` (already
- * OR semantics over the raw query text).
+ * `paradedb.score(id)` over its `bm25` index and matches with the `|||`
+ * operator on `content` (already OR semantics over the raw query text).
  */
 export function buildLexicalQuerySql(
   lexical: LexicalRanker | undefined,
@@ -735,12 +734,10 @@ export function buildLexicalQuerySql(
 ): { match: string; score: string; allTerms: string } {
   const name = lexical?.ranker ?? "ts_rank_cd";
   if (name === "bm25" && lexical?.bm25Engine) {
-    const scoreFn =
-      lexical.bm25Engine === "pg_search" ? "paradedb.score" : "bm25_score";
     const queryPh = p.add(queryText);
     return {
       match: `content ||| ${queryPh}`,
-      score: `${scoreFn}(id)`,
+      score: `paradedb.score(id)`,
       allTerms: "FALSE",
     };
   }

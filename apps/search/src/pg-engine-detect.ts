@@ -38,7 +38,9 @@ export function createEngineDetection(deps: {
 
   // ── BM25 extension detection (Req 4.7, task 6.9) ─────────────────────────
   // FTS_RANKER=bm25 is honoured only when a BM25 extension is actually
-  // installed: ParadeDB `pg_search` (preferred) or VectorChord-bm25.
+  // installed. Only ParadeDB pg_search is supported. A VectorChord-bm25 index
+  // (bm25vector column) uses different operators and is ignored, so the
+  // collection falls back to ts_rank_cd.
   // Detected once per process, lazily on the first search that needs the
   // lexical ranker. `undefined` = not checked yet; a result (including
   // `null` = none installed) is cached — these extensions are never created
@@ -54,14 +56,10 @@ export function createEngineDetection(deps: {
     if (bm25Engine !== undefined) return bm25Engine;
     try {
       const res = await (exec ?? pool).query<{ extname: string }>(
-        "SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'vchord_bm25')",
+        "SELECT extname FROM pg_extension WHERE extname IN ('pg_search')",
       );
       const installed = new Set(res.rows.map((r) => r.extname));
-      bm25Engine = installed.has("pg_search")
-        ? "pg_search"
-        : installed.has("vchord_bm25")
-          ? "vchord_bm25"
-          : null;
+      bm25Engine = installed.has("pg_search") ? "pg_search" : null;
     } catch (err) {
       // Fail safe: an unreadable extension list means no BM25, never a
       // broken query — ts_rank_cd works on every PostgreSQL.
@@ -71,13 +69,15 @@ export function createEngineDetection(deps: {
     if (bm25Engine === null && !bm25FallbackWarned) {
       bm25FallbackWarned = true;
       logger.warn(
-        "FTS_RANKER=bm25 requested but neither pg_search nor vchord_bm25 is installed; falling back to ts_rank_cd",
+        "FTS_RANKER=bm25 requested but pg_search is not installed; falling back to ts_rank_cd",
       );
     }
     return bm25Engine;
   }
-  // An installed extension is not enough: `content ||| q` / `bm25_score(id)`
-  // only work against a `USING bm25` index on the collection table, which
+  // An installed extension is not enough: `content ||| q` /
+  // `paradedb.score(id)` only work against a `USING bm25` index on the
+  // collection table — with `key_field`, pg_search's mandatory parameter —
+  // which
   // this service never creates. Without it every lexical query would fail
   // instead of falling back, so the engine counts as usable for a table only
   // when such an index exists. A positive answer is cached for the process; a
@@ -103,6 +103,7 @@ export function createEngineDetection(deps: {
         `SELECT 1 FROM pg_indexes
           WHERE schemaname = current_schema() AND tablename = $1
             AND indexdef ~* 'USING bm25'
+            AND indexdef ~* 'key_field'
           LIMIT 1`,
         [table],
       );

@@ -335,9 +335,9 @@ export interface Config {
   /**
    * Requirement 4.7: ranker for the lexical (full-text) list. `ts_rank_cd`
    * (default) uses PostgreSQL's coverage-density rank with length
-   * normalisation. `bm25` is honoured only when a BM25 extension
-   * (ParadeDB `pg_search` or VectorChord-bm25) is installed; without one,
-   * the search service logs a warning once and keeps `ts_rank_cd`.
+   * normalisation. `bm25` is honoured only when ParadeDB `pg_search` is
+   * installed; other BM25 extensions fall back to `ts_rank_cd`, and the
+   * search service logs a warning once.
    */
   ftsRanker: "ts_rank_cd" | "bm25"; // FTS_RANKER (default: ts_rank_cd)
 

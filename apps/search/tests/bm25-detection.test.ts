@@ -4,8 +4,8 @@
 /**
  * BM25 extension detection (task 6.9, Requirement 4.7).
  *
- * FTS_RANKER=bm25 may only take effect when a BM25 extension is actually
- * installed (ParadeDB `pg_search` preferred, VectorChord-bm25 second). The
+ * FTS_RANKER=bm25 may only take effect when ParadeDB `pg_search` is actually
+ * installed; other BM25 extensions fall back to `ts_rank_cd`. The
  * client detects the extension once per process, caches the verdict, and
  * falls back to `ts_rank_cd` with a single warning when bm25 was requested
  * but no extension exists. The default config (ts_rank_cd) must never run
@@ -58,6 +58,12 @@ interface FakePgOptions {
 	bm25Extensions?: string[];
 	/** Whether the collection table carries a `USING bm25` index (default true). */
 	bm25Index?: boolean;
+	/**
+	 * Index definitions answered for the pg_indexes check. When set, the fake
+	 * applies the `USING bm25` / `key_field` conditions of the real detection
+	 * SQL to these strings instead of the `bm25Index` flag.
+	 */
+	indexDefs?: string[];
 }
 
 function installFakePg(options: FakePgOptions = {}) {
@@ -88,8 +94,24 @@ function installFakePg(options: FakePgOptions = {}) {
 			};
 		}
 		if (sql.includes("FROM pg_indexes")) {
+			const defs =
+				options.indexDefs ??
+				((options.bm25Index ?? true)
+					? [
+							'CREATE INDEX vc_docs_bm25 ON docs USING bm25 (content) WITH (key_field = "id")',
+						]
+					: []);
 			return {
-				rows: (options.bm25Index ?? true) ? [{ "?column?": 1 }] : [],
+				rows: defs
+					.filter(
+						(def) =>
+							!sql.includes("'USING bm25'") || /using bm25/i.test(def),
+					)
+					.filter(
+						(def) =>
+							!sql.includes("'key_field'") || /key_field/i.test(def),
+					)
+					.map(() => ({ "?column?": 1 })),
 			};
 		}
 		return { rows: [], rowCount: 0 };
@@ -172,7 +194,7 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		await postgres.close();
 	});
 
-	it("prefers pg_search over vchord_bm25 when both are installed", async () => {
+	it("uses pg_search when installed alongside other extensions", async () => {
 		installFakePg({ bm25Extensions: ["vchord_bm25", "pg_search"] });
 		const postgres = client({ ftsRanker: "bm25" });
 		const sql = await runFtsSearch(postgres);
@@ -180,11 +202,13 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		await postgres.close();
 	});
 
-	it("uses bm25_score for vchord_bm25", async () => {
+	it("ignores vchord_bm25 and falls back to ts_rank_cd", async () => {
 		installFakePg({ bm25Extensions: ["vchord_bm25"] });
 		const postgres = client({ ftsRanker: "bm25" });
 		const sql = await runFtsSearch(postgres);
-		expect(sql).toContain("bm25_score(id) AS text_score");
+		expect(sql).toContain("ts_rank_cd(");
+		expect(sql).not.toContain("|||");
+		expect(sql).not.toContain("bm25_score");
 		await postgres.close();
 	});
 
@@ -261,6 +285,25 @@ describe("BM25 extension detection (Req 4.7, task 6.9)", () => {
 		expect(indexWarnings).toHaveLength(1);
 		await postgres.close();
 	});
+	it("falls back to ts_rank_cd when the bm25 index has no key_field", async () => {
+		// `key_field` is a mandatory pg_search index parameter; an index
+		// definition without it is not a usable pg_search index.
+		installFakePg({
+			bm25Extensions: ["pg_search"],
+			indexDefs: [
+				"CREATE INDEX vc_docs_bm25 ON docs USING bm25 (content)",
+			],
+		});
+		const postgres = client({ ftsRanker: "bm25" });
+		const sql = await runFtsSearch(postgres);
+		expect(sql).toContain(
+			"ts_rank_cd(ts_search, to_tsquery('simple', $1), 32)",
+		);
+		expect(sql).not.toContain("paradedb");
+		expect(sql).not.toContain("|||");
+		await postgres.close();
+	});
+
 	it("does not re-check a table whose bm25 index was found", async () => {
 		installFakePg({ bm25Extensions: ["pg_search"], bm25Index: true });
 		const postgres = client({ ftsRanker: "bm25" });

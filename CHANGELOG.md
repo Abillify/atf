@@ -614,6 +614,7 @@ releases:
 - **Search: lexical query operands split hyphenated words.** `A-009` became the operands
   `'A' | '009'`, which never match the whole-word lexeme `to_tsvector` indexes for it; the
   tokenizer now keeps hyphenated words intact, so identifier questions match and rank again.
+- Search no longer generates invalid SQL for a VectorChord-bm25 index: only ParadeDB pg_search is used for `FTS_RANKER=bm25`; any other BM25 index falls back to `ts_rank_cd`.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

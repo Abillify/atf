@@ -805,15 +805,6 @@ describe("buildFtsQuery", () => {
       expect(f).not.toContain("ts_rank");
     });
 
-    it("uses bm25_score for bm25 via vchord_bm25", () => {
-      const f = flat(
-        buildLexical({ ranker: "bm25", bm25Engine: "vchord_bm25" }).sql,
-      );
-      expect(f).toContain("bm25_score(id) AS text_score");
-      expect(f).toContain("content ||| $1");
-      expect(f).not.toContain("ts_rank");
-    });
-
     it("falls back to ts_rank_cd when bm25 is requested but no extension was detected", () => {
       const f = flat(buildLexical({ ranker: "bm25", bm25Engine: null }).sql);
       expect(f).toContain(

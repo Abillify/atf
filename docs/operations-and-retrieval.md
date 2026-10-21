@@ -61,9 +61,9 @@ and degraded hybrid search to pure vector search). Within the lexical list, chun
 every query term rank first; the remaining OR matches follow by score. This keeps precise
 questions precise while natural-language questions still find partial matches.
 The branch is fused via RRF with the dense
-branch and an optional SPLADE `sparsevec` branch. Where a ParadeDB/VectorChord BM25 extension is
-detected, the lexical branch uses `content ||| ?` (already OR semantics) with the extension's
-score function instead. Because the tsquery is built from plain tokens (letters and digits), the
+branch and an optional SPLADE `sparsevec` branch. Only ParadeDB pg_search is supported for
+`FTS_RANKER=bm25`; other BM25 extensions fall back to `ts_rank_cd`. Where pg_search is detected,
+the lexical branch uses `content ||| ?` (already OR semantics) with `paradedb.score(id)` instead. Because the tsquery is built from plain tokens (letters and digits), the
 `websearch_to_tsquery` operators are **not** available any more: `"quoted phrases"`, `-exclusion` and
 `OR` in the query text are ordinary terms, and `E-Mail` is searched as `E | Mail`. Exact matches belong
 in `filter`/identifier lookups, not in the query string. A very long query ORs every distinct term, which

@@ -106,9 +106,9 @@ export interface PostgresClientConfig {
   rrfMissingZero?: boolean;
   /**
    * Req 4.7: ranker for the lexical (full-text) list. `ts_rank_cd` (default)
-   * with length normalisation; `bm25` only takes effect when a BM25 extension
-   * (ParadeDB `pg_search` or VectorChord-bm25) is installed — otherwise the
-   * client logs a warning once and keeps `ts_rank_cd`.
+   * with length normalisation; `bm25` only takes effect when ParadeDB
+   * `pg_search` is installed — otherwise the client logs a warning once and
+   * keeps `ts_rank_cd`.
    */
   ftsRanker?: "ts_rank_cd" | "bm25";
   /** Interval in ms for flushing buffered stats to the database. Default: 30 000. */
