@@ -43,6 +43,7 @@ Contract packages: [identity](../packages/identity-contract/README.md),
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables per service. **Generated** — run `bun run config-reference` |
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
+| [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
 | [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |
 | [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md) | Moving a deployment onto the Document Intelligence v2 ingestion path |

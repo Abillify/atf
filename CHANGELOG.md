@@ -385,6 +385,7 @@ releases:
 - An LLM call rejected for exceeding the context length is retried once with a 25 % smaller context budget (diagnostic `context_length_retry`).
 - Helm: `global.redis` exports a Redis URL from an existing Secret to Runtime (`REDIS_URL`) and Search/Extract (`RATE_LIMIT_REDIS_URL`); NOTES warn about the in-pod converter acknowledgement and about multiple replicas without Redis.
 - `docs/CONFIGURATION.md` includes a generated reference of the Gate configuration file.
+- `docs/METRICS-AND-RETENTION.md` lists the exported metrics with suggested alerts and every retention location with its setting.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
