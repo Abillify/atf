@@ -23,6 +23,10 @@ import { parallelChildId, parallelChildCondition } from "../types/flow.js";
 import { validateFlowDefinition } from "./flow-parser.js";
 import { validateConditionExpression } from "./condition-evaluator.js";
 import { flowEdgeIssues } from "./edge-rules.js";
+import {
+  findUnknownConfigKeys,
+  formatUnknownConfigKey,
+} from "./flow-config-keys.js";
 import { checkLoadTimePlaceholders, evaluateFlowVariables } from "./flow-parser/variable-values.js";
 
 export interface ValidationIssue {
@@ -257,6 +261,15 @@ export function validateFlow(
   // Edges the graph compiler would reject: to/from parallel children, from
   // harness-only workers, and nodes unreachable from the entry.
   for (const issue of flowEdgeIssues(flow.nodes, flow.edges)) errors.push(issue);
+
+  // Node `config` keys the node type does not read (warnings only — the exit
+  // code of `validate` stays unchanged).
+  for (const u of findUnknownConfigKeys(flow.nodes)) {
+    warnings.push({
+      path: `nodes[${u.nodeIndex}](${u.nodeId}).config.${u.key}`,
+      message: formatUnknownConfigKey(u),
+    });
+  }
 
   // Cycle detection: detect directed cycles using DFS (Tarjan-like).
   // Only non-conditional edges are considered for hard cycles since conditional

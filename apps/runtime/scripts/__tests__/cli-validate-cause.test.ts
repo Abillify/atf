@@ -64,4 +64,18 @@ describe("validate (CLI) reports the cause", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout.toString()).toContain("missing");
   });
+
+  test("an unknown config key is a warning, not an error", () => {
+    const file = join(dir, "typo.yaml");
+    writeFileSync(
+      file,
+      "id: typo\nname: Typo\nnodes:\n  - id: a\n    type: llm\n    config:\n      toolArgz: {}\nedges: []\n",
+    );
+    const result = run(file);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout.toString();
+    expect(out).toContain("WARN");
+    expect(out).toContain("nodes[0](a).config.toolArgz");
+    expect(out).toContain('Did you mean "toolArgs"');
+  });
 });

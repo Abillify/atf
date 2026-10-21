@@ -356,6 +356,7 @@ releases:
   or bare name) and `maxTokens` next to the reference answer; a cell passes when its
   reference score and every assertion do. Existing cases are unchanged.
 - **Search: `TRANSACTION_JWKS_URI` and `TRANSACTION_ALGORITHMS`**, see Security.
+- `cli.ts validate` and `POST /flows/validate` warn about node `config` keys the node type does not read (with a "did you mean" suggestion). Keys starting with `x-` are reserved for author annotations and never reported.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
