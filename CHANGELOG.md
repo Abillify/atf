@@ -379,6 +379,7 @@ releases:
 - Eval assertions `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g. `loop_blocked`) check the execution trace.
 - `config.toolArgs` accepts `"*"` and `"<server>/*"` keys; wildcard arguments apply to tools that declare them, exact refs still win.
 - `CHARS_PER_TOKEN` (default 4) and a per-model `charsPerToken` tune the token estimate used for context fitting and tool-result budgets.
+- An LLM call rejected for exceeding the context length is retried once with a 25 % smaller context budget (diagnostic `context_length_retry`).
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

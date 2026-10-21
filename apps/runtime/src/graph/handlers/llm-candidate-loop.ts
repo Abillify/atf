@@ -30,6 +30,10 @@ import {
   truncateMessagesToWindow,
 } from "../context-window.js";
 import {
+  CONTEXT_RETRY_FACTOR,
+  isContextLengthError,
+} from "../context-length-retry.js";
+import {
   combineAbortSignals,
   stripUnsignedGeminiToolHistory,
   type ExecRuntime,
@@ -197,6 +201,13 @@ export async function runCandidateLoop(
   };
   let providerAttemptCount = 0;
   const circuitSkippedProviders: string[] = [];
+  // One context-length retry per handler invocation: a provider rejection
+  // for an oversized prompt is deterministic, so it is retried exactly once
+  // with a reduced context budget (see context-length-retry.ts). The scale
+  // persists across candidates so a failover after such a rejection keeps
+  // the smaller budget.
+  let contextRetryUsed = false;
+  let contextBudgetScale = 1;
   for (const [c, candidate] of candidates.entries()) {
     const isFallback = c > 0;
     const circuitState = runtime.providerCircuitBreaker?.getState(
@@ -316,6 +327,10 @@ export async function runCandidateLoop(
     );
     // Attempt number visible to prepareStep diagnostics (assigned per attempt).
     let currentAttempt = 0;
+    // Attempt bound for THIS candidate. Raised by one above maxAttempts only
+    // when the context-length retry is triggered, so the retry also happens
+    // when the rejection arrives on the last regular attempt.
+    let maxAttemptsEffective = maxAttempts;
     if (aiTools !== undefined && Object.keys(aiTools).length > 0) {
       // Nested LLM requests from tool executions must not count as steps of
       // this attempt nor report connect-retries on this node.
@@ -591,7 +606,7 @@ export async function runCandidateLoop(
         : attemptMessages;
     };
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= maxAttemptsEffective; attempt++) {
       providerAttemptCount += 1;
       currentAttempt = attempt;
       // Every retry starts from the identical original prefix, optionally
@@ -613,9 +628,23 @@ export async function runCandidateLoop(
       // emit no final-answer marker / verifier pass signal — the run ends with
       // no result despite valid findings. Truncating the input instead keeps
       // the output allowance intact and is recorded in the trace below.
+      // After a context-length rejection the window is scaled down so the
+      // retry truncates the prompt to the smaller budget. An unknown window
+      // stays unknown (truncation is a no-op there, as before).
+      const windowBeforeScale = resolveContextWindow(candidate);
+      const truncationCandidate =
+        contextBudgetScale === 1 || windowBeforeScale === undefined
+          ? candidate
+          : {
+              ...candidate,
+              parameters: {
+                ...candidate.parameters,
+                contextLength: Math.floor(windowBeforeScale * CONTEXT_RETRY_FACTOR),
+              },
+            };
       const truncation = truncateMessagesToWindow(
         streamParams.messages ?? [],
-        candidate,
+        truncationCandidate,
         maxTokens,
       );
       if (truncation.truncated) {
@@ -1348,6 +1377,50 @@ export async function runCandidateLoop(
         if (post.action === "return") return { done: true, value: post.value };
         if (post.action === "continue") continue;
       } catch (err) {
+        // A provider rejection for exceeding the context length is
+        // deterministic — resending the same prompt fails identically. Give
+        // it exactly one retry with a 25 % smaller context budget, which
+        // re-runs the deterministic truncation above against the reduced
+        // window. Skipped once anything reached the client (a second answer
+        // must not be appended to partial output) and while the request or
+        // flow is already aborted. A second rejection takes the normal
+        // error path below.
+        if (
+          !contextRetryUsed &&
+          !st.emittedAny &&
+          runtime.signal?.aborted !== true &&
+          !requestDeadline.aborted &&
+          isContextLengthError(err)
+        ) {
+          contextRetryUsed = true;
+          contextBudgetScale = CONTEXT_RETRY_FACTOR;
+          accountAttempt("error");
+          const windowBefore = windowBeforeScale;
+          const windowAfter =
+            windowBefore === undefined
+              ? undefined
+              : Math.floor(windowBefore * CONTEXT_RETRY_FACTOR);
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "warn",
+            code: "context_length_retry",
+            message:
+              "The provider rejected the request for exceeding the context " +
+              "length; retrying once with a smaller context budget.",
+            details: {
+              attempt,
+              provider: candidate.provider,
+              model: candidate.model,
+              ...(windowBefore !== undefined
+                ? { context_length_before: windowBefore }
+                : {}),
+              ...(windowAfter !== undefined
+                ? { context_length_after: windowAfter }
+                : {}),
+            },
+          });
+          maxAttemptsEffective = Math.max(maxAttemptsEffective, attempt + 1);
+          continue;
+        }
         const handled = await handleAttemptError(
           {
             accountAttempt,

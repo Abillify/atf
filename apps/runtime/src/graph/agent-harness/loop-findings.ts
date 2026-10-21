@@ -19,6 +19,7 @@ import {
 } from "@langchain/core/messages";
 import { isRagContextMessage } from "../exec-runtime.js";
 import type { AgentState } from "../graph-engine.js";
+import { isContextLengthError } from "../context-length-retry.js";
 import type { StopReason, Task } from "./types.js";
 
 /**
@@ -436,10 +437,7 @@ export function isSubstantiveFinding(
   // wraps them in the flow's required marker structure. This is a defensive
   // boundary; typed terminal errors should normally prevent such text from
   // reaching the harness at all.
-  if (
-    isTerminalBudgetErrorText(trimmed) ||
-    /maximum context length|context length is/iu.test(trimmed)
-  ) {
+  if (isTerminalBudgetErrorText(trimmed) || isContextLengthError(trimmed)) {
     return false;
   }
   const saysNoNewFinding = trimmed
