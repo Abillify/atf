@@ -505,6 +505,16 @@ export async function runAttemptStream(ctx: AttemptStreamCtx): Promise<void> {
       attemptUsage.promptTokens += finite(stepUsage?.inputTokens);
       attemptUsage.completionTokens += finite(stepUsage?.outputTokens);
       attemptUsage.totalTokens += finite(stepUsage?.totalTokens);
+      // A step the provider cut off at its output limit: the answer ends
+      // mid-thought. Reported so operators — and `config.cascade` — can see it.
+      if ((part as { finishReason?: unknown }).finishReason === "length") {
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "llm_output_length_limit",
+          message: "The model stopped because it reached its output length limit; the answer may be incomplete.",
+          details: { node_id: node.id, attempt, model: `${candidate.provider}/${candidate.model}` },
+        });
+      }
       // Presence-gated: only start accumulating once a step actually
       // reports the field, so a provider that never reports it leaves
       // `cachedPromptTokens` undefined rather than a misleading 0.

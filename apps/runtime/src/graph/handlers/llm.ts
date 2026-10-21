@@ -82,6 +82,7 @@ import {
 } from "./llm-tool-setup.js";
 import { buildLlmMessages } from "./llm-message-build.js";
 import { runCandidateLoop } from "./llm-candidate-loop.js";
+import { withCascade } from "../cascade.js";
 
 export function createLlmNodeHandler(
   node: FlowNode,
@@ -752,5 +753,5 @@ export function createLlmNodeHandler(
 export const nodeType: NodeHandlerRegistration = {
   type: "llm",
   emitsLifecycle: true,
-  factory: (node) => createLlmNodeHandler(node),
+  factory: (node) => withCascade(node, createLlmNodeHandler),
 };
