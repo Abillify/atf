@@ -71,12 +71,89 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
+/**
+ * Derive the bare execution uuid from a chat-completion response id.
+ *
+ * The non-streaming endpoint answers with `id: "chatcmpl-<executionId>"`
+ * (see `routes/chat/streaming.ts`), which keys the debug trace at
+ * `GET /monitoring/debug/:executionId`. Replay ids (`chatcmpl-replay-…`)
+ * never correspond to a recorded execution, and ids without the prefix
+ * cannot be trusted, so both yield `undefined`.
+ */
+export function executionIdFromCompletionId(
+  id: string | undefined,
+): string | undefined {
+  if (id === undefined) return undefined;
+  if (id.startsWith("chatcmpl-replay-")) return undefined;
+  if (id.startsWith("chatcmpl-")) return id.slice("chatcmpl-".length) || undefined;
+  return undefined;
+}
+
+/** What {@link summarizeDebugTrace} extracts from a debug trace. */
+export interface DebugTraceSummary {
+  /** Tool refs (`server/tool`) in call order, for `toolCalled` assertions. */
+  toolCalls: string[];
+  /** Finish reason of the last node that reported one, if any. */
+  finishReason?: string;
+  /** All in-node diagnostic codes, in trace order. */
+  diagnostics: string[];
+}
+
+/**
+ * Pure summary of a debug trace (unknown shape tolerated): tool-call names
+ * from `nodes[].tool_calls[].name`, the LAST node-level `finish_reason`
+ * (falling back to a top-level one), and every `diagnostics[].code`.
+ */
+export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
+  const root = (trace ?? {}) as {
+    nodes?: unknown;
+    finish_reason?: unknown;
+  };
+  const toolCalls: string[] = [];
+  const diagnostics: string[] = [];
+  let finishReason: string | undefined;
+  const nodes = Array.isArray(root.nodes) ? root.nodes : [];
+  for (const raw of nodes) {
+    const node = (raw ?? {}) as {
+      tool_calls?: unknown;
+      diagnostics?: unknown;
+      finish_reason?: unknown;
+    };
+    if (Array.isArray(node.tool_calls)) {
+      for (const call of node.tool_calls) {
+        const name = (call as { name?: unknown } | null)?.name;
+        if (typeof name === "string") toolCalls.push(name);
+      }
+    }
+    if (Array.isArray(node.diagnostics)) {
+      for (const entry of node.diagnostics) {
+        const code = (entry as { code?: unknown } | null)?.code;
+        if (typeof code === "string") diagnostics.push(code);
+      }
+    }
+    if (typeof node.finish_reason === "string") finishReason = node.finish_reason;
+  }
+  if (finishReason === undefined && typeof root.finish_reason === "string") {
+    finishReason = root.finish_reason;
+  }
+  return {
+    toolCalls,
+    ...(finishReason !== undefined ? { finishReason } : {}),
+    diagnostics,
+  };
+}
+
 /** Builds an executor that POSTs to /v1/chat/completions (non-streaming). */
 export function createHttpExecutor(
   baseUrl: string,
   token?: string,
   /** Outbound fetch: the process-wide Egress_Guard by default (SSRF-safe). */
   fetchFn: typeof fetch = egressFetch,
+  /**
+   * Fetch the execution's debug trace after the answer (default `true`) so
+   * `toolCalled` and trace-based assertions can pass against a server.
+   */
+  fetchTrace = true,
 ): FlowExecutor {
   return async (
     flow: string,
@@ -105,6 +182,7 @@ export function createHttpExecutor(
       throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     }
     const json = (await res.json()) as {
+      id?: string;
       choices?: Array<{ message?: { content?: string } }>;
       usage?: {
         prompt_tokens: number;
@@ -113,10 +191,33 @@ export function createHttpExecutor(
       };
     };
     const text = json.choices?.[0]?.message?.content ?? "";
-    return {
+    const result: FlowExecutionResult = {
       text,
       ...(json.usage !== undefined ? { usage: json.usage } : {}),
     };
+    const executionId = executionIdFromCompletionId(json.id);
+    if (fetchTrace && executionId !== undefined) {
+      const traceUrl = `${baseUrl.replace(/\/$/, "")}/monitoring/debug/${encodeURIComponent(executionId)}`;
+      try {
+        const traceRes = await fetchFn(traceUrl, { headers });
+        if (traceRes.ok) {
+          const summary = summarizeDebugTrace(await traceRes.json());
+          result.toolCalls = summary.toolCalls;
+          if (summary.finishReason !== undefined)
+            result.finishReason = summary.finishReason;
+          result.diagnostics = summary.diagnostics;
+        } else {
+          process.stderr.write(
+            `eval: debug trace for ${executionId} unavailable (HTTP ${traceRes.status}); toolCalled/trace assertions cannot pass\n`,
+          );
+        }
+      } catch (err) {
+        process.stderr.write(
+          `eval: debug trace for ${executionId} unavailable (${(err as Error).message}); toolCalled/trace assertions cannot pass\n`,
+        );
+      }
+    }
+    return result;
   };
 }
 

@@ -54,6 +54,10 @@ export interface FlowExecutionResult {
   cost?: number;
   /** Tool refs in call order (`server/tool`), for `toolCalled` assertions. */
   toolCalls?: string[];
+  /** Finish reason of the execution (from the debug trace), when reported. */
+  finishReason?: string;
+  /** Diagnostic codes recorded during the execution, in trace order. */
+  diagnostics?: string[];
 }
 
 export type FlowExecutor = (
