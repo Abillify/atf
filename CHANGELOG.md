@@ -515,6 +515,9 @@ releases:
   at 250 pages.
 - **Gate: approver semantics** (see Security); an approval event now has `declaredApprover`
   and `selfResolved`.
+- Search: the lexical list ranks chunks that contain all query terms first (then by score).
+  On the synthetic golden set this restores lexical MRR@10 from 0.70 to 1.00 while keeping
+  the recall gain of the OR list.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

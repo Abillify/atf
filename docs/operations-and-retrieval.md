@@ -57,7 +57,10 @@ The lexical branch is PostgreSQL full-text search using `ts_rank_cd` (with lengt
 and an OR-combined `to_tsquery`: each distinct term of the query becomes a quoted operand joined
 by `|`, so a natural-language question like "Wie hoch ist die Miete im Mietvertrag" produces
 lexical hits on any of its terms instead of requiring all of them (which left the branch empty
-and degraded hybrid search to pure vector search). The branch is fused via RRF with the dense
+and degraded hybrid search to pure vector search). Within the lexical list, chunks that contain
+every query term rank first; the remaining OR matches follow by score. This keeps precise
+questions precise while natural-language questions still find partial matches.
+The branch is fused via RRF with the dense
 branch and an optional SPLADE `sparsevec` branch. Where a ParadeDB/VectorChord BM25 extension is
 detected, the lexical branch uses `content ||| ?` (already OR semantics) with the extension's
 score function instead. Because the tsquery is built from plain tokens (letters and digits), the

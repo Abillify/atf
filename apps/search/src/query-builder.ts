@@ -677,14 +677,31 @@ const TS_RANK_CD_LENGTH_NORMALIZATION = 32;
  * still run through the configured text-search config, so stemming and
  * stopword removal happen in PostgreSQL exactly as at ingest. A query with no
  * word tokens yields `""` — an empty tsquery that matches nothing, the same
- * net effect the old `websearch_to_tsquery('')` had.
+ * net effect the old `websearch_to_tsquery('')` had. Chunks that contain every
+ * operand rank first (see buildLexicalAndTsQuery), so a precise question keeps
+ * its exact match on top while the OR list still recovers recall.
  */
 export function buildLexicalOrTsQuery(queryText: string): string {
+  const operands = lexicalOperands(queryText);
+  if (operands.length === 0) return "";
+  return operands.join(" | ");
+}
+
+/** Same operands as buildLexicalOrTsQuery, AND-ed: a chunk matching every (non-stopword) term. */
+export function buildLexicalAndTsQuery(queryText: string): string {
+  const operands = lexicalOperands(queryText);
+  if (operands.length === 0) return "";
+  return operands.join(" & ");
+}
+
+/**
+ * Quoted tsquery operands for `queryText`: every word token, de-duplicated,
+ * quoted per tsquery rules (see buildLexicalOrTsQuery). Shared by the OR and
+ * AND query builders so both lists tokenise identically.
+ */
+function lexicalOperands(queryText: string): string[] {
   const tokens = [...new Set(queryText.match(/[\p{L}\p{N}]+/gu) ?? [])];
-  if (tokens.length === 0) return "";
-  return tokens
-    .map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`)
-    .join(" | ");
+  return tokens.map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`);
 }
 
 /**
@@ -706,25 +723,33 @@ export function buildLexicalQuerySql(
   language: string,
   p: SqlParams,
   queryText: string,
-): { match: string; score: string } {
+): { match: string; score: string; allTerms: string } {
   const name = lexical?.ranker ?? "ts_rank_cd";
   if (name === "bm25" && lexical?.bm25Engine) {
     const scoreFn =
       lexical.bm25Engine === "pg_search" ? "paradedb.score" : "bm25_score";
     const queryPh = p.add(queryText);
-    return { match: `content ||| ${queryPh}`, score: `${scoreFn}(id)` };
+    return {
+      match: `content ||| ${queryPh}`,
+      score: `${scoreFn}(id)`,
+      allTerms: "FALSE",
+    };
   }
   const queryPh = p.add(buildLexicalOrTsQuery(queryText));
   const tsq = `to_tsquery('${language}', ${queryPh})`;
+  const andPh = p.add(buildLexicalAndTsQuery(queryText));
+  const allTerms = `ts_search @@ to_tsquery('${language}', ${andPh})`;
   if (name === "ts_rank") {
     return {
       match: `ts_search @@ ${tsq}`,
       score: `ts_rank(ts_search, ${tsq})`,
+      allTerms,
     };
   }
   return {
     match: `ts_search @@ ${tsq}`,
     score: `ts_rank_cd(ts_search, ${tsq}, ${TS_RANK_CD_LENGTH_NORMALIZATION})`,
+    allTerms,
   };
 }
 
@@ -816,7 +841,7 @@ export function buildFtsQuery(
   // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd with length
   // normalisation; bm25 only when a BM25 extension was detected. The query
   // parameter is added here (first parameter of the query) by the builder.
-  const { match, score } = buildLexicalQuerySql(
+  const { match, score, allTerms } = buildLexicalQuerySql(
     lexical,
     language,
     p,
@@ -864,7 +889,7 @@ export function buildFtsQuery(
       FROM "${table}"
       WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
         AND ${match}
-      ORDER BY text_score DESC, id ASC
+      ORDER BY (${allTerms}) DESC, text_score DESC, id ASC
       LIMIT ${limitPh} OFFSET ${offsetPh}
     `,
     params: p.values,
@@ -1235,11 +1260,11 @@ export function buildHybridQuery(
         LIMIT ${candPh}
       ),
       txt AS (
-        SELECT id, ${lexicalSql.score} AS tscore
+        SELECT id, ${lexicalSql.score} AS tscore, (${lexicalSql.allTerms}) AS tall
         FROM "${table}"
         WHERE TRUE${visibilitySql}
           AND ${lexicalSql.match}
-        ORDER BY tscore DESC
+        ORDER BY tall DESC, tscore DESC
         LIMIT ${candPh}
       ),
       ${sparseCTE}
@@ -1249,7 +1274,7 @@ export function buildHybridQuery(
         FROM vec
       ),
       txt_ranked AS (
-        SELECT id, tscore, ROW_NUMBER() OVER (ORDER BY tscore DESC) AS trank
+        SELECT id, tscore, ROW_NUMBER() OVER (ORDER BY tall DESC, tscore DESC) AS trank
         FROM txt
       ),
       rrf AS (

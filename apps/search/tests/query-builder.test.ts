@@ -28,6 +28,7 @@ import {
   buildBinaryDenseQuery,
   buildFtsQuery,
   buildHybridQuery,
+  buildLexicalAndTsQuery,
   buildLexicalOrTsQuery,
   candidatePoolSize,
   CursorNotSupportedError,
@@ -640,17 +641,23 @@ describe("buildFtsQuery", () => {
   /**
    * The FTS query previously had NO secondary sort key at all, so two documents
    * with an equal ts_rank could come back in either order between calls — which
-   * makes any pagination unstable regardless of the cursor predicate.
+   * makes any pagination unstable regardless of the cursor predicate. Since
+   * AND-first ranking the all-terms predicate leads: chunks containing every
+   * query term come before the remaining OR matches.
    */
   it("adds a deterministic tie-break to the relevance ordering", () => {
-    expect(flat(build().sql)).toContain("ORDER BY text_score DESC, id ASC");
+    expect(flat(build().sql)).toContain(
+      "ORDER BY (ts_search @@ to_tsquery('german', $2)) DESC, text_score DESC, id ASC",
+    );
   });
 
   it("uses the ts_rank_cd expression in the cursor predicate", () => {
     const f = flat(build(rankedCursor).sql);
-    // $2 is the tenant bind of the mandatory scope; the cursor score is $3.
+    // $1 is the OR tsquery, $2 the AND tsquery of the all-terms predicate;
+    // $3 is the tenant bind of the mandatory scope, the cursor score follows
+    // at $4.
     expect(f).toContain(
-      "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) < $3::float8",
+      "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) < $4::float8",
     );
   });
 
@@ -729,6 +736,22 @@ describe("buildFtsQuery", () => {
       expect(buildLexicalOrTsQuery("")).toBe("");
       expect(buildLexicalOrTsQuery("   ")).toBe("");
       expect(buildLexicalOrTsQuery("?!&")).toBe("");
+    });
+  });
+
+  // AND-first ranking: the lexical list puts chunks matching EVERY term first
+  // (see buildLexicalAndTsQuery), then the remaining OR matches by score.
+  describe("lexical AND tsquery (buildLexicalAndTsQuery)", () => {
+    it("ANDs every term of a natural-language question", () => {
+      expect(buildLexicalAndTsQuery("Wie hoch ist die Miete?")).toBe(
+        "'Wie' & 'hoch' & 'ist' & 'die' & 'Miete'",
+      );
+    });
+
+    it("yields an empty tsquery for a query without word tokens", () => {
+      expect(buildLexicalAndTsQuery("")).toBe("");
+      expect(buildLexicalAndTsQuery("   ")).toBe("");
+      expect(buildLexicalAndTsQuery("?!&")).toBe("");
     });
   });
 
@@ -929,6 +952,35 @@ describe("buildHybridQuery", () => {
       "ts_rank_cd(ts_search, to_tsquery('german', $2), 32) AS tscore",
     );
     expect(f).toContain("ts_search @@ to_tsquery('german', $2)");
+  });
+
+  // AND-first ranking: the txt CTE carries an all-terms flag ($3 — the AND
+  // tsquery follows the OR tsquery at $2) and orders by it before the score,
+  // so trank puts chunks containing every query term first.
+  it("ranks the txt CTE all-terms-first", () => {
+    const f = flat(build(10, 0).sql);
+    expect(f).toContain(
+      "(ts_search @@ to_tsquery('german', $3)) AS tall",
+    );
+    expect(f).toContain("ORDER BY tall DESC, tscore DESC");
+    expect(f).toContain(
+      "ROW_NUMBER() OVER (ORDER BY tall DESC, tscore DESC) AS trank",
+    );
+    // The AND tsquery is bound right after the OR tsquery.
+    const { params } = build(10, 0);
+    expect(params[1]).toBe("'mietvertrag'");
+    expect(params[2]).toBe("'mietvertrag'");
+  });
+
+  it("disables the all-terms flag in the txt CTE for bm25", () => {
+    const f = flat(
+      build(10, 0, undefined, false, {
+        ranker: "bm25",
+        bm25Engine: "pg_search",
+      }).sql,
+    );
+    expect(f).toContain("(FALSE) AS tall");
+    expect(f).toContain("ORDER BY tall DESC, tscore DESC");
   });
 
   it("ranks the txt CTE with paradedb.score for bm25 via pg_search", () => {
