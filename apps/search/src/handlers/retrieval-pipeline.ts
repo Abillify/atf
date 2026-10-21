@@ -313,6 +313,8 @@ export interface RankingOptions {
 	diversify: DiversifyMode;
 	/** v2 `group_by` merge (`"none"` is a passthrough). */
 	groupBy: GroupByMode;
+	/** `include_all_versions`: keep document revisions apart when grouping. */
+	includeAllVersions?: boolean;
 	minScore: MinScoreStage | null;
 	/** Scale of the final scores (rerank applied, else retrieval mode). */
 	scoreKind: ScoreKind;
@@ -343,12 +345,23 @@ export function rankResults(
 		ranked = groupResultsByDocument(
 			ranked,
 			opts.groupMaxChunksPerDocument ?? 8,
+			opts.includeAllVersions === true,
 		);
 	}
-	if (opts.diversify === "default") ranked = diversifyResults(ranked);
+	if (opts.diversify === "default")
+		ranked = diversifyResults(ranked, {
+			includeAllVersions: opts.includeAllVersions === true,
+		});
 	else if (opts.diversify === "uncapped")
-		ranked = diversifyResults(ranked, { perSectionCap: 0 });
-	ranked = groupResultsV2(ranked, opts.groupBy);
+		ranked = diversifyResults(ranked, {
+			perSectionCap: 0,
+			includeAllVersions: opts.includeAllVersions === true,
+		});
+	ranked = groupResultsV2(
+		ranked,
+		opts.groupBy,
+		opts.includeAllVersions === true,
+	);
 
 	if (opts.minScore === null) {
 		const page = ranked.slice(0, opts.limit);
@@ -573,6 +586,7 @@ export async function runRetrievalPipeline(
 		groupMaxChunksPerDocument: cfg.groupMaxChunksPerDocument,
 		diversify: cfg.diversify,
 		groupBy: cfg.groupBy,
+		includeAllVersions: cfg.includeAllVersions,
 		minScore: cfg.minScore,
 		scoreKind,
 	});

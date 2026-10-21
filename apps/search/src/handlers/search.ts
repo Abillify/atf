@@ -714,7 +714,11 @@ export function createSearchHandler(
 
       // Group chunks into documents (best score wins, content merged dedup'd).
       if (groupByDocument) {
-        results = groupResultsByDocument(results, groupMaxChunksPerDocument);
+        results = groupResultsByDocument(
+          results,
+          groupMaxChunksPerDocument,
+          includeAllVersions,
+        );
       }
 
       // Diversify (task 3.5, design §7.1 step 4): collapse same table/figure to
@@ -725,7 +729,7 @@ export function createSearchHandler(
       // path.
       let sectionGroups: SectionGroup[] | undefined;
       if (groupBySection && !groupByDocument) {
-        results = diversifyResults(results);
+        results = diversifyResults(results, { includeAllVersions });
         results = results.slice(0, limit);
         sectionGroups = groupResultsBySection(results);
       } else {
@@ -1090,17 +1094,20 @@ export function buildPostgresFilter(
  * - At most `maxChunksPerDocument` best-scoring chunks are kept per document;
  *   a document that was cut short reports `truncated: true` and
  *   `omitted_chunks` so a consumer knows the merged text is incomplete.
+ * - With `includeAllVersions` (`include_all_versions`), the revisions of one
+ *   document stay separate groups instead of being merged into one.
  * - The final array is sorted by document score descending.
  */
 export function groupResultsByDocument(
   results: SearchResult[],
   maxChunksPerDocument = 8,
+  includeAllVersions = false,
 ): SearchResult[] {
   // Group by document — or by the document's group, so an e-mail thread is one
   // result — preserving the order chunks were returned in.
   const groups = new Map<string, SearchResult[]>();
   for (const r of results) {
-    const key = documentGroupKey(r);
+    const key = documentGroupKey(r, includeAllVersions);
     const existing = groups.get(key);
     if (existing) {
       existing.push(r);

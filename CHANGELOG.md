@@ -668,6 +668,7 @@ releases:
 - OpenAPI documents: Extract reports the product version, and health schemas include auth and flow_load.
 - Search v1/v2 embed the raw query when it consists only of noise characters, and v1 computes dense and sparse embeddings in parallel.
 - Search `group_by_section` no longer merges equally named sections of different documents.
+- Search keeps revisions apart when `include_all_versions` is set (diversification and document grouping).
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

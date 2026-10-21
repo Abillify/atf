@@ -170,16 +170,34 @@ export interface DiversifyOptions {
    * cap (table/figure collapsing still runs).
    */
   perSectionCap?: number;
+  /**
+   * `include_all_versions`: keep revisions of one document apart. The
+   * document-scoped keys are extended by the hit's revision identity, so
+   * collapsing and capping never merge hits from different versions.
+   */
+  includeAllVersions?: boolean;
+}
+
+/**
+ * Revision identity of a hit: its `reference` without the `_chunk_N` suffix.
+ * Versioned rows carry the version in their reference (`doc_v2`), so this
+ * separates the revisions of one document while all chunks of one revision
+ * share it.
+ */
+export function revisionIdentity(r: SearchResult): string {
+  return r.reference.replace(/_chunk_\d+$/, "");
 }
 
 /**
  * Document identity used to scope every diversification key: the `base_ref`
  * (all versions/chunks of one document), falling back to `reference`. Extract
  * numbers sections, tables and figures per document, so none of those ids is
- * meaningful across documents.
+ * meaningful across documents. With `include_all_versions` the key is
+ * extended by the revision identity so revisions are not collapsed together.
  */
-function diversifyDocumentKey(r: SearchResult): string {
-  return r.base_ref || r.reference;
+function diversifyDocumentKey(r: SearchResult, includeAllVersions: boolean): string {
+  const doc = r.base_ref || r.reference;
+  return includeAllVersions ? `${doc}\u0000${revisionIdentity(r)}` : doc;
 }
 
 /**
@@ -212,6 +230,7 @@ export function diversifyResults(
   opts: DiversifyOptions = {},
 ): SearchResult[] {
   const perSectionCap = opts.perSectionCap ?? DEFAULT_SECTION_CAP;
+  const includeAllVersions = opts.includeAllVersions === true;
 
   // ── Pass 1: collapse same table_id / same figure_id to the best hit. ──
   // Key space is namespaced so a table id can never collide with a figure id.
@@ -223,9 +242,9 @@ export function diversifyResults(
     // Document-scoped: `table_id` / `figure_id` are assigned per document by
     // Extract, so the same id in two documents is two different objects.
     const key = tId
-      ? `${diversifyDocumentKey(r)}\u0000table:${tId}`
+      ? `${diversifyDocumentKey(r, includeAllVersions)}\u0000table:${tId}`
       : fId
-        ? `${diversifyDocumentKey(r)}\u0000figure:${fId}`
+        ? `${diversifyDocumentKey(r, includeAllVersions)}\u0000figure:${fId}`
         : null;
     if (key === null) {
       collapsed.push(r);
@@ -263,7 +282,7 @@ export function diversifyResults(
     }
     // Document-scoped bucket (same composite-key pattern as groupResultsV2):
     // the same section path in two documents is two buckets, not one.
-    const bucket = `${diversifyDocumentKey(r)}\u0000${section}`;
+    const bucket = `${diversifyDocumentKey(r, includeAllVersions)}\u0000${section}`;
     const count = perSectionCount.get(bucket) ?? 0;
     if (count < perSectionCap) {
       perSectionCount.set(bucket, count + 1);
@@ -475,9 +494,15 @@ export function groupMemberOrder(a: SearchResult, b: SearchResult): number {
 /**
  * The key hits are merged under by `group_by=document` / `groupByDocument`: the
  * document's group (an e-mail thread) when it has one, else the document.
+ * With `includeAllVersions` the document key is extended by the revision
+ * identity, so the revisions of one document stay separate groups.
  */
-export function documentGroupKey(r: SearchResult): string {
-  return r.document_group?.id ?? (r.base_ref || r.reference);
+export function documentGroupKey(
+  r: SearchResult,
+  includeAllVersions = false,
+): string {
+  const doc = r.document_group?.id ?? (r.base_ref || r.reference);
+  return includeAllVersions ? `${doc}\u0000${revisionIdentity(r)}` : doc;
 }
 
 /**
@@ -501,6 +526,7 @@ export function documentGroupKey(r: SearchResult): string {
 export function groupResultsV2(
   results: SearchResult[],
   by: GroupByMode,
+  includeAllVersions = false,
 ): GroupedSearchResult[] {
   if (by === "none") return results;
   const groups = new Map<string, SearchResult[]>();
@@ -510,7 +536,7 @@ export function groupResultsV2(
     let groupKey: string;
     let publicKey: string;
     if (by === "document") {
-      groupKey = documentGroupKey(r);
+      groupKey = documentGroupKey(r, includeAllVersions);
       publicKey = groupKey;
     } else {
       const section = sectionKey(r);
