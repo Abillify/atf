@@ -299,7 +299,15 @@ const OAuthVerificationTargetSchema = z
     audience: z.union([z.string(), z.array(z.string())]).optional(),
     algorithms: z.array(z.string()).default(["RS256"]),
     clockToleranceSec: z.coerce.number().int().nonnegative().default(5),
+    /**
+     * @deprecated No effect: the issuer is always required and pinned. Setting
+     * it to `true` only logs a startup warning; the option will be removed.
+     */
     allowAnyIssuer: boolish.default(false),
+    /**
+     * @deprecated No effect: the audience is always required. Setting it to
+     * `true` only logs a startup warning; the option will be removed.
+     */
     allowAnyAudience: boolish.default(false),
   })
   .superRefine((target, ctx) => {

@@ -1321,3 +1321,46 @@ describe("mutable identity claims in tool bindings", () => {
     }
   });
 });
+
+describe("deprecated allowAnyIssuer / allowAnyAudience", () => {
+  const oauth = (extra: Record<string, unknown>) =>
+    goodConfig({
+      auth: {
+        mode: "oauth",
+        oauth: {
+          jwksUri: "https://id.example.com/jwks",
+          issuer: "https://id.example.com/",
+          audience: "mcpgate",
+          ...extra,
+        },
+      },
+    });
+
+  test("warns that the flags have no effect when set", () => {
+    const warnings = warningsIn(oauth({ allowAnyIssuer: true, allowAnyAudience: true }));
+    expect(warnings).toContain("auth.oauth.allowAnyIssuer has no effect and will be removed.");
+    expect(warnings).toContain("auth.oauth.allowAnyAudience has no effect and will be removed.");
+  });
+
+  test("warns for additional issuers with their index", () => {
+    const warnings = warningsIn(
+      oauth({
+        additionalIssuers: [
+          {
+            jwksUri: "https://other.example.com/jwks",
+            issuer: "https://other.example.com/",
+            audience: "mcpgate",
+            allowAnyAudience: true,
+          },
+        ],
+      }),
+    );
+    expect(warnings).toContain(
+      "auth.oauth.additionalIssuers[0].allowAnyAudience has no effect and will be removed.",
+    );
+  });
+
+  test("is silent when the flags are false", () => {
+    expect(warningsIn(oauth({})).some((m) => m.includes("has no effect"))).toBe(false);
+  });
+});

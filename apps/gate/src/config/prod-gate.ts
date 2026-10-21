@@ -158,6 +158,17 @@ export function checkProductionReadiness(
           "service will authenticate here (audience confusion). Set auth.oauth.audience.",
       );
     }
+    const deprecated = (path: string, target: { allowAnyIssuer?: boolean; allowAnyAudience?: boolean } | undefined): void => {
+      for (const flagName of ["allowAnyIssuer", "allowAnyAudience"] as const) {
+        if (target?.[flagName] === true) {
+          warnings.push(`${path}.${flagName} has no effect and will be removed.`);
+        }
+      }
+    };
+    deprecated("auth.oauth", oauth);
+    for (const [i, extra] of (oauth?.additionalIssuers ?? []).entries()) {
+      deprecated(`auth.oauth.additionalIssuers[${i}]`, extra);
+    }
     for (const [i, extra] of (oauth?.additionalIssuers ?? []).entries()) {
       if (extra.allowAnyIssuer) {
         flag(
