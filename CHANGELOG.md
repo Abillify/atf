@@ -654,6 +654,7 @@ releases:
 - `docs/THREAT-MODEL.md` matches the code again (approval separation, derived-PDF cache, converter gate, compliance policy, content-trust taint) and its tables render correctly; the Gate README no longer mentions a Runtime approval secret.
 - Runbooks reference existing endpoints and the Runtime audit chain; new runbooks cover a Redis outage and transaction-token rotation, and the incident runbook covers a compromised evidence key.
 - Documentation names the existing bundle verifier (`cli.ts verify-bundle`) instead of a non-existent `atf verify-bundle` command.
+- `docs/CAPABILITIES.md` lists the capabilities added in this release.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

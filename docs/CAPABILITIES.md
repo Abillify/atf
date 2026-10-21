@@ -123,6 +123,23 @@ need adaptation.
   a chat request. `TRIGGERS_REQUIRE_SIGNATURE` controls signature enforcement.
 - **Asynchronous jobs.** Long runs execute in the background and are polled by job id, with
   optional lease-based recovery after a replica restart.
+- **Flow load failures are visible.** `/health/ready` carries an informational `flow_load`
+  check (`degraded` with the file, reason and first-seen time; never a 503) and the gauge
+  `aiperator_flow_load_failures` follows the same ledger. In the production profile a flow
+  whose node `config` contains a key the node type does not read is not loaded at all;
+  elsewhere the load logs a warning. `cli.ts validate` and `POST /flows/validate` report
+  unknown config keys with a "did you mean" suggestion (`x-`-prefixed keys are author
+  annotations and never reported).
+- **Shadowed flows are reported.** An online (published) flow still overrides a same-id file
+  flow, but not silently: startup warns about every shadowed file flow, `GET /flows/:id`
+  reports `shadowsFile` plus the file baseline, publish and rollback record it, and a GitOps
+  webhook push without runtime effect returns `shadowedFlows`.
+- **Wildcard tool arguments.** `config.toolArgs` accepts `"*"` and `"<server>/*"` keys;
+  wildcard arguments apply to every tool that declares them, exact references still win.
+- **Harness coverage lanes and progress.** The plannerless agent harness can work several
+  coverage assignments concurrently (`coverageQueue.lanes`, 1–8, merged in assignment order)
+  and emits structured progress — phase, tasks done/total, coverage, elapsed time and ETA —
+  as the SSE event `atf.progress`, in the debug trace, and in `GET /v1/jobs/{id}`.
 
 ## Document extraction
 
@@ -161,6 +178,22 @@ callers that already hold Markdown.
   images, `CONVERT_CONCURRENCY`, `PAGE_CONCURRENCY`, a queue that answers 503 with `Retry-After`
   past `QUEUE_MAX_DEPTH`, a per-tenant daily vision-page budget (`VISION_BUDGET_PAGES_PER_DAY`,
   `BUDGET_EXCEEDED`), and large uploads spooled to disk instead of the heap.
+- **Page windows.** `pages` on a v2 job selects a window of the source (`"5"`, `"3-10"`,
+  `"5-"`, `"-8"`; lists and reversed windows are a 400). Pages keep the source's numbering,
+  `MAX_PAGES` counts the window, and Search spans the document unit over it; a native source
+  (BPMN, a chart-free XLSX) ignores `pages`.
+- **Job lanes.** A worker can run several jobs in parallel via `JOB_CONCURRENCY` (default 1 —
+  sequential, range 1–32); the page scheduler refills a freed `PAGE_CONCURRENCY` slot as soon
+  as a page settles instead of advancing in lockstep batches.
+- **Derived-PDF cache.** Derived PDFs are reused across runs under `TEMP_DIR/derived-pdf`
+  (`DERIVED_PDF_CACHE`, default on): a LibreOffice conversion is published once under a key of
+  the source hash plus converter identity and hard-linked in on later runs, so retries and
+  re-ingestion of an unchanged document skip the conversion. The cache is bounded by
+  `DERIVED_PDF_CACHE_MAX_MB` and `DERIVED_PDF_CACHE_MAX_AGE_HOURS`.
+- **Retention of derived data.** `JOB_RETENTION_DAYS` (default `0` = keep) sweeps finished
+  jobs, `UPLOAD_SESSION_MAX_AGE_HOURS` (default 72) sweeps abandoned resumable uploads, and
+  the sweep runs at start and hourly; sources are deliberately not swept by age because
+  `/v2/render` renders zoom and tiles from them.
 - **Hostile-document hardening.** ZIP containers are checked against `ZIP_MAX_*` before they
   are unpacked (`DOCUMENT_TOO_COMPLEX`), XML entity expansion is off, native parsers run in a
   heap-limited Worker thread, LibreOffice starts with macros and linked-content updates
@@ -217,6 +250,18 @@ vector database is required.
 - **Storage efficiency.** Vector quantization and half-precision storage reduce index size.
 - **Embedding drift protection.** `EMBED_MODEL_REVISION` and `EMBED_EXPECTED_DIMENSION` make
   an unsafe in-place embedding model change fail fast rather than silently degrade relevance.
+- **Bounded query cost.** `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the
+  last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms
+  (longest first). The lexical list ranks chunks containing all query terms first, then by
+  score.
+- **Bounded document groups.** `group_by_document` keeps at most
+  `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT` (default 8) best-scoring chunks per document and
+  marks the result `truncated` with `omitted_chunks`, so one document cannot turn the whole
+  candidate pool into context.
+- **Capability-gated navigation.** `collection_stats` reports which retrieval features a
+  collection supports (`unitRows`, `unitGraph`, `outline`, `pages`), and Runtime hides the
+  Search navigation tools a pinned collection cannot serve (cached,
+  `COLLECTION_CAPABILITY_TTL_MS`, fail-open).
 - **Access control.** Retrieval is scoped by verified identity and group membership; the
   verified identity is authoritative and is never taken from a client-supplied field.
 
@@ -241,6 +286,10 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   (`ask`) and write (`act`) paths so a read intent can never reach a mutating tool.
 - **Two MCP transports.** The current streamable transport and the legacy SSE transport, with
   live session monitoring.
+- **Monitor tenant scope.** The monitor stream filters events by the OIDC session's tenant
+  (`monitoring.tenantScope`, default `session`) and replaces tool results with a SHA-256
+  digest and size unless `monitoring.includeToolContent` is true; dashboard logins can be
+  restricted to id_token `groups` members (`monitoring.oidc.requiredGroups`).
 
 ## Guardrails and safety
 
@@ -257,7 +306,8 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
 - **Tool output validation.** Data returned *by* a tool, and the chunks a `retrieval` node puts
   into the prompt, are inspected for injected instructions before they reach the model. This
   closes the indirect prompt injection path that output-only filtering misses. On by default in
-  production (`TOOL_OUTPUT_VALIDATOR_ENABLED`, unset = on when `APP_ENV=production`); a finding
+  production (`TOOL_OUTPUT_VALIDATOR_ENABLED`, unset = on in the production profile
+  (`ATF_PROFILE=production`, or `APP_ENV=production`)); a finding
   is neutralised (`TOOL_OUTPUT_VALIDATOR_MODE=redact`) and recorded on the consuming node's trace
   as `indirect_prompt_injection` and in `aiperator_indirect_injection_total`.
   Retrieved chunks reach the model as a delimited untrusted-data block (`RETRIEVAL_CONTEXT_MODE`,
@@ -265,6 +315,17 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   needs human approval for the rest of the run (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`, unset = on
   in production; recorded as `tainted_write_tool_approval`). Search results carry
   `content_trust: untrusted` and an `injection_risk` hint.
+- **Content trust across services.** The taint signal survives the hop between services:
+  Search labels every document-read response (per item and envelope, worst hit wins), the
+  Runtime parses the labels into retrieved chunks and taints the execution on a `suspected`
+  label, and the Gate marks executed tool results untrusted via MCP
+  `_meta["io.atf/content-trust"]`. With `TAINT_MODE=on-untrusted-source` (default
+  `on-finding`) the result of any MCP server not marked `contentTrust: trusted` taints the
+  execution, so internal curated servers must be labelled explicitly.
+- **AI disclosure.** `AI_DISCLOSURE=header|field` (default `off`) marks successful
+  completions as AI-generated: `X-AI-Generated: true` on `/v1/chat/completions` and
+  `/v1/responses`, or `metadata.ai_generated: true` in a JSON body (a stream carries the
+  header).
 - **Declarative tool authorization.** Which principal may invoke which tool is policy, not
   code, and it fails closed by default (`TOOL_AUTHZ_FAIL_CLOSED`).
 - **Groundedness checking.** Answers are scored against the retrieved sources, semantically
@@ -294,7 +355,15 @@ Consequential actions can require a human decision before they execute.
   Silence never results in an action.
 - **Cluster-wide visibility.** With Redis configured, pending approvals are visible across
   replicas so any reviewer can decide. If Redis is unavailable the system degrades to
-  per-replica scope rather than blocking.
+  per-replica scope rather than blocking. The Gate's 2026 endpoint keeps its pending
+  approvals in Redis too, so request and resolve may hit different replicas.
+- **Approver separation.** The resolver of an approval comes from the verified identity,
+  never from a client-supplied label. `policies.approval.requireDifferentApprover` (default
+  `off`) makes self-resolution a 403 without consuming the request: the resolver must be a
+  different principal of the same tenant holding `policies.approval.approverScope`. The
+  Gate's 2026 endpoint adds `approvals/list` (own requests, or the tenant's for scope
+  holders) and `approvals/get` (status and, once approved, the one-shot token for the
+  requester).
 - **Audited.** Every decision, including timeouts, is written to the audit log and counted as
   a metric.
 
@@ -366,7 +435,16 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   executed flow with includes expanded) and `subflow_versions[]`; CI fails a flow change without
   a `metadata.version` bump (`check:flow-versions`).
 - **Verifiable evidence bundles.** A signed bundle ties an execution to its inputs, policy
-  decisions, sources, and outputs (`EVIDENCE_BUNDLE_SECRET`).
+  decisions, sources, and outputs. `EVIDENCE_SIGNING_KEY` (Ed25519, preferred) makes the
+  platform sign audit chain anchors, evidence bundles and — as a fallback — erasure receipts
+  with one asymmetric identity; its public key is published at
+  `GET /.well-known/atf-evidence-jwks.json` (OKP/Ed25519, never the private part), so an
+  auditor verifies an artefact offline with no shared secret and no dependency on the
+  platform being reachable. `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks
+  <url|file>` verifies Ed25519 bundles; the legacy HMAC path (`EVIDENCE_BUNDLE_SECRET`,
+  verified with `--secret`) still works but is deprecated in favour of Ed25519. Signed
+  envelopes carry an `alg`/`algorithm` field and verification branches on it strictly —
+  never a silent fallback between algorithms.
 - **Compliance dossier.** A single generated document collects the active policy, the audit
   chain verification result, executed erasures, retention windows, evaluation results, and
   the red-team posture score, with references to the architecture decisions behind them.
@@ -378,6 +456,15 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Evaluation runs.** Datasets, automated judge scoring, and matrix runs across model and
   prompt variants, suitable for use as a regression gate in CI. Eval cases can be collected from
   Studio test runs, each with a reference answer, and removed again (`DELETE /eval/cases/:id`).
+- **Structured eval assertions.** Eval cases and matrix tasks accept `contains`, `regex`,
+  `jsonPath` (restricted `$.a.b[0]` syntax), `toolCalled` (min/max, `server/tool` or bare
+  name), `maxTokens`, `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g.
+  `loop_blocked`, which checks the execution trace); a cell passes when its reference score
+  and every assertion do.
+- **Extract quality eval.** `bun run eval:extract-quality` scores Extract output against a
+  golden set — character error rate, Heading-F1 (text and strict with level) and table TEDS
+  (and TEDS-S) — with a gating mode (`--max-cer`, `--min-heading-f1`, `--min-teds`) and a
+  documented format for an operator's own sets.
 - **Canary promotion.** A flow variant serves a fraction of traffic and is promoted or rolled
   back against configured criteria.
 - **Shadow mode.** A sample of production requests (5 % unless an entry in `shadow.yaml` sets
@@ -426,6 +513,11 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   member as a failover, and skip a member whose provider circuit breaker is open. Every pool member
   is included in the flow's model, capability, compliance, and token-limit accounting, so a rotated-
   to or failed-over model is never invisible to those checks.
+- **Sticky pools for prefix caches.** A pool may set `sticky: execution | conversation`
+  instead of rotating: a tool-carrying turn stays on the model that started the execution
+  (`execution`) or on the model that answered the conversation (`conversation`, across
+  executions), which is what a provider's prefix cache rewards. Failover still applies —
+  the failed-over model becomes the sticky one.
 - **Provider key pool.** Multiple keys per provider with automatic quarantine on error, which
   spreads provider-side rate limits.
 - **Three cache layers.** Response cache, semantic cache for equivalent-meaning requests, and
@@ -434,6 +526,14 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Budgets and anomaly detection.** Hard per-tenant daily budgets reject requests once
   exhausted, threshold webhooks fire earlier, and spike detection flags unusual spend
   (`BUDGET_DAILY_PER_TENANT`, `COST_ANOMALY_ENABLED`).
+- **Per-run budgets.** A flow declares `budgets` (`maxTokens`, `maxToolCalls`, `maxWallMs`);
+  the execution stops before the next model or tool call once a limit is reached and finishes
+  with `finishReason: budget_exceeded`.
+- **Shared rate-limit budgets.** `RATE_LIMIT_REDIS_URL` moves the Search and Extract HTTP
+  rate limiters onto a shared Redis budget, so a multi-replica deployment throttles each
+  client once fleet-wide instead of once per pod (the backends fail open on Redis errors);
+  the Runtime's webhook router shares its `REDIS_URL`-backed store the same way. With
+  `REPLICAS > 1` and no shared store, the production gate fails or warns.
 - **FinOps accounting.** Usage and cost per tenant, day, and model, with forecasting and CO2
   accounting derived from configurable energy and grid-intensity factors.
 - **Currency labelling.** Every cost display renders in one configured currency
@@ -476,6 +576,13 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   static credential, with a revocation console.
 - **Trusted headers are explicit.** Identity headers are only honored from configured trusted
   sources (`TRUSTED_IDENTITY_HEADERS`, `STRICT_IDENTITY_HEADERS`).
+- **One operating profile, one preset.** `ATF_PROFILE` (`development | staging | production`)
+  sets the operating profile for all four services at once and wins over the service's own
+  variable (`APP_ENV`, `MCPGATE_ENV`, …); an unknown value aborts startup. `ATF_PRESET`
+  selects a preset (the old per-service `PROFILE` variable is a deprecated alias that warns,
+  and a conflicting value stops startup); regulated presets turn on taint mode, AI
+  disclosure and mandatory compliance policies, and in the production profile make a missing
+  audit anchor file, an empty egress allowlist or a missing `EVIDENCE_SIGNING_KEY` fatal.
 
 ## Channels
 
