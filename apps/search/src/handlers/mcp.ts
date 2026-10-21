@@ -196,6 +196,8 @@ export interface McpHandlerOptions {
    * and `omitted_chunks`.
    */
   groupMaxChunksPerDocument?: number;
+  /** SEARCH_MCP_PRETTY_JSON: indent the `search` tool's JSON. Default false. */
+  mcpPrettyJson?: boolean;
   /** Chunking options forwarded from server config. null = no chunking. */
   chunkingOptions?: ChunkingOptions | null;
   /**

@@ -877,6 +877,7 @@ export function createApp(
     minRerankScore: config.minRerankScore,
     maxQueryChars: config.maxQueryChars,
     groupMaxChunksPerDocument: config.groupMaxChunksPerDocument,
+    mcpPrettyJson: config.mcpPrettyJson,
     chunkingOptions: mcpChunkingOptions,
     summaryClient,
     hydeClient,

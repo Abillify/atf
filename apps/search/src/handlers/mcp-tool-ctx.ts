@@ -59,6 +59,8 @@ export interface McpToolContext {
    * and `omitted_chunks`.
    */
   groupMaxChunksPerDocument?: number;
+  /** SEARCH_MCP_PRETTY_JSON: indent the `search` tool's JSON. Default false. */
+  mcpPrettyJson?: boolean;
   chunkingOptions?: ChunkingOptions | null;
   summaryClient?: SummaryClient | null;
   transactionConfig: TransactionConfig;

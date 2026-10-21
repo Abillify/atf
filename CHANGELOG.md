@@ -558,6 +558,7 @@ releases:
 - The configuration preset variable is now `ATF_PRESET`; `PROFILE` keeps working as a deprecated alias and logs a warning. Setting both to different values stops startup.
 - Runtime keeps per-node execution state per delegation instance, and the debug trace names the instance (`instance_id`) when an agent-harness task delegated to a node.
 - Search keeps the scores of successful rerank batches when one batch fails (`rerank.partial`), and `RERANK_GLOBAL_CONCURRENCY` bounds rerank calls per process.
+- Search MCP results are compact JSON by default (`SEARCH_MCP_PRETTY_JSON=true` restores indentation); `collection_stats` uses one scan.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
@@ -776,6 +777,7 @@ what it returns, without any code change on your side:
 - With `TAINT_MODE=on-untrusted-source`, results of MCP servers without `contentTrust: trusted` now taint the execution (previously only results labelled untrusted by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
 - Deployments with `PROFILE=regulated` (or `regulated-multitenant`) in production need `AUDIT_ANCHOR_FILE`, `EGRESS_ALLOWED_HOSTS`, `EVIDENCE_SIGNING_KEY` and a `compliance-policy.yaml` before upgrading; explicit env values still override the preset.
 - The configuration preset variable is now `ATF_PRESET`; `PROFILE` keeps working as a deprecated alias and logs a warning. Setting both to different values stops startup.
+- Search MCP `search` results are compact JSON now; set `SEARCH_MCP_PRETTY_JSON=true` if a client relied on the 2-space indentation.
 ## [0.18.1] — 2026-10-18
 
 ### Security

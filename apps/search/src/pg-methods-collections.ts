@@ -302,15 +302,8 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
             : "is_latest AND base_ref LIKE $1 ESCAPE '\\'";
         const params = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
         const access = scopedWhere(scope, params);
-        const { rows } = await client.query<{
-          chunks: string;
-          docs: string;
-        }>(
-          `SELECT COUNT(*) AS chunks, COUNT(DISTINCT base_ref) AS docs
-             FROM "${table}" WHERE ${where}${access.sql}`,
-          access.params,
-        );
-        const row = rows[0]!;
+        let chunks = "0";
+        let docs = "0";
         // What the data supports. A table created before the v2 columns existed
         // has none of them: that is the answer "no unit graph", not an error.
         let capabilities = {
@@ -320,17 +313,22 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
           pages: false,
         };
         try {
-          const caps = await client.query<{
+          const { rows } = await client.query<{
+            chunks: string;
+            docs: string;
             units: string;
             sections: string;
             paged: string;
           }>(
-            `SELECT COUNT(unit_id) AS units, COUNT(section_id) AS sections,
+            `SELECT COUNT(*) AS chunks, COUNT(DISTINCT base_ref) AS docs,
+                    COUNT(unit_id) AS units, COUNT(section_id) AS sections,
                     COUNT(page_start) AS paged
                FROM "${table}" WHERE ${where}${access.sql}`,
             access.params,
           );
-          const c = caps.rows[0];
+          const c = rows[0];
+          chunks = c?.chunks ?? "0";
+          docs = c?.docs ?? "0";
           const unitRows = parseInt(c?.units ?? "0", 10);
           capabilities = {
             unitRows,
@@ -340,11 +338,21 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
           };
         } catch (err) {
           if ((err as { code?: string }).code !== "42703") throw err;
+          const { rows } = await client.query<{
+            chunks: string;
+            docs: string;
+          }>(
+            `SELECT COUNT(*) AS chunks, COUNT(DISTINCT base_ref) AS docs
+               FROM "${table}" WHERE ${where}${access.sql}`,
+            access.params,
+          );
+          chunks = rows[0]?.chunks ?? "0";
+          docs = rows[0]?.docs ?? "0";
         }
         return {
           collection,
-          totalDocs: parseInt(row.docs, 10),
-          totalChunks: parseInt(row.chunks, 10),
+          totalDocs: parseInt(docs, 10),
+          totalChunks: parseInt(chunks, 10),
           pathPrefix: norm === "" ? null : norm,
           capabilities,
         };

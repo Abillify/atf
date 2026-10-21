@@ -63,6 +63,7 @@ export function registerSearchTool(opts: McpToolContext): void {
     minRerankScore = null,
     maxQueryChars = DEFAULT_MAX_QUERY_CHARS,
     groupMaxChunksPerDocument = 8,
+    mcpPrettyJson = false,
     authorize,
   } = opts;
 
@@ -809,7 +810,7 @@ export function registerSearchTool(opts: McpToolContext): void {
                   : {}),
               },
               null,
-              2,
+              mcpPrettyJson ? 2 : undefined,
             ),
           },
         ],

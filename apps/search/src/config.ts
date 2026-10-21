@@ -146,6 +146,11 @@ export interface Config {
    * `truncated` and `omitted_chunks`.
    */
   groupMaxChunksPerDocument: number; // SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT (default: 8)
+  /**
+   * SEARCH_MCP_PRETTY_JSON: indent the JSON the MCP `search` tool returns.
+   * Compact by default; the indentation only costs tokens.
+   */
+  mcpPrettyJson: boolean; // SEARCH_MCP_PRETTY_JSON (default: false)
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
   /** Shared Redis URL for the rate limiter; without it the budget is per replica. */
   rateLimitRedisUrl: string | null; // RATE_LIMIT_REDIS_URL
@@ -1197,6 +1202,7 @@ export function loadConfig(): Config {
     "PG_STATEMENT_TIMEOUT_MS",
     30_000,
   );
+  const mcpPrettyJson = parseBoolEnv("SEARCH_MCP_PRETTY_JSON", false);
   const statsRetentionDays = parseNonNegIntEnv("STATS_RETENTION_DAYS", 90);
   // Query statistics are hashed by default; the raw term is persisted only on
   // explicit opt-in (Requirement 2.6). The pepper makes the hash salted.
@@ -1676,6 +1682,7 @@ export function loadConfig(): Config {
     bodyLimit,
     maxQueryChars,
     groupMaxChunksPerDocument,
+    mcpPrettyJson,
     rateLimit,
     rateLimitRedisUrl,
     replicas,
