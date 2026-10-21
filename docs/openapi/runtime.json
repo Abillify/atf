@@ -9343,6 +9343,42 @@
         ]
       }
     },
+    "/monitoring/flow-health": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Monitoring, audit and observability endpoint",
+        "operationId": "get__monitoring_flow_health",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/monitoring/debug": {
       "get": {
         "tags": [
