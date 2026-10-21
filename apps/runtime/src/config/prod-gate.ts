@@ -63,6 +63,15 @@ export function checkProductionReadiness(
   const warnings: string[] = [];
 
   const isProd = config.appEnv === "production";
+  // The regulated presets promise a hardened posture: in the production
+  // Betriebsprofil their three core controls (durable audit anchor, pinned
+  // egress, asymmetric evidence key) are fatal instead of warnings.
+  const regulatedPreset =
+    config.profile === "regulated" ||
+    config.profile === "regulated-multitenant";
+  const presetPrefix = regulatedPreset
+    ? `Preset "${config.profile}" in production: `
+    : "";
 
   if (
     config.authnMode === "disabled" &&
@@ -539,33 +548,48 @@ export function checkProductionReadiness(
   // detectable. Without AUDIT_ANCHOR_FILE the signed checkpoints live only in
   // process memory and are lost on restart — warn (non-fatal, so existing
   // deployments are not broken) when anchoring has no durable file target.
+  // Under a regulated preset the same finding is fatal.
   if (isProd && config.auditAnchorFile === undefined) {
-    warnings.push(
+    const msg =
       "AUDIT_ANCHOR_FILE is not set: signed audit-chain checkpoints are kept " +
-        "in memory only and lost on restart. Configure AUDIT_ANCHOR_FILE (with " +
-        "AUDIT_ANCHOR_SECRET) so external anchors survive restarts and a " +
-        "tampered chain rebuild stays detectable.",
-    );
+      "in memory only and lost on restart. Configure AUDIT_ANCHOR_FILE (with " +
+      "AUDIT_ANCHOR_SECRET) so external anchors survive restarts and a " +
+      "tampered chain rebuild stays detectable.";
+    if (regulatedPreset) fatal.push(`${presetPrefix}${msg}`);
+    else warnings.push(msg);
   }
 
   // Egress_Guard: an empty EGRESS_ALLOWED_HOSTS means "any public host". The
   // guard still blocks private and metadata ranges, but a flow, tool or MCP
   // server can reach every public destination — which is not what a record of
-  // processing that names its recipients assumes.
+  // processing that names its recipients assumes. Under a regulated preset
+  // the same finding is fatal.
   if (isProd && (config.egressAllowedHosts ?? []).length === 0) {
-    warnings.push(
+    const msg =
       "EGRESS_ALLOWED_HOSTS is empty: every public host is a permitted destination for " +
-        "guarded outbound calls (tools, MCP, providers). Set the destinations you actually " +
-        "use (exact hosts or `.suffix` domains) so the recipients named in the record of " +
-        "processing are the only ones reachable.",
-    );
+      "guarded outbound calls (tools, MCP, providers). Set the destinations you actually " +
+      "use (exact hosts or `.suffix` domains) so the recipients named in the record of " +
+      "processing are the only ones reachable.";
+    if (regulatedPreset) fatal.push(`${presetPrefix}${msg}`);
+    else warnings.push(msg);
   }
   // ADR 0030: HMAC-signed anchors/bundles/receipts can only be verified by
   // someone holding the shared secret — auditors, regulators, and customers
   // cannot check them independently. Warn (non-fatal: legacy HMAC deployments
   // keep working) when the evidence chain is active without the asymmetric
-  // EVIDENCE_SIGNING_KEY.
-  if (
+  // EVIDENCE_SIGNING_KEY. Under a regulated preset a missing key is fatal
+  // regardless of whether HMAC secrets are set.
+  if (regulatedPreset) {
+    if (isProd && config.evidenceSigningKey === undefined) {
+      fatal.push(
+        `${presetPrefix}EVIDENCE_SIGNING_KEY is not set. The evidence chain ` +
+          "(audit anchors / Evidence Bundles) needs the Ed25519 key (ADR 0030) " +
+          "so anchors, bundles, and Erasure Receipts carry signatures verifiable " +
+          "offline via /.well-known/atf-evidence-jwks.json, without sharing any " +
+          "secret.",
+      );
+    }
+  } else if (
     isProd &&
     config.evidenceSigningKey === undefined &&
     (config.auditAnchorSecret !== undefined ||

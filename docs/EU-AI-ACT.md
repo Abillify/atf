@@ -97,6 +97,7 @@ you classify as high-risk:
 
 | Setting | Effect |
 | --- | --- |
+| `PROFILE=regulated` / `regulated-multitenant` | Preset that fills the control bundle above (`TAINT_MODE=on-untrusted-source`, `AI_DISCLOSURE=header`, `COMPLIANCE_POLICY_REQUIRED=true` and the guardrail/PII/retention flags); explicit env values still win. In the production Betriebsprofil the preset makes a missing `AUDIT_ANCHOR_FILE`, an empty `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` fatal instead of warnings |
 | `ATF_PROFILE=production` | Turns the production-readiness gates on (authentication, tenant isolation, RLS, audit anchoring warnings) |
 | `COMPLIANCE_POLICY_REQUIRED=true` | Production refuses to start without a loaded `compliance-policy.yaml`, so residency and data-class rules cannot be silently absent |
 | `EGRESS_ALLOWED_HOSTS` | Restricts guarded outbound calls to the destinations in your record of processing; empty means every public host |

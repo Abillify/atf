@@ -60,6 +60,11 @@ const REGULATED_CONTROLS: ProfileDefaults = {
   RETENTION_ENABLED: "true",
   REPLAY_ENABLED: "true",
   IDEMPOTENCY_ENABLED: "true",
+  // `DECISION_RECEIPTS_ENABLED` is deliberately NOT set here: it aborts the
+  // start without a `RECEIPT_SIGNING_KEY`, and profiles never carry secrets.
+  TAINT_MODE: "on-untrusted-source",
+  AI_DISCLOSURE: "header",
+  COMPLIANCE_POLICY_REQUIRED: "true",
 };
 
 /** Cost/latency levers — safe to enable everywhere (no-ops without an embedder). */

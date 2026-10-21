@@ -35,6 +35,18 @@ describe("applyProfile", () => {
     expect(r.applied).toContain("PII_VAULT_ENABLED");
   });
 
+  it("regulated presets fill the new controls and no decision receipts", () => {
+    for (const name of ["regulated", "regulated-multitenant"]) {
+      const r = applyProfile({ PROFILE: name });
+      expect(r.env.TAINT_MODE).toBe("on-untrusted-source");
+      expect(r.env.AI_DISCLOSURE).toBe("header");
+      expect(r.env.COMPLIANCE_POLICY_REQUIRED).toBe("true");
+      // Would abort the start without RECEIPT_SIGNING_KEY (profiles carry no secrets).
+      expect(r.env.DECISION_RECEIPTS_ENABLED).toBeUndefined();
+    }
+    expect(applyProfile({ PROFILE: "secure" }).env.TAINT_MODE).toBeUndefined();
+  });
+
   it("never overrides an explicitly-set variable (explicit env wins)", () => {
     const r = applyProfile({
       PROFILE: "regulated",

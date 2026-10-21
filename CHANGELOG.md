@@ -536,6 +536,7 @@ releases:
 - Search validates transaction envelopes with the shared `@atf/transaction-contract`
   consumer schema; additional issuer claims no longer make Search reject an otherwise
   valid token.
+- The `regulated` presets also set `TAINT_MODE=on-untrusted-source`, `AI_DISCLOSURE=header` and `COMPLIANCE_POLICY_REQUIRED=true`; in production they make a missing `AUDIT_ANCHOR_FILE`, an empty `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` fatal.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
@@ -736,6 +737,7 @@ what it returns, without any code change on your side:
 - Gate monitor: OIDC users now see only events of their own tenant (`monitoring.tenantScope: session`) and tool results only as digest (`monitoring.includeToolContent: false`). Set `tenantScope: all` and/or `includeToolContent: true` to restore the previous view.
 - Set `AUDIT_PSEUDONYM_PEPPER` (random, ≥ 32 characters) and keep it stable; changing it changes the pseudonyms of later audit entries.
 - With `TAINT_MODE=on-untrusted-source`, results of MCP servers without `contentTrust: trusted` now taint the execution (previously only results labelled untrusted by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
+- Deployments with `PROFILE=regulated` (or `regulated-multitenant`) in production need `AUDIT_ANCHOR_FILE`, `EGRESS_ALLOWED_HOSTS`, `EVIDENCE_SIGNING_KEY` and a `compliance-policy.yaml` before upgrading; explicit env values still override the preset.
 ## [0.18.1] — 2026-10-18
 
 ### Security

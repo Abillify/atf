@@ -178,6 +178,89 @@ describe("checkProductionReadiness", () => {
     expect(dev.warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS"))).toBe(false);
   });
 
+  test("regulated preset in production makes the three controls fatal", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      productionConfig({ profile: "regulated" }),
+    );
+    expect(
+      fatal.filter((f) => f.startsWith('Preset "regulated" in production: ')),
+    ).toHaveLength(3);
+    expect(
+      fatal.some((f) => f.includes("AUDIT_ANCHOR_FILE is not set")),
+    ).toBe(true);
+    expect(
+      fatal.some((f) => f.includes("EGRESS_ALLOWED_HOSTS is empty")),
+    ).toBe(true);
+    expect(
+      fatal.some((f) => f.includes("EVIDENCE_SIGNING_KEY is not set")),
+    ).toBe(true);
+    // The findings moved from warnings to fatal, they are not reported twice.
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes("AUDIT_ANCHOR_FILE is not set") ||
+          w.includes("EGRESS_ALLOWED_HOSTS is empty"),
+      ),
+    ).toBe(false);
+  });
+
+  test("regulated-multitenant preset is fatal too; a complete config is not", () => {
+    const bare = checkProductionReadiness(
+      productionConfig({ profile: "regulated-multitenant" }),
+    );
+    expect(
+      bare.fatal.filter((f) =>
+        f.startsWith('Preset "regulated-multitenant" in production: '),
+      ),
+    ).toHaveLength(3);
+    const complete = checkProductionReadiness(
+      productionConfig({
+        profile: "regulated-multitenant",
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+        egressAllowedHosts: ["api.openai.com"],
+        evidenceSigningKey: "a-base64-or-pem-ed25519-key-value",
+      }),
+    );
+    expect(
+      complete.fatal.some((f) => f.includes("Preset ")),
+    ).toBe(false);
+  });
+
+  test("missing evidence key is fatal under the preset even without HMAC secrets", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({
+        profile: "regulated",
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+        egressAllowedHosts: ["api.openai.com"],
+      }),
+    );
+    expect(
+      fatal.some(
+        (f) =>
+          f.startsWith('Preset "regulated" in production: ') &&
+          f.includes("EVIDENCE_SIGNING_KEY is not set"),
+      ),
+    ).toBe(true);
+  });
+
+  test("production without a preset keeps the three findings as warnings", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      productionConfig({
+        auditAnchorSecret: "anchor-secret-at-least-16-chars",
+      }),
+    );
+    expect(fatal.some((f) => f.includes("Preset "))).toBe(false);
+    expect(
+      warnings.some((w) => w.includes("AUDIT_ANCHOR_FILE is not set")),
+    ).toBe(true);
+    expect(
+      warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS is empty")),
+    ).toBe(true);
+    expect(
+      warnings.some((w) => w.includes("cannot verify it independently")),
+    ).toBe(true);
+  });
+
   test("warns in production when the evidence chain is HMAC-only (ADR 0030)", () => {
     const { warnings } = checkProductionReadiness(
       productionConfig({
