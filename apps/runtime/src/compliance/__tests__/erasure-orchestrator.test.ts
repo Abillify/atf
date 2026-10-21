@@ -329,10 +329,15 @@ describe("createErasureOrchestrator — retry", () => {
 
 describe("createErasureOrchestrator — persistence (fake Database)", () => {
   /** Minimal in-memory fake speaking the erasure_requests SQL subset. */
-  function fakeDb(): Database & { rows: Map<string, Record<string, unknown>> } {
+  function fakeDb(): Database & {
+    rows: Map<string, Record<string, unknown>>;
+    renewals: string[];
+  } {
     const rows = new Map<string, Record<string, unknown>>();
+    const renewals: string[] = [];
     const db = {
       rows,
+      renewals,
       query: async <T,>(text: string, params?: readonly unknown[]): Promise<T[]> => {
         if (text.startsWith("INSERT INTO erasure_requests")) {
           const id = String(params?.[0]);
@@ -348,6 +353,7 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
             results: JSON.parse(String(params?.[6])),
             store_groups: JSON.parse(String(params?.[7])),
             receipt: null,
+            lease_token: params?.[8],
             created_at: new Date(),
             updated_at: new Date(),
           });
@@ -357,6 +363,14 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
           const row = rows.get(String(params?.[0]));
           if (row !== undefined) row.subject = null;
           return [];
+        }
+        if (text.includes("SET updated_at = now()\n        WHERE request_id = $1 AND status = 'in_progress' AND lease_token")) {
+          // renewLease: matches only while the row is in_progress and the token still holds it.
+          const row = rows.get(String(params?.[0]));
+          if (row === undefined || row.status !== "in_progress" || row.lease_token !== params?.[1]) return [];
+          renewals.push(String(params?.[0]));
+          row.updated_at = new Date();
+          return [{ request_id: params?.[0] }] as unknown as T[];
         }
         if (text.includes("SET updated_at = now()")) {
           // claimExpired: only an in_progress row older than the lease matches.
@@ -370,6 +384,7 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
             return [];
           }
           row.updated_at = new Date();
+          row.lease_token = params?.[2];
           return [row] as unknown as T[];
         }
         if (text.startsWith("UPDATE erasure_requests")) {
@@ -390,7 +405,10 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
       },
       close: async () => {},
     };
-    return db as unknown as Database & { rows: Map<string, Record<string, unknown>> };
+    return db as unknown as Database & {
+      rows: Map<string, Record<string, unknown>>;
+      renewals: string[];
+    };
   }
 
   it("persists the operation and replays across orchestrator instances", async () => {
@@ -515,6 +533,109 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
     const again = await orch.execute(req);
     expect(again.status).toBe("complete");
     expect(target.calls).toBe(1);
+  });
+
+  describe("lease heartbeat and fencing", () => {
+    const second: ErasureTargetConfig = {
+      service: "extract",
+      url: "http://extract:8080/v1/erasure",
+      tokenEnv: "EXTRACT_ERASURE_TOKEN",
+    };
+    const envLookup = (name: string): string | undefined => `token-for-${name}`;
+    const okResponse = (service: string): Response =>
+      jsonResponse({
+        requestId: "irrelevant",
+        service,
+        results: [{ store: "chunks", status: "ok", erased: 1 }],
+      });
+
+    it("renews the lease after the local group and after every remote service", async () => {
+      const db = fakeDb();
+      const fetchImpl = (async (url: unknown) =>
+        okResponse(String(url).includes("extract") ? "extract" : "search")) as unknown as typeof fetch;
+      const orch = createErasureOrchestrator({
+        retention: new RetentionService([new FakeTarget("runtime.history", { erased: 2 })]),
+        database: db,
+        targets: [target, second],
+        fetchImpl,
+        envLookup,
+      });
+      const req = request();
+      const op = await orch.execute(req);
+      expect(op.status).toBe("complete");
+      // local group + search + extract
+      expect(db.renewals).toHaveLength(3);
+      expect(new Set(db.renewals)).toEqual(new Set([req.requestId]));
+    });
+
+    it("stops writing when another worker took the lease over", async () => {
+      const db = fakeDb();
+      const req = request();
+      const fetchImpl = (async () => {
+        // A second worker claims the expired lease while this run is talking to the remote.
+        const row = db.rows.get(req.requestId);
+        if (row !== undefined) row.lease_token = "taken-over-by-another-worker";
+        return okResponse("search");
+      }) as unknown as typeof fetch;
+      const warnings: string[] = [];
+      const orch = createErasureOrchestrator({
+        retention: new RetentionService([new FakeTarget("runtime.history", { erased: 2 })]),
+        database: db,
+        targets: [target],
+        fetchImpl,
+        envLookup,
+        logger: {
+          debug() {},
+          info() {},
+          error() {},
+          warn: (message: string) => {
+            warnings.push(message);
+          },
+        } as never,
+      });
+      const op = await orch.execute(req);
+      // The run reports the stored (still in_progress) operation and wrote no results or receipt.
+      expect(op.status).toBe("in_progress");
+      const row = db.rows.get(req.requestId);
+      expect(row?.status).toBe("in_progress");
+      expect(row?.results).toEqual([]);
+      expect(row?.receipt).toBeNull();
+      expect(warnings.some((w) => w.includes("erasure lease lost"))).toBe(true);
+    });
+
+    it("a take-over replaces the token, so the previous holder is fenced out", async () => {
+      const db = fakeDb();
+      const req = request();
+      db.rows.set(req.requestId, {
+        request_id: req.requestId,
+        tenant_id: req.tenantId,
+        scope: req.scope,
+        subject: { userId: "u@x.de", externalIds: [] },
+        doc_references: null,
+        status: "in_progress",
+        results: [],
+        store_groups: [],
+        receipt: null,
+        lease_token: "old-holder",
+        created_at: new Date(Date.now() - 3_600_000),
+        updated_at: new Date(Date.now() - 3_600_000),
+      });
+      const orch = createErasureOrchestrator({
+        retention: new RetentionService([new FakeTarget("runtime.history", { erased: 1 })]),
+        database: db,
+        leaseMs: 60_000,
+      });
+      const taken = await orch.execute(req);
+      expect(taken.status).toBe("complete");
+      expect(db.rows.get(req.requestId)?.lease_token).not.toBe("old-holder");
+    });
+
+    it("works without a database too (in-memory store)", async () => {
+      const orch = createErasureOrchestrator({
+        retention: new RetentionService([new FakeTarget("runtime.history", { erased: 1 })]),
+      });
+      expect((await orch.execute(request())).status).toBe("complete");
+    });
   });
 
   it("never erases the whole tenant for a subject operation that lost its subject", async () => {

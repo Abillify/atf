@@ -1646,6 +1646,16 @@ export const MIGRATIONS: readonly Migration[] = [
        $do$`,
     ],
   },
+  {
+    version: 49,
+    name: "erasure_requests.lease_token — fencing token for the erasure lease",
+    statements: [
+      // The run that holds the lease carries this token; every heartbeat
+      // renews the lease only while the token still matches, so a worker
+      // that was taken over notices it and stops instead of racing the new one.
+      `ALTER TABLE erasure_requests ADD COLUMN IF NOT EXISTS lease_token TEXT`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

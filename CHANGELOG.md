@@ -695,6 +695,7 @@ releases:
 - Gate no longer returns internal error messages of failed tools to MCP clients: the client receives `Tool execution failed (reference <id>)`, the full text stays in the log and the monitor stream.
 - Gate keys the `hash` redaction strategy with `MCPGATE_REDACTION_HASH_SECRET` (HMAC-SHA256) and the production check warns while a tool hashes values without it; without the secret the digest is unchanged.
 - Control renders server-side texts in the locale of each request.
+- Long erasure runs renew their lease after every store group and stop when another worker took over.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

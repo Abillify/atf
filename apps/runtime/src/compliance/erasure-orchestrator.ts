@@ -141,6 +141,13 @@ export interface ErasureOrchestrator {
 export const RUNTIME_STORE_SERVICE = "runtime";
 /** Store name of the synthetic failure for an operation that addressed no store. */
 export const NO_STORES_ADDRESSED = `${RUNTIME_STORE_SERVICE}.no_stores`;
+/** The lease of an `in_progress` operation was taken over by another worker. */
+class ErasureLeaseLostError extends Error {
+  constructor(requestId: string) {
+    super(`erasure lease lost for ${requestId}`);
+    this.name = "ErasureLeaseLostError";
+  }
+}
 /** Default lease of an `in_progress` operation. */
 const DEFAULT_LEASE_MS = 15 * 60_000;
 
@@ -264,7 +271,8 @@ function noStoresAddressed(): ErasureStoreResult {
  * (`erasure_requests`) or a process-local map when no database is configured.
  */
 interface OperationStore {
-  insert(op: ErasureOperation): Promise<ErasureOperation | null>;
+  /** Insert a new operation holding the lease `leaseToken`; `null` when it was inserted. */
+  insert(op: ErasureOperation, leaseToken: string): Promise<ErasureOperation | null>;
   update(op: ErasureOperation): Promise<void>;
   load(requestId: string): Promise<ErasureOperation | null>;
   loadByReceiptId(receiptId: string): Promise<ErasureOperation | null>;
@@ -273,18 +281,38 @@ interface OperationStore {
    * (and renew the lease). Returns the claimed operation, or `null` when it is
    * not in progress, still leased, or another caller claimed it first.
    */
-  claimExpired(requestId: string, leaseMs: number): Promise<ErasureOperation | null>;
+  claimExpired(
+    requestId: string,
+    leaseMs: number,
+    leaseToken: string,
+  ): Promise<ErasureOperation | null>;
+  /**
+   * Heartbeat: extend the lease, but only while `leaseToken` still holds it
+   * (the operation is `in_progress` and no other worker claimed it). `false`
+   * means the lease was lost and the run must stop.
+   */
+  renewLease(requestId: string, leaseToken: string): Promise<boolean>;
   /** Remove the cleartext subject from a stored operation. */
   redactSubject(requestId: string): Promise<void>;
 }
 
 class InMemoryOperationStore implements OperationStore {
   private readonly map = new Map<string, ErasureOperation>();
-  async insert(op: ErasureOperation): Promise<ErasureOperation | null> {
+  private readonly leases = new Map<string, string>();
+  async insert(op: ErasureOperation, leaseToken: string): Promise<ErasureOperation | null> {
     const existing = this.map.get(op.requestId);
     if (existing !== undefined) return existing;
     this.map.set(op.requestId, op);
+    this.leases.set(op.requestId, leaseToken);
     return null;
+  }
+  async renewLease(requestId: string, leaseToken: string): Promise<boolean> {
+    const op = this.map.get(requestId);
+    if (op === undefined || op.status !== "in_progress" || this.leases.get(requestId) !== leaseToken) {
+      return false;
+    }
+    this.map.set(requestId, { ...op, updatedAt: new Date().toISOString() });
+    return true;
   }
   async update(op: ErasureOperation): Promise<void> {
     this.map.set(op.requestId, op);
@@ -295,12 +323,14 @@ class InMemoryOperationStore implements OperationStore {
   async claimExpired(
     requestId: string,
     leaseMs: number,
+    leaseToken: string,
   ): Promise<ErasureOperation | null> {
     const op = this.map.get(requestId);
     if (op === undefined || op.status !== "in_progress") return null;
     if (Date.now() - Date.parse(op.updatedAt) < leaseMs) return null;
     const claimed = { ...op, updatedAt: new Date().toISOString() };
     this.map.set(requestId, claimed);
+    this.leases.set(requestId, leaseToken);
     return claimed;
   }
   async redactSubject(requestId: string): Promise<void> {
@@ -325,12 +355,12 @@ class PostgresOperationStore implements OperationStore {
     private readonly logger?: Logger,
   ) {}
 
-  async insert(op: ErasureOperation): Promise<ErasureOperation | null> {
+  async insert(op: ErasureOperation, leaseToken: string): Promise<ErasureOperation | null> {
     const rows = await this.db.query<{ request_id: string }>(
       `INSERT INTO erasure_requests
          (request_id, tenant_id, scope, subject, doc_references, status,
-          results, store_groups)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8::jsonb)
+          results, store_groups, lease_token)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8::jsonb, $9)
        ON CONFLICT (request_id) DO NOTHING
        RETURNING request_id`,
       [
@@ -342,6 +372,7 @@ class PostgresOperationStore implements OperationStore {
         op.status,
         JSON.stringify(op.results),
         JSON.stringify(op.storeGroups),
+        leaseToken,
       ],
     );
     if (rows.length > 0) return null;
@@ -368,18 +399,31 @@ class PostgresOperationStore implements OperationStore {
   async claimExpired(
     requestId: string,
     leaseMs: number,
+    leaseToken: string,
   ): Promise<ErasureOperation | null> {
-    // One statement: only the caller whose UPDATE matches the expired row wins.
+    // One statement: only the caller whose UPDATE matches the expired row wins,
+    // and it replaces the lease token, fencing out the previous holder.
     const rows = await this.db.query<RowShape>(
       `UPDATE erasure_requests
-          SET updated_at = now()
+          SET updated_at = now(), lease_token = $3
         WHERE request_id = $1 AND status = 'in_progress'
           AND updated_at < now() - ($2::bigint * interval '1 millisecond')
         RETURNING request_id, tenant_id, scope, subject, doc_references, status,
                   results, store_groups, receipt, created_at, updated_at`,
-      [requestId, Math.max(0, Math.floor(leaseMs))],
+      [requestId, Math.max(0, Math.floor(leaseMs)), leaseToken],
     );
     return rows.length > 0 ? rowToOperation(rows[0]) : null;
+  }
+
+  async renewLease(requestId: string, leaseToken: string): Promise<boolean> {
+    const rows = await this.db.query<{ request_id: string }>(
+      `UPDATE erasure_requests
+          SET updated_at = now()
+        WHERE request_id = $1 AND status = 'in_progress' AND lease_token = $2
+        RETURNING request_id`,
+      [requestId, leaseToken],
+    );
+    return rows.length > 0;
   }
   async redactSubject(requestId: string): Promise<void> {
     await this.db.query(
@@ -534,23 +578,26 @@ export function createErasureOrchestrator(
   const runRemote = async (
     request: ErasureRequest,
     onlyServices?: readonly string[],
+    /** Called after each service finished (lease heartbeat); may throw to stop the run. */
+    onServiceDone?: () => Promise<void>,
   ): Promise<{ service: string; results: ErasureStoreResult[] }[]> => {
     const selected =
       onlyServices === undefined
         ? targets
         : targets.filter((t) => onlyServices.includes(t.service));
     const settled = await Promise.all(
-      selected.map(async (target) => ({
-        service: target.service,
-        results: await callRemoteTarget(target, request, {
+      selected.map(async (target) => {
+        const results = await callRemoteTarget(target, request, {
           fetchImpl,
           token: envLookup(target.tokenEnv),
           timeoutMs,
           attempts,
           backoffBaseMs,
           ...(logger !== undefined ? { logger } : {}),
-        }),
-      })),
+        });
+        await onServiceDone?.();
+        return { service: target.service, results };
+      }),
     );
     return settled;
   };
@@ -630,11 +677,12 @@ export function createErasureOrchestrator(
       createdAt: now,
       updatedAt: now,
     };
-    const conflict = await store.insert(operation);
+    const leaseToken = randomUUID();
+    const conflict = await store.insert(operation, leaseToken);
     // Idempotent replay (Req 2.9); an operation whose lease ran out is a
     // zombie of a crashed run and is taken over instead of replayed as-is.
     if (conflict !== null) return takeOverIfExpired(conflict);
-    return runOperation(operation, request);
+    return runOperation(operation, request, leaseToken);
   };
   /** The wire request of a persisted operation (the issuer never leaves the runtime). */
   const requestOf = (op: ErasureOperation): ErasureRequest => ({
@@ -649,17 +697,54 @@ export function createErasureOrchestrator(
     op: ErasureOperation,
   ): Promise<ErasureOperation> => {
     if (op.status !== "in_progress") return op;
-    const claimed = await store.claimExpired(op.requestId, leaseMs);
+    const leaseToken = randomUUID();
+    const claimed = await store.claimExpired(op.requestId, leaseMs, leaseToken);
     if (claimed === null) return op; // still running, or another caller won
     logger?.warn("erasure operation lease expired — taking it over", {
       requestId: op.requestId,
     });
-    return runOperation(claimed, requestOf(claimed));
+    return runOperation(claimed, requestOf(claimed), leaseToken);
   };
   const runOperation = async (
     operation: ErasureOperation,
     request: ErasureRequest,
+    leaseToken: string,
   ): Promise<ErasureOperation> => {
+    try {
+      return await runLeased(operation, request, leaseToken);
+    } catch (error) {
+      if (!(error instanceof ErasureLeaseLostError)) throw error;
+      // Another worker took the operation over: it owns the result now. This
+      // run writes nothing further and reports what is stored.
+      logger?.warn("erasure lease lost — stopping this run", { requestId: operation.requestId });
+      return (await store.load(operation.requestId)) ?? operation;
+    }
+  };
+  const runLeased = async (
+    operation: ErasureOperation,
+    request: ErasureRequest,
+    leaseToken: string,
+  ): Promise<ErasureOperation> => {
+    /**
+     * Lease heartbeat after every store group: a run longer than the lease
+     * would otherwise be mistaken for a zombie and taken over while it is
+     * still erasing. A lost lease (fencing token replaced) stops the run; a
+     * database error on the heartbeat itself does not — the run goes on and
+     * the lease may simply expire.
+     */
+    const heartbeat = async (): Promise<void> => {
+      let held: boolean;
+      try {
+        held = await store.renewLease(operation.requestId, leaseToken);
+      } catch (error) {
+        logger?.warn("erasure lease heartbeat failed", {
+          requestId: operation.requestId,
+          error: errorMessage(error),
+        });
+        return;
+      }
+      if (!held) throw new ErasureLeaseLostError(operation.requestId);
+    };
     const subject: ErasureSubject = {
       tenantId: request.tenantId,
       ...localUserIdentity(operation.subject),
@@ -673,9 +758,12 @@ export function createErasureOrchestrator(
 
     const [localResults, remoteGroups] = await Promise.all([
       runLocal
-        ? localForget(subject)
+        ? localForget(subject).then(async (local) => {
+            await heartbeat();
+            return local;
+          })
         : Promise.resolve<ErasureStoreResult[]>([]),
-      runRemote(request),
+      runRemote(request, undefined, heartbeat),
     ]);
 
     let results = localResults;
