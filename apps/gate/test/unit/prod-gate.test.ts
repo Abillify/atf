@@ -1364,3 +1364,33 @@ describe("deprecated allowAnyIssuer / allowAnyAudience", () => {
     expect(warningsIn(oauth({})).some((m) => m.includes("has no effect"))).toBe(false);
   });
 });
+
+describe("unkeyed redaction hash", () => {
+  const hashing = () =>
+    goodConfig({
+      tools: [
+        {
+          name: "people",
+          type: "database",
+          database: "main",
+          query: "SELECT email FROM people",
+          requiredScopes: ["people:read"],
+          redact: [{ column: "email", strategy: "hash" }],
+        },
+      ],
+    });
+
+  test("warns when a tool hashes values and no secret is set", () => {
+    const report = checkProductionReadiness(hashing(), "production", {});
+    expect(report.warnings.some((m) => m.includes("MCPGATE_REDACTION_HASH_SECRET"))).toBe(true);
+  });
+
+  test("is silent with the secret, or without any hash rule", () => {
+    const withSecret = checkProductionReadiness(hashing(), "production", {
+      MCPGATE_REDACTION_HASH_SECRET: "k".repeat(32),
+    });
+    expect(withSecret.warnings.some((m) => m.includes("MCPGATE_REDACTION_HASH_SECRET"))).toBe(false);
+    const none = checkProductionReadiness(goodConfig(), "production", {});
+    expect(none.warnings.some((m) => m.includes("MCPGATE_REDACTION_HASH_SECRET"))).toBe(false);
+  });
+});

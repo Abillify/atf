@@ -421,6 +421,19 @@ export function checkProductionReadiness(
     }
   }
 
+  // A "hash" redaction without a secret is an unkeyed SHA-256: for low-entropy
+  // values (emails, phone numbers) it can be reversed by hashing candidates.
+  if (!env.MCPGATE_REDACTION_HASH_SECRET) {
+    for (const tool of config.tools) {
+      if (tool.type === "database" && tool.redact.some((rule) => rule.strategy === "hash")) {
+        warnings.push(
+          `database tool '${tool.name}' uses redact strategy 'hash' without MCPGATE_REDACTION_HASH_SECRET — ` +
+            "the digest is unkeyed and can be reversed for low-entropy values. Set a secret to use HMAC-SHA256.",
+        );
+      }
+    }
+  }
+
   // The name, email and preferred_username claims are editable by the user at
   // many identity providers; a tool binding on them lets users impersonate each
   // other. Bind the subject or a stable id instead.

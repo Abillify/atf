@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import { DatabaseToolExecutor } from "../../src/tools/database-tool.ts";
 import { DatabaseToolSchema } from "../../src/config/schema.ts";
@@ -118,6 +119,38 @@ describe("DatabaseToolExecutor · redaction", () => {
     const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0].email).toMatch(/^[0-9a-f]{16}$/);
     expect(payload.rows[0].email).not.toBe("a@example.com");
+  });
+
+  it("keys the hash strategy with MCPGATE_REDACTION_HASH_SECRET (HMAC-SHA256)", async () => {
+    const saved = process.env.MCPGATE_REDACTION_HASH_SECRET;
+    const run = async (): Promise<string> => {
+      const { db } = fakeDb([{ id: 1, email: "a@example.com" }]);
+      const cfg = DatabaseToolSchema.parse({
+        name: "t",
+        type: "database",
+        database: "main",
+        query: "select 1",
+        redact: [{ column: "email", strategy: "hash" }],
+      });
+      const exec = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
+      const res = await exec.execute({}, ctx);
+      return JSON.parse(res.content[0].text).rows[0].email as string;
+    };
+    try {
+      delete process.env.MCPGATE_REDACTION_HASH_SECRET;
+      const unkeyed = await run();
+      expect(unkeyed).toBe(createHash("sha256").update("a@example.com").digest("hex").slice(0, 16));
+
+      process.env.MCPGATE_REDACTION_HASH_SECRET = "redaction-secret-0123456789";
+      const keyed = await run();
+      expect(keyed).toBe(
+        createHmac("sha256", "redaction-secret-0123456789").update("a@example.com").digest("hex").slice(0, 16),
+      );
+      expect(keyed).not.toBe(unkeyed);
+    } finally {
+      if (saved === undefined) delete process.env.MCPGATE_REDACTION_HASH_SECRET;
+      else process.env.MCPGATE_REDACTION_HASH_SECRET = saved;
+    }
   });
 });
 

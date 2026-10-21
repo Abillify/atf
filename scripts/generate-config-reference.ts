@@ -859,6 +859,8 @@ const CURATED_DESCRIPTIONS: Record<string, string> = {
   "Gate:MCPGATE_LOG_LEVEL": "`debug` additionally logs database tool SQL",
   "Gate:MCPGATE_LOG_REDACT":
     "SECURITY: `0` turns off redaction of sensitive fields in log context — local debugging only",
+  "Gate:MCPGATE_REDACTION_HASH_SECRET":
+    "SECRET. Key for the `hash` redaction strategy of database tools: with it the digest is HMAC-SHA256, without it an unkeyed SHA-256 that can be reversed for low-entropy values. The production check warns while a tool hashes values and no secret is set",
   "Gate:MCPGATE_REPLICAS":
     "Replica count, for the production check that redeemed approval tokens are shared (Redis) when more than one replica runs. Default 1",
   "Gate:MCPGATE_TRANSACTION_ENFORCEMENT":

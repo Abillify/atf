@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type { Knex } from "knex";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { AuthContext } from "../auth/context.ts";
 import { orderByDirection, type DatabaseTool, type RedactRule } from "../config/schema.ts";
 import { compileQuery } from "../db/bindings.ts";
@@ -434,6 +434,7 @@ function applyRedaction(
   rows: unknown[],
   rules: RedactRule[],
   conditions: Record<string, boolean>,
+  hashSecret: string | undefined = process.env.MCPGATE_REDACTION_HASH_SECRET || undefined,
 ): unknown[] {
   if (!rules || rules.length === 0) return rows;
   const active = rules.filter((r) => r.when === undefined || conditions[r.when] === true);
@@ -450,10 +451,18 @@ function applyRedaction(
           break;
         case "hash": {
           const value = out[rule.column];
+          // With MCPGATE_REDACTION_HASH_SECRET the digest is keyed (HMAC-SHA256);
+          // an unkeyed hash of a low-entropy value (email, phone) can be
+          // reversed by hashing candidates.
           out[rule.column] =
             value === null || value === undefined
               ? value
-              : createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
+              : (hashSecret === undefined
+                  ? createHash("sha256").update(String(value))
+                  : createHmac("sha256", hashSecret).update(String(value))
+                )
+                  .digest("hex")
+                  .slice(0, 16);
           break;
         }
         case "mask":
