@@ -378,15 +378,18 @@ export const MAX_ALLOWED_CONCURRENT_TASKS = 8;
  *  4. A task requiring approval is never batched with others — it is returned
  *     alone. Approval is an interactive pause, and interleaving several prompts
  *     from one batch would present the user with concurrent, unordered requests.
- *  5. A candidate whose `target` is ALREADY in the batch is a barrier. Two
- *     concurrent delegations to the same node are not parallelism — the node is
- *     a single resource, and the engine's per-node execution state (streaming
- *     guardrail buffer, chunk ids, start time, model, token counts, prompt and
- *     response capture) is keyed by node id alone. Running one node twice at
- *     once therefore interleaves two token streams through one guardrail buffer
- *     (producing corrupted text), overwrites the timing/model bookkeeping, and
- *     fires the node's completion event twice. The tasks still both run — just
- *     in consecutive batches instead of simultaneously.
+ *  5. A candidate whose `target` is ALREADY in the batch is a barrier, unless
+ *     `options.allowSameTarget`: each delegation then runs as its own instance
+ *     (see graph-engine/node-instance.ts), so the per-node execution state is
+ *     no longer shared. Without that option, two concurrent delegations to the
+ *     same node are not parallelism — the node is a single resource, and the
+ *     engine's per-node execution state (streaming guardrail buffer, chunk ids,
+ *     start time, model, token counts, prompt and response capture) is keyed by
+ *     node id alone. Running one node twice at once therefore interleaves two
+ *     token streams through one guardrail buffer (producing corrupted text),
+ *     overwrites the timing/model bookkeeping, and fires the node's completion
+ *     event twice. The tasks still both run — just in consecutive batches
+ *     instead of simultaneously.
  *
  * Contiguity matters: a non-parallelizable task acts as a barrier, so tasks
  * after it must not be pulled forward past work they may depend on.
@@ -397,6 +400,7 @@ export function selectTaskBatch(
   tasks: Task[],
   maxConcurrent: number,
   requiresApproval: (task: Task) => boolean = () => false,
+  options?: { allowSameTarget?: boolean },
 ): Task[] {
   const cap = Math.max(1, Math.floor(maxConcurrent));
   const pending = tasks.filter((t) => t.status === "pending");
@@ -414,8 +418,15 @@ export function selectTaskBatch(
     if (batch.length >= cap) break;
     if (candidate.parallelizable !== true) break; // barrier
     if (requiresApproval(candidate)) break; // must run alone
-    // Rule 5: the same node must not run twice concurrently.
-    if (targetsInBatch.has(candidate.target)) break;
+    // Rule 5: the same node must not run twice concurrently, unless
+    // options.allowSameTarget: each delegation then runs as its own instance
+    // (see graph-engine/node-instance.ts).
+    if (
+      options?.allowSameTarget !== true &&
+      targetsInBatch.has(candidate.target)
+    ) {
+      break;
+    }
     batch.push(candidate);
     targetsInBatch.add(candidate.target);
   }
@@ -1167,6 +1178,7 @@ export function parseHarnessConfig(
           : {}),
         sourceTool: raw.sourceTool.trim(),
         batchSize: boundedInt(raw.batchSize, 1, 100, 20),
+        lanes: boundedInt(raw.lanes, 1, 8, 1),
         maxOriginalsPerBatch: boundedInt(raw.maxOriginalsPerBatch, 1, 10, 3),
         assignmentCharBudget: boundedInt(
           raw.assignmentCharBudget,

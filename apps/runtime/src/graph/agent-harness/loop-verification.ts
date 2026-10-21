@@ -58,6 +58,8 @@ export interface VerificationCtx {
   state: AgentState;
   coverageLedger: CoverageLedger | undefined;
   currentCoverageAssignment: CoverageAssignment | undefined;
+  /** Full assignments issued this run, keyed by id (coverage lanes). */
+  readonly coverageAssignments: Map<string, CoverageAssignment>;
   plannerlessSeq: number;
   issuedTaskIds: number;
   verificationRounds: number;
@@ -480,6 +482,10 @@ export const replanAfterVerification = async (
     if (coverageLedger !== undefined && coverageConfig !== undefined) {
       ctx.currentCoverageAssignment = issueCoverageAssignment();
       if (ctx.currentCoverageAssignment === undefined) return false;
+      ctx.coverageAssignments.set(
+        ctx.currentCoverageAssignment.id,
+        ctx.currentCoverageAssignment,
+      );
     } else {
       ctx.currentCoverageAssignment = undefined;
     }

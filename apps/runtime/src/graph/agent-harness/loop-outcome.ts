@@ -66,6 +66,8 @@ export interface OutcomeCtx {
   state: AgentState;
   coverageLedger: CoverageLedger | undefined;
   readonly currentCoverageAssignment: CoverageAssignment | undefined;
+  /** Resolves the full assignment a task was created from (coverage lanes). */
+  readonly assignmentForTask: (t: Task) => CoverageAssignment | undefined;
   coverageUpdates: number;
   coverageReportRejections: number;
   coverageProvenanceFailure: boolean;
@@ -131,7 +133,7 @@ export const incorporateOutcome = (ctx: OutcomeCtx, outcome: {
     carryForward,
     coverageConfig,
     coverageAssignmentKey,
-    currentCoverageAssignment,
+    assignmentForTask,
     maxTaskAttempts,
     emitHarnessStatus,
   } = ctx;
@@ -222,7 +224,7 @@ export const incorporateOutcome = (ctx: OutcomeCtx, outcome: {
       ? update.messages
       : [update.messages];
     let findingMsgs = newMsgs;
-    const assignment = currentCoverageAssignment;
+    const assignment = assignmentForTask(t);
     if (
       coverageConfig !== undefined &&
       ctx.coverageLedger !== undefined &&

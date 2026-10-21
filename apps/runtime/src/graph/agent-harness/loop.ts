@@ -37,11 +37,13 @@ import {
   coverageOpenCount,
   coverageSummary,
   isCoverageTerminal,
+  releaseCoverageDocuments,
   renderCoverageAssignment,
+  reserveCoverageDocuments,
   seedCoverageLedger,
 } from "./coverage.js";
 import { applySummaryTriageRerank } from "./coverage-rerank.js";
-import type { HarnessProgress } from "./types.js";
+import type { HarnessProgress, Task } from "./types.js";
 import { createCoverageAssignmentRuntime } from "./loop-coverage-assignment.js";
 import {
   formatCoverageSearchStatus,
@@ -240,6 +242,28 @@ export function createAgentHarnessNodeHandler(
     let coverageLedger: CoverageLedger | undefined;
     let currentCoverageAssignment: CoverageAssignment | undefined;
     let plannerlessSeq = 0;
+    // Concurrent coverage lanes (1 = serial, the default). Each lane is its
+    // own delegation instance of the target node; results are merged in
+    // assignment order.
+    const lanes = coverageConfig?.lanes ?? 1;
+    // Coverage batches never exceed the lane count; planned mode keeps its
+    // configured concurrency (coverageConfig is plannerless-only).
+    const batchLimit =
+      coverageConfig !== undefined
+        ? Math.min(maxConcurrentTasks, lanes)
+        : maxConcurrentTasks;
+    // Full assignments issued this run, keyed by id. Tasks only carry the
+    // assignment id, so result processing resolves the full assignment here.
+    const coverageAssignments = new Map<string, CoverageAssignment>();
+    const assignmentForTask = (
+      t: Task,
+    ): CoverageAssignment | undefined =>
+      (t.coverageAssignmentId !== undefined
+        ? coverageAssignments.get(t.coverageAssignmentId)
+        : undefined) ??
+      (currentCoverageAssignment?.id === t.coverageAssignmentId
+        ? currentCoverageAssignment
+        : undefined);
 
     // Counts completed plannerless passes that added no unique condensed
     // finding. Unlike deduplication alone, this turns repeated work into a
@@ -503,7 +527,7 @@ export function createAgentHarnessNodeHandler(
         });
         return stop("no-tasks", progress, errors);
       }
-      plannerlessSeq += 1;
+      const seededTasks: Task[] = [];
       if (coverageConfig !== undefined) {
         const coverageSeedFailure = () => {
           errors.push({
@@ -556,7 +580,32 @@ export function createAgentHarnessNodeHandler(
         try {
           coverageLedger = seededLedger;
           progress.coverage = coverageLedger;
-          currentCoverageAssignment = issueCoverageAssignment();
+          for (let lane = 0; lane < lanes; lane++) {
+            const assignment = issueCoverageAssignment();
+            if (assignment === undefined) break;
+            coverageAssignments.set(assignment.id, assignment);
+            // Reserve the documents so the next lane in this pass is handed
+            // different ones (the ledger only advances when outcomes fold in).
+            if (lanes > 1 && coverageLedger !== undefined)
+              coverageLedger = reserveCoverageDocuments(
+                coverageLedger,
+                assignment,
+              );
+            if (lane === 0) currentCoverageAssignment = assignment;
+            plannerlessSeq += 1;
+            seededTasks.push({
+              id: `t${plannerlessSeq}`,
+              displayStep: plannerlessSeq,
+              description: coverageTaskLabel(assignment, "Coverage"),
+              target:
+                coverageTargetForAssignment(assignment) ?? plannerlessTarget,
+              status: "pending",
+              coverageAssignmentId: assignment.id,
+              coverageAssignmentMode: assignment.mode,
+              coverageRefs: assignment.documents.map((document) => document.ref),
+              ...(lanes > 1 ? { parallelizable: true } : {}),
+            });
+          }
         } catch {
           return coverageSeedFailure();
         }
@@ -569,30 +618,17 @@ export function createAgentHarnessNodeHandler(
             errors,
           );
         }
-      }
-      progress.tasks = [
-        {
+      } else {
+        plannerlessSeq += 1;
+        seededTasks.push({
           id: `t${plannerlessSeq}`,
           displayStep: plannerlessSeq,
-          description:
-            currentCoverageAssignment === undefined
-              ? `Research step ${plannerlessSeq}`
-              : coverageTaskLabel(currentCoverageAssignment, "Coverage"),
-          target:
-            coverageTargetForAssignment(currentCoverageAssignment) ??
-            plannerlessTarget,
+          description: `Research step ${plannerlessSeq}`,
+          target: plannerlessTarget,
           status: "pending",
-          ...(currentCoverageAssignment !== undefined
-            ? {
-                coverageAssignmentId: currentCoverageAssignment.id,
-                coverageAssignmentMode: currentCoverageAssignment.mode,
-                coverageRefs: currentCoverageAssignment.documents.map(
-                  (document) => document.ref,
-                ),
-              }
-            : {}),
-        },
-      ];
+        });
+      }
+      progress.tasks = seededTasks;
     } else {
       // --- Convert state.messages to ModelMessage[] for the planner ---
       // Filter out tool-related messages to avoid tool call/result mismatch
@@ -775,6 +811,8 @@ export function createAgentHarnessNodeHandler(
       coverageTargetForAssignment,
       coverageTaskLabel,
       issueCoverageAssignment,
+      coverageAssignments,
+      assignmentForTask,
       plannerless,
       plannerlessTarget,
       plannerLlm,
@@ -798,10 +836,13 @@ export function createAgentHarnessNodeHandler(
       // identical to the previous strictly sequential loop.
       const batch = selectTaskBatch(
         progress.tasks,
-        maxConcurrentTasks,
+        batchLimit,
         (t) =>
           cfg.consequentialTargets?.includes(t.target) === true &&
           runtime.approvalGate?.enabled === true,
+        // Coverage lanes share the same target by design; each lane runs as
+        // its own delegation instance.
+        { allowSameTarget: lanes > 1 },
       );
 
       if (batch.length === 0) {
@@ -863,6 +904,16 @@ export function createAgentHarnessNodeHandler(
         );
 
         if (!decision.approved) {
+          // This path never reaches `incorporateOutcome`, so the lane
+          // reservation of the rejected task is released here.
+          if (lanes > 1 && coverageLedger !== undefined) {
+            const released = assignmentForTask(task);
+            if (released !== undefined)
+              coverageLedger = releaseCoverageDocuments(
+                coverageLedger,
+                released.id,
+              );
+          }
           task.status = "failed";
           task.error = decision.reason ?? "approval rejected";
           errors.push({
@@ -952,10 +1003,7 @@ export function createAgentHarnessNodeHandler(
 
       const outcomes = await Promise.all(
         batch.map(async (t) => {
-          const assignment =
-            currentCoverageAssignment?.id === t.coverageAssignmentId
-              ? currentCoverageAssignment
-              : undefined;
+          const assignment = assignmentForTask(t);
           // A worker with config.refHandles sees handles in its tool results;
           // its assignment and coverage evidence must use the same registry.
           const workerRefHandles =
@@ -1131,6 +1179,21 @@ export function createAgentHarnessNodeHandler(
 
       for (const outcome of outcomes) {
         stopSignalHit = incorporateOutcome(ctx, outcome) || stopSignalHit;
+      }
+
+      // Release the lane reservations of this batch. Folding already applied
+      // each report to the ledger; a task that produced none (failure,
+      // rejected report) must still free its documents for a later lane.
+      if (lanes > 1 && coverageLedger !== undefined) {
+        for (const outcome of outcomes) {
+          const released = assignmentForTask(outcome.task);
+          if (released !== undefined)
+            coverageLedger = releaseCoverageDocuments(
+              coverageLedger,
+              released.id,
+            );
+        }
+        progress.coverage = coverageLedger;
       }
       if (terminalBudgetFailure) {
         runtime.onNodeDiagnostic?.(node.id, {
@@ -1348,11 +1411,50 @@ export function createAgentHarnessNodeHandler(
             });
             return stop("stagnation-limit", progress, errors);
           }
-          plannerlessSeq += 1;
-          currentCoverageAssignment = issueCoverageAssignment();
+          const reseededTasks: Task[] = [];
+          let firstReseedAssignment: CoverageAssignment | undefined;
+          if (coverageConfig !== undefined) {
+            for (let lane = 0; lane < lanes; lane++) {
+              const assignment = issueCoverageAssignment();
+              if (assignment === undefined) break;
+              coverageAssignments.set(assignment.id, assignment);
+              if (lanes > 1 && coverageLedger !== undefined)
+                coverageLedger = reserveCoverageDocuments(
+                  coverageLedger,
+                  assignment,
+                );
+              if (firstReseedAssignment === undefined)
+                firstReseedAssignment = assignment;
+              plannerlessSeq += 1;
+              reseededTasks.push({
+                id: `t${plannerlessSeq}`,
+                displayStep: plannerlessSeq,
+                description: coverageTaskLabel(assignment, "Coverage"),
+                target:
+                  coverageTargetForAssignment(assignment) ?? plannerlessTarget,
+                status: "pending",
+                coverageAssignmentId: assignment.id,
+                coverageAssignmentMode: assignment.mode,
+                coverageRefs: assignment.documents.map(
+                  (document) => document.ref,
+                ),
+                ...(lanes > 1 ? { parallelizable: true } : {}),
+              });
+            }
+          } else {
+            plannerlessSeq += 1;
+            reseededTasks.push({
+              id: `t${plannerlessSeq}`,
+              displayStep: plannerlessSeq,
+              description: `Research step ${plannerlessSeq}`,
+              target: plannerlessTarget,
+              status: "pending",
+            });
+          }
+          currentCoverageAssignment = firstReseedAssignment;
           if (
             coverageLedger !== undefined &&
-            currentCoverageAssignment === undefined
+            firstReseedAssignment === undefined
           ) {
             // The queue still owes work it can no longer assign — typically a
             // discovery round whose bounded attempts are spent. Completeness
@@ -1374,27 +1476,7 @@ export function createAgentHarnessNodeHandler(
             }
             return stop(verified ? "completed" : "exhausted", progress, errors);
           }
-          progress.tasks.push({
-            id: `t${plannerlessSeq}`,
-            displayStep: plannerlessSeq,
-            description:
-              currentCoverageAssignment === undefined
-                ? `Research step ${plannerlessSeq}`
-                : coverageTaskLabel(currentCoverageAssignment, "Coverage"),
-            target:
-              coverageTargetForAssignment(currentCoverageAssignment) ??
-              plannerlessTarget,
-            status: "pending",
-            ...(currentCoverageAssignment !== undefined
-              ? {
-                  coverageAssignmentId: currentCoverageAssignment.id,
-                  coverageAssignmentMode: currentCoverageAssignment.mode,
-                  coverageRefs: currentCoverageAssignment.documents.map(
-                    (document) => document.ref,
-                  ),
-                }
-              : {}),
-          });
+          progress.tasks.push(...reseededTasks);
           emitHarnessStatus(`Next research step (${plannerlessSeq}) …`);
           continue;
         }

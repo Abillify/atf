@@ -119,6 +119,12 @@ export interface CoverageQueueConfig {
 	targets?: CoverageTargets;
 	sourceTool: string;
 	batchSize: number;
+	/**
+	 * Coverage assignments worked on concurrently (1–8, default 1). Each lane
+	 * is a separate delegation instance of the target node; results are merged
+	 * in assignment order.
+	 */
+	lanes?: number;
 	maxOriginalsPerBatch: number;
 	assignmentCharBudget: number;
 	documentWindowChars: number;
@@ -184,6 +190,15 @@ export interface CoverageDocument {
 	rerankRank?: number;
 	/** Set while the current triage decision was made deterministically by the reranker. */
 	triageSource?: "rerank";
+	/**
+	 * Id of the assignment currently working this document on a coverage
+	 * lane. Set when the assignment is issued (lanes > 1) and cleared once
+	 * its outcome is folded in, so a second lane cannot be handed the same
+	 * document. Deliberately not a status: the document keeps its real
+	 * review state, so a lane that dies mid-flight leaves the ledger
+	 * non-terminal and the run fail-closed.
+	 */
+	inFlightAssignmentId?: string;
 }
 
 export type CoverageLedgerPhase =
@@ -608,7 +623,11 @@ export function nextCoverageAssignment(
 		// With summary rerank scores, the most promising summaries are triaged
 		// first; without them this is exactly the ledger order.
 		const openCandidates = byRerankRank(
-			ledger.documents.filter((document) => document.status === "open"),
+			ledger.documents.filter(
+				(document) =>
+					document.status === "open" &&
+					document.inFlightAssignmentId === undefined,
+			),
 		).slice(0, config.batchSize);
 		if (openCandidates.length > 0) {
 			const documents = fitAssignmentBudget(
@@ -637,6 +656,7 @@ export function nextCoverageAssignment(
 			.filter(
 				(document) =>
 					document.status === "summary-reviewed" &&
+					document.inFlightAssignmentId === undefined &&
 					!isDocumentFullyCovered(document) &&
 					(config.searchDiscovery === undefined ||
 						ledger.candidateRefs.includes(document.ref)),
@@ -683,13 +703,21 @@ export function nextCoverageAssignment(
 	}
 
 	const originalCandidates = ledger.documents
-		.filter((document) => document.status === "summary-reviewed")
+		.filter(
+			(document) =>
+				document.status === "summary-reviewed" &&
+				document.inFlightAssignmentId === undefined,
+		)
 		.slice(0, Math.min(config.batchSize, config.maxOriginalsPerBatch));
 	const openCandidates =
 		originalCandidates.length > 0
 			? []
 			: ledger.documents
-					.filter((document) => document.status === "open")
+					.filter(
+						(document) =>
+							document.status === "open" &&
+							document.inFlightAssignmentId === undefined,
+					)
 					.slice(0, config.batchSize);
 	const mode: CoverageAssignmentMode =
 		originalCandidates.length > 0 ? "original" : "summary";
@@ -737,6 +765,48 @@ export function markCoverageAssignmentIssued(
 					activeExpansionSeeds: expansionSeeds,
 				}
 			: {}),
+	};
+}
+
+/**
+ * Marks the documents of one issued assignment as in-flight, so a second lane
+ * issued in the same pass cannot be handed the same documents. Discovery
+ * assignments carry no documents and leave the ledger untouched.
+ */
+export function reserveCoverageDocuments(
+	ledger: CoverageLedger,
+	assignment: CoverageAssignment,
+): CoverageLedger {
+	if (assignment.documents.length === 0) return ledger;
+	const refs = new Set(assignment.documents.map((document) => document.ref));
+	return {
+		...ledger,
+		documents: ledger.documents.map((document) =>
+			refs.has(document.ref)
+				? { ...document, inFlightAssignmentId: assignment.id }
+				: document,
+		),
+	};
+}
+
+/**
+ * Clears the in-flight marker left by {@link reserveCoverageDocuments} once
+ * the assignment's outcome was folded in (or its task failed before any
+ * delegation). Documents of other lanes keep their marker.
+ */
+export function releaseCoverageDocuments(
+	ledger: CoverageLedger,
+	assignmentId: string,
+): CoverageLedger {
+	if (!ledger.documents.some((d) => d.inFlightAssignmentId === assignmentId))
+		return ledger;
+	return {
+		...ledger,
+		documents: ledger.documents.map((document) => {
+			if (document.inFlightAssignmentId !== assignmentId) return document;
+			const { inFlightAssignmentId: _released, ...rest } = document;
+			return rest;
+		}),
 	};
 }
 

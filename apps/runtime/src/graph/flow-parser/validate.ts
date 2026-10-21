@@ -461,6 +461,7 @@ export const HarnessConfigSchema = z
 					.optional(),
 				sourceTool: z.string().min(1).max(256),
 				batchSize: z.number().int().min(1).max(100).optional(),
+				lanes: z.number().int().min(1).max(8).optional(),
 				maxOriginalsPerBatch: z.number().int().min(1).max(10).optional(),
 				assignmentCharBudget: z.number().int().min(1000).max(100000).optional(),
 				documentWindowChars: z.number().int().min(1000).max(100000).optional(),

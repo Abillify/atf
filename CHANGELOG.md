@@ -370,6 +370,7 @@ releases:
 - Runtime hides Search navigation tools that the pinned collection cannot serve, based on `collection_stats.capabilities` (cached, `COLLECTION_CAPABILITY_TTL_MS`, fail-open).
 - Gate 2026 endpoint: `approvals/list` (own requests, or the tenant's requests for holders of `approverScope` when `requireDifferentApprover` is on) and `approvals/get` (status and, once approved, the one-shot approval token for the requester).
 - Gate keeps pending approvals of the 2026 endpoint in Redis when a Redis URL is configured (`MCPGATE_TRANSACTION_REDIS_URL`, `server.rateLimit.store`, or `monitoring.cluster`), so request and resolve may hit different replicas.
+- Agent harness: `coverageQueue.lanes` (1–8, default 1) works on several coverage assignments of the plannerless queue concurrently, each as its own delegation instance; results are merged in assignment order.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

@@ -168,6 +168,51 @@ describe("selectTaskBatch", () => {
     expect(selectTaskBatch(tasks, 5).map((t) => t.id)).toEqual(["t1"]);
   });
 
+  test("allowSameTarget batches duplicate targets, still honouring the cap", () => {
+    // Coverage lanes: every delegation carries its own instance key, so the
+    // engine's per-node state no longer collides and one target may run twice.
+    const tasks = [
+      mkTask("t1", { parallelizable: true, target: "researcher" }),
+      mkTask("t2", { parallelizable: true, target: "researcher" }),
+      mkTask("t3", { parallelizable: true, target: "researcher" }),
+    ];
+    expect(
+      selectTaskBatch(tasks, 5, () => false, { allowSameTarget: true }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["t1", "t2", "t3"]);
+    expect(
+      selectTaskBatch(tasks, 2, () => false, { allowSameTarget: true }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["t1", "t2"]);
+  });
+
+  test("allowSameTarget keeps the other rules intact", () => {
+    // A non-parallelizable task is still a barrier, and an approval-gated task
+    // still runs alone — approval is an interactive pause, lanes or not.
+    const barrier = [
+      mkTask("t1", { parallelizable: true, target: "a" }),
+      mkTask("t2", { target: "a" }),
+      mkTask("t3", { parallelizable: true, target: "a" }),
+    ];
+    expect(
+      selectTaskBatch(barrier, 5, () => false, { allowSameTarget: true }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["t1"]);
+
+    const tasks = [
+      mkTask("t1", { parallelizable: true, target: "danger" }),
+      mkTask("t2", { parallelizable: true, target: "danger" }),
+    ];
+    expect(
+      selectTaskBatch(tasks, 5, (t) => t.target === "danger", {
+        allowSameTarget: true,
+      }).map((t) => t.id),
+    ).toEqual(["t1"]);
+  });
+
   test("distinct targets still batch fully up to the cap", () => {
     const tasks = [
       mkTask("t1", { parallelizable: true, target: "a" }),
