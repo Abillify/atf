@@ -248,6 +248,29 @@ setting that governs it.
   hardening, BYOK, OIDC and RBAC, OpenTelemetry and Prometheus, per-execution debug traces, and
   optional durable execution.
 
+## Verification
+
+Every artefact the platform issues — decision receipts, signed evidence
+bundles, Ed25519 erasure receipts, audit-log exports with anchors — can be
+verified offline with `atf-verify`, without trusting or contacting the issuing
+instance. Each GitHub release ships a standalone Linux x64 binary
+(`atf-verify-linux-x64`); in a source checkout the same tool runs as
+`bun run scripts/atf-verify.ts`. Public keys come from the instance's JWKS
+(fetched once or from a saved file); the artefact's own `kid` selects the key.
+
+```bash
+atf-verify --receipt <file> --jwks <url|file> [--proof <file>]   # decision receipt (+ Merkle proof)
+atf-verify --bundle <file> --jwks <url|file>                     # signed evidence bundle
+atf-verify --erasure-receipt <file> --jwks <url|file>            # erasure receipt
+atf-verify --audit-export <file> [--anchor <file>]               # audit log (+ anchors)
+```
+
+Exit codes: `0` verified, `1` verification failed, `2` usage or input error.
+Legacy HMAC artefacts verify with `--secret` via
+`bun run scripts/cli.ts verify-bundle` in `apps/runtime`. See
+[ADR 0030](docs/adr/0030-asymmetric-evidence-chain-ed25519.md) for the
+verification design.
+
 ## Development
 
 ```bash

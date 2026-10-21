@@ -70,16 +70,52 @@ as verify-only legacy so every pre-existing artefact stays verifiable.
      `AUDIT_ANCHOR_SECRET` (HMAC) > unsigned
 
 5. **Offline verification CLI.**
+   The standalone `atf-verify` binary (and `bun run scripts/atf-verify.ts` in a
+   source checkout) verifies bundles with `atf-verify --bundle <bundle.json>
+   --jwks <url|file> [--kid <kid>]` (the bundle's own `kid` auto-selects the
+   key); see "Offline verification" below. As an alternative,
    `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url|file> [--kid <kid>]`
-   (run in `apps/runtime` of a source checkout) verifies Ed25519 bundles against the JWKS
-   (the bundle's own `kid` auto-selects the key); `--secret <secret>` remains
-   for legacy HMAC artefacts. The Markdown rendering of a bundle names the
-   matching verify command for its algorithm.
+   (run in `apps/runtime` of a source checkout) does the same for bundles;
+   `--secret <secret>` remains for legacy HMAC artefacts. The Markdown
+   rendering of a bundle names the matching verify command for its algorithm.
 
 6. **Migration visibility.** The production gate warns (non-fatal) when a
    deployment still signs evidence with HMAC only, recommending
    `EVIDENCE_SIGNING_KEY`; compliance dossiers and the Control UI state which
    algorithm produced each artefact and how to verify it.
+
+## Offline verification
+
+The `atf-verify` CLI verifies every artefact family of this ADR without
+contacting the issuing Runtime. Releases ship a Linux x64 binary
+(`atf-verify-linux-x64`); in a source checkout the same tool runs as
+`bun run scripts/atf-verify.ts` (or `bun run atf-verify:build` for a local
+binary). A JWKS — fetched once from the endpoint or a previously saved file —
+supplies the public key; the artefact's own `kid` selects it.
+
+```
+atf-verify --receipt <file> --jwks <url|file> [--proof <file>] [--kid <kid>] [--json]
+atf-verify --bundle <file> --jwks <url|file> [--kid <kid>] [--json]
+atf-verify --erasure-receipt <file> --jwks <url|file> [--kid <kid>] [--json]
+atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>] [--kid <kid>] [--json]
+```
+
+- `--bundle` re-computes the canonical content hash of the bundle and verifies
+  the Ed25519 signature against the JWKS key. The `apps/runtime` alternative
+  `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url|file>`
+  remains available; `--secret <secret>` verifies legacy HMAC artefacts.
+- `--erasure-receipt` verifies the Ed25519 signature over the canonical JSON
+  payload and schema-checks the payload.
+- `--audit-export` re-verifies the hash chain of a JSONL audit-log export
+  (`GET /monitoring/audit/export?format=jsonl`); with `--anchor <file>` it
+  additionally verifies anchors written by the `AUDIT_ANCHOR_FILE` writer
+  against the Ed25519 key from the JWKS.
+- `--receipt` verifies Decision_Receipts (COSE_Sign1) and, with `--proof`,
+  Merkle inclusion against the signed tree head (ADR-0029).
+
+Exit codes: `0` verified, `1` verification failed, `2` usage or input error.
+Legacy HMAC artefacts are out of scope for the binary — they verify with
+`--secret` via `cli.ts verify-bundle` against the secret that signed them.
 
 ## Consequences
 

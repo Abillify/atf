@@ -546,9 +546,11 @@ new status value, `in_progress`, which the previous version reads as `partial`).
 Rolling back keeps
 Ed25519 anchors, bundles and receipts written in the meantime: an older binary
 does not understand `alg: "ed25519"` and reports them as unverifiable — keep the
-new binary around for audits, or verify them offline with
-`bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url|file>` (run in
-`apps/runtime` of a source checkout).
+new binary around for audits, or verify them offline with the `atf-verify`
+binary from the release (`atf-verify --bundle <bundle.json> --jwks <url|file>`;
+in a source checkout: `bun run scripts/atf-verify.ts`). The
+`apps/runtime` alternative `bun run scripts/cli.ts verify-bundle <bundle.json>
+--jwks <url|file>` remains available.
 
 ## Known upgrade blockers
 

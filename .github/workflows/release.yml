@@ -240,6 +240,17 @@ jobs:
         with:
           pattern: release-*-${{ github.sha }}
           path: staging/bundle
+      # The offline verifier ships as a standalone Linux x64 binary so third
+      # parties can verify decision receipts, evidence bundles, erasure
+      # receipts and audit exports without a Bun checkout. Building it into
+      # the bundle directory includes it in CHECKSUMS.sha256 and the attested
+      # tarball; the same file is uploaded as a release asset.
+      - name: Build atf-verify Linux x64 binary
+        run: |
+          set -euo pipefail
+          bun build --compile scripts/atf-verify.ts --outfile dist/bin/atf-verify-linux-x64
+          dist/bin/atf-verify-linux-x64 --help >/dev/null
+          cp dist/bin/atf-verify-linux-x64 staging/bundle/atf-verify-linux-x64
       - name: Create checksummed bundle
         run: |
           set -euo pipefail
@@ -285,4 +296,5 @@ jobs:
             --verify-tag \
             --notes-file release-notes.md \
             "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz" \
-            "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz.sha256"
+            "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz.sha256" \
+            "staging/bundle/atf-verify-linux-x64"

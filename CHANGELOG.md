@@ -18,6 +18,10 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- `atf-verify` verifies Evidence Bundles, Ed25519 erasure receipts and audit-log exports (with anchors) offline, in addition to decision receipts; releases ship a Linux x64 binary.
+
 ### Security
 
 - **Search / Runtime / Gate** (`@atf/search`, `@atf/runtime`, `@atf/gate`):
