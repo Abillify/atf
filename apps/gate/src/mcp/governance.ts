@@ -318,7 +318,11 @@ export class GovernancePolicy {
         d.tool !== tool ||
         d.args !== expectedFingerprint ||
         d.evidence !== evidenceContractHash ||
-        d.exp <= now
+        d.exp <= now ||
+        // Self-minted tokens (approver === owner) stay valid until expiry
+        // when the flag was enabled after they were issued; reject them.
+        (this.config.approval.requireDifferentApprover === true &&
+          d.approver === d.sub)
       )
         return false;
       return !consume || (await this.consumed.consume(d.jti, d.exp));

@@ -471,6 +471,19 @@ export function checkProductionReadiness(
       );
     }
   }
+  // ── Approver separation (N-P1-10) ───────────────────────────────────────
+  if (
+    isProd &&
+    config.policies.approval.requireDifferentApprover !== true &&
+    (config.policies.defaultEffect === "approval" ||
+      config.policies.rules.some((rule) => rule.effect === "approval"))
+  ) {
+    warnings.push(
+      "policies.approval.requireDifferentApprover is off: the principal that " +
+        "requested an approval may resolve it itself, so approvals do not " +
+        "separate duties. Enable it once approvers hold the approverScope.",
+    );
+  }
   // ── Rate limiting (P1-G6) ─────────────────────────────────────────────────
   if (
     config.server.rateLimit.enabled &&
@@ -544,6 +557,17 @@ export function checkProductionReadiness(
       "Configure MCPGATE_TRANSACTION_REDIS_URL or an existing Redis-backed server store.";
     if (isProd) fatal.push(message);
     else warnings.push(message);
+  }
+  // Pending approvals of the 2026 endpoint live in the process memory store;
+  // with more than one replica `approvals/resolve` can hit a replica that
+  // never saw the request (shared store planned once Redis is configured).
+  if (!Number.isNaN(replicas) && replicas > 1 && !transactionRedis) {
+    warnings.push(
+      `MCPGATE_REPLICAS=${replicas}: pending approvals of the 2026 endpoint are ` +
+        "kept per process, so approvals/resolve can reach another replica and " +
+        "fail. Configure MCPGATE_TRANSACTION_REDIS_URL (or server.rateLimit." +
+        "store redis) to share them.",
+    );
   }
   // Pagination cursors are HMAC-signed with a per-process random key unless
   // server.pagination.secret is set: behind a load balancer a cursor minted by

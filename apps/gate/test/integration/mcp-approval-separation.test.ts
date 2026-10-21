@@ -13,8 +13,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Server } from "node:http";
 import type { Express } from "express";
+import type { AuthContext } from "../../src/auth/context.ts";
 import { AppConfigSchema } from "../../src/config/schema.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
+import {
+  GovernancePolicy,
+  approvalArgsFingerprint,
+  approvalOwner,
+  mintApprovalToken,
+} from "../../src/mcp/governance.ts";
 import { FakeDb } from "../helpers/fake-db.ts";
 
 function listen(app: Express): Promise<{ server: Server; port: number }> {
@@ -257,5 +264,95 @@ describe("approvals/resolve · separation of duties (requireDifferentApprover=tr
       })
     ).json()) as { result: { resultType: string } };
     expect(asApprover.result.resultType).toBe("input_required");
+  });
+});
+
+describe("verifyApproval · approver separation at verify time (N-P1-10)", () => {
+  const viewer: AuthContext = {
+    method: "static",
+    subject: "requester",
+    username: "requester",
+    scopes: ["tools:read", "tools:write"],
+    claims: { tenant: "acme" },
+    headers: {},
+    rawToken: "x",
+  };
+  const SECRET = "separation-approval-secret";
+
+  function policy(requireDifferentApprover: boolean): GovernancePolicy {
+    return new GovernancePolicy({
+      defaultEffect: "approval",
+      rules: [],
+      approval: {
+        ttlMs: 300_000,
+        maxPending: 10,
+        secret: SECRET,
+        requireDifferentApprover,
+        approverScope: "approvals:resolve",
+      },
+    });
+  }
+
+  // A token minted before the flag was enabled can carry the owner hash as
+  // approver (self-resolve); `sub` is the approvalOwner hash of the caller.
+  function selfToken(): string {
+    return mintApprovalToken({
+      subject: approvalOwner(viewer),
+      tool: "approved_orders",
+      argsFingerprint: approvalArgsFingerprint({ id: 7 }),
+      requestState: "state-self",
+      approver: approvalOwner(viewer),
+      secret: SECRET,
+      ttlMs: 300_000,
+    });
+  }
+
+  it("rejects a token whose approver equals the owner when the flag is on", async () => {
+    const policyOn = policy(true);
+    expect(
+      await policyOn.verifyApproval(
+        selfToken(),
+        viewer,
+        "approved_orders",
+        { id: 7 },
+        undefined,
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts a token from a different approver when the flag is on", async () => {
+    const token = mintApprovalToken({
+      subject: approvalOwner(viewer),
+      tool: "approved_orders",
+      argsFingerprint: approvalArgsFingerprint({ id: 7 }),
+      requestState: "state-other",
+      approver: "approver",
+      secret: SECRET,
+      ttlMs: 300_000,
+    });
+    expect(
+      await policy(true).verifyApproval(
+        token,
+        viewer,
+        "approved_orders",
+        { id: 7 },
+        undefined,
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("still accepts a self token when the flag is off (unchanged default)", async () => {
+    expect(
+      await policy(false).verifyApproval(
+        selfToken(),
+        viewer,
+        "approved_orders",
+        { id: 7 },
+        undefined,
+        false,
+      ),
+    ).toBe(true);
   });
 });

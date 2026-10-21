@@ -232,6 +232,7 @@ releases:
 - Search verifies the `typ` header of transaction tokens (`at+jwt` or `txn+jwt`) and answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) when the JWKS is unreachable, instead of reporting an invalid token.
 - Gate warns in production while `monitoring.oidc.requiredGroups` is empty (every identity-provider user could open the monitor).
 - Gate monitor stream filters events by the OIDC session's tenant (`monitoring.tenantScope`, default `session`) and replaces tool results with a SHA-256 digest and size unless `monitoring.includeToolContent` is true.
+- Gate: with `policies.approval.requireDifferentApprover` an approval token whose approver is the requester is rejected even if it was issued before the flag was enabled; production warns while the flag is off and approval rules exist, and when pending approvals are per process with more than one replica.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

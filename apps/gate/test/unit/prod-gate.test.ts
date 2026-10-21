@@ -1080,3 +1080,139 @@ describe("transaction signing and audience (ADR-0035)", () => {
     expect(sharedAudience(warnings)).toBe(false);
   });
 });
+
+describe("approver separation gate (N-P1-10)", () => {
+  const approvalPolicies = {
+    defaultEffect: "allow",
+    rules: [{ effect: "approval", match: { tool: "orders_delete" } }],
+    approval: { secret: "a".repeat(32) },
+  };
+
+  test("warns in production while approval rules exist and the flag is off", () => {
+    const report = checkProductionReadiness(
+      goodConfig({ policies: approvalPolicies }),
+      "production",
+    );
+    expect(
+      report.warnings.some((message) =>
+        message.includes("requireDifferentApprover is off"),
+      ),
+    ).toBe(true);
+  });
+
+  test("warns when defaultEffect itself is approval", () => {
+    const report = checkProductionReadiness(
+      goodConfig({
+        policies: {
+          defaultEffect: "approval",
+          rules: [],
+          approval: { secret: "a".repeat(32) },
+        },
+      }),
+      "production",
+    );
+    expect(
+      report.warnings.some((message) =>
+        message.includes("requireDifferentApprover is off"),
+      ),
+    ).toBe(true);
+  });
+
+  test("is silent when the flag is on or no approval rule exists", () => {
+    const on = checkProductionReadiness(
+      goodConfig({
+        policies: {
+          ...approvalPolicies,
+          approval: { secret: "a".repeat(32), requireDifferentApprover: true },
+        },
+      }),
+      "production",
+    );
+    expect(
+      on.warnings.some((message) =>
+        message.includes("requireDifferentApprover is off"),
+      ),
+    ).toBe(false);
+    const noApprovalRules = checkProductionReadiness(
+      goodConfig({
+        policies: {
+          defaultEffect: "allow",
+          rules: [],
+          approval: { secret: "a".repeat(32) },
+        },
+      }),
+      "production",
+    );
+    expect(
+      noApprovalRules.warnings.some((message) =>
+        message.includes("requireDifferentApprover is off"),
+      ),
+    ).toBe(false);
+  });
+
+  test("is silent outside production", () => {
+    const report = checkProductionReadiness(
+      goodConfig({ policies: approvalPolicies }),
+      "development",
+    );
+    expect(
+      report.warnings.some((message) =>
+        message.includes("requireDifferentApprover is off"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("pending-approval replica gate (N-P1-10)", () => {
+  const savedReplicas = process.env.MCPGATE_REPLICAS;
+  const savedTransactionRedis = process.env.MCPGATE_TRANSACTION_REDIS_URL;
+  const restore = (): void => {
+    if (savedReplicas === undefined) delete process.env.MCPGATE_REPLICAS;
+    else process.env.MCPGATE_REPLICAS = savedReplicas;
+    if (savedTransactionRedis === undefined)
+      delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    else process.env.MCPGATE_TRANSACTION_REDIS_URL = savedTransactionRedis;
+  };
+
+  test("warns when replicas > 1 have no shared approval store", () => {
+    process.env.MCPGATE_REPLICAS = "3";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      const report = checkProductionReadiness(goodConfig(), "production");
+      expect(
+        report.warnings.some((message) =>
+          message.includes(
+            "MCPGATE_REPLICAS=3: pending approvals of the 2026 endpoint",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  test("is silent with a single replica or a configured Redis", () => {
+    try {
+      process.env.MCPGATE_REPLICAS = "1";
+      delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+      const single = checkProductionReadiness(goodConfig(), "production");
+      expect(
+        single.warnings.some((message) =>
+          message.includes("pending approvals of the 2026 endpoint"),
+        ),
+      ).toBe(false);
+
+      process.env.MCPGATE_REPLICAS = "3";
+      process.env.MCPGATE_TRANSACTION_REDIS_URL =
+        "redis://redis.internal:6379";
+      const shared = checkProductionReadiness(goodConfig(), "production");
+      expect(
+        shared.warnings.some((message) =>
+          message.includes("pending approvals of the 2026 endpoint"),
+        ),
+      ).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
