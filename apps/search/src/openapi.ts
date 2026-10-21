@@ -372,7 +372,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                 "application/json": {
                   schema: {
                     type: "object",
-                    properties: { status: { type: "string", example: "ok" } },
+                    properties: {
+                      status: { type: "string", example: "ok" },
+                      // Present while auth is disabled (handlers/admin.ts).
+                      auth: { type: "string", enum: ["disabled"] },
+                    },
                   },
                 },
               },

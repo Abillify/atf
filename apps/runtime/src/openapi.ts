@@ -343,6 +343,85 @@ const JSON_ERROR_RESPONSE = {
   content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
 };
 
+// Health probe schemas — mirror the response bodies in routes/health.ts.
+const DEPENDENCY_CHECK_SCHEMA = {
+  type: "object",
+  properties: {
+    status: {
+      type: "string",
+      enum: ["ok", "degraded", "unavailable", "unconfigured"],
+    },
+    reason: { type: "string" },
+    latencyMs: { type: "number" },
+  },
+  required: ["status"],
+};
+
+/**
+ * Response overrides for probe endpoints, keyed by OpenAPI path template.
+ * The generic route-catalog response is `{type: "object"}`; these carry the
+ * real shapes, including the optional `auth: "disabled"` marker that the
+ * probes add while `AUTHN_MODE=disabled` is in effect.
+ */
+const HEALTH_RESPONSE_OVERRIDES: Record<
+  string,
+  Record<string, Record<string, unknown>>
+> = {
+  "/health": {
+    "200": {
+      description: "Composite probe (always 200, backward compatible)",
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["ok"] },
+              auth: { type: "string", enum: ["disabled"] },
+              flows_loaded: { type: "number" },
+            },
+            required: ["status"],
+          },
+        },
+      },
+    },
+  },
+  "/health/live": {
+    "200": {
+      description: "Process alive",
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["ok"] },
+              uptime_seconds: { type: "number" },
+            },
+            required: ["status", "uptime_seconds"],
+          },
+        },
+      },
+    },
+  },
+  "/health/ready": {
+    "200": {
+      description: "Ready to serve",
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/ReadinessResponse" },
+        },
+      },
+    },
+    "503": {
+      description: "A configured dependency is unavailable",
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/ReadinessResponse" },
+        },
+      },
+    },
+  },
+};
+
 const SECURITY_SCHEMES = {
   bearerAuth: {
     type: "http",
@@ -429,10 +508,11 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
                 },
               }),
           responses: {
-            "200": {
+            "200": HEALTH_RESPONSE_OVERRIDES[template]?.["200"] ?? {
               description: "Success",
               content: { "application/json": { schema: { type: "object" } } },
             },
+            ...(HEALTH_RESPONSE_OVERRIDES[template]?.["503"] ?? {}),
             default: JSON_ERROR_RESPONSE,
           },
           ...(securityFor(meta.auth) ? { security: securityFor(meta.auth) } : {}),
@@ -463,6 +543,28 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
     components: {
       securitySchemes: SECURITY_SCHEMES,
       schemas: {
+        DependencyCheck: DEPENDENCY_CHECK_SCHEMA,
+        ReadinessResponse: {
+          type: "object",
+          description:
+            "Readiness probe body (routes/health.ts). A check is present only when the dependency is configured.",
+          properties: {
+            status: { type: "string", enum: ["ready", "not_ready"] },
+            checks: {
+              type: "object",
+              properties: {
+                database: { $ref: "#/components/schemas/DependencyCheck" },
+                redis: { $ref: "#/components/schemas/DependencyCheck" },
+                flows: { $ref: "#/components/schemas/DependencyCheck" },
+                audit: { $ref: "#/components/schemas/DependencyCheck" },
+                flow_load: { $ref: "#/components/schemas/DependencyCheck" },
+                policy_stale: { $ref: "#/components/schemas/DependencyCheck" },
+              },
+            },
+            auth: { type: "string", enum: ["disabled"] },
+          },
+          required: ["status", "checks"],
+        },
         Error: {
           type: "object",
           properties: {

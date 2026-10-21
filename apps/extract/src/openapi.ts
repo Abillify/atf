@@ -19,6 +19,7 @@ import {
   EXTRACT_CONTRACT_ID,
   EXTRACT_CONTRACT_VERSION,
 } from "@atf/extract-contract/v1";
+import { version } from "../package.json";
 import { supportedMimeTypes } from "./formats.js";
 
 export interface OpenApiOptions {
@@ -168,7 +169,24 @@ export function buildOpenApiSpec(
           },
         ],
         responses: {
-          "200": { description: "Healthy" },
+          "200": {
+            description: "Healthy",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    status: { type: "string", enum: ["ok", "unhealthy"] },
+                    // Present while auth is disabled (handlers/health.ts).
+                    auth: { type: "string", enum: ["disabled"] },
+                    uptime_seconds: { type: "number" },
+                    dependencies: { type: "object" },
+                  },
+                  required: ["status"],
+                },
+              },
+            },
+          },
           "503": { description: "A required dependency is unavailable" },
         },
       },
@@ -1285,7 +1303,10 @@ export function buildOpenApiSpec(
     openapi: "3.1.0",
     info: {
       title: "ATF Extract",
-      version: EXTRACT_CONTRACT_VERSION,
+      // The product version, like every other service's document. The wire
+      // contract version the body conforms to is carried separately.
+      version,
+      "x-wire-version": EXTRACT_CONTRACT_VERSION,
       summary:
         "Document-to-Markdown extraction against the atf-extract contract",
       description:

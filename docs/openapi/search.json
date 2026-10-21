@@ -446,6 +446,12 @@
                     "status": {
                       "type": "string",
                       "example": "ok"
+                    },
+                    "auth": {
+                      "type": "string",
+                      "enum": [
+                        "disabled"
+                      ]
                     }
                   }
                 }

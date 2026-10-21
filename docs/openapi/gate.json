@@ -41,7 +41,24 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "auth": {
+                      "type": "string",
+                      "enum": [
+                        "disabled"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
                 }
               }
             }
@@ -72,7 +89,85 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "auth": {
+                      "type": "string",
+                      "enum": [
+                        "disabled"
+                      ]
+                    },
+                    "tools": {
+                      "type": "number"
+                    },
+                    "databases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "dependencies": {
+                      "type": "object",
+                      "properties": {
+                        "transactionLedger": {
+                          "type": "string"
+                        },
+                        "webhookReplay": {
+                          "type": "string"
+                        },
+                        "approvalConsumption": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "transactionLedger"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "tools",
+                    "databases",
+                    "dependencies"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A readiness dependency check failed or timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "unready"
+                      ]
+                    },
+                    "tools": {
+                      "type": "number"
+                    },
+                    "databases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "tools",
+                    "databases"
+                  ]
                 }
               }
             }

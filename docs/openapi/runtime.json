@@ -243,11 +243,31 @@
         "operationId": "get__health",
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Composite probe (always 200, backward compatible)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "auth": {
+                      "type": "string",
+                      "enum": [
+                        "disabled"
+                      ]
+                    },
+                    "flows_loaded": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
                 }
               }
             }
@@ -279,11 +299,26 @@
         "operationId": "get__health_live",
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Process alive",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "uptime_seconds": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "uptime_seconds"
+                  ]
                 }
               }
             }
@@ -315,12 +350,20 @@
         "operationId": "get__health_ready",
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Ready to serve",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
+              }
+            }
+          },
+          "description": "A configured dependency is unavailable",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadinessResponse"
               }
             }
           },
@@ -10931,6 +10974,75 @@
       }
     },
     "schemas": {
+      "DependencyCheck": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "unavailable",
+              "unconfigured"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "latencyMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "description": "Readiness probe body (routes/health.ts). A check is present only when the dependency is configured.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ]
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "redis": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "flows": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "audit": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "flow_load": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "policy_stale": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              }
+            }
+          },
+          "auth": {
+            "type": "string",
+            "enum": [
+              "disabled"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ]
+      },
       "Error": {
         "type": "object",
         "properties": {

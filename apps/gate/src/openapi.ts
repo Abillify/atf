@@ -53,8 +53,16 @@ interface Op {
   enabledWhen?: string;
   /** Media type the operation produces (defaults to application/json). */
   produces?: string;
+  /** Response schema for 200 (defaults to a generic object). */
+  responseSchema?: Record<string, unknown>;
+  /** Extra named responses (e.g. "503") merged into the responses map. */
+  extraResponses?: Record<string, Record<string, unknown>>;
   requestBody?: boolean;
 }
+
+// Health probe schemas — mirror the response bodies in server/health-routes.ts.
+// Both probes carry `auth: "disabled"` while `auth.mode: disabled` is in effect.
+const AUTH_DISABLED_PROPERTY = { type: "string", enum: ["disabled"] };
 
 const SECURITY_SCHEMES = {
   bearerAuth: {
@@ -108,13 +116,62 @@ function securityFor(auth: Op["auth"]): Array<Record<string, string[]>> | undefi
  */
 const SURFACE: Record<string, Record<string, Op>> = {
   "/healthz": {
-    get: { tag: "Health", summary: "Liveness probe (never rate-limited)", auth: "none" },
+    get: {
+      tag: "Health",
+      summary: "Liveness probe (never rate-limited)",
+      auth: "none",
+      responseSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["ok"] },
+          auth: AUTH_DISABLED_PROPERTY,
+        },
+        required: ["status"],
+      },
+    },
   },
   "/readyz": {
     get: {
       tag: "Health",
       summary: "Readiness probe: database, ledger and optional stores",
       auth: "none",
+      responseSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["ok"] },
+          auth: AUTH_DISABLED_PROPERTY,
+          tools: { type: "number" },
+          databases: { type: "array", items: { type: "string" } },
+          dependencies: {
+            type: "object",
+            properties: {
+              transactionLedger: { type: "string" },
+              webhookReplay: { type: "string" },
+              approvalConsumption: { type: "string" },
+            },
+            required: ["transactionLedger"],
+          },
+        },
+        required: ["status", "tools", "databases", "dependencies"],
+      },
+      extraResponses: {
+        "503": {
+          description: "A readiness dependency check failed or timed out",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  status: { type: "string", enum: ["unready"] },
+                  tools: { type: "number" },
+                  databases: { type: "array", items: { type: "string" } },
+                },
+                required: ["status", "tools", "databases"],
+              },
+            },
+          },
+        },
+      },
     },
   },
   "/.well-known/oauth-protected-resource": {
@@ -293,8 +350,9 @@ function operation(template: string, method: string, op: Op): Record<string, unk
     responses: {
       "200": {
         description: "Success",
-        content: { [produces]: { schema: { type: "object" } } },
+        content: { [produces]: { schema: op.responseSchema ?? { type: "object" } } },
       },
+      ...(op.extraResponses ?? {}),
       default: JSON_ERROR_RESPONSE,
     },
     ...(securityFor(op.auth) ? { security: securityFor(op.auth) } : {}),

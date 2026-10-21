@@ -663,6 +663,7 @@ releases:
 - UPGRADE.md: page ranges, media route and the compliance-policy behaviour are described correctly.
 - Operations, DPIA, UI style, MCP 2026 and EU AI Act documents are updated (Redis requirement, per-process stores, current status, CI accessibility tests, shared MCP package, Articles 25, 27, 72/73 and 86).
 - Runtime, Search, Gate and Outpost Desktop READMEs cover the new endpoints and settings, and Outpost Desktop describes credential handling accurately.
+- OpenAPI documents: Extract reports the product version, and health schemas include auth and flow_load.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
