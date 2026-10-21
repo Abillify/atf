@@ -151,6 +151,12 @@ export interface Config {
    * Compact by default; the indentation only costs tokens.
    */
   mcpPrettyJson: boolean; // SEARCH_MCP_PRETTY_JSON (default: false)
+  /**
+   * SEARCH_EVIDENCE_SIGNING_KEY: Ed25519 key (PEM PKCS#8 or base64 32-byte
+   * seed) that signs verified evidence packs; its public key is published at
+   * `/.well-known/atf-search-evidence-jwks.json`. Null = packs are unsigned.
+   */
+  evidenceSigningKey: string | null; // SEARCH_EVIDENCE_SIGNING_KEY (default: unset)
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
   /** Shared Redis URL for the rate limiter; without it the budget is per replica. */
   rateLimitRedisUrl: string | null; // RATE_LIMIT_REDIS_URL
@@ -1203,6 +1209,7 @@ export function loadConfig(): Config {
     30_000,
   );
   const mcpPrettyJson = parseBoolEnv("SEARCH_MCP_PRETTY_JSON", false);
+  const evidenceSigningKey = optionalString("SEARCH_EVIDENCE_SIGNING_KEY");
   const statsRetentionDays = parseNonNegIntEnv("STATS_RETENTION_DAYS", 90);
   // Query statistics are hashed by default; the raw term is persisted only on
   // explicit opt-in (Requirement 2.6). The pepper makes the hash salted.
@@ -1683,6 +1690,7 @@ export function loadConfig(): Config {
     maxQueryChars,
     groupMaxChunksPerDocument,
     mcpPrettyJson,
+    evidenceSigningKey,
     rateLimit,
     rateLimitRedisUrl,
     replicas,

@@ -198,6 +198,8 @@ export interface McpHandlerOptions {
   groupMaxChunksPerDocument?: number;
   /** SEARCH_MCP_PRETTY_JSON: indent the `search` tool's JSON. Default false. */
   mcpPrettyJson?: boolean;
+  /** SEARCH_EVIDENCE_SIGNING_KEY, parsed: signs verified evidence packs. */
+  evidenceSigningKey?: import("../evidence-signing.js").EvidenceSigningKey | null;
   /** Chunking options forwarded from server config. null = no chunking. */
   chunkingOptions?: ChunkingOptions | null;
   /**

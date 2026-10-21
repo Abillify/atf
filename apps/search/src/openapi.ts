@@ -416,6 +416,22 @@ export function buildOpenApiSpec(serverUrl: string) {
         },
       },
 
+      "/.well-known/atf-search-evidence-jwks.json": {
+        get: {
+          tags: ["Admin"],
+          operationId: "getSearchEvidenceJwks",
+          summary: "Public key for signed evidence packs",
+          description:
+            "JWKS with the Ed25519 public key that verifies the `signature` of " +
+            "verified evidence packs. 404 while `SEARCH_EVIDENCE_SIGNING_KEY` is unset. No auth required.",
+          security: [],
+          responses: {
+            "200": { description: "JWKS (OKP/Ed25519)" },
+            "404": { description: "Evidence pack signing is not configured" },
+          },
+        },
+      },
+
       // ── Auth ───────────────────────────────────────────────────────────────
       "/login": {
         post: {

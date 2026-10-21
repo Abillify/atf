@@ -61,6 +61,8 @@ export interface McpToolContext {
   groupMaxChunksPerDocument?: number;
   /** SEARCH_MCP_PRETTY_JSON: indent the `search` tool's JSON. Default false. */
   mcpPrettyJson?: boolean;
+  /** SEARCH_EVIDENCE_SIGNING_KEY, parsed: signs verified evidence packs. */
+  evidenceSigningKey?: import("../evidence-signing.js").EvidenceSigningKey | null;
   chunkingOptions?: ChunkingOptions | null;
   summaryClient?: SummaryClient | null;
   transactionConfig: TransactionConfig;

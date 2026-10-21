@@ -21,6 +21,7 @@ import { canonicalActionContractHash, enforceRetrievalBudget, getTransactionCont
 import { clampQuery, DEFAULT_MAX_QUERY_CHARS } from "../query-limits.js";
 import { rerankResultsWithStatus } from "./search.js";
 import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
+import { signEvidencePack } from "../evidence-signing.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
 export function registerTransactionTools(opts: McpToolContext): void {
@@ -37,6 +38,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
     hybridSearchDefault = true,
     candidateMultiplier = 4,
     maxQueryChars = DEFAULT_MAX_QUERY_CHARS,
+    evidenceSigningKey = null,
     authorize,
     emitQueryActivity,
   } = opts;
@@ -324,7 +326,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
       rankedResults = rankedResults.slice(0, limit);
 
       const { buildVerifiedEvidencePack } = await import("../evidence-pack.js");
-      const pack = buildVerifiedEvidencePack({
+      const unsignedPack = buildVerifiedEvidencePack({
         collection: col,
         query,
         effectiveQuery: embedText,
@@ -352,6 +354,9 @@ export function registerTransactionTools(opts: McpToolContext): void {
         fetchLimit,
         sparseApplied,
       });
+      const pack = evidenceSigningKey
+        ? signEvidencePack(unsignedPack, evidenceSigningKey)
+        : unsignedPack;
 
       emitQueryActivity({
         tool: "verified_evidence_pack",

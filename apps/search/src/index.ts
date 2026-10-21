@@ -89,6 +89,8 @@ import { createMetricsHandler } from "./handlers/metrics.js";
 import { createRetrievalEvaluationHandler } from "./handlers/evaluation.js";
 import { HttpMetrics } from "./http-metrics.js";
 import { createMcpHandlers, createMcp2026Handlers } from "./handlers/mcp.js";
+import { createEvidenceJwksHandler } from "./handlers/evidence-jwks.js";
+import { parseEvidenceSigningKey } from "./evidence-signing.js";
 import { createQueryHandlers } from "./handlers/query.js";
 import {
   createV2AssetHandlers,
@@ -863,6 +865,8 @@ export function createApp(
         }
       : null;
 
+  // Malformed key material throws here, at startup, rather than per request.
+  const evidenceSigningKey = parseEvidenceSigningKey(config.evidenceSigningKey);
   const mcpOptions = {
     embeddingClient,
     postgresClient,
@@ -878,6 +882,7 @@ export function createApp(
     maxQueryChars: config.maxQueryChars,
     groupMaxChunksPerDocument: config.groupMaxChunksPerDocument,
     mcpPrettyJson: config.mcpPrettyJson,
+    evidenceSigningKey,
     chunkingOptions: mcpChunkingOptions,
     summaryClient,
     hydeClient,
@@ -998,6 +1003,10 @@ export function createApp(
   app.get("/health/live", createLivenessHandler());
   app.get("/health/ready", createReadinessHandler(postgresClient, logger));
   app.get("/metrics", authMiddleware, authorizeMetrics, metricsHandler);
+  app.get(
+    "/.well-known/atf-search-evidence-jwks.json",
+    createEvidenceJwksHandler(evidenceSigningKey),
+  );
 
   // OpenAPI spec — no auth required so tooling (Swagger UI, etc.) can fetch it.
   app.get("/openapi.json", (req: Request, res: Response) => {

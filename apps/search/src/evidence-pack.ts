@@ -94,6 +94,15 @@ export interface VerifiedEvidencePack {
     }>;
   };
   evidence: VerifiedEvidence[];
+  /**
+   * Present only when `SEARCH_EVIDENCE_SIGNING_KEY` is set (additive; the
+   * schema stays v2). Covers the canonical pack without this member.
+   */
+  signature?: {
+    alg: "EdDSA";
+    kid: string;
+    value: string;
+  };
 }
 
 export interface VerifiedEvidence {

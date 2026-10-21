@@ -336,6 +336,15 @@ asymmetric algorithms, and warns while HS256 is accepted. The migration order is
 [the upgrade guide](../../docs/UPGRADE.md) (item 20) and
 [ADR-0035](../../docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md).
 
+## Signed evidence packs
+
+Set `SEARCH_EVIDENCE_SIGNING_KEY` (Ed25519, PEM PKCS#8 or a base64 32-byte seed, the format of the
+Runtime's `EVIDENCE_SIGNING_KEY`) and the MCP `verified_evidence_pack` tool adds
+`signature: { alg: "EdDSA", kid, value }` to the pack. The signature covers the canonical JSON
+(`@atf/canonical-json`) of the pack without the `signature` member; the schema stays `v2`. The
+public key is served unauthenticated at `/.well-known/atf-search-evidence-jwks.json` (404 while no
+key is set). Without the variable the pack carries no `signature` field.
+
 ## Access control
 
 The verified identity is authoritative and is never taken from a client-supplied field

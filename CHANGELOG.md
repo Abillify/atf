@@ -388,6 +388,7 @@ releases:
 - `docs/CONFIGURATION.md` includes a generated reference of the Gate configuration file.
 - `docs/METRICS-AND-RETENTION.md` lists the exported metrics with suggested alerts and every retention location with its setting.
 - Search checks at startup that the embedding fallback produces vectors in the same space (canary, cosine ≥ 0.99) and counts embeddings per source.
+- Search signs evidence packs with Ed25519 when `SEARCH_EVIDENCE_SIGNING_KEY` is set and publishes the key at `/.well-known/atf-search-evidence-jwks.json`.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
