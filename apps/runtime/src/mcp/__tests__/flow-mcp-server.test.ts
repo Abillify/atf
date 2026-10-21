@@ -181,6 +181,25 @@ describe("FlowMcpServer", () => {
       await client.close();
     });
 
+    it("marks the result as AI-generated when AI_DISCLOSURE is on, and only then", async () => {
+      for (const [mode, marked] of [
+        [undefined, false],
+        ["off", false],
+        ["header", true],
+        ["field", true],
+      ] as const) {
+        const server = createFlowMcpServer({
+          flowRegistry: makeRegistry([makeFlow("helpdesk")]),
+          graphEngine: makeEngine("ok"),
+          ...(mode !== undefined ? { aiDisclosure: mode } : {}),
+        });
+        const client = await connectClient(server);
+        const result = await client.callTool({ name: "helpdesk", arguments: { message: "hi" } });
+        expect(result._meta?.["io.atf/ai-generated"], String(mode)).toBe(marked ? "true" : undefined);
+        await client.close();
+      }
+    });
+
     it("forwards conversation_id in requestParams", async () => {
       const engine = makeEngine("ok");
       const server = createFlowMcpServer({

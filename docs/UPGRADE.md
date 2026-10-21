@@ -402,7 +402,7 @@ configuration and clients. Do these **before** rolling out:
     with `contentTrust: trusted`.
 16. **AI disclosure (optional).** `AI_DISCLOSURE=header` adds `X-AI-Generated: true`
     to successful `/v1/chat/completions` and `/v1/responses` responses;
-    `field` adds `metadata.ai_generated: true` to a non-streaming JSON body (a
+    `field` adds `metadata.ai_generated: "true"` to a non-streaming JSON body (a
     stream carries the header). Default `off`; see [EU-AI-ACT.md](EU-AI-ACT.md).
 17. **Health shows an open door.** With `AUTHN_MODE=disabled` Runtime
     (`/health`, `/health/ready`), Search and Extract (`/health`) and Gate

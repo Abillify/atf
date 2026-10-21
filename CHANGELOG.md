@@ -572,6 +572,7 @@ releases:
 - Search keeps the scores of successful rerank batches when one batch fails (`rerank.partial`), and `RERANK_GLOBAL_CONCURRENCY` bounds rerank calls per process.
 - Search MCP results are compact JSON by default (`SEARCH_MCP_PRETTY_JSON=true` restores indentation); `collection_stats` uses one scan.
 - The Gate options `auth.oauth.allowAnyIssuer` and `allowAnyAudience` (also under `additionalIssuers`) are deprecated: they have had no effect since the issuer and audience became mandatory, and setting them to `true` now logs a startup warning.
+- `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` (string, OpenAI metadata format) and also marks `/v1/responses/{id}` and flows served as MCP tools.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
@@ -797,6 +798,7 @@ what it returns, without any code change on your side:
 - Deployments with `PROFILE=regulated` (or `regulated-multitenant`) in production need `AUDIT_ANCHOR_FILE`, `EGRESS_ALLOWED_HOSTS`, `EVIDENCE_SIGNING_KEY` and a `compliance-policy.yaml` before upgrading; explicit env values still override the preset.
 - The configuration preset variable is now `ATF_PRESET`; `PROFILE` keeps working as a deprecated alias and logs a warning. Setting both to different values stops startup.
 - Search MCP `search` results are compact JSON now; set `SEARCH_MCP_PRETTY_JSON=true` if a client relied on the 2-space indentation.
+- `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` as a string now; clients that compared with the boolean `true` must compare with the string.
 ## [0.18.1] — 2026-10-18
 
 ### Security

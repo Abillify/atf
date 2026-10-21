@@ -69,12 +69,12 @@ describe("AI_DISCLOSURE=field", () => {
   test("adds metadata.ai_generated to a JSON completion and keeps existing metadata", async () => {
     const app = appFor("field");
     const plain = (await (await post(app, {})).json()) as { metadata: Record<string, unknown>; id: string };
-    expect(plain.metadata).toEqual({ ai_generated: true });
+    expect(plain.metadata).toEqual({ ai_generated: "true" });
     expect(plain.id).toBe("c1");
     const withMeta = (await (await post(app, { metadata: { trace: "t-1" } })).json()) as {
       metadata: Record<string, unknown>;
     };
-    expect(withMeta.metadata).toEqual({ trace: "t-1", ai_generated: true });
+    expect(withMeta.metadata).toEqual({ trace: "t-1", ai_generated: "true" });
   });
 
   test("a stream has no single body, so it gets the header instead", async () => {
@@ -87,6 +87,28 @@ describe("AI_DISCLOSURE=field", () => {
     const res = await post(appFor("field"), { fail: true });
     expect(res.headers.get(AI_GENERATED_HEADER)).toBeNull();
     expect(await res.json()).not.toHaveProperty("metadata");
+  });
+});
+
+describe("AI_DISCLOSURE on the responses routes", () => {
+  test("marks /v1/responses and the routes below it, not other paths", async () => {
+    const app = new Hono();
+    const disclosure = aiDisclosureMiddleware("field");
+    // The wiring of bootstrap/routes-inference.ts.
+    app.use("/v1/responses", disclosure);
+    app.use("/v1/responses/*", disclosure);
+    app.post("/v1/responses", (ctx) => ctx.json({ id: "r1" }));
+    app.get("/v1/responses/r1", (ctx) => ctx.json({ id: "r1" }));
+    app.get("/v1/other", (ctx) => ctx.json({ id: "o1" }));
+    const created = (await (await app.request("/v1/responses", { method: "POST" })).json()) as {
+      metadata: Record<string, unknown>;
+    };
+    expect(created.metadata).toEqual({ ai_generated: "true" });
+    const fetched = (await (await app.request("/v1/responses/r1")).json()) as {
+      metadata: Record<string, unknown>;
+    };
+    expect(fetched.metadata).toEqual({ ai_generated: "true" });
+    expect(await (await app.request("/v1/other")).json()).not.toHaveProperty("metadata");
   });
 });
 

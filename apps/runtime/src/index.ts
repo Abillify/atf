@@ -875,6 +875,7 @@ if (import.meta.main) {
     admission: executionAdmission,
     serverName: "aiperator",
     serverVersion: "1.0.0",
+    ...(config.aiDisclosure !== undefined ? { aiDisclosure: config.aiDisclosure } : {}),
     logger,
   });
   flowMcpServerRef = flowMcpServer;

@@ -211,14 +211,14 @@ const META_RULES: Array<
     prefix: "/v1/chat/completions",
     tag: "Inference",
     summary:
-      "OpenAI-compatible chat completions (AI_DISCLOSURE=header|field marks successful completions as AI-generated: X-AI-Generated: true, or metadata.ai_generated in the JSON body)",
+      "OpenAI-compatible chat completions (AI_DISCLOSURE=header|field marks successful completions as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string) in the JSON body; flows served as MCP tools carry _meta io.atf/ai-generated)",
     auth: "bearer",
   },
   {
     prefix: "/v1/responses",
     tag: "Inference",
     summary:
-      "OpenAI-compatible responses API (AI_DISCLOSURE=header|field marks successful responses as AI-generated: X-AI-Generated: true, or metadata.ai_generated)",
+      "OpenAI-compatible responses API (AI_DISCLOSURE=header|field marks successful responses as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string))",
     auth: "bearer",
   },
   {

@@ -73,8 +73,9 @@ when you ask for it, is flag the response as AI-generated for the systems downst
   exemption "human review or editorial control".
 - **Machine-readable marking (Art. 50(2))**: set `AI_DISCLOSURE` on the Runtime. `header` adds
   `X-AI-Generated: true` to every successful `/v1/chat/completions` and `/v1/responses` response;
-  `field` adds `metadata.ai_generated: true` to a non-streaming JSON body and, because a stream has no
-  single body, the header to a streamed response. Error responses are not marked, and the default is
+  `field` adds `metadata.ai_generated: "true"` to a non-streaming JSON body and, because a stream has no
+  single body, the header to a streamed response. `/v1/responses/*` is marked like `/v1/responses`, and
+  every successful flow served as an MCP tool carries `_meta["io.atf/ai-generated"]: "true"`. Error responses are not marked, and the default is
   `off`, so existing clients see no change. This marks the API response, not the content once it is
   copied out: a marker that has to survive in a document, an e-mail or an image is applied at the
   point where the text leaves your system. Whether your use case needs it, and which of the two

@@ -549,7 +549,7 @@ export interface AppConfig {
   /**
    * Machine-readable AI disclosure on completions (EU AI Act Art. 50):
    * `off` (default), `header` (`X-AI-Generated: true`) or `field`
-   * (`metadata.ai_generated: true`; a stream gets the header).
+   * (`metadata.ai_generated: "true"`; a stream gets the header).
    */
   aiDisclosure?: "off" | "header" | "field";
   approvalGateEnabled?: boolean;
@@ -1975,7 +1975,7 @@ export const EnvSchema = z.object({
    * Marks successful completions as AI-generated for downstream systems
    * (EU AI Act Art. 50): `header` adds `X-AI-Generated: true` to
    * `/v1/chat/completions` and `/v1/responses`; `field` adds
-   * `metadata.ai_generated: true` to the JSON body (a streamed response gets
+   * `metadata.ai_generated: "true"` to the JSON body (a streamed response gets
    * the header, it has no single body). Off by default.
    */
   AI_DISCLOSURE: z.enum(["off", "header", "field"]).default("off"),

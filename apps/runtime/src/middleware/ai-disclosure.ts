@@ -7,11 +7,15 @@
  *
  *   header — every successful completion carries `X-AI-Generated: true`.
  *   field  — a non-streaming JSON completion carries `metadata.ai_generated:
- *            true` in its body. A stream has no single body to put a field
+ *            "true"` in its body (a string: OpenAI `metadata` is a map of
+ *            string values, and a boolean would be rejected by typed clients). A stream has no single body to put a field
  *            in, so a streamed completion carries the header instead: the
  *            marker is never silently missing.
  *
- * Only 2xx responses of the two completion endpoints are marked. An error body
+ * Only 2xx responses of the completion endpoints (`/v1/chat/completions`,
+ * `/v1/responses` and the routes below it) are marked; flows served as MCP
+ * tools carry `_meta["io.atf/ai-generated"]: "true"` instead
+ * ({@link AI_GENERATED_MCP_META_KEY}). An error body
  * is not generated content, and the marker must not appear on responses that
  * contain none.
  */
@@ -20,6 +24,9 @@ import type { MiddlewareHandler } from "hono";
 export type AiDisclosureMode = "off" | "header" | "field";
 
 export const AI_GENERATED_HEADER = "X-AI-Generated";
+
+/** `_meta` key that marks the result of a flow served as an MCP tool. */
+export const AI_GENERATED_MCP_META_KEY = "io.atf/ai-generated";
 
 export function aiDisclosureMiddleware(mode: AiDisclosureMode): MiddlewareHandler {
   return async (ctx, next) => {
@@ -44,7 +51,7 @@ export function aiDisclosureMiddleware(mode: AiDisclosureMode): MiddlewareHandle
             : {};
         const headers = new Headers(response.headers);
         headers.delete("Content-Length");
-        ctx.res = new Response(JSON.stringify({ ...record, metadata: { ...existing, ai_generated: true } }), {
+        ctx.res = new Response(JSON.stringify({ ...record, metadata: { ...existing, ai_generated: "true" } }), {
           status: response.status,
           statusText: response.statusText,
           headers,

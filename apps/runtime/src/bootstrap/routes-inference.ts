@@ -328,6 +328,7 @@ export async function registerInferenceRoutes(
     const disclosure = aiDisclosureMiddleware(config.aiDisclosure);
     app.use("/v1/chat/completions", disclosure);
     app.use("/v1/responses", disclosure);
+    app.use("/v1/responses/*", disclosure);
   }
   app.route(
     "/",

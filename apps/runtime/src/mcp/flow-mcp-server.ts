@@ -70,6 +70,7 @@ import {
   decideFlowAccess,
   type FlowAuthorizer,
 } from "../graph/flow-authorizer.js";
+import { AI_GENERATED_MCP_META_KEY } from "../middleware/ai-disclosure.js";
 import type { AuthPrincipal } from "../middleware/auth.js";
 import type { JwtVerifier } from "../middleware/jwt-verifier.js";
 import type { ExecutionAdmissionService } from "../graph/execution-admission.js";
@@ -113,6 +114,7 @@ type FlowToolArgs = z.infer<typeof FlowToolInputSchema>;
 interface FlowToolResult {
   isError?: boolean;
   content: Array<{ type: "text"; text: string }>;
+  _meta?: Record<string, unknown>;
 }
 
 /**
@@ -186,6 +188,11 @@ export interface FlowMcpServerOptions {
   serverName?: string;
   /** Server version string. */
   serverVersion?: string;
+  /**
+   * `AI_DISCLOSURE` mode. Anything but `off` marks every successful flow
+   * result with `_meta["io.atf/ai-generated"]: "true"` (Art. 50 AI Act).
+   */
+  aiDisclosure?: "off" | "header" | "field";
   logger?: Logger;
 }
 
@@ -226,6 +233,7 @@ class FlowMcpServerImpl implements FlowMcpServer {
   private readonly flowScopeClaims: readonly string[] | undefined;
   private readonly admission: ExecutionAdmissionService | undefined;
   private readonly logger: Logger | undefined;
+  private readonly aiDisclosure: boolean;
   /** Track which flow ids are currently registered as tools. */
   private readonly registeredFlowIds = new Set<string>();
 
@@ -239,6 +247,7 @@ class FlowMcpServerImpl implements FlowMcpServer {
     this.flowScopeClaims = opts.flowScopeClaims;
     this.admission = opts.admission;
     this.logger = opts.logger;
+    this.aiDisclosure = opts.aiDisclosure !== undefined && opts.aiDisclosure !== "off";
     this.serverName = opts.serverName ?? "aiperator";
     this.serverVersion = opts.serverVersion ?? "1.0.0";
 
@@ -483,6 +492,7 @@ class FlowMcpServerImpl implements FlowMcpServer {
             content: [
               { type: "text" as const, text: responseText || "(no response)" },
             ],
+            ...(this.aiDisclosure ? { _meta: { [AI_GENERATED_MCP_META_KEY]: "true" } } : {}),
           };
         },
       );

@@ -324,7 +324,7 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   execution, so internal curated servers must be labelled explicitly.
 - **AI disclosure.** `AI_DISCLOSURE=header|field` (default `off`) marks successful
   completions as AI-generated: `X-AI-Generated: true` on `/v1/chat/completions` and
-  `/v1/responses`, or `metadata.ai_generated: true` in a JSON body (a stream carries the
+  `/v1/responses`, or `metadata.ai_generated: "true"` in a JSON body (a stream carries the
   header).
 - **Declarative tool authorization.** Which principal may invoke which tool is policy, not
   code, and it fails closed by default (`TOOL_AUTHZ_FAIL_CLOSED`).

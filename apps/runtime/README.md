@@ -148,7 +148,7 @@ Three settings shape what the platform does with untrusted content and what it t
   content, not only after a detected attack.
 - `AI_DISCLOSURE` (`off`, `header`, `field`) marks successful completions as AI-generated for
   downstream systems: `X-AI-Generated: true` on `/v1/chat/completions` and `/v1/responses`, or
-  `metadata.ai_generated: true` in a non-streaming JSON body (a stream gets the header). See
+  `metadata.ai_generated: "true"` in a non-streaming JSON body (a stream gets the header). See
   [`docs/EU-AI-ACT.md`](../../docs/EU-AI-ACT.md).
 - `AUTHN_MODE=disabled` is a development setting: the Runtime warns at start, `/health` and
   `/health/ready` report `"auth": "disabled"`, and the production gate refuses it.

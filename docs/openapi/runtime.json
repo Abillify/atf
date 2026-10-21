@@ -549,7 +549,7 @@
         "tags": [
           "Inference"
         ],
-        "summary": "OpenAI-compatible chat completions (AI_DISCLOSURE=header|field marks successful completions as AI-generated: X-AI-Generated: true, or metadata.ai_generated in the JSON body)",
+        "summary": "OpenAI-compatible chat completions (AI_DISCLOSURE=header|field marks successful completions as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string) in the JSON body; flows served as MCP tools carry _meta io.atf/ai-generated)",
         "operationId": "post__v1_chat_completions",
         "requestBody": {
           "required": true,
@@ -595,7 +595,7 @@
         "tags": [
           "Inference"
         ],
-        "summary": "OpenAI-compatible responses API (AI_DISCLOSURE=header|field marks successful responses as AI-generated: X-AI-Generated: true, or metadata.ai_generated)",
+        "summary": "OpenAI-compatible responses API (AI_DISCLOSURE=header|field marks successful responses as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string))",
         "operationId": "post__v1_responses",
         "requestBody": {
           "required": true,
