@@ -299,6 +299,9 @@ configuration and clients. Do these **before** rolling out:
    reports `legacyForm` — the number of rows that verified only under the old hash
    form. Rows whose `details` Postgres had already reordered after they were
    hashed were false positives before and stay unverifiable.
+   Migration 48 adds `audit_chain_meta`: the first row written after the upgrade records its id as
+   the canonical cut-off, and from then on the legacy hash form is accepted only for rows below it
+   (`legacy hash form after cut-off at id <n>` otherwise).
 7. **Search ranking.** The lexical branch ORs the query terms and no longer parses
    `websearch` syntax (`"phrase"`, `-term`, `OR`). Hybrid and FTS rankings change
    for natural-language questions (the lexical list is no longer empty). Re-run
@@ -574,7 +577,7 @@ new binary around for audits, or verify them offline with
 | Search/Extract refuse to start: `REPLICAS` without shared rate limit | `REPLICAS > 1` in production and no `RATE_LIMIT_REDIS_URL` | Set `RATE_LIMIT_REDIS_URL` (and install `redis` in the image), or declare `REPLICAS=1` only if that is true |
 | Extract job `failed`, message `…the configured limit is N (MAX_PAGES)` | The job covers more pages than `MAX_PAGES` | Raise `MAX_PAGES`, request fewer pages (narrow the requested range, e.g. `pages: "3-10"`), or set `0` |
 | Quoted phrases / `-term` in Search queries no longer behave as before | The lexical branch ORs plain terms; `websearch` syntax is not parsed | Filter client-side; use `filter`/identifier lookups for exact matches |
-| `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering |
+| `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering. Rows after the canonical cut-off must verify canonically |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
 | Flow missing after upgrade, `/health/ready` shows `flow_load: degraded` with "Unknown config keys" | Production profile rejects config keys the node type does not read | Fix the key or prefix it with `x-`; check with `cli.ts validate` |
 

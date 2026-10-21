@@ -1619,6 +1619,33 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE executions ADD COLUMN IF NOT EXISTS iss TEXT`,
     ],
   },
+  {
+    version: 48,
+    name: "audit_chain_meta — canonical-form cut-off of the audit hash chain",
+    statements: [
+      // Small key/value table next to audit_log. The first canonical-form row
+      // records its id as `canonical_cutoff_id`; the chain verifier accepts the
+      // legacy (pre-canonicalization) hash form only for rows BELOW it, so a
+      // forged row after the cut-off cannot hide behind the legacy form.
+      `CREATE TABLE IF NOT EXISTS audit_chain_meta (
+         key    TEXT PRIMARY KEY,
+         value  TEXT NOT NULL
+       )`,
+      // Insert/select only, like audit_log: the cut-off is written once.
+      `DO $do$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_app') THEN
+           EXECUTE 'GRANT INSERT, SELECT ON audit_chain_meta TO aiperator_app';
+           EXECUTE 'REVOKE UPDATE, DELETE ON audit_chain_meta FROM aiperator_app';
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
+           EXECUTE 'GRANT INSERT, SELECT ON audit_chain_meta TO aiperator_operator';
+           EXECUTE 'REVOKE UPDATE, DELETE ON audit_chain_meta FROM aiperator_operator';
+         END IF;
+       END
+       $do$`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

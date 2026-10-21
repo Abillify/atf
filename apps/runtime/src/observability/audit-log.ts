@@ -225,6 +225,18 @@ function computeLegacyAuditHash(
     .digest("hex");
 }
 
+export interface AuditChainVerifyOptions {
+  /**
+   * Id of the first row written in the canonical hash form. The legacy form is
+   * accepted only for rows with a smaller id. Absent = no canonical row is
+   * known (every row may be legacy); `0` = the history is canonical only.
+   */
+  legacyCutoffId?: number;
+}
+
+/** Key of the persisted cut-off in `audit_chain_meta`. */
+export const AUDIT_CANONICAL_CUTOFF_KEY = "canonical_cutoff_id";
+
 export interface AuditChainVerification {
   /** True when every record's stored hash matches its recomputed hash AND chains correctly to the previous one. */
   valid: boolean;
@@ -236,8 +248,13 @@ export interface AuditChainVerification {
    */
   brokenAt?: {
     id: number;
-    reason: "hash_mismatch" | "prev_hash_mismatch";
+    reason: "hash_mismatch" | "prev_hash_mismatch" | "legacy_hash_after_cutoff";
   };
+  /**
+   * Human-readable reason, set for `legacy_hash_after_cutoff`:
+   * `legacy hash form after cut-off at id <n>`.
+   */
+  message?: string;
   /**
    * Number of records that verified only under the pre-canonicalization hash
    * form (`details` hashed in as-stored key order). Such rows were written
@@ -264,6 +281,7 @@ export interface AuditChainVerification {
  */
 export function verifyAuditChain(
   records: readonly AuditRecord[],
+  options: AuditChainVerifyOptions = {},
 ): AuditChainVerification {
   let expectedPrevHash: string | undefined;
   let legacyForm = 0;
@@ -275,6 +293,16 @@ export function verifyAuditChain(
       // anything else is a genuine mismatch.
       if (computeLegacyAuditHash(rec.prevHash, rec) !== rec.hash) {
         return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "hash_mismatch" } };
+      }
+      // From the cut-off on every row is canonical: a legacy-form hash there is
+      // a row written after the fix that does not verify canonically.
+      if (options.legacyCutoffId !== undefined && rec.id >= options.legacyCutoffId) {
+        return {
+          valid: false,
+          checked: records.length,
+          brokenAt: { id: rec.id, reason: "legacy_hash_after_cutoff" },
+          message: `legacy hash form after cut-off at id ${rec.id}`,
+        };
       }
       legacyForm++;
     }
@@ -469,7 +497,8 @@ export class InMemoryAuditLog implements AuditLog {
     // `entries` is already stored in ascending-id order.
     const records =
       limit !== undefined ? this.entries.slice(-Math.max(1, limit)) : this.entries;
-    return verifyAuditChain(records);
+    // Every in-memory row is written in the canonical form.
+    return verifyAuditChain(records, { legacyCutoffId: 0 });
   }
 
   async getById(id: number): Promise<AuditRecord | undefined> {
@@ -663,6 +692,13 @@ export class PostgresAuditLog implements AuditLog {
             at,
           ],
         );
+        // The first canonical row marks the end of the legacy hash form; later
+        // writes keep the recorded value (ON CONFLICT DO NOTHING).
+        await db.query(
+          `INSERT INTO audit_chain_meta (key, value) VALUES ($1, $2)
+           ON CONFLICT (key) DO NOTHING`,
+          [AUDIT_CANONICAL_CUTOFF_KEY, String(id)],
+        );
         await db.query("COMMIT");
       } catch (err) {
         try {
@@ -738,6 +774,26 @@ export class PostgresAuditLog implements AuditLog {
     }
   }
 
+  /**
+   * The persisted cut-off, or `undefined` when no canonical row was written
+   * yet (or the table is missing on an older schema): then the legacy form
+   * stays acceptable everywhere, as before.
+   */
+  private async readCanonicalCutoff(): Promise<number | undefined> {
+    try {
+      const rows = await this.db.withOperator((db) =>
+        db.query<{ value: string }>(`SELECT value FROM audit_chain_meta WHERE key = $1`, [
+          AUDIT_CANONICAL_CUTOFF_KEY,
+        ]),
+      );
+      const value = rows[0]?.value;
+      const parsed = value === undefined ? Number.NaN : Number(value);
+      return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async verifyChain(limit?: number): Promise<AuditChainVerification> {
     try {
       const rows = await this.db.withOperator((db) =>
@@ -755,7 +811,8 @@ export class PostgresAuditLog implements AuditLog {
       // The LIMIT-ed query returns newest-first; verifyAuditChain requires
       // ascending order regardless of which branch produced the rows.
       const ordered = limit !== undefined ? rows.slice().reverse() : rows;
-      return verifyAuditChain(ordered.map(rowToRecord));
+      const cutoff = await this.readCanonicalCutoff();
+      return verifyAuditChain(ordered.map(rowToRecord), cutoff !== undefined ? { legacyCutoffId: cutoff } : {});
     } catch (err) {
       this.logger?.warn("Audit chain verification query failed; verifying in-memory mirror instead", {
         error: err instanceof Error ? err.message : String(err),

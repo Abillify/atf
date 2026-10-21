@@ -34,6 +34,12 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
     let sql: InstanceType<typeof Bun.SQL>;
     let db: Database;
 
+    /** Empty the chain and forget its canonical cut-off. */
+    const reset = async (): Promise<void> => {
+      await sql.unsafe(`DELETE FROM audit_log`);
+      await sql.unsafe(`DELETE FROM audit_chain_meta`);
+    };
+
     const rawRows = async () =>
       (await sql.unsafe(
         `SELECT id, details::text AS details_text, hash, prev_hash FROM audit_log ORDER BY id ASC`,
@@ -54,16 +60,20 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
            hash TEXT, prev_hash TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
          )`,
       );
+      await sql.unsafe(
+        `CREATE TABLE IF NOT EXISTS audit_chain_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+      );
       db = wrapBunSql(sql);
     });
 
     afterAll(async () => {
       await sql?.unsafe(`DELETE FROM audit_log`).catch(() => {});
+      await sql?.unsafe(`DELETE FROM audit_chain_meta`).catch(() => {});
       await sql?.close();
     });
 
     test("multi-key, nested and numeric details verify after the jsonb round-trip", async () => {
-      await sql.unsafe(`DELETE FROM audit_log`);
+      await reset();
       const log = new PostgresAuditLog(db);
       // Keys deliberately NOT in jsonb storage order (length, then bytes) and
       // NOT sorted; numbers that jsonb re-renders; unicode; array of objects.
@@ -101,7 +111,7 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
     });
 
     test("a tampered VALUE in the stored details is detected", async () => {
-      await sql.unsafe(`DELETE FROM audit_log`);
+      await reset();
       const log = new PostgresAuditLog(db);
       await log.recordRequired({
         actor: "alice",
@@ -117,24 +127,17 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
       expect(result.brokenAt?.reason).toBe("hash_mismatch");
     });
 
-    test("a row hashed in the pre-fix form (as-stored key order) still verifies and is counted", async () => {
-      await sql.unsafe(`DELETE FROM audit_log`);
-      const log = new PostgresAuditLog(db);
-      await log.recordRequired({ actor: "alice", action: "first" });
-
-      // Emulate a row written before details were canonicalized: insertion
-      // order { to, from } == jsonb storage order (shorter key first), but NOT
-      // key-sorted ({ from, to }), so only the legacy form can match.
-      const tip = (await rawRows()).at(-1);
-      if (tip === undefined) throw new Error("expected a tip row");
+    /** Insert a row hashed in the pre-fix form (as-stored key order) after `tip`. */
+    const insertLegacyRow = async (tipHash: string, details: Record<string, unknown>) => {
+      // Insertion order { to, from } == jsonb storage order (shorter key first),
+      // but NOT key-sorted ({ from, to }), so only the legacy form can match.
       const idRows = (await sql.unsafe(
         `SELECT nextval(pg_get_serial_sequence('audit_log', 'id')) AS id`,
       )) as unknown as { id: number | string }[];
       const id = Number(idRows[0]?.id);
       const at = new Date().toISOString();
-      const details = { to: "b", from: "a" };
       const legacyHash = createHash("sha256")
-        .update(tip.hash)
+        .update(tipHash)
         .update(
           JSON.stringify({
             id,
@@ -151,8 +154,21 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
       await sql.unsafe(
         `INSERT INTO audit_log (id, actor, role, action, target, outcome, details, hash, prev_hash, created_at)
          VALUES ($1, 'mallory-free', NULL, 'legacy.row', NULL, 'success', $2::jsonb, $3, $4, $5)`,
-        [id, JSON.stringify(details), legacyHash, tip.hash, at],
+        [id, JSON.stringify(details), legacyHash, tipHash, at],
       );
+      return id;
+    };
+
+    test("rows hashed in the pre-fix form BEFORE the first canonical row still verify and are counted", async () => {
+      await reset();
+      const log = new PostgresAuditLog(db);
+      // A pre-fix history: the legacy row is the first and only row.
+      const details = { to: "b", from: "a" };
+      const id = await insertLegacyRow(AUDIT_CHAIN_GENESIS_HASH, details);
+      // Without any canonical row there is no cut-off yet: legacy stays acceptable.
+      expect((await log.verifyChain()).valid).toBe(true);
+      // The first canonical write after the upgrade records the cut-off.
+      await log.recordRequired({ actor: "alice", action: "first-canonical" });
 
       const result = await log.verifyChain();
       expect(result.valid).toBe(true);
@@ -169,8 +185,35 @@ describe.skipIf(PG_URL === undefined || PG_URL === "")(
       expect(tampered.brokenAt).toEqual({ id, reason: "hash_mismatch" });
     });
 
+    test("the cut-off is the id of the first canonical row and does not move", async () => {
+      await reset();
+      const log = new PostgresAuditLog(db);
+      await log.recordRequired({ actor: "alice", action: "one" });
+      await log.recordRequired({ actor: "alice", action: "two" });
+      const rows = await rawRows();
+      const meta = (await sql.unsafe(
+        `SELECT value FROM audit_chain_meta WHERE key = 'canonical_cutoff_id'`,
+      )) as unknown as { value: string }[];
+      expect(meta).toHaveLength(1);
+      expect(Number(meta[0]?.value)).toBe(Number(rows[0]?.id));
+    });
+
+    test("a legacy-form row after the cut-off fails verification", async () => {
+      await reset();
+      const log = new PostgresAuditLog(db);
+      await log.recordRequired({ actor: "alice", action: "first" });
+      const tip = (await rawRows()).at(-1);
+      if (tip === undefined) throw new Error("expected a tip row");
+      const id = await insertLegacyRow(tip.hash, { to: "b", from: "a" });
+
+      const result = await log.verifyChain();
+      expect(result.valid).toBe(false);
+      expect(result.brokenAt).toEqual({ id, reason: "legacy_hash_after_cutoff" });
+      expect(result.message).toBe(`legacy hash form after cut-off at id ${id}`);
+    });
+
     test("the genesis hash anchors the first row", async () => {
-      await sql.unsafe(`DELETE FROM audit_log`);
+      await reset();
       const log = new PostgresAuditLog(db);
       await log.recordRequired({ actor: "alice", action: "only" });
       expect((await rawRows())[0]?.prev_hash).toBe(AUDIT_CHAIN_GENESIS_HASH);

@@ -140,7 +140,7 @@ function lockedChainDb(): {
       if (/^SELECT nextval/i.test(trimmed)) {
         return [{ id: nextId++ }] as unknown as T[];
       }
-      if (/^INSERT/i.test(trimmed)) {
+      if (/^INSERT INTO audit_log\b/i.test(trimmed)) {
         if (insertFails) throw new Error("injected insert failure");
         const p = params ?? [];
         rows.push({
@@ -259,7 +259,11 @@ describe("Audit chain linearity (Properties 1 & 2)", () => {
              hash TEXT, prev_hash TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
            )`,
         );
+        await sqlA.unsafe(
+          `CREATE TABLE IF NOT EXISTS audit_chain_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+        );
         await sqlA.unsafe(`DELETE FROM audit_log`);
+        await sqlA.unsafe(`DELETE FROM audit_chain_meta`);
         const logA = new PostgresAuditLog(wrapBunSql(sqlA));
         const logB = new PostgresAuditLog(wrapBunSql(sqlB));
         const writes = Array.from({ length: 10 }, (_, i) =>

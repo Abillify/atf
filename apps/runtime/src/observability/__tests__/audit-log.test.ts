@@ -107,7 +107,7 @@ describe("PostgresAuditLog", () => {
         if (/^SELECT nextval/i.test(trimmed)) {
           return [{ id: 2 }] as unknown as T[];
         }
-        if (/^INSERT/i.test(trimmed)) {
+        if (/^INSERT INTO audit_log\b/i.test(trimmed)) {
           inserts.push([...(params ?? [])]);
           return [] as T[];
         }
@@ -214,7 +214,7 @@ describe("PostgresAuditLog", () => {
         if (/^SELECT nextval/i.test(trimmed)) {
           return [{ id: nextId++ }] as unknown as T[];
         }
-        if (/^INSERT/i.test(trimmed)) {
+        if (/^INSERT INTO audit_log\b/i.test(trimmed)) {
           if (opts.failInsert?.() === true) throw new Error("insert failed");
           const p = params ?? [];
           rows.push({
@@ -296,7 +296,7 @@ describe("PostgresAuditLog", () => {
     const db: Database = {
       async query<T = Record<string, unknown>>(text: string): Promise<T[]> {
         const trimmed = text.trim();
-        if (/^INSERT/i.test(trimmed)) {
+        if (/^INSERT INTO audit_log\b/i.test(trimmed)) {
           await gate; // hold the write open so `pending` stays visible
           return [] as T[];
         }
@@ -586,6 +586,45 @@ describe("hash chain", () => {
         legacyHash(AUDIT_CHAIN_GENESIS_HASH, { zz: 1, a: 2 }),
       );
       expect(verifyAuditChain([rec]).valid).toBe(false);
+    });
+
+    describe("cut-off", () => {
+      const details = { to: "b", from: "a" };
+      const legacyRow = () => record(details, legacyHash(AUDIT_CHAIN_GENESIS_HASH, details));
+
+      it("accepts the legacy form below the cut-off", () => {
+        const result = verifyAuditChain([legacyRow()], { legacyCutoffId: 2 });
+        expect(result.valid).toBe(true);
+        expect(result.legacyForm).toBe(1);
+      });
+
+      it("rejects the legacy form at and after the cut-off", () => {
+        for (const cutoff of [1, 0]) {
+          const result = verifyAuditChain([legacyRow()], { legacyCutoffId: cutoff });
+          expect(result.valid).toBe(false);
+          expect(result.brokenAt).toEqual({ id: 1, reason: "legacy_hash_after_cutoff" });
+          expect(result.message).toBe("legacy hash form after cut-off at id 1");
+        }
+      });
+
+      it("without a cut-off the legacy form stays acceptable", () => {
+        expect(verifyAuditChain([legacyRow()]).valid).toBe(true);
+      });
+
+      it("canonical rows verify on either side of the cut-off", () => {
+        const canonical = record(
+          { b: 1, a: 2 },
+          computeAuditHash(AUDIT_CHAIN_GENESIS_HASH, { ...base, details: { b: 1, a: 2 } }),
+        );
+        expect(verifyAuditChain([canonical], { legacyCutoffId: 1 }).valid).toBe(true);
+        expect(verifyAuditChain([canonical], { legacyCutoffId: 0 }).valid).toBe(true);
+      });
+
+      it("the in-memory log is canonical only", async () => {
+        const log = new InMemoryAuditLog();
+        log.record({ actor: "alice", action: "a", details: { b: 1, a: 2 } });
+        expect((await log.verifyChain()).valid).toBe(true);
+      });
     });
 
     it("a prev_hash mismatch is still detected on legacy-form rows", () => {
