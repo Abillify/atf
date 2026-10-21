@@ -26,6 +26,10 @@ import type { MonitoringServiceInterface } from "../../monitoring/monitoring-ser
 import type { GraphEngineService } from "../../graph/graph-engine.js";
 import { SSEStreamer } from "../../streaming/sse-streamer.js";
 import { splitChunkByFrameBytes } from "../../graph/exec-runtime.js";
+import {
+  harnessProgressSseFrame,
+  registerHarnessProgressSink,
+} from "../../graph/agent-harness/progress-event.js";
 import { QueueOverflowError } from "../../graph/graph-engine/error-strategy.js";
 import { inferenceStreamBuffer } from "../../streaming/stream-replay-buffer.js";
 import type { IdempotencyRecord } from "../../graph/idempotency-store.js";
@@ -228,6 +232,16 @@ export function executeStreaming(
       write: serializedWrite,
     };
 
+    // Structured harness progress travels on its own SSE event so OpenAI
+    // clients can read it without parsing the reasoning text. They ignore
+    // unknown event names, so the content stream is unaffected.
+    const unregisterProgress = registerHarnessProgressSink(
+      requestCtx.executionId,
+      (progress) => {
+        serializedWrite(harnessProgressSseFrame(progress)).catch(() => {});
+      },
+    );
+
     // Open a replay buffer for this execution so reconnecting clients
     // can resume mid-stream with Last-Event-ID.
     const execBuffer = inferenceStreamBuffer.open(requestCtx.executionId);
@@ -370,6 +384,7 @@ export function executeStreaming(
       await finalize(collected.join(""), true);
     } finally {
       streamClosed = true;
+      unregisterProgress();
       if (heartbeat !== undefined) clearInterval(heartbeat);
       inferenceStreamBuffer.seal(requestCtx.executionId);
     }

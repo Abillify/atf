@@ -399,6 +399,17 @@ export interface ExecRuntime {
     diagnostic: import("../types/debug-trace.js").NodeDiagnosticInput,
   ) => void;
   /**
+   * Structured progress event of the agent harness, called alongside the
+   * free-text status lines on the reasoning channel. Consumers (streaming
+   * chat, async job records) persist or transport the latest value per node;
+   * the harness itself stays agnostic about what happens with it. Optional —
+   * a no-op when unset.
+   */
+  onProgress?: (
+    nodeId: string,
+    progress: import("./agent-harness/progress-event.js").HarnessProgress,
+  ) => void;
+  /**
    * Annotates a node's open trace span with OpenTelemetry GenAI semantic
    * convention attributes (`gen_ai.*`) so traces are understood by GenAI-aware
    * backends (Langfuse, Arize, Datadog LLM Observability). No-op when tracing

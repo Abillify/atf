@@ -44,6 +44,12 @@ import {
 } from "./coverage.js";
 import { applySummaryTriageRerank } from "./coverage-rerank.js";
 import type { HarnessProgress, Task } from "./types.js";
+import {
+  buildHarnessProgress,
+  emitHarnessProgress,
+  type HarnessProgressCoverage,
+  type HarnessProgressPhase,
+} from "./progress-event.js";
 import { createCoverageAssignmentRuntime } from "./loop-coverage-assignment.js";
 import {
   formatCoverageSearchStatus,
@@ -361,9 +367,44 @@ export function createAgentHarnessNodeHandler(
         ),
       };
     };
+    // --- Initialize progress ---
+    const progress: HarnessProgress = {
+      tasks: [],
+      iterations: 0,
+      cost: 0,
+      depth: currentDepth,
+      ...(dropped.length > 0 ? { droppedTargets: dropped } : {}),
+      ...(cyclic.length > 0 ? { cyclicTargets: cyclic } : {}),
+    };
+
+    // Phase of the loop at emit time. Set at the region boundaries below; the
+    // status wrapper reads it lazily so call sites living in the helper modules
+    // (outcome/verification/stop) report the phase they were reached from.
+    let harnessPhase: HarnessProgressPhase = "planning";
+    /** Coarse coverage counters for the progress event, absent without a queue. */
+    const coverageProgressSnapshot = (): HarnessProgressCoverage | undefined => {
+      if (coverageLedger === undefined) return undefined;
+      const covered = coverageLedger.documents.filter(
+        (d) => d.status === "reviewed" || d.status === "excluded",
+      ).length;
+      return {
+        covered,
+        total: coverageLedger.total,
+        open: coverageLedger.total - covered,
+      };
+    };
     const emitHarnessStatus = (text: string): void => {
       const lineTerminated = `${text.replace(/\n+$/, "")}\n`;
       runtime.onReasoning(node.id, lineTerminated).catch(() => {});
+      const event = buildHarnessProgress(
+        progress,
+        harnessPhase,
+        startTime,
+        coverageProgressSnapshot(),
+        text,
+      );
+      runtime.onProgress?.(node.id, event);
+      emitHarnessProgress(runtime.ctx.executionId, event);
     };
     // Emit a real reasoning-channel message before a potentially long planner
     // call. Open WebUI measures Thinking duration from the first to the last
@@ -374,16 +415,6 @@ export function createAgentHarnessNodeHandler(
     );
     // We track cost via a running delta from the plan calls and delegate calls
     let accumulatedCost = 0;
-
-    // --- Initialize progress ---
-    const progress: HarnessProgress = {
-      tasks: [],
-      iterations: 0,
-      cost: 0,
-      depth: currentDepth,
-      ...(dropped.length > 0 ? { droppedTargets: dropped } : {}),
-      ...(cyclic.length > 0 ? { cyclicTargets: cyclic } : {}),
-    };
 
     const {
       coverageTargetForAssignment,
@@ -449,7 +480,7 @@ export function createAgentHarnessNodeHandler(
     const baseMessages = state.messages;
 
     // --- Local stop helper (Req 8.1, 8.2, 8.3, 12.4) ---
-    const stop = createStopHelper({
+    const stopRun = createStopHelper({
       node,
       runtime,
       cfg,
@@ -463,6 +494,12 @@ export function createAgentHarnessNodeHandler(
       getCoverageLedger: () => coverageLedger,
       coverageConfig,
     });
+    // Every terminal stop is the run's conclusion, so the status lines the
+    // stop helper emits report the synthesis phase.
+    const stop: ReturnType<typeof createStopHelper> = (reason, prog, errs) => {
+      harnessPhase = "synthesis";
+      return stopRun(reason, prog, errs);
+    };
 
     // --- Depth limit: refuse to run at all when entered too deep ---
     // Checked here (after `stop` is defined, before any planning) so the run
@@ -824,6 +861,9 @@ export function createAgentHarnessNodeHandler(
 
     // --- Execution Loop ---
     while (true) {
+      // Back to research at the top of every pass — a verification re-plan
+      // `continue`s here and the gate phase must not leak into the next batch.
+      harnessPhase = "research";
       // Limit checks BEFORE starting another task (Req 5.2, 6.2, 7.2)
       const limitHit = checkLimits(progress, cfg, startTime);
       if (limitHit !== undefined) {
@@ -1465,6 +1505,7 @@ export function createAgentHarnessNodeHandler(
             // additionally reopen explicitly named refs. Only an actual
             // verifier PASS upgrades this to "completed"; without a gate, or
             // with a rejecting one, the run stays partial.
+            harnessPhase = "verification";
             const gate = await gateCompletion(ctx);
             if (gate.action === "stop") {
               return stop(gate.reason, progress, errors);
@@ -1486,6 +1527,7 @@ export function createAgentHarnessNodeHandler(
         // Only a run that actually produced something is worth verifying; an
         // "exhausted" run has nothing for a reviewer to look at.
         if (anyCompleted) {
+          harnessPhase = "verification";
           const gate = await gateCompletion(ctx);
           if (gate.action === "stop") {
             return stop(gate.reason, progress, errors);
@@ -1520,6 +1562,7 @@ export function createAgentHarnessNodeHandler(
         // The stop signal says the WORKER considers itself done — the verifier
         // still gets the final say, otherwise a self-declared completion would
         // bypass the gate entirely.
+        harnessPhase = "verification";
         const gate = await gateCompletion(ctx);
         if (gate.action === "stop") {
           return stop(gate.reason, progress, errors);

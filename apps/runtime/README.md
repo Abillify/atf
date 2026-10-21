@@ -72,6 +72,29 @@ The two Rocket.Chat groups are documented in
 [`docs/CAPABILITIES.md`](../../docs/CAPABILITIES.md#rocketchat). Both are off unless
 `ROCKETCHAT_ENABLED` is set, and both require PostgreSQL.
 
+### Streaming progress events
+
+While an agent-harness node works, the streaming chat response carries structured progress
+alongside the ordinary OpenAI chunks as a dedicated SSE event:
+
+```text
+event: atf.progress
+data: {"phase":"research","tasksDone":3,"tasksTotal":7,"coverage":{"covered":2,"total":7,"open":5},"elapsedMs":12400,"etaMs":16533,"message":"Task t3 → completed"}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `phase` | `planning`, `research`, `verification` or `synthesis` — where in the loop the harness is |
+| `tasksDone` / `tasksTotal` | Tasks in a terminal state (`completed`/`failed`) over all known tasks |
+| `coverage` | Optional coverage counters (`covered`, `total`, `open`) when a coverage queue is configured |
+| `elapsedMs` | Wall-clock time since the harness started |
+| `etaMs` | Linear ETA `(elapsedMs / tasksDone) * (tasksTotal - tasksDone)`; only present once at least two tasks are done |
+| `message` | The free-text status line that triggered the event, unchanged |
+
+OpenAI-compatible clients ignore unknown SSE event names, so this is safe to consume
+optionally. The last event per node is also stored on the debug trace
+(`DebugNodeTrace.progress`).
+
 ## Configuration
 
 Every setting is an environment variable, parsed and validated as a whole at startup: Runtime

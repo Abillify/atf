@@ -23,6 +23,7 @@
  */
 
 import type { EdgeFlowRecord } from "./edge-flow.js";
+import type { HarnessProgress } from "../graph/agent-harness/progress-event.js";
 
 // ---------------------------------------------------------------------------
 // Top-level trace
@@ -429,6 +430,14 @@ export interface DebugNodeTrace {
    * /monitoring/explain/:executionId`).
    */
   groundedness?: DebugGroundedness;
+
+  /**
+   * Present on agent-harness nodes that emitted structured progress: the LAST
+   * `atf.progress` event seen for the node, so a finished trace shows how far
+   * the harness got (phase, tasks done/total, coverage, elapsed time, ETA)
+   * without replaying the reasoning text.
+   */
+  progress?: HarnessProgress;
 }
 
 /** One immutable execution attempt retained under a canonical node trace. */
