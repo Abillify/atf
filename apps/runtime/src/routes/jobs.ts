@@ -45,6 +45,9 @@ export function toJobView(job: JobRecord) {
     // job (the pre-existing, non-recoverable behaviour).
     attempt: job.attempt,
     max_attempts: job.maxAttempts,
+    // Latest harness progress snapshot while the job runs (throttled writes
+    // — see `job-store.ts`); absent for jobs that never emitted one.
+    ...(job.progress !== undefined ? { progress: job.progress } : {}),
     ...(job.result !== undefined ? { result: job.result } : {}),
     ...(job.error !== undefined ? { error: job.error } : {}),
   };

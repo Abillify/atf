@@ -832,7 +832,7 @@
             }
           }
         },
-        "x-enabled-when": "evidenceKey !== undefined"
+        "x-enabled-when": "evidenceKey !== undefined || erasureJwksKey !== undefined"
       }
     },
     "/mcp": {

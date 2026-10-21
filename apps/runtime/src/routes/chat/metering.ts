@@ -43,7 +43,8 @@ import type { Judge } from "../../eval/eval-runner.js";
 import type { ModelQualityRegistry } from "../../graph/model-quality.js";
 import type { ByokResolver } from "../../graph/tenant-provider-keys.js";
 import type { IdempotencyStore } from "../../graph/idempotency-store.js";
-import type { JobStore } from "../../graph/job-store.js";
+import { createProgressWriteThrottle, type JobStore } from "../../graph/job-store.js";
+import { registerHarnessProgressSink } from "../../graph/agent-harness/progress-event.js";
 import type { LlmConfig } from "../../types/flow.js";
 import {
   contextRequiresAttestation,
@@ -876,6 +877,14 @@ export function createFinalize(
 // ---------------------------------------------------------------------------
 
 /**
+ * How often a running job's progress snapshot may be persisted. Progress is
+ * observability, not state: writing on every harness event would multiply
+ * store traffic for no client benefit, since `GET /v1/jobs/:id` can only
+ * ever show the latest value.
+ */
+const PROGRESS_WRITE_INTERVAL_MS = 2000;
+
+/**
  * Runs one attempt of a flow execution and settles the job's outcome
  * (`complete`/`fail`) on the store. Shared by `dispatchAsyncJob`'s first
  * attempt and the Durable Agent Runtime's recovery-sweeper retries
@@ -931,6 +940,26 @@ async function runJobAttempt(opts: {
     (heartbeat as unknown as { unref?: () => void }).unref?.();
   }
 
+  // Progress observability for the agent harness: the harness publishes its
+  // snapshots through the sink registry keyed by this attempt's execution id
+  // (each attempt — original or sweeper retry — gets a fresh one), and the
+  // snapshots are persisted at most every PROGRESS_WRITE_INTERVAL_MS. The
+  // pending value is flushed before the job settles so the last progress is
+  // stored alongside the outcome.
+  const progressThrottle = createProgressWriteThrottle({
+    intervalMs: PROGRESS_WRITE_INTERVAL_MS,
+    now: Date.now,
+    write: (progress, nowMs) =>
+      jobStore.setProgress(jobId, {
+        ...progress,
+        updatedAt: new Date(nowMs).toISOString(),
+      }),
+  });
+  const unregisterProgress = registerHarnessProgressSink(
+    requestCtx.executionId,
+    (progress) => progressThrottle.submit(progress),
+  );
+
   const content: string[] = [];
   let jobError = false;
   let jobUsage: TokenUsage | undefined;
@@ -959,7 +988,12 @@ async function runJobAttempt(opts: {
     content.push(`[Error: ${err instanceof Error ? err.message : String(err)}]`);
   } finally {
     if (heartbeat !== undefined) clearInterval(heartbeat);
+    unregisterProgress();
   }
+
+  // The harness is done publishing — persist the last snapshot before the
+  // job settles so `GET /v1/jobs/:id` shows where the run actually ended.
+  await progressThrottle.flush();
 
   const responseText = content.join("");
   const result: ChatCompletionResponse = {

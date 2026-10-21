@@ -372,6 +372,7 @@ releases:
 - Gate keeps pending approvals of the 2026 endpoint in Redis when a Redis URL is configured (`MCPGATE_TRANSACTION_REDIS_URL`, `server.rateLimit.store`, or `monitoring.cluster`), so request and resolve may hit different replicas.
 - Agent harness: `coverageQueue.lanes` (1–8, default 1) works on several coverage assignments of the plannerless queue concurrently, each as its own delegation instance; results are merged in assignment order.
 - Agent harness emits structured progress (`phase`, tasks done/total, coverage, elapsed time, ETA) as the SSE event `atf.progress` and records the last value per node in the debug trace.
+- `GET /v1/jobs/{id}` reports `progress` of a running agent-harness job (updated at most every 2 s).
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

@@ -64,6 +64,7 @@
 
 import type { ChatCompletionResponse } from "../types/openai.js";
 import type { ChatMessage } from "../types/openai.js";
+import type { HarnessProgress } from "./agent-harness/progress-event.js";
 import type { VerifiedExecutionContextEnvelope } from "./verified-execution-context.js";
 import type { Logger } from "../observability/logger.js";
 import {
@@ -125,6 +126,83 @@ export interface JobRecord {
   leaseExpiresAt?: string;
   /** Present when the job was submitted with retry enabled (`maxAttempts > 1`). */
   resumePayload?: JobResumePayload;
+  /**
+   * Latest agent-harness progress snapshot, written at most every 2 s while
+   * the job runs. Present once the harness has emitted its first progress
+   * event; the last value before completion is flushed with the outcome.
+   */
+  progress?: JobProgress;
+}
+
+/**
+ * A {@link HarnessProgress} snapshot stamped with the time it was stored.
+ * `updatedAt` is set by the caller writing the snapshot (the async job
+ * runner), not by the store.
+ */
+export type JobProgress = HarnessProgress & { updatedAt: string };
+
+/**
+ * Throttles progress writes for a running job: at most one write per
+ * `intervalMs`, and between writes only the MOST RECENT value is kept
+ * (last value wins). {@link ProgressWriteThrottle.flush} persists a value
+ * that has not yet reached its interval — the async job runner calls it
+ * right before settling the job so the final progress is never lost.
+ *
+ * Writes are sequenced in submission order and are best-effort: a failing
+ * write is swallowed (progress is observability, it must never break or
+ * slow down execution beyond the store's own error handling).
+ */
+export interface ProgressWriteThrottle {
+  /** Offers a progress snapshot; written now or kept as the pending value. */
+  submit(progress: HarnessProgress): void;
+  /** Writes any pending snapshot and waits for all writes to settle. */
+  flush(): Promise<void>;
+}
+
+export function createProgressWriteThrottle(opts: {
+  /** Minimum time between two writes. */
+  intervalMs: number;
+  /** Injectable clock (ms epoch) so throttling is testable without waiting. */
+  now: () => number;
+  /** Performs the actual write; called with the snapshot and its write time. */
+  write: (progress: HarnessProgress, nowMs: number) => void | Promise<void>;
+}): ProgressWriteThrottle {
+  const { intervalMs, now, write } = opts;
+  let lastWriteMs = Number.NEGATIVE_INFINITY;
+  let pending: HarnessProgress | undefined;
+  let inflight: Promise<void> = Promise.resolve();
+  let busy = false;
+  const doWrite = (progress: HarnessProgress): void => {
+    const writeMs = now();
+    lastWriteMs = writeMs;
+    pending = undefined;
+    const run = async (): Promise<void> => {
+      try {
+        await write(progress, writeMs);
+      } catch {
+        /* best-effort — a failed progress write must not affect execution */
+      } finally {
+        busy = false;
+      }
+    };
+    // Start immediately when idle so a sync `write` lands in this tick;
+    // only queue behind an in-flight write, preserving submission order.
+    if (busy) inflight = inflight.then(run);
+    else {
+      busy = true;
+      inflight = run();
+    }
+  };
+  return {
+    submit(progress: HarnessProgress): void {
+      if (now() - lastWriteMs >= intervalMs) doWrite(progress);
+      else pending = progress;
+    },
+    async flush(): Promise<void> {
+      if (pending !== undefined) doWrite(pending);
+      await inflight;
+    },
+  };
 }
 
 export interface JobStore {
@@ -172,6 +250,12 @@ export interface JobStore {
   complete(id: string, result: ChatCompletionResponse): void | Promise<void>;
   /** Marks a job failed with an error message. */
   fail(id: string, error: string): void | Promise<void>;
+  /**
+   * Stores the latest progress snapshot on a job. No-op when the job is
+   * unknown or expired. Callers throttle how often they write; the store
+   * simply keeps the most recent value.
+   */
+  setProgress(id: string, progress: JobProgress): void | Promise<void>;
   /** Returns a job by id, or undefined if unknown/expired. */
   get(id: string): JobRecord | undefined | Promise<JobRecord | undefined>;
 }
@@ -304,6 +388,13 @@ export class InMemoryJobStore implements JobStore {
     j.error = error;
     j.updatedAt = this.nowIso();
     delete j.leaseExpiresAt;
+  }
+
+  setProgress(id: string, progress: JobProgress): void {
+    const j = this.jobs.get(id);
+    if (j === undefined) return;
+    j.progress = progress;
+    j.updatedAt = this.nowIso();
   }
 
   get(id: string): JobRecord | undefined {
@@ -554,6 +645,12 @@ export class RedisJobStore implements JobStore {
       delete r.leaseExpiresAt;
     });
     await this.removeFromRunningIndex(id);
+  }
+
+  async setProgress(id: string, progress: JobProgress): Promise<void> {
+    await this.mutate(id, (r) => {
+      r.progress = progress;
+    });
   }
 
   async get(id: string): Promise<JobRecord | undefined> {

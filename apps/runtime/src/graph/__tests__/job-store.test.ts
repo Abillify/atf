@@ -7,7 +7,11 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { InMemoryJobStore } from "../job-store.js";
+import {
+  createProgressWriteThrottle,
+  InMemoryJobStore,
+  type JobProgress,
+} from "../job-store.js";
 import type { ChatCompletionResponse } from "../../types/openai.js";
 
 const resp = (text: string): ChatCompletionResponse => ({
@@ -209,5 +213,120 @@ describe("InMemoryJobStore", () => {
       const s = new InMemoryJobStore();
       expect(s.requeueForRetry("nope")).toBeUndefined();
     });
+  });
+});
+
+describe("setProgress", () => {
+  const snapshot = (done: number): JobProgress => ({
+    phase: "research",
+    tasksDone: done,
+    tasksTotal: 4,
+    elapsedMs: done * 100,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  test("stores the progress snapshot and it is readable via get", () => {
+    const s = new InMemoryJobStore();
+    s.create({ id: "jp1", model: "flow-x" });
+    s.setProgress("jp1", snapshot(1));
+    expect(s.get("jp1")?.progress?.tasksDone).toBe(1);
+  });
+
+  test("last write wins", () => {
+    const s = new InMemoryJobStore();
+    s.create({ id: "jp2", model: "flow-x" });
+    s.setProgress("jp2", snapshot(1));
+    s.setProgress("jp2", snapshot(3));
+    expect(s.get("jp2")?.progress?.tasksDone).toBe(3);
+  });
+
+  test("progress is absent until the first write", () => {
+    const s = new InMemoryJobStore();
+    s.create({ id: "jp3", model: "flow-x" });
+    expect(s.get("jp3")?.progress).toBeUndefined();
+  });
+
+  test("is a no-op for an unknown job", () => {
+    const s = new InMemoryJobStore();
+    s.setProgress("nope", snapshot(1));
+    expect(s.get("nope")).toBeUndefined();
+  });
+});
+
+describe("createProgressWriteThrottle", () => {
+  test("two submits within the interval produce a single write", async () => {
+    let now = 1_000;
+    const writes: number[] = [];
+    const t = createProgressWriteThrottle({
+      intervalMs: 2_000,
+      now: () => now,
+      write: () => {
+        writes.push(now);
+      },
+    });
+    t.submit({ phase: "research", tasksDone: 1, tasksTotal: 4, elapsedMs: 10 });
+    now += 500;
+    t.submit({ phase: "research", tasksDone: 2, tasksTotal: 4, elapsedMs: 510 });
+    // Let the scheduled write run; the second submit must still be suppressed.
+    await Promise.resolve();
+    expect(writes).toEqual([1_000]);
+    await t.flush();
+    expect(writes).toEqual([1_000, 1_500]);
+  });
+
+  test("a submit after the interval writes again", async () => {
+    let now = 0;
+    const writes: number[] = [];
+    const t = createProgressWriteThrottle({
+      intervalMs: 2_000,
+      now: () => now,
+      write: () => {
+        writes.push(now);
+      },
+    });
+    t.submit({ phase: "research", tasksDone: 1, tasksTotal: 4, elapsedMs: 0 });
+    now = 2_000;
+    t.submit({ phase: "research", tasksDone: 2, tasksTotal: 4, elapsedMs: 2_000 });
+    await t.flush();
+    expect(writes).toEqual([0, 2_000]);
+  });
+
+  test("flush persists the pending value exactly once (last value wins)", async () => {
+    let now = 0;
+    const done: number[] = [];
+    const t = createProgressWriteThrottle({
+      intervalMs: 2_000,
+      now: () => now,
+      write: (p) => {
+        done.push(p.tasksDone);
+      },
+    });
+    t.submit({ phase: "research", tasksDone: 1, tasksTotal: 4, elapsedMs: 0 });
+    now = 500;
+    t.submit({ phase: "research", tasksDone: 2, tasksTotal: 4, elapsedMs: 500 });
+    now = 900;
+    t.submit({ phase: "research", tasksDone: 3, tasksTotal: 4, elapsedMs: 900 });
+    await t.flush();
+    expect(done).toEqual([1, 3]);
+    await t.flush();
+    expect(done).toEqual([1, 3]);
+  });
+
+  test("a failing write is swallowed and later writes still happen", async () => {
+    let now = 0;
+    let calls = 0;
+    const t = createProgressWriteThrottle({
+      intervalMs: 1_000,
+      now: () => now,
+      write: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("store down");
+      },
+    });
+    t.submit({ phase: "research", tasksDone: 1, tasksTotal: 2, elapsedMs: 0 });
+    now = 1_000;
+    t.submit({ phase: "research", tasksDone: 2, tasksTotal: 2, elapsedMs: 1_000 });
+    await t.flush();
+    expect(calls).toBe(2);
   });
 });

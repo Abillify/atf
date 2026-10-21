@@ -287,3 +287,49 @@ describe("RedisJobStore", () => {
     });
   });
 });
+
+describe("RedisJobStore.setProgress", () => {
+  it("persists the progress snapshot and it survives a re-read", async () => {
+    const redis = new FakeRedis();
+    const store = new RedisJobStore(redis);
+    await store.create({ id: "job-p1", model: "flow-p" });
+    await store.setProgress("job-p1", {
+      phase: "research",
+      tasksDone: 2,
+      tasksTotal: 5,
+      elapsedMs: 400,
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    });
+    const rec = await store.get("job-p1");
+    expect(rec?.progress?.tasksDone).toBe(2);
+    expect(rec?.progress?.tasksTotal).toBe(5);
+    expect(rec?.progress?.updatedAt).toBe("2026-01-01T00:00:02.000Z");
+  });
+
+  it("keeps the entry TTL when updating progress", async () => {
+    const redis = new FakeRedis();
+    const store = new RedisJobStore(redis);
+    await store.create({ id: "job-p2", model: "flow-p" });
+    await store.setProgress("job-p2", {
+      phase: "research",
+      tasksDone: 1,
+      tasksTotal: 1,
+      elapsedMs: 10,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(redis.store.get("aiperator:job:job-p2")?.ttl).toBeDefined();
+  });
+
+  it("is a no-op for an unknown job", async () => {
+    const redis = new FakeRedis();
+    const store = new RedisJobStore(redis);
+    await store.setProgress("nope", {
+      phase: "research",
+      tasksDone: 1,
+      tasksTotal: 1,
+      elapsedMs: 0,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(await store.get("nope")).toBeUndefined();
+  });
+});

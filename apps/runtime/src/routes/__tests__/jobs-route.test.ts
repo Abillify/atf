@@ -160,3 +160,48 @@ describe("GET /v1/jobs/:id", () => {
     expect(await hidden.json()).toEqual(await unknown.json());
   });
 });
+
+describe("GET /v1/jobs/:id progress", () => {
+  it("includes the progress snapshot when the job has one", async () => {
+    const store = new InMemoryJobStore();
+    createJob(store, "prog-job", "default");
+    store.setProgress("prog-job", {
+      phase: "research",
+      tasksDone: 2,
+      tasksTotal: 7,
+      elapsedMs: 4_200,
+      updatedAt: "2026-01-01T00:00:04.200Z",
+    });
+
+    const res = await appWith(store, {
+      claims: { tenant_id: "default" },
+    }).request("/v1/jobs/prog-job", {
+      headers: { Authorization: "******" },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.progress).toEqual({
+      phase: "research",
+      tasksDone: 2,
+      tasksTotal: 7,
+      elapsedMs: 4_200,
+      updatedAt: "2026-01-01T00:00:04.200Z",
+    });
+  });
+
+  it("omits progress for a job that never emitted one", async () => {
+    const store = new InMemoryJobStore();
+    createJob(store, "bare-job", "default");
+
+    const res = await appWith(store, {
+      claims: { tenant_id: "default" },
+    }).request("/v1/jobs/bare-job", {
+      headers: { Authorization: "******" },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect("progress" in body).toBe(false);
+  });
+});
