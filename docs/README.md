@@ -31,6 +31,7 @@
 Contract packages: [identity](../packages/identity-contract/README.md),
 [transaction](../packages/transaction-contract/README.md),
 [evidence](../packages/evidence-contract/README.md),
+[erasure](../packages/erasure-contract/README.md),
 [extract](../packages/extract-contract/README.md),
 [schema compatibility](../packages/schema-compatibility/README.md), and
 [contract adapter](../packages/contract-adapter/README.md).
@@ -69,11 +70,11 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 33 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 39 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 
-- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0029)
+- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0035)
 - [`adr/search/`](adr/search/) — Search decisions
 - [`adr/gate/`](adr/gate/) — Gate decisions
 
@@ -115,12 +116,15 @@ result-interpretation configuration is in
 
 ## Generated documents
 
-Two documents are generated and must not be edited by hand. CI fails when they are stale.
+These documents are generated and must not be edited by hand. CI fails when they are stale.
 
 | Document | Generator | Source |
 | --- | --- | --- |
 | [CONFIGURATION.md](CONFIGURATION.md) | `bun run config-reference` | Runtime's Zod env schema, Search's `Config` interface, and a scan of every service's source for raw environment reads |
-| [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [../sbom.cdx.json](../sbom.cdx.json) | `bun run supply-chain` | The installed dependency tree |
+| [FLOWS.md](FLOWS.md) and [`apps/runtime/schemas/flow.schema.json`](../apps/runtime/schemas/flow.schema.json) | `bun run flow-reference` | The flow schema and the node-type catalog |
+| The route table in [ARCHITECTURE.md](../ARCHITECTURE.md) | `bun run route-reference` | The Runtime route registrations |
+| [`openapi/*.json`](openapi/) | `bun run openapi:update` | The OpenAPI documents of the services (the baselines the compatibility check compares against) |
+| [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [../sbom.cdx.json](../sbom.cdx.json) | `bun run supply-chain` | The installed dependency tree; the authoritative run is the linux/amd64 container run described in [DEVELOPMENT.md](../DEVELOPMENT.md) |
 
 ## A note on missing paths
 

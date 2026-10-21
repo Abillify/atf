@@ -261,14 +261,7 @@ Bun 1.4.0 is the only package manager and task runner; npm, pnpm, and yarn are n
 Node.js 26 is the supported Node major. Target one workspace with
 `bun run --filter @atf/runtime test`.
 
-The gates CI enforces:
-
-```bash
-bun run verify:public       # no secrets or forbidden paths in the tree
-bun run verify:spdx         # tracked TypeScript source carries the project SPDX header
-bun run supply-chain:check  # third-party notices and SBOM are current
-bun run config-reference:check
-```
+The full list of gates CI runs is in [DEVELOPMENT.md](DEVELOPMENT.md#the-gates).
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -285,6 +278,11 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
 | [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md) | Document Intelligence v2 upgrade, rollback, and corpus re-ingest |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
+| [docs/README.md](docs/README.md) | Index of all documentation |
+| [docs/UPGRADE.md](docs/UPGRADE.md) | Upgrading a deployment, milestone by milestone |
+| [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | STRIDE threat model per service |
+| [docs/EU-AI-ACT.md](docs/EU-AI-ACT.md) | EU AI Act obligations mapped to ATF controls |
+| [docs/runbooks/](docs/runbooks/) | Backup, key rotation, incidents, scaling, Redis outage, transaction-token rotation |
 
 ## License
 

@@ -69,7 +69,8 @@ Solid lines show configured request or persistence paths; they are not all manda
 deployment or flow. Dashed lines are explicitly optional coordination paths. Runtime can run
 without Search, Gate, or PostgreSQL for flows that do not require those capabilities, with
 in-memory/per-replica trade-offs described below. Without Redis, Runtime and Gate degrade to
-per-replica coordination rather than failing. Extract is optional in both directions: Search
+per-replica coordination rather than failing; Search and Extract keep per-process rate limits, and
+in production refuse to start with `REPLICAS` > 1 and no `RATE_LIMIT_REDIS_URL`. Extract is optional in both directions: Search
 mounts `/ingest-file` only when `CONVERTER_URL` is set, and Extract mounts `/v1/ingest` only
 when `SEARCH_URL` is set. Extract's own PostgreSQL connection (`EXTRACT_DATABASE_URL`, schema
 `extract`) is likewise optional: it is what turns on the persistent v2 job path — resumable
@@ -267,6 +268,32 @@ Tauri desktop wrapper around the same core. The native host keeps credentials in
 keychain, spawns the Node SEA sidecar (the `sidecar` command above), and exchanges only a
 loopback port and Bearer token with it. See [Extract Outpost](#extract-outpost) above for the
 process topology.
+
+## Trust architecture
+
+Three chains of evidence cross the service boundaries. Each rests on a signed or labelled artefact
+that a later stage can check without trusting the one before it.
+
+**Content trust.** Retrieved text is data, never instructions. Search labels what it returns
+(`content_trust` and `injection_risk` per hit and on the envelope). Gate carries that label on tool
+results in `_meta["io.atf/content-trust"]`. Runtime turns it into taint: with
+`TAINT_MODE=on-untrusted-source`, content labelled untrusted (including a result from an MCP
+server that is not declared `contentTrust: trusted`) taints the execution, and write tools then need
+approval. Read-only tools stay unaffected.
+
+**Evidence chain.** One Ed25519 key, `EVIDENCE_SIGNING_KEY` (ADR 0030), signs the audit-chain
+anchors, the evidence bundles and the erasure receipts; the public key is served at
+`/.well-known/atf-evidence-jwks.json`, so an auditor verifies offline without a shared secret.
+Decision receipts use their own key, `RECEIPT_SIGNING_KEY`, published at
+`/.well-known/atf-receipt-jwks.json`. Search can sign evidence packs with its own key
+(`SEARCH_EVIDENCE_SIGNING_KEY`).
+
+**Transaction tokens.** Runtime issues the token that carries a request's identity, tenant, scopes
+and action contract to Gate and Search (JWT header `typ: at+jwt`). It is signed with a shared HS256
+secret, or with ES256/EdDSA keys published at `/.well-known/atf-transaction-jwks.json` so a verifier
+cannot mint tokens. The audience is per Gate (`AGENT_TRANSACTION_AUDIENCES` on the Runtime,
+`MCPGATE_TRANSACTION_AUDIENCE` on the Gate), so a token minted for one service is refused by
+another (ADR 0035). Gate and Search verify it with the shared `@atf/security-kit` verifier.
 
 ## Shared packages
 
