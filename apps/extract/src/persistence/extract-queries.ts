@@ -1322,7 +1322,7 @@ export function advanceUploadOffsetQuery(
 	};
 }
 
-// ─── document deletion and retention (P1-E8) ─────────────────────────────
+// ─── document deletion and retention ─────────────────────────────
 /**
  * Delete every job of one reference in one collection (any status). Stage
  * checkpoints (the persisted model responses) and both outboxes go with the

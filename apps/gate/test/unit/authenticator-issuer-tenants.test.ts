@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Issuer → tenant binding (P1-G3), the Gate's counterpart of the Runtime's
+ * Issuer → tenant binding, the Gate's counterpart of the Runtime's
  * JWT_ISSUER_TENANTS. A valid signature proves who issued a token, not that the
  * issuer may speak for the tenant its claim names: with several trusted issuers
  * and no binding, any of them can assert any tenant.

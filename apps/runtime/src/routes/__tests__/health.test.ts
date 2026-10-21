@@ -362,7 +362,7 @@ describe("GET /health/ready — policy_stale (Req 7.7)", () => {
     expect(body.checks.policy_stale?.status).toBe("degraded");
   });
 });
-describe("auth: disabled signal (P0-1)", () => {
+describe("auth: disabled signal", () => {
   it("/health and /health/ready say so while AUTHN_MODE=disabled", async () => {
     const app = new Hono().route(
       "/",

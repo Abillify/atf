@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
  * Pure, deterministic text/structure metrics for the extraction-quality
- * harness (`extract-quality.ts`, review item P1-E9).
+ * harness (`extract-quality.ts`).
  *
  * The retrieval harness (`metrics.ts`) asks whether the right page comes back;
  * `extraction-metrics.ts` scores table cells, figure labels and BPMN graphs

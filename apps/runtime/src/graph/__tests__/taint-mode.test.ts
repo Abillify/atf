@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * TAINT_MODE=on-untrusted-source (P1-Q1).
+ * TAINT_MODE=on-untrusted-source.
  *
  * Default (`on-finding`): the run is tainted only after the injection scan
  * flags something. With `on-untrusted-source` it is tainted as soon as content

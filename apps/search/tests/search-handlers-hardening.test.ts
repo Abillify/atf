@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Three small hardening fixes in the search handlers (P1-S5, S6, S7):
+ * Three small hardening fixes in the search handlers:
  *
  *  - the activity stream is process-wide, so its search summary must not carry
  *    the query text (GDPR data minimisation);
@@ -46,7 +46,7 @@ function chunk(
   };
 }
 
-describe("buildSearchSummary · no query text in the activity stream (P1-S5)", () => {
+describe("buildSearchSummary · no query text in the activity stream", () => {
   const base = {
     collection: "documents",
     mode: "hybrid" as const,
@@ -75,7 +75,7 @@ describe("buildSearchSummary · no query text in the activity stream (P1-S5)", (
   });
 });
 
-describe("mapWithConcurrency / attachExpansions · bounded fan-out (P1-S6)", () => {
+describe("mapWithConcurrency / attachExpansions · bounded fan-out", () => {
   it("never runs more than `limit` calls at once and keeps the order", async () => {
     let inFlight = 0;
     let peak = 0;
@@ -141,7 +141,7 @@ describe("mapWithConcurrency / attachExpansions · bounded fan-out (P1-S6)", () 
   });
 });
 
-describe("groupResultsByDocument · gap marker between distant chunks (P1-S7)", () => {
+describe("groupResultsByDocument · gap marker between distant chunks", () => {
   const withIndex = (id: string, index: number, content: string) =>
     chunk(id, content, {
       chunk: {

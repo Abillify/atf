@@ -587,7 +587,7 @@ describe("Monitor playground under an OIDC session · dry-run", () => {
   });
 });
 
-describe("Monitor OIDC · PKCE, nonce and token checks (P1-G5)", () => {
+describe("Monitor OIDC · PKCE, nonce and token checks", () => {
   it("sends a PKCE S256 challenge and a nonce to the authorization endpoint", async () => {
     const port = await start();
     const loginRes = await fetch(`http://127.0.0.1:${port}/monitor/login`, { redirect: "manual" });

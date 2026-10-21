@@ -12,8 +12,7 @@ Agent Transaction Fabric envelope, `@atf/transaction-contract`): who acts, for
 which execution and invocation, with which scopes and budget. It was signed
 HS256 with one shared secret, and in the reference deployments every Gate and
 the runtime used the same audience, `mcpgate`.
-That has two consequences the project review (P1-Q3; Gate P2-9; Search P2-5)
-called out:
+That has two consequences the project review called out:
 - **Verifying equals minting.** Every party that holds the secret to *check* a
   token can also *create* one. A leak at any Gate, or a compromised Search,
   yields tokens every other service accepts.

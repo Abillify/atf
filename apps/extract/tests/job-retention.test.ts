@@ -5,7 +5,7 @@
  *
  * What a finished job keeps (page-level model responses, outboxes) and what an
  * abandoned upload leaves behind is bounded by JOB_RETENTION_DAYS and
- * UPLOAD_SESSION_MAX_AGE_HOURS (P1-E8). The source bytes are not part of the
+ * UPLOAD_SESSION_MAX_AGE_HOURS. The source bytes are not part of the
  * sweep: /v2/render needs them for as long as Search serves the document.
  */
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";

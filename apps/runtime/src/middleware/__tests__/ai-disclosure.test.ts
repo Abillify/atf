@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * AI_DISCLOSURE (EU AI Act Art. 50, P1-Q5): opt-in, machine-readable marker on
+ * AI_DISCLOSURE (EU AI Act Art. 50): opt-in, machine-readable marker on
  * successful completions only.
  */
 import { describe, expect, test } from "bun:test";

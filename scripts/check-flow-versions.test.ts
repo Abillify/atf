@@ -109,7 +109,7 @@ describe("resolveFlowDependencies", () => {
     expect(deps.has("mcp.yaml")).toBe(false);
   });
 
-  test("compliance-policy, access, canary and experiments are shared dependencies of every flow (P1-P8)", () => {
+  test("compliance-policy, access, canary and experiments are shared dependencies of every flow", () => {
     const plain = "id: p\nname: P\nnodes:\n  - id: a\n    type: llm\nedges: []\n";
     const deps = resolveFlowDependencies("p.yaml", plain, read, flowFiles);
     for (const shared of ["compliance-policy.yaml", "access.yaml", "canary.yaml", "experiments.yaml"]) {

@@ -147,7 +147,7 @@ async function app(
 }
 
 describe("GET /health", () => {
-  it("says so while authentication is disabled, and only then (P0-1)", async () => {
+  it("says so while authentication is disabled, and only then", async () => {
     const open = await request(await app({ AUTHN_MODE: "disabled" })).get("/health");
     expect(open.body.auth).toBe("disabled");
     const closed = await request(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * `approvals/resolve` (P1-G4).
+ * `approvals/resolve`.
  *
  *  - WHO resolved an approval is the verified identity. A client-supplied
  *    `approver` string is only a display label next to it; it can no longer
@@ -267,7 +267,7 @@ describe("approvals/resolve · separation of duties (requireDifferentApprover=tr
   });
 });
 
-describe("verifyApproval · approver separation at verify time (N-P1-10)", () => {
+describe("verifyApproval · approver separation at verify time", () => {
   const viewer: AuthContext = {
     method: "static",
     subject: "requester",

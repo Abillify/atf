@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Structured eval assertions (P1-P9): jsonPath, toolCalled, maxTokens next to the
+ * Structured eval assertions: jsonPath, toolCalled, maxTokens next to the
  * existing contains/regex/..., usable in dataset cases AND matrix tasks.
  * Additive: a case or task with only a free-text `expected` is unchanged.
  */

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * The LibreOffice build is part of the pipeline stand (P1-E6): pages of one
+ * The LibreOffice build is part of the pipeline stand: pages of one
  * resumed job must not be paginated by two converter builds. The identity
  * enters `pipelineHash` through `extra.converter`; without it the hash is
  * byte-for-byte what it was before the field existed, so tests and a failed

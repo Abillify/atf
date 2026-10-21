@@ -413,7 +413,7 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
     expect(secondTarget.calls).toBe(0);
   });
 
-  it("keeps the cleartext subject only while the operation is not complete (P1-R4)", async () => {
+  it("keeps the cleartext subject only while the operation is not complete", async () => {
     const db = fakeDb();
     const failing = new FakeTarget("runtime.bad", { error: "down" });
     const orch = createErasureOrchestrator({
@@ -454,7 +454,7 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
     expect(JSON.stringify([...db.rows.values()])).not.toContain("person@example.org");
   });
 
-  it("an operation stored as in_progress is not a finished one (P1-R4)", async () => {
+  it("an operation stored as in_progress is not a finished one", async () => {
     const db = fakeDb();
     const req = request();
     // Simulate a crash after the insert: the row exists, nothing ran.
@@ -485,7 +485,7 @@ describe("createErasureOrchestrator — persistence (fake Database)", () => {
     expect(target.calls).toBe(0);
   });
 
-  it("takes over a zombie whose lease expired and runs it to completion (P1-R4)", async () => {
+  it("takes over a zombie whose lease expired and runs it to completion", async () => {
     const db = fakeDb();
     const req = request();
     db.rows.set(req.requestId, {

@@ -3,7 +3,7 @@
 /**
  * page-renderer-window.test.ts
  *
- * The render window (P1-7 / E7): `PreparedSource.prefetch` renders a run of
+ * The render window: `PreparedSource.prefetch` renders a run of
  * pages with ONE `pdfinfo` and ONE `pdftoppm` call instead of two subprocesses
  * per page, and the figure-resolution render of a page is shared by all of its
  * crops.

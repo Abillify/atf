@@ -4,7 +4,7 @@
  * render-region.test.ts
  *
  * `POST /v2/render` renders a page or a region ONCE, at the DPI it chose and
- * reports (P1-E5). Before, it rendered the whole page at model resolution just
+ * reports. Before, it rendered the whole page at model resolution just
  * to learn the page size, re-rendered it for a crop, computed a DPI it never
  * used, planned the tile grid from the downscaled pixels and enlarged the
  * result to the requested size.

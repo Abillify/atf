@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Integration test for the OR-semantics lexical list (P0-11) against a REAL
+ * Integration test for the OR-semantics lexical list against a REAL
  * PostgreSQL + pgvector instance.
  *
  * The defect it pins: the lexical branch used `websearch_to_tsquery`, which

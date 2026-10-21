@@ -433,7 +433,7 @@ export function checkProductionReadiness(
     }
   }
 
-  // ── Tenant authority (P1-G3) ──────────────────────────────────────────────
+  // ── Tenant authority ──────────────────────────────────────────────
   if (config.tenantIsolation.enabled) {
     if (config.tenantIsolation.claimNames.includes("client_id")) {
       warnings.push(
@@ -457,7 +457,7 @@ export function checkProductionReadiness(
       );
     }
   }
-  // ── Default-allow governance (P1-G1) ──────────────────────────────────────
+  // ── Default-allow governance ──────────────────────────────────────
   if (config.authorization.enabled && config.policies.defaultEffect === "allow") {
     const unscoped = config.tools
       .filter((tool) => (tool.requiredScopes ?? []).length === 0)
@@ -471,7 +471,7 @@ export function checkProductionReadiness(
       );
     }
   }
-  // ── Approver separation (N-P1-10) ───────────────────────────────────────
+  // ── Approver separation ───────────────────────────────────────
   if (
     isProd &&
     config.policies.approval.requireDifferentApprover !== true &&
@@ -484,7 +484,7 @@ export function checkProductionReadiness(
         "separate duties. Enable it once approvers hold the approverScope.",
     );
   }
-  // ── Rate limiting (P1-G6) ─────────────────────────────────────────────────
+  // ── Rate limiting ─────────────────────────────────────────────────
   if (
     config.server.rateLimit.enabled &&
     config.server.trustProxy !== false &&

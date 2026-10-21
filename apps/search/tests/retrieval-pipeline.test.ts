@@ -602,7 +602,7 @@ describe("runRetrievalPipeline", () => {
     ).rejects.toThrow(EmbeddingFailedError);
   });
 
-  it("starts the dense and the sparse query embedding at the same time (P1-S4)", async () => {
+  it("starts the dense and the sparse query embedding at the same time", async () => {
     const order: string[] = [];
     const { clients } = clientsFor([hit({ id: "a" })]);
     clients.embeddingClient = {

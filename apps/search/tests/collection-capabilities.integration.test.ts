@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * `collection_stats.capabilities` (P1-S8) against a REAL PostgreSQL + pgvector.
+ * `collection_stats.capabilities` against a REAL PostgreSQL + pgvector.
  *
  * A collection ingested before the v2 pipeline has chunk rows but no unit
  * graph: `get_outline`, `get_pages`, `get_section` and `get_context` come back

@@ -385,7 +385,7 @@ describe("checkProductionReadiness", () => {
     });
   });
 });
-describe("job retention (P1-E8)", () => {
+describe("job retention", () => {
   const database = { EXTRACT_DATABASE_URL: "postgres://extract:secret@db.internal:5432/extract" };
   it("warns, but does not fail, when finished jobs are kept forever in production", () => {
     const report = checkProductionReadiness(prodConfig(database));

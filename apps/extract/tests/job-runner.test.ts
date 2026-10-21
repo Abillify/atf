@@ -1691,7 +1691,7 @@ describe("job-runner · MAX_PAGES refusal (v2)", () => {
   });
 });
 
-// ── render window (P1-7) ─────────────────────────────────────────────────────
+// ── render window ─────────────────────────────────────────────────────
 describe("job-runner · render window", () => {
 	it("warms the pages about to start and the next ones, in source page numbers, and still processes every page once", async () => {
 		const store = createFakeJobStore();

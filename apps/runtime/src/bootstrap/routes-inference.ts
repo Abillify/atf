@@ -207,10 +207,10 @@ export async function registerInferenceRoutes(
       // Req 7.7: a failed tool-authz.json reload surfaces as a degraded
       // (never 503) policy_stale hint — the last-known-good policy still holds.
       toolAuthz: toolAuthzLoader,
-      // P1-R3: flow files that fail to load are an informational readiness
+      // Flow files that fail to load are an informational readiness
       // hint, and the aiperator_flow_load_failures gauge reads the same ledger.
       flowLoad: getFlowLoadFailures,
-      // P0-1: an instance without authentication says so on /health.
+      // An instance without authentication says so on /health.
       authDisabled: config.authnMode === "disabled",
     }),
   );

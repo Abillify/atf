@@ -537,7 +537,7 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
   });
 });
 
-// ── What Extract keeps of a document leaves with it (P1-E8) ──────────────────
+// ── What Extract keeps of a document leaves with it ──────────────────
 describe("DELETE /v2/documents/{reference} · Extract's own data", () => {
   const token = "f".repeat(40);
   const tokenEnv = {

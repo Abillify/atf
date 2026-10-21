@@ -1193,7 +1193,7 @@ describe("loadConfig() — token exchange", () => {
     expect(stderrOutput.join("")).toContain("MCP_SERVERS");
   });
 });
-describe("COMPLIANCE_POLICY_REQUIRED (P1-Q2)", () => {
+describe("COMPLIANCE_POLICY_REQUIRED", () => {
   test("is off by default and reads true/1", () => {
     delete process.env.COMPLIANCE_POLICY_REQUIRED;
     expect(loadConfig().compliancePolicyRequired).toBe(false);

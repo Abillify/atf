@@ -4,7 +4,7 @@
  * jobs/job-retention.ts
  *
  * What Extract keeps about a document besides the source bytes, and for how
- * long (P1-E8). A finished job still holds the persisted model response of every
+ * long. A finished job still holds the persisted model response of every
  * page (`page_stages.output`), the emit/asset outboxes and, for an abandoned
  * resumable upload, a session row. None of that is needed once the job is done,
  * and all of it can contain the document's content, so it must not live

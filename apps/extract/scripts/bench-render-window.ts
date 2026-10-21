@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * bench-render-window.ts — before/after numbers for the render window (P1-7).
+ * bench-render-window.ts — before/after numbers for the render window.
  *
  * The page renderer used to spawn `pdfinfo` (page size) and `pdftoppm` (raster)
  * once PER PAGE, each re-reading the PDF's cross-reference table. With the

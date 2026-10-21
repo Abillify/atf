@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
  * bench-time-to-searchable.ts — how soon do the first pages become searchable
- * once a job hands its staged document to Search (P1-4)?
+ * once a job hands its staged document to Search?
  *
  * Runs the REAL emitter (`createEmitter`) against the in-memory job store the
  * tests use and a simulated Search whose calls take a configurable time, then

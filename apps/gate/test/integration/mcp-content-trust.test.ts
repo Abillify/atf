@@ -4,7 +4,7 @@
  * Everything a tool returns is data from a downstream system. The Gate says so
  * on every executed tool result (`_meta["io.atf/content-trust"]`), additively:
  * `content` and `structuredContent` are untouched, and a result the Gate
- * produced itself (policy denial) carries no such label (P1-Q1).
+ * produced itself (policy denial) carries no such label.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Server } from "node:http";

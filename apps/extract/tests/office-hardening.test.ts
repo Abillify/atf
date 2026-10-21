@@ -171,7 +171,7 @@ describe("neutralizeHtmlReferences bypasses", () => {
 });
 
 /**
- * Second-round bypasses (P0-10 follow-up): the tokenizer fixed the structural
+ * Second-round bypasses: the tokenizer fixed the structural
  * mistakes of the regex rewriter, but passed anything it did not model. Each
  * case below is one of those, asserted against the exact output.
  */

@@ -715,7 +715,7 @@ export function createApp(
     vision,
     searchClient,
     logger,
-    // P0-1: an instance without authentication says so on /health.
+    // An instance without authentication says so on /health.
     authDisabled: config.authnMode === "disabled",
     ...(overrides.probeBinary !== undefined
       ? { probeBinary: overrides.probeBinary }
@@ -1334,7 +1334,7 @@ export function createApp(
     res.status(status === 499 ? 499 : status).json(body);
   });
 
-  // Retention (P1-E8): only the app that opened the store sweeps it; an injected
+  // Retention: only the app that opened the store sweeps it; an injected
   // test store is the test's own.
   const retentionSweeper =
     ownsStore && store !== null

@@ -208,7 +208,7 @@ describeIfPg("batch worker · real postgres", () => {
     worker.stop();
   });
 
-  it("works through a backlog in ONE poll wake-up instead of one batch per interval (P1-S3)", async () => {
+  it("works through a backlog in ONE poll wake-up instead of one batch per interval", async () => {
     const revisions = [
       await stage("backlog-1.pdf", 1),
       await stage("backlog-2.pdf", 2),
@@ -236,7 +236,7 @@ describeIfPg("batch worker · real postgres", () => {
     }
   });
 
-  it("drain() honours stop(): a stopped worker claims nothing more (P1-S3)", async () => {
+  it("drain() honours stop(): a stopped worker claims nothing more", async () => {
     await stage("stopped.pdf", 1);
     const worker = createBatchWorker(pool, fakeEmbeddingClient(), { intervalMs: 0, onlyTenantId: TENANT });
     worker.stop();
@@ -248,7 +248,7 @@ describeIfPg("batch worker · real postgres", () => {
     live.stop();
   });
 
-  it("embeds the slices of one batch concurrently and keeps the vector order (P1-S3)", async () => {
+  it("embeds the slices of one batch concurrently and keeps the vector order", async () => {
     // 6 distinct paragraphs + 1 figure = enough units for several slices at size 2.
     const created = await store.createRevision({ tenantId: TENANT, collection, reference: "slices.pdf", ttlMs: 60_000 });
     if (!created.ok) throw new Error("create failed");

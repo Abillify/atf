@@ -130,7 +130,7 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
     expect(inputSchema.required).toEqual([]);
   });
 
-  describe("access level of imported tools (P1-G7)", () => {
+  describe("access level of imported tools", () => {
     const plain = (extra: Record<string, unknown> = {}) =>
       McpServerImportSchema.parse({
         server: { url: `http://127.0.0.1:${downstreamPort}/mcp`, token: DOWNSTREAM_TOKEN },

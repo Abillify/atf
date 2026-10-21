@@ -141,7 +141,7 @@ describe("checkProductionReadiness", () => {
     ).toBe(false);
   });
 
-  test("warns about process-local media and receipt state when several replicas run (P1-R1)", () => {
+  test("warns about process-local media and receipt state when several replicas run", () => {
     const single = checkProductionReadiness(
       productionConfig({ replicas: 1, embedSearchFigures: true, mediaBaseUrl: "https://atf.example.com", decisionReceiptsEnabled: true }),
     );
@@ -156,7 +156,7 @@ describe("checkProductionReadiness", () => {
     expect(unrelated.warnings.some((w) => w.includes("transparency log"))).toBe(false);
   });
 
-  test("warns outside production when AUTHN_MODE=disabled (P0-1)", () => {
+  test("warns outside production when AUTHN_MODE=disabled", () => {
     const dev = checkProductionReadiness(baseConfig({ appEnv: "development", authnMode: "disabled" }));
     expect(dev.warnings.some((w) => w.includes("AUTHN_MODE=disabled: every endpoint"))).toBe(true);
     const secured = checkProductionReadiness(baseConfig({ appEnv: "development", authnMode: "oidc" }));
@@ -166,7 +166,7 @@ describe("checkProductionReadiness", () => {
     expect(prod.fatal.length).toBeGreaterThan(0);
   });
 
-  test("warns in production when EGRESS_ALLOWED_HOSTS is empty (P1-Q2)", () => {
+  test("warns in production when EGRESS_ALLOWED_HOSTS is empty", () => {
     const open = checkProductionReadiness(productionConfig());
     expect(open.warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS is empty"))).toBe(true);
     expect(open.fatal.some((w) => w.includes("EGRESS_ALLOWED_HOSTS"))).toBe(false);

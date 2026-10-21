@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * extract-quality.ts — scores what Extract produced against a golden set
- * (review item P1-E9): character error rate of the running text, heading F1 and
+ * extract-quality.ts — scores what Extract produced against a golden set:
+ * character error rate of the running text, heading F1 and
  * table TEDS. A change of vision model, render DPI or prompt is the biggest
  * cost and quality lever of the pipeline; this puts a number on it.
  *

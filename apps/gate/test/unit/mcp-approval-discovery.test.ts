@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * `approvals/list` and `approvals/get` on the 2026 endpoint (N-P1-10 part 2).
+ * `approvals/list` and `approvals/get` on the 2026 endpoint.
  *
  *  - `approvals/list` shows the caller's open approvals: their own requests,
  *    and — with `requireDifferentApprover` on — every request of the tenant for

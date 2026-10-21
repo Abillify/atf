@@ -3,7 +3,7 @@
 /**
  * Gate health probes. An instance whose `auth.mode` is `disabled` answers every
  * request anonymously; both probes say so (`auth: "disabled"`), so it cannot be
- * mistaken for a protected one (P0-1).
+ * mistaken for a protected one.
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import express from "express";

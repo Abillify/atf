@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Reranker batching (P1-S4): a long candidate list is split into requests of
+ * Reranker batching: a long candidate list is split into requests of
  * `RERANK_BATCH_SIZE` documents (it was a hard-coded 16 that no setting
  * reached), and `RERANK_BATCH_CONCURRENCY` of them run at once instead of
  * 100 hits costing ⌈100/16⌉ serial round-trips. Scores must still land on the

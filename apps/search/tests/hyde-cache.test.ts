@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * HyDE expansion cache (P1-S4): the expansion is one LLM round-trip in front
+ * HyDE expansion cache: the expansion is one LLM round-trip in front
  * of every embedding. An identical query within the TTL is answered from
  * memory (no second call, no second cost), concurrent identical queries share
  * one call, failures are never cached, and the cache is bounded.

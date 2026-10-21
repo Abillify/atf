@@ -64,7 +64,7 @@ export interface HealthDetail {
    */
   audit?: DependencyCheck;
   /**
-   * Flow files that fail to load (P1-R3): `degraded` while any does.
+   * Flow files that fail to load: `degraded` while any does.
    * Informational only (never 503). Present only when a ledger is wired.
    */
   flow_load?: DependencyCheck;
@@ -216,7 +216,7 @@ export interface HealthRouterOptions {
    */
   toolAuthz?: { readonly policyStale?: boolean };
   /**
-   * Flow files that currently fail to load (P1-R3). When provided,
+   * Flow files that currently fail to load. When provided,
    * `/health/ready` reports a `flow_load` check: `degraded` with the file
    * names while any flow file fails to load, `ok` otherwise. Informational
    * (never 503): one broken file must not pull every replica out of rotation,

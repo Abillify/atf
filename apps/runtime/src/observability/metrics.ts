@@ -139,7 +139,7 @@ export interface Metrics {
   ): void;
   setActiveExecutions(n: number): void;
   setQueueDepth(n: number): void;
-  /** Source of `aiperator_flow_load_failures` (P1-R3), read on every render. */
+  /** Source of `aiperator_flow_load_failures`, read on every render. */
   setFlowLoadFailureProbe?(probe: () => number): void;
   /** Prometheus text exposition format. */
   render(): string;
@@ -295,7 +295,7 @@ class MetricsRegistry implements Metrics {
     this.setGauge("aiperator_queue_depth", n);
   }
   /**
-   * Source of `aiperator_flow_load_failures` (P1-R3): the number of flow files
+   * Source of `aiperator_flow_load_failures`: the number of flow files
    * that currently fail to load. Read when `/metrics` is rendered, so the
    * gauge is always current without every loader event having to push it.
    */

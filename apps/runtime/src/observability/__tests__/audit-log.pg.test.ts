@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Audit hash chain against a REAL Postgres (P0-8).
+ * Audit hash chain against a REAL Postgres.
  *
  * The defect: `details` is stored in a `jsonb` column, and `jsonb` does not
  * preserve key order (it stores keys by length, then bytes). A hash computed

@@ -172,7 +172,7 @@ describe("GET /health/ready (requirement 12.5)", () => {
   });
 });
 
-describe("auth: disabled signal (P0-1)", () => {
+describe("auth: disabled signal", () => {
   it("is reported while AUTHN_MODE=disabled and absent otherwise", async () => {
     const postgresClient = createMockPostgresClient({});
     const open = mockRes();

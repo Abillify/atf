@@ -3,7 +3,7 @@
 /**
  * `validate` must name WHY a flow is rejected. It used to print only
  * "Schema validation failed" and drop the per-field causes the loader logs, so
- * a CI failure could not be fixed without starting the runtime (P1-P8).
+ * a CI failure could not be fixed without starting the runtime.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

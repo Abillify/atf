@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Flow files that fail to load (P1-R3).
+ * Flow files that fail to load.
  *
  * A broken flow file used to leave one line on stderr: readiness stayed green,
  * no metric moved, and a file that was deleted from disk stayed registered (and

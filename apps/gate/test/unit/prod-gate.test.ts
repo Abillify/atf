@@ -684,7 +684,7 @@ describe("tenant SQL diagnostics", () => {
   });
 });
 
-describe("pagination cursors across replicas (P1-R1)", () => {
+describe("pagination cursors across replicas", () => {
   const saved = process.env.MCPGATE_REPLICAS;
   const paged = (secret?: string) =>
     goodConfig({
@@ -895,7 +895,7 @@ describe("deprecated mcp forwardBearerToken (Req 6.13)", () => {
   });
 });
 
-describe("tenant authority, default-allow governance and rate limiting (P1-G3, G1, G6)", () => {
+describe("tenant authority, default-allow governance and rate limiting", () => {
   const warn = (config: AppConfig, env = "production") =>
     checkProductionReadiness(config, env).warnings.join("\n");
   const fatal = (config: AppConfig, env = "production") =>
@@ -1081,7 +1081,7 @@ describe("transaction signing and audience (ADR-0035)", () => {
   });
 });
 
-describe("approver separation gate (N-P1-10)", () => {
+describe("approver separation gate", () => {
   const approvalPolicies = {
     defaultEffect: "allow",
     rules: [{ effect: "approval", match: { tool: "orders_delete" } }],
@@ -1163,7 +1163,7 @@ describe("approver separation gate (N-P1-10)", () => {
   });
 });
 
-describe("pending-approval replica gate (N-P1-10)", () => {
+describe("pending-approval replica gate", () => {
   const savedReplicas = process.env.MCPGATE_REPLICAS;
   const savedTransactionRedis = process.env.MCPGATE_TRANSACTION_REDIS_URL;
   const restore = (): void => {

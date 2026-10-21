@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
  * Parity of the MCP `search` tool with `/v2/search` on the shared retrieval
- * pipeline (P1-S2): the query text is normalised before it is embedded (the
+ * pipeline: the query text is normalised before it is embedded (the
  * other search surfaces do this; MCP used to embed the raw string), and the
  * rerank inputs are fitted to the real token budget when a tokenizer is wired.
  * Drives the REAL MCP server through the SDK client against fakes.

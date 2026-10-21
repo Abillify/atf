@@ -183,7 +183,7 @@ if (import.meta.main) {
   // extractor built there reports its fail-open degradations through them
   // (Req 7.8); buildObservability below receives this same instance.
   const metrics = createMetrics(config.metricsEnabled ?? true);
-  // P1-R3: flow files that fail to load are a gauge, not just a line on stderr.
+  // Flow files that fail to load are a gauge, not just a line on stderr.
   metrics.setFlowLoadFailureProbe?.(() => getFlowLoadFailures().length);
   const cacheResult = await buildCache(
     config,

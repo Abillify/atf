@@ -665,7 +665,7 @@ export function createApp(
     {
       postgresClient,
       embeddingClient,
-      // P0-1: an instance without authentication says so on /health.
+      // An instance without authentication says so on /health.
       authDisabled: config.authnMode === "disabled",
     },
     logger,

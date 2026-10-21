@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Machine-readable AI disclosure (EU AI Act Art. 50, P1-Q5).
+ * Machine-readable AI disclosure (EU AI Act Art. 50).
  *
  * Opt-in via `AI_DISCLOSURE`; off by default so existing clients see no change.
  *

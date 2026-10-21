@@ -3,7 +3,7 @@
 /**
  * untrusted-content.test.ts
  *
- * Document text is DATA in every prompt Extract builds (OWASP LLM01, P1-Q1):
+ * Document text is DATA in every prompt Extract builds (OWASP LLM01):
  * it sits inside an explicit element, the system prompt says so, the document
  * cannot close the element itself and hidden "tag" characters are removed.
  */
