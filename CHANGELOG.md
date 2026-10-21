@@ -616,6 +616,7 @@ releases:
   `'A' | '009'`, which never match the whole-word lexeme `to_tsvector` indexes for it; the
   tokenizer now keeps hyphenated words intact, so identifier questions match and rank again.
 - Search no longer generates invalid SQL for a VectorChord-bm25 index: only ParadeDB pg_search is used for `FTS_RANKER=bm25`; any other BM25 index falls back to `ts_rank_cd`.
+- Search documentation and comments no longer claim that the lexical ranker normalises by document length; flag 32 maps the score to rank/(rank+1).
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

@@ -780,7 +780,7 @@ describe("buildFtsQuery", () => {
   // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranker is
   // configurable; bm25 only with a detected extension, else ts_rank_cd.
   describe("lexical ranker (FTS_RANKER)", () => {
-    it("defaults to ts_rank_cd with length normalisation (32)", () => {
+    it("defaults to ts_rank_cd with normalisation flag 32", () => {
       const f = flat(build().sql);
       expect(f).toContain(
         "ts_rank_cd(ts_search, to_tsquery('german', $1), 32) AS text_score",
@@ -956,10 +956,10 @@ describe("buildHybridQuery", () => {
   });
 
   // FTS_RANKER (task 6.9, Requirement 4.7): the txt CTE ranks with
-  // ts_rank_cd + length normalisation by default; bm25 only with a detected
+  // ts_rank_cd (flag 32: rank/(rank+1)) by default; bm25 only with a detected
   // engine. The identifier lexical branch stays ts_rank on ts_ident — it is
   // an identifier list, not the lexical list.
-  it("ranks the txt CTE with ts_rank_cd and length normalisation by default", () => {
+  it("ranks the txt CTE with ts_rank_cd normalisation flag 32 by default", () => {
     const f = flat(build(10, 0).sql);
     expect(f).toContain(
       "ts_rank_cd(ts_search, to_tsquery('german', $2), 32) AS tscore",

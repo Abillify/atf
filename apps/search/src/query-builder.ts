@@ -648,8 +648,8 @@ export type Bm25EngineName = "pg_search";
  * Which ranker the lexical (FTS) list uses. `bm25` is only honoured when a
  * BM25 extension was actually detected (`bm25Engine` non-null) — Requirement
  * 4.7 makes BM25 conditional on ParadeDB `pg_search` being available;
- * without it the builder falls back to `ts_rank_cd` with length
- * normalisation, which is the default ranker anyway.
+ * without it the builder falls back to `ts_rank_cd`, which is the default
+ * ranker anyway.
  */
 export interface LexicalRanker {
   ranker: LexicalRankerName;
@@ -657,11 +657,13 @@ export interface LexicalRanker {
 }
 
 /**
- * `ts_rank_cd` normalisation flag 32: divide the score by 1 + log(document
- * length): the length normalization Requirement 4.7 demands of the default
- * ranker so long chunks do not outrank short ones on raw term hits alone.
+ * `ts_rank_cd` normalisation flag 32 maps the score to rank/(rank+1); it does
+ * NOT normalise by document length (that is flag 1). Kept at 32: the
+ * golden-set comparison in tests/lexical-golden-mrr.integration.test.ts showed
+ * no gain for 1|32. Reciprocal-rank fusion only uses the order, so the flag
+ * matters only within the lexical list.
  */
-const TS_RANK_CD_LENGTH_NORMALIZATION = 32;
+const TS_RANK_CD_NORMALIZATION = 32;
 
 /**
  * Turn a free-text query into OR-ed `to_tsquery` operand text.
@@ -754,7 +756,7 @@ export function buildLexicalQuerySql(
   }
   return {
     match: `ts_search @@ ${tsq}`,
-    score: `ts_rank_cd(ts_search, ${tsq}, ${TS_RANK_CD_LENGTH_NORMALIZATION})`,
+    score: `ts_rank_cd(ts_search, ${tsq}, ${TS_RANK_CD_NORMALIZATION})`,
     allTerms,
   };
 }
@@ -844,8 +846,8 @@ export function buildFtsQuery(
   }
 
   const p = new SqlParams();
-  // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd with length
-  // normalisation; bm25 only when a BM25 extension was detected. The query
+  // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd (flag 32:
+  // rank/(rank+1)); bm25 only when a BM25 extension was detected. The query
   // parameter is added here (first parameter of the query) by the builder.
   const { match, score, allTerms } = buildLexicalQuerySql(
     lexical,
@@ -1027,7 +1029,7 @@ export function buildHybridQuery(
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
   // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranks with
-  // ts_rank_cd + length normalisation by default; bm25 only when a BM25
+  // ts_rank_cd (flag 32: rank/(rank+1)) by default; bm25 only when a BM25
   // extension was detected (the caller passes the engine in, or null to
   // keep the default). The lexical query parameter is added here, right after
   // the dense vector, so it stays the second parameter of the query.

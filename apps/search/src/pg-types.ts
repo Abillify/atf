@@ -105,8 +105,8 @@ export interface PostgresClientConfig {
    */
   rrfMissingZero?: boolean;
   /**
-   * Req 4.7: ranker for the lexical (full-text) list. `ts_rank_cd` (default)
-   * with length normalisation; `bm25` only takes effect when ParadeDB
+   * Req 4.7: ranker for the lexical (full-text) list. `ts_rank_cd` (default,
+   * normalisation flag 32: rank/(rank+1)); `bm25` only takes effect when ParadeDB
    * `pg_search` is installed — otherwise the client logs a warning once and
    * keeps `ts_rank_cd`.
    */

@@ -53,7 +53,7 @@ Document revisions may carry a nullable `valid_from` business timestamp. It is s
 
 Collection schema 11 adds this column and the tenant/base-reference temporal index. Query timestamps remain bind parameters in dense, binary, FTS, sparse, and hybrid branches, and tenant/ACL predicates continue to apply to the final rows. Evaluation reports its normalized `valid_at`; verified evidence binds the selected temporal mode and instant into its provenance hash.
 
-The lexical branch is PostgreSQL full-text search using `ts_rank_cd` (with length normalisation)
+The lexical branch is PostgreSQL full-text search using `ts_rank_cd` (normalisation flag 32: rank/(rank+1))
 and an OR-combined `to_tsquery`: each distinct term of the query becomes a quoted operand joined
 by `|`, so a natural-language question like "Wie hoch ist die Miete im Mietvertrag" produces
 lexical hits on any of its terms instead of requiring all of them (which left the branch empty

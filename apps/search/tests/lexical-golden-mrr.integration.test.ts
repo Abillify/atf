@@ -28,7 +28,10 @@ import { pino } from "pino";
 import { createPostgresClient, type PostgresClient } from "../src/postgres-client.js";
 import { collectionTableName } from "../src/collection-ddl.js";
 import { ensureRevisionTables } from "../src/revision-schema.js";
-import { buildLexicalOrTsQuery } from "../src/query-builder.js";
+import {
+  buildLexicalAndTsQuery,
+  buildLexicalOrTsQuery,
+} from "../src/query-builder.js";
 import type { AccessScope } from "../src/access-scope.js";
 
 const CONNECTION = process.env.TEST_POSTGRES_URL;
@@ -149,6 +152,28 @@ describeIfPg("lexical MRR@10 on the synthetic golden set · real postgres", () =
     return res.rows.map((r) => r.reference);
   }
 
+  /**
+   * The production ranking shape (all-terms-first) with an explicit
+   * `ts_rank_cd` normalisation flag, so flags 32 and 33 can be measured on the
+   * same data (see the T-015 decision rule).
+   */
+  async function andFirstReferencesWithFlag(
+    query: string,
+    flag: number,
+  ): Promise<string[]> {
+    const res = await pool.query<{ reference: string }>(
+      `SELECT reference FROM "${table}"
+        WHERE tenant_id = $1
+          AND ts_search @@ to_tsquery('simple', $2)
+        ORDER BY (ts_search @@ to_tsquery('simple', $3)) DESC,
+                 ts_rank_cd(ts_search, to_tsquery('simple', $2), $4) DESC,
+                 id ASC
+        LIMIT 10`,
+      [TENANT, buildLexicalOrTsQuery(query), buildLexicalAndTsQuery(query), flag],
+    );
+    return res.rows.map((r) => r.reference);
+  }
+
   async function andFirstReferences(query: string): Promise<string[]> {
     const res = await hybrid(query);
     expect(res.ok, res.ok ? "" : JSON.stringify(res.error)).toBe(true);
@@ -258,6 +283,62 @@ describeIfPg("lexical MRR@10 on the synthetic golden set · real postgres", () =
       expect(mrrAndFirst).toBeGreaterThanOrEqual(0.9);
       expect(mrrAndFirst).toBeGreaterThanOrEqual(mrrOrBaseline);
       expect(mrrAndFirstDe).toBeGreaterThanOrEqual(mrrOrBaselineDe - 0.01);
+    },
+    120_000,
+  );
+
+  it(
+    "compares ts_rank_cd normalisation 32 vs 33",
+    async () => {
+      const golden = JSON.parse(
+        readFileSync(resolve(GOLDEN_DIR, "golden-set.v1.json"), "utf8"),
+      ) as { questions: GoldenQuestionLike[] };
+      const variantSet = JSON.parse(
+        readFileSync(resolve(GOLDEN_DIR, "de-morphology.v1.json"), "utf8"),
+      ) as { variants: MorphologyVariantLike[] };
+      const questionById = new Map(golden.questions.map((q) => [q.id, q]));
+      const questions = golden.questions.filter((q) => q.expectedPages.length > 0);
+      expect(questions.length).toBeGreaterThan(0);
+
+      const mrr = async (
+        items: { question: string; document: string; expectedPages: number[] }[],
+        flag: number,
+      ): Promise<number> => {
+        let sum = 0;
+        for (const item of items) {
+          sum += reciprocalRank(
+            await andFirstReferencesWithFlag(item.question, flag),
+            item.document,
+            item.expectedPages,
+          );
+        }
+        return items.length > 0 ? sum / items.length : 0;
+      };
+
+      const deItems = variantSet.variants
+        .map((variant) => {
+          const base = questionById.get(variant.base);
+          if (!base || base.expectedPages.length === 0) return null;
+          return {
+            question: variant.question,
+            document: base.document,
+            expectedPages: base.expectedPages,
+          };
+        })
+        .filter((item): item is { question: string; document: string; expectedPages: number[] } => item !== null);
+
+      const golden32 = await mrr(questions, 32);
+      const golden33 = await mrr(questions, 33);
+      const de32 = await mrr(deItems, 32);
+      const de33 = await mrr(deItems, 33);
+
+      console.info("normalisation compare", { golden32, golden33, de32, de33 });
+
+      for (const value of [golden32, golden33, de32, de33]) {
+        expect(typeof value).toBe("number");
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThanOrEqual(1);
+      }
     },
     120_000,
   );
