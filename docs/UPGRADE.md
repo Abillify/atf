@@ -6,8 +6,10 @@
 Database migrations are additive and run under a PostgreSQL advisory lock,
 so a migration job and booting replicas serialize safely. Who runs them is
 controlled by `MIGRATE_ON_START` (see [DEPLOYMENT.md](../DEPLOYMENT.md)):
-outside production a service migrates on start; with
-`APP_ENV`/`NODE_ENV=production` and the variable unset it does not, and the
+outside production a service migrates on start; with the production profile
+(`ATF_PROFILE=production`; without it the service variable, e.g. `APP_ENV=production` for
+Runtime, `MCPGATE_ENV` for the Gate, `NODE_ENV` for Search and Extract) and the variable unset
+it does not, and the
 standalone `bun run migrate` command (the Helm chart's pre-install/pre-upgrade
 jobs) applies the schema instead. Manual steps exist only for configuration
 and contracts. Before every upgrade, take a backup as described in

@@ -62,7 +62,9 @@ anchored, evidence bundles are signed, and a generated dossier collects the acti
 chain verification result, executed erasures, retention windows, evaluation results, and the
 red-team posture score.
 
-**Production gates reject selected unsafe settings.** With `APP_ENV=production`, Runtime refuses
+**Production gates reject selected unsafe settings.** With the production profile
+(`ATF_PROFILE=production`; without it the service variable, e.g. `APP_ENV=production` for
+Runtime, `MCPGATE_ENV` for the Gate, `NODE_ENV` for Search and Extract), Runtime refuses
 to start on configurations such as open CORS, unverified JWTs, or an unauthenticated metrics
 endpoint. Individual guardrails and policies remain explicit deployment choices; their defaults
 and prerequisites are documented in [Capabilities](docs/CAPABILITIES.md) and

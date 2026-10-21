@@ -165,8 +165,8 @@ nothing else. Exit code 0 means the schema is at the target version
 (including "already up to date"); 1 means it is not.
 
 `MIGRATE_ON_START` controls whether a service applies migrations itself at
-boot. Unset means: `true` outside production, `false` when
-`APP_ENV`/`NODE_ENV` is `production` — production replicas therefore do not do
+boot. Unset means: `true` outside production, `false` when the resolved
+profile is production (`ATF_PROFILE`, else `APP_ENV`/`NODE_ENV`) — production replicas therefore do not do
 DDL on their boot path, and a one-shot migration Job runs `bun run migrate`
 ahead of the rollout instead (the Helm chart wires this as a
 `pre-install`/`pre-upgrade` hook). An explicit `true`/`false` always wins, e.g.
@@ -323,12 +323,12 @@ full-text default) are listed in [docs/UPGRADE.md](docs/UPGRADE.md).
 Verify an image before you pin its digest. Replace `<service>` and the version:
 
 ```sh
-IMAGE=ghcr.io/abillify/atf-<service>:0.16.0
+IMAGE=ghcr.io/abillify/atf-<service>:<VERSION>
 DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')
 
 # Signature: the identity is the release workflow at the release tag.
 cosign verify "ghcr.io/abillify/atf-<service>@${DIGEST}" \
-  --certificate-identity "https://github.com/Abillify/atf/.github/workflows/release.yml@refs/tags/v0.16.0" \
+  --certificate-identity "https://github.com/Abillify/atf/.github/workflows/release.yml@refs/tags/v<VERSION>" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Build provenance and SBOM attestations.
@@ -339,6 +339,22 @@ gh attestation verify "oci://ghcr.io/abillify/atf-<service>@${DIGEST}" --repo Ab
 
 Deploy by the verified digest through the per-service `image.digest` value (for example
 `--set runtime.image.digest=${DIGEST}`), not by the mutable version tag in `global.image.tag`.
+
+### Verify the release bundle
+
+Tag releases also attach a checksummed supply-chain bundle
+(`atf-supply-chain-v<VERSION>-<commit-sha>.tar.gz`) to the GitHub release. The release workflow
+signs the tarball with a keyless GitHub artifact attestation that binds its digest to the
+workflow run and commit. After downloading the bundle from the release page, verify it:
+
+```sh
+gh attestation verify atf-supply-chain-v<VERSION>-<commit-sha>.tar.gz --repo Abillify/atf
+```
+
+A successful verification proves the tarball was produced by the release workflow for this
+repository at the tagged commit; compare the file against `CHECKSUMS.sha256` inside it as a
+second check.
+
 ## Throughput tuning: `PAGE_CONCURRENCY` vs. the vLLM batch
 
 `PAGE_CONCURRENCY` (Extract) is the number of pages of **one job** Extract keeps in flight

@@ -108,7 +108,8 @@ startup error.
 - `ATF_PRESET` applies a bundle of defaults (`dev`, `secure`, `regulated`,
   `regulated-multitenant`, `performance`); explicit variables always win.
   `PROFILE` is a deprecated alias of it
-- With `APP_ENV=production` a readiness gate refuses to start under unsafe settings such as
+- With the production profile (`ATF_PROFILE=production`; without it `APP_ENV=production`) a
+  readiness gate refuses to start under unsafe settings such as
   open CORS or unverified JWTs (`src/config/prod-gate.ts`)
 
 Three settings shape what the platform does with untrusted content and what it tells clients:

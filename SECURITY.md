@@ -55,7 +55,15 @@ injection, prompt injection that escalates to tool execution or data access beyo
 caller's scope, PII vault leakage, audit log forgery, approval gate bypass, SSRF through tool,
 provider, conversion-callback, or `source_url` configuration, escape from the document
 conversion path,
-secret disclosure, and privilege escalation in the operator plane.
+secret disclosure, and privilege escalation in the operator plane. Two mechanisms bound the
+blast radius of such findings and are therefore in scope:
+- **Evidence signing.** Runtime evidence bundles are signed (COSE_Sign1, Ed25519); verification
+  keys are published at `GET /.well-known/atf-evidence-jwks.json`. Forging or replaying signed
+  evidence, or weakening signature verification, is in scope.
+- **Content trust / taint.** Untrusted tool and retrieval results taint the execution
+  (`_meta["io.atf/content-trust"]` between services; `TAINT_MODE`,
+  `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`). Bypassing taint — e.g. a tainted result performing
+  writes without the required approval — is in scope.
 
 Out of scope: findings that only apply to `deploy/examples`, which is documented as an
 unauthenticated local stack and is not a production template; missing hardening in a
@@ -67,7 +75,9 @@ can bump); and results from automated scanners without a demonstrated impact.
 
 ATF provides production-readiness gates and multiple fail-closed controls, but individual
 features and fail modes remain configuration-dependent. Runtime refuses to start under selected
-unsafe settings when `APP_ENV=production`, for example open CORS, unverified JWTs, or an
+unsafe settings under the production profile (`ATF_PROFILE=production`; without it the service
+variable, e.g. `APP_ENV=production` for Runtime, `MCPGATE_ENV` for the Gate, `NODE_ENV` for
+Search and Extract), for example open CORS, unverified JWTs, or an
 unauthenticated monitoring endpoint. Treat that gate as a safety net, not as a substitute for
 the review described in [DEPLOYMENT.md](DEPLOYMENT.md).
 
