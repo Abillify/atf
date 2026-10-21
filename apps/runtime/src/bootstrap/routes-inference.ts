@@ -210,6 +210,12 @@ export async function registerInferenceRoutes(
       // Flow files that fail to load are an informational readiness
       // hint, and the aiperator_flow_load_failures gauge reads the same ledger.
       flowLoad: getFlowLoadFailures,
+      // COMPLIANCE_POLICY_REQUIRED: a missing (or no longer loadable) policy is
+      // an informational readiness hint, read lazily so hot-reloads count.
+      compliancePolicy: {
+        required: config.compliancePolicyRequired === true,
+        loaded: () => getCompliancePolicy() !== undefined,
+      },
       // An instance without authentication says so on /health.
       authDisabled: config.authnMode === "disabled",
     }),

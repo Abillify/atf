@@ -35,7 +35,7 @@ export type { SecureDefaults } from "./defaults.js";
 
 // --- Production-readiness gate from prod-gate.ts ---
 export type { ClusterStateContext } from "./prod-gate.js";
-export { checkProductionReadiness } from "./prod-gate.js";
+export { checkCompliancePolicyRequirement, checkProductionReadiness } from "./prod-gate.js";
 
 // --- Config loader from load.ts ---
 export { loadConfig } from "./load.js";

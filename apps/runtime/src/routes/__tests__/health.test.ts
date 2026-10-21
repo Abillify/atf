@@ -383,3 +383,50 @@ describe("auth: disabled signal", () => {
     expect(await (await plain.request("/health")).json()).not.toHaveProperty("auth");
   });
 });
+
+describe("compliance_policy readiness hint", () => {
+  const ready = async (compliancePolicy?: { required: boolean; loaded: () => boolean }) => {
+    const app = new Hono().route(
+      "/",
+      createHealthRouter(makeFlowRegistry(["a"]), {
+        database: makeDatabase(),
+        ...(compliancePolicy !== undefined ? { compliancePolicy } : {}),
+      }),
+    );
+    const res = await app.request("/health/ready");
+    return { status: res.status, body: (await res.json()) as ReadinessResponse };
+  };
+
+  it("reports `missing` (degraded, never 503) while the required policy is not loaded", async () => {
+    const { status, body } = await ready({ required: true, loaded: () => false });
+    expect(status).toBe(200);
+    expect(body.status).toBe("ready");
+    expect(body.checks.compliance_policy).toMatchObject({ status: "degraded", compliance_policy: "missing" });
+  });
+
+  it("reports `loaded` when the policy is there", async () => {
+    const { body } = await ready({ required: true, loaded: () => true });
+    expect(body.checks.compliance_policy).toEqual({ status: "ok", compliance_policy: "loaded" });
+  });
+
+  it("follows a failed hot-reload: the state is read per request", async () => {
+    let loaded = true;
+    const app = new Hono().route(
+      "/",
+      createHealthRouter(makeFlowRegistry(["a"]), {
+        database: makeDatabase(),
+        compliancePolicy: { required: true, loaded: () => loaded },
+      }),
+    );
+    const first = (await (await app.request("/health/ready")).json()) as ReadinessResponse;
+    expect(first.checks.compliance_policy?.compliance_policy).toBe("loaded");
+    loaded = false;
+    const second = (await (await app.request("/health/ready")).json()) as ReadinessResponse;
+    expect(second.checks.compliance_policy?.compliance_policy).toBe("missing");
+  });
+
+  it("adds nothing when the policy is not required or no source is wired", async () => {
+    expect((await ready({ required: false, loaded: () => false })).body.checks).not.toHaveProperty("compliance_policy");
+    expect((await ready()).body.checks).not.toHaveProperty("compliance_policy");
+  });
+});

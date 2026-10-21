@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { checkProductionReadiness, type AppConfig } from "../index.js";
+import { checkCompliancePolicyRequirement, checkProductionReadiness, type AppConfig } from "../index.js";
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -1470,5 +1470,36 @@ describe("checkProductionReadiness · downgraded production variable", () => {
       { ATF_PROFILE: "staging" },
     );
     expect(warnings.some((w) => w.includes("is overridden by"))).toBe(false);
+  });
+});
+
+describe("COMPLIANCE_POLICY_REQUIRED in the readiness gate", () => {
+  test("a missing policy is fatal in production and a warning elsewhere", () => {
+    const prod = checkProductionReadiness(
+      productionConfig({ compliancePolicyRequired: true }),
+      { storeBacking: "postgres", rlsVerified: true, compliancePolicyLoaded: false },
+    );
+    expect(prod.fatal.some((f) => f.includes("COMPLIANCE_POLICY_REQUIRED"))).toBe(true);
+    const staging = checkProductionReadiness(
+      baseConfig({ appEnv: "staging", compliancePolicyRequired: true }),
+      { storeBacking: "postgres", rlsVerified: true, compliancePolicyLoaded: false },
+    );
+    expect(staging.fatal.some((f) => f.includes("COMPLIANCE_POLICY_REQUIRED"))).toBe(false);
+    expect(staging.warnings.some((w) => w.includes("COMPLIANCE_POLICY_REQUIRED"))).toBe(true);
+  });
+
+  test("a loaded policy, an unknown state or a policy that is not required report nothing", () => {
+    const has = (r: { fatal: string[]; warnings: string[] }) =>
+      [...r.fatal, ...r.warnings].some((m) => m.includes("COMPLIANCE_POLICY_REQUIRED"));
+    const ctx = { storeBacking: "postgres" as const, rlsVerified: true };
+    expect(has(checkProductionReadiness(productionConfig({ compliancePolicyRequired: true }), { ...ctx, compliancePolicyLoaded: true }))).toBe(false);
+    expect(has(checkProductionReadiness(productionConfig({ compliancePolicyRequired: true }), ctx))).toBe(false);
+    expect(has(checkProductionReadiness(productionConfig({ compliancePolicyRequired: false }), { ...ctx, compliancePolicyLoaded: false }))).toBe(false);
+  });
+
+  test("checkCompliancePolicyRequirement alone", () => {
+    expect(checkCompliancePolicyRequirement({ appEnv: "production", compliancePolicyRequired: true }, false).fatal).toHaveLength(1);
+    expect(checkCompliancePolicyRequirement({ appEnv: "development", compliancePolicyRequired: true }, false).warnings).toHaveLength(1);
+    expect(checkCompliancePolicyRequirement({ appEnv: "production", compliancePolicyRequired: true }, true)).toEqual({ fatal: [], warnings: [] });
   });
 });

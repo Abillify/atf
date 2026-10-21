@@ -42,6 +42,34 @@ export interface ClusterStateContext {
    * be read.
    */
   tenantCount?: number;
+  /**
+   * Whether a valid `compliance-policy.yaml` is loaded. Only known once the
+   * policy loader exists (later than persistence); when given together with
+   * `COMPLIANCE_POLICY_REQUIRED`, a missing policy is judged like any other
+   * readiness finding. `undefined` = not known yet, the check is skipped.
+   */
+  compliancePolicyLoaded?: boolean;
+}
+
+/**
+ * `COMPLIANCE_POLICY_REQUIRED`: residency and data-class rules only exist when
+ * `compliance-policy.yaml` loaded. Production without one is fatal; elsewhere
+ * the same gap is a warning, so the configuration surfaces it early.
+ */
+export function checkCompliancePolicyRequirement(
+  config: Pick<AppConfig, "compliancePolicyRequired" | "appEnv">,
+  policyLoaded: boolean,
+): { fatal: string[]; warnings: string[] } {
+  if (config.compliancePolicyRequired !== true || policyLoaded) {
+    return { fatal: [], warnings: [] };
+  }
+  const message =
+    "COMPLIANCE_POLICY_REQUIRED is set but no valid compliance-policy.yaml is loaded: " +
+    "data-class residency and provider rules are not enforced. Add the policy to the " +
+    "flows directory (see compliance-policy.example.yaml).";
+  return config.appEnv === "production"
+    ? { fatal: [message], warnings: [] }
+    : { fatal: [], warnings: [message] };
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +514,12 @@ export function checkProductionReadiness(
   }
 
   // ── Cluster-State & RLS checks (Req 2.2, 2.3, 3.1) ────────────────────────
+  if (clusterState?.compliancePolicyLoaded !== undefined) {
+    const compliance = checkCompliancePolicyRequirement(config, clusterState.compliancePolicyLoaded);
+    fatal.push(...compliance.fatal);
+    warnings.push(...compliance.warnings);
+  }
+
   if (clusterState !== undefined) {
     if (clusterState.storeBacking === "memory") {
       const states =

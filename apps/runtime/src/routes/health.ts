@@ -78,6 +78,15 @@ export interface HealthDetail {
    * Present only when a tool-authz loader is wired.
    */
   policy_stale?: DependencyCheck & { policy_stale?: boolean };
+  /**
+   * `COMPLIANCE_POLICY_REQUIRED` is set: `degraded` with
+   * `compliance_policy: "missing"` while no valid `compliance-policy.yaml` is
+   * loaded (also after a failed hot-reload), `ok` / `"loaded"` otherwise.
+   * Informational only (never 503): the data-class rules are not enforced
+   * while it is missing, and that must not be invisible. Present only when
+   * the policy is required.
+   */
+  compliance_policy?: DependencyCheck & { compliance_policy?: "missing" | "loaded" };
 }
 
 export interface ReadinessResponse {
@@ -224,6 +233,12 @@ export interface HealthRouterOptions {
    */
   flowLoad?: () => ReadonlyArray<{ file: string; reason: string; since: string }>;
   /**
+   * `COMPLIANCE_POLICY_REQUIRED` state. When `required`, `/health/ready`
+   * reports a `compliance_policy` check that is `degraded` while `loaded()`
+   * is false (evaluated per request, so a failed hot-reload shows up).
+   */
+  compliancePolicy?: { required: boolean; loaded: () => boolean };
+  /**
    * `AUTHN_MODE=disabled` is in effect: every endpoint answers without a
    * credential. `/health` and `/health/ready` then carry `auth: "disabled"` so
    * a probe, a dashboard or a person looking at the response cannot mistake an
@@ -339,6 +354,17 @@ export function createHealthRouter(
                 .join(", ")}${flowLoadFailures.length > 10 ? ", …" : ""} (see aiperator_flow_load_failures).`,
             }
           : { status: "ok" };
+    const complianceCheck: HealthDetail["compliance_policy"] | undefined =
+      options?.compliancePolicy?.required !== true
+        ? undefined
+        : options.compliancePolicy.loaded()
+          ? { status: "ok", compliance_policy: "loaded" }
+          : {
+              status: "degraded",
+              reason:
+                "COMPLIANCE_POLICY_REQUIRED is set but no valid compliance-policy.yaml is loaded — data-class residency and provider rules are not enforced.",
+              compliance_policy: "missing",
+            };
     const checks: HealthDetail = {
       database: dbCheck,
       redis: redisCheck,
@@ -348,6 +374,7 @@ export function createHealthRouter(
       ...(policyStaleCheck !== undefined
         ? { policy_stale: policyStaleCheck }
         : {}),
+      ...(complianceCheck !== undefined ? { compliance_policy: complianceCheck } : {}),
     };
 
     // A replica with no loaded flows cannot serve meaningful execution traffic.

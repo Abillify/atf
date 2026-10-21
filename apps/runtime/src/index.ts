@@ -23,7 +23,7 @@
  */
 
 import { getFlowLoadFailures } from "./graph/flow-parser/validate.js";
-import { loadConfig, checkProductionReadiness } from "./config/index.js";
+import { loadConfig, checkCompliancePolicyRequirement, checkProductionReadiness } from "./config/index.js";
 import { buildOperatorAuthentication } from "./bootstrap/operator-auth.js";
 import { createFlowParserService } from "./graph/flow-parser.js";
 import {
@@ -1096,19 +1096,14 @@ if (import.meta.main) {
   // COMPLIANCE_POLICY_REQUIRED: residency and data-class rules only exist when
   // compliance-policy.yaml loaded. Production without one refuses to start;
   // elsewhere it is a warning, so the same configuration surfaces the gap early.
-  if (
-    config.compliancePolicyRequired === true &&
-    compliancePolicyLoaderRef?.policy === undefined
-  ) {
-    const message =
-      "COMPLIANCE_POLICY_REQUIRED is set but no valid compliance-policy.yaml is loaded: " +
-      "data-class residency and provider rules are not enforced. Add the policy to the " +
-      "flows directory (see compliance-policy.example.yaml).";
-    if (config.appEnv === "production") {
-      logger.error(message);
-      process.exit(1);
-    }
-    logger.warn(message);
+  const complianceReadiness = checkCompliancePolicyRequirement(
+    config,
+    compliancePolicyLoaderRef?.policy !== undefined,
+  );
+  for (const w of complianceReadiness.warnings) logger.warn(`Readiness warning: ${w}`);
+  if (complianceReadiness.fatal.length > 0) {
+    for (const f of complianceReadiness.fatal) logger.error(`Readiness failure: ${f}`);
+    process.exit(1);
   }
   // 14. HTTP Server
   const server = Bun.serve({
