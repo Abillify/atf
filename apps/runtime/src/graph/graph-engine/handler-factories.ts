@@ -55,6 +55,10 @@ import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
 import { createExecutionTaint } from "../execution-taint.js";
 import {
+  ExecutionBudget,
+  isExecutionBudgetExceededError,
+} from "../execution-budget.js";
+import {
   sideEffectFreeApprovalGate,
   type ApprovalRegistry,
 } from "../approval-gate.js";
@@ -953,6 +957,11 @@ class GraphEngineServiceImpl implements GraphEngineService {
         if (res !== undefined) setGenAiResponseAttributes(span, res);
       },
       usage,
+      // Per-execution budgets (flow-level `budgets` block): only present when
+      // the flow declares them, so flows without budgets are unaffected.
+      ...(resolvedFlow.budgets !== undefined
+        ? { executionBudget: new ExecutionBudget(resolvedFlow.budgets) }
+        : {}),
       llmProviderFactory: this.llmProviderFactory,
       // Flow-local decisions (a dead endpoint in this run must not skip the
       // provider in unrelated runs), while the reachability signal is also fed
@@ -1430,7 +1439,28 @@ class GraphEngineServiceImpl implements GraphEngineService {
         }
       }
     } catch (err) {
-      if (controller.signal.aborted) {
+      if (isExecutionBudgetExceededError(err)) {
+        // Execution budget reached: finish gracefully with the text produced
+        // so far (no error chunk, no rethrow). The check happens before each
+        // LLM/tool call, so no in-flight call is interrupted.
+        st.recordNodeDiagnostic(finalNodeId ?? "flow", {
+          level: "warn",
+          code: "budget_exceeded",
+          message: err.message,
+          details: { kind: err.kind, limit: err.limit, used: err.used },
+        });
+        try {
+          await onChunk({
+            id: crypto.randomUUID(),
+            object: "chat.completion.chunk",
+            created: Math.floor(Date.now() / 1000),
+            model,
+            choices: [{ index: 0, delta: {}, finish_reason: "budget_exceeded" }],
+          } as unknown as ChatCompletionChunk);
+        } catch {
+          /* client disconnected */
+        }
+      } else if (controller.signal.aborted) {
         st.flowErrored = true;
         const timeoutMessage =
           `Flow "${flowId}" execution exceeded the ${timeoutMs}ms timeout and was aborted.`;

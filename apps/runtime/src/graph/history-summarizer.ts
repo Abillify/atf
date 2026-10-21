@@ -217,6 +217,7 @@ export function createHistorySummarizer(
       runtime.usage.promptTokens += promptTokens;
       runtime.usage.completionTokens += completionTokens;
       runtime.usage.totalTokens += promptTokens + completionTokens;
+      runtime.executionBudget?.addTokens(promptTokens + completionTokens);
       const cost = estimateCost(
         llm.provider,
         llm.model,

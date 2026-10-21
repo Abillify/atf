@@ -345,6 +345,10 @@ export async function runStructuredLlmOutput(
     let candidateFailed = false;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Per-execution budget (T-036): checked before each attempt's model
+    // call; a call already in flight is never aborted.
+    runtime.executionBudget?.check("tokens");
+    runtime.executionBudget?.check("wallMs");
     try {
       let text = "";
       let genUsage: StructuredUsage | undefined;
@@ -451,6 +455,7 @@ export async function runStructuredLlmOutput(
         genUsage?.totalTokens && genUsage.totalTokens > 0
           ? genUsage.totalTokens
           : promptTokens + completionTokens;
+      runtime.executionBudget?.addTokens(promptTokens + completionTokens);
       runtime.setGenAiAttributes?.(node.id, undefined, {
         inputTokens: promptTokens,
         outputTokens: completionTokens,

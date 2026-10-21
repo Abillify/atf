@@ -566,6 +566,14 @@ export interface FlowDefinition {
    *                      unused so the gap stays visible rather than implied.
    */
   recovery?: FlowRecoveryPolicy;
+  /**
+   * Per-execution budgets (tokens, tool calls, wall-clock). Enforced centrally
+   * by the engine: once a limit is reached the execution stops BEFORE the next
+   * model or tool call (a call already in flight is never aborted) and finishes
+   * with `finishReason: "budget_exceeded"`, returning the text produced so far.
+   * Absent → no budget enforcement (behaviour unchanged).
+   */
+  budgets?: FlowExecutionBudget;
   /** Flow nodes — between 1 and 100 */
   nodes: FlowNode[];
   /** Flow edges — between 0 and 500 */
@@ -579,6 +587,21 @@ export interface FlowDefinition {
   metadata?: Record<string, unknown> & {
     ui?: FlowUiMetadata["ui"];
   };
+}
+
+/**
+ * Per-execution budget limits declared by a flow (`budgets` block). All three
+ * dimensions are optional and independent; a dimension that is omitted is
+ * simply not enforced. Enforced by `ExecutionBudget` in
+ * `graph/execution-budget.ts`.
+ */
+export interface FlowExecutionBudget {
+  /** Max sum of prompt + completion tokens over all LLM calls of the execution. */
+  maxTokens?: number;
+  /** Max sum of all MCP/tool calls of the execution. */
+  maxToolCalls?: number;
+  /** Max wall-clock milliseconds since the execution started. */
+  maxWallMs?: number;
 }
 
 /**

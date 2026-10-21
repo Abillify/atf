@@ -58,8 +58,18 @@ export function buildLoopGuardedExecuteToolCall(
     (typeof loopGuardSetting === "object" && loopGuardSetting !== null);
   const innerExecuteToolCall = runtime.executeToolCall;
   const toolResultMemo = new Map<string, Promise<unknown>>();
+  // Per-execution budget (T-036): the limit is checked BEFORE the call is
+  // dispatched (a running call is never aborted) and the call counts against
+  // it even when the loop guard later blocks it or the result memo serves it
+  // from cache — an attempted call is a call.
+  const budgetCheck = () => {
+    runtime.executionBudget?.check("toolCalls");
+    runtime.executionBudget?.check("wallMs");
+    runtime.executionBudget?.addToolCall();
+  };
   return loopGuardEnabled
     ? async (toolCallId, toolName, args, execute) => {
+        budgetCheck();
         const memoKey = looksMutating(toolName)
           ? undefined
           : `${toolName}\u0000${hashToolArgs(args)}`;
@@ -219,5 +229,10 @@ export function buildLoopGuardedExecuteToolCall(
         }
         return pending;
       }
-    : innerExecuteToolCall;
+    : async (toolCallId, toolName, args, execute) => {
+        budgetCheck();
+        return innerExecuteToolCall !== undefined
+          ? innerExecuteToolCall(toolCallId, toolName, args, execute)
+          : execute();
+      };
 }

@@ -101,6 +101,31 @@
       ],
       "additionalProperties": false
     },
+    "budgets": {
+      "description": "Per-execution budgets: once a limit is reached the execution stops before the next model or tool call and finishes with `finishReason: budget_exceeded`.",
+      "type": "object",
+      "properties": {
+        "maxTokens": {
+          "description": "Maximum total tokens (prompt + completion of all LLM calls) for one execution of the flow.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000000
+        },
+        "maxToolCalls": {
+          "description": "Maximum total MCP/tool calls for one execution of the flow.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxWallMs": {
+          "description": "Maximum wall-clock time in milliseconds since the execution started.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        }
+      },
+      "additionalProperties": false
+    },
     "nodes": {
       "minItems": 1,
       "maxItems": 100,

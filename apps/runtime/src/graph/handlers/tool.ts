@@ -447,6 +447,12 @@ export function createToolNodeHandler(
                 },
               )
             : undefined;
+          // Per-execution budget (T-036): checked before dispatch, so a call
+          // already in flight is never aborted — the limit takes effect on the
+          // next tool call the node would make.
+          runtime.executionBudget?.check("toolCalls");
+          runtime.executionBudget?.check("wallMs");
+          runtime.executionBudget?.addToolCall();
           let result: Awaited<ReturnType<typeof runtime.mcpWrapper.callTool>>;
           try {
             result = await runtime.mcpWrapper.callTool(

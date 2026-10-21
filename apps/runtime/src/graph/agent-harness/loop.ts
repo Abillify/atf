@@ -23,6 +23,7 @@ import {
   resolveTurnContext,
 } from "../exec-runtime.js";
 import { buildClassificationNamespaces } from "../classification-access.js";
+import { isExecutionBudgetExceededError } from "../execution-budget.js";
 import type { AgentState, ExecRuntime } from "../graph-engine.js";
 import { baseMessagesToModelMessages } from "../message-mapping.js";
 import type {
@@ -896,6 +897,21 @@ export function createAgentHarnessNodeHandler(
         return stop(limitHit, progress, errors);
       }
 
+      // Flow-level execution budget (`budgets:`): treated like a limit stop —
+      // checked before starting another batch, never aborting a running call.
+      if (runtime.executionBudget !== undefined) {
+        try {
+          runtime.executionBudget.check("tokens");
+          runtime.executionBudget.check("toolCalls");
+          runtime.executionBudget.check("wallMs");
+        } catch (budgetErr) {
+          if (isExecutionBudgetExceededError(budgetErr)) {
+            return stop("budget-limit", progress, errors);
+          }
+          throw budgetErr;
+        }
+      }
+
       // Select the next batch of pending tasks (Req 4.1). A batch holds more
       // than one task only when the planner marked contiguous pending tasks
       // `parallelizable` — otherwise it is a single task and behaviour is
@@ -1687,7 +1703,7 @@ export function createAgentHarnessNodeHandler(
           statusText(
             cfg.statusLanguage,
             "stopSignal",
-            { signal: cfg.stopSignal },
+            { signal: cfg.stopSignal ?? "" },
             `Stop signal detected ("${cfg.stopSignal}") — research complete, re-plan skipped.`,
           ),
         );

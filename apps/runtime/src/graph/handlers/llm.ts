@@ -106,6 +106,11 @@ export function createLlmNodeHandler(
 
     runtime.onNodeStart(node.id);
 
+    // Per-execution budget (T-036): checked before the node's first model
+    // call; a call already in flight is never aborted.
+    runtime.executionBudget?.check("tokens");
+    runtime.executionBudget?.check("wallMs");
+
     const resolved = resolveNodeConfig(node, state);
     resolved.systemPrompt = resolveContextPlaceholders(
       resolved.systemPrompt,
@@ -457,6 +462,9 @@ export function createLlmNodeHandler(
         runtime.usage.promptTokens += hit.usage.promptTokens;
         runtime.usage.completionTokens += hit.usage.completionTokens;
         runtime.usage.totalTokens += hit.usage.totalTokens;
+        runtime.executionBudget?.addTokens(
+          hit.usage.promptTokens + hit.usage.completionTokens,
+        );
         runtime.setGenAiAttributes?.(node.id, undefined, {
           inputTokens: hit.usage.promptTokens,
           outputTokens: hit.usage.completionTokens,
@@ -475,6 +483,9 @@ export function createLlmNodeHandler(
         runtime.usage.promptTokens += hit.usage.promptTokens;
         runtime.usage.completionTokens += hit.usage.completionTokens;
         runtime.usage.totalTokens += hit.usage.totalTokens;
+        runtime.executionBudget?.addTokens(
+          hit.usage.promptTokens + hit.usage.completionTokens,
+        );
         runtime.setGenAiAttributes?.(node.id, undefined, {
           inputTokens: hit.usage.promptTokens,
           outputTokens: hit.usage.completionTokens,

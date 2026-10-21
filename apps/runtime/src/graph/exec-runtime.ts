@@ -421,6 +421,13 @@ export interface ExecRuntime {
     res?: GenAiResponse,
   ) => void;
   usage: UsageAccumulator;
+  /**
+   * Per-execution token / tool-call / wall-clock budget (T-036), present only
+   * when the flow declares `budgets`. Checked before each LLM and tool call;
+   * exceeding a dimension throws `ExecutionBudgetExceededError`, which ends
+   * the execution gracefully with `finishReason: "budget_exceeded"`.
+   */
+  executionBudget?: import("./execution-budget.js").ExecutionBudget;
   /** LLM provider factory — defaults to the real createLlmProvider. */
   llmProviderFactory: LlmProviderFactory;
   /** Flow-local provider availability state shared by all nodes in this run. */

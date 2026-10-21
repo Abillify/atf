@@ -1090,6 +1090,40 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
 		.describe(
 			"Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling.",
 		),
+	budgets: z
+		.object({
+			maxTokens: z
+				.number()
+				.int()
+				.min(1)
+				.max(50_000_000)
+				.optional()
+				.describe(
+					"Maximum total tokens (prompt + completion of all LLM calls) for one execution of the flow.",
+				),
+			maxToolCalls: z
+				.number()
+				.int()
+				.min(1)
+				.max(10_000)
+				.optional()
+				.describe(
+					"Maximum total MCP/tool calls for one execution of the flow.",
+				),
+			maxWallMs: z
+				.number()
+				.int()
+				.min(1)
+				.max(86_400_000)
+				.optional()
+				.describe(
+					"Maximum wall-clock time in milliseconds since the execution started.",
+				),
+		})
+		.optional()
+		.describe(
+			"Per-execution budgets: once a limit is reached the execution stops before the next model or tool call and finishes with `finishReason: budget_exceeded`.",
+		),
 	nodes: z
 		.array(FlowNodeSchema)
 		.min(1)

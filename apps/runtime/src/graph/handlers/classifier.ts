@@ -426,6 +426,10 @@ export function createClassifierNodeHandler(
       // The last candidate keeps the SDK default retries.
       const sdkRetryOverride =
         attemptIndex < poolChain.length - 1 ? 0 : undefined;
+      // Per-execution budget (T-036): checked before each attempt's model
+      // call; a call already in flight is never aborted.
+      runtime.executionBudget?.check("tokens");
+      runtime.executionBudget?.check("wallMs");
       try {
         let text: string;
         let genUsage:
@@ -527,6 +531,7 @@ export function createClassifierNodeHandler(
           genUsage?.totalTokens && genUsage.totalTokens > 0
             ? genUsage.totalTokens
             : promptTokens + completionTokens;
+        runtime.executionBudget?.addTokens(promptTokens + completionTokens);
         // Surface per-node token usage so the live graph / history can show
         // tokens and the estimated per-call cost for this classifier node. The
         // classifier handler does not set the model via the llm-node path, so

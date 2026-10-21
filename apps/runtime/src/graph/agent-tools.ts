@@ -45,6 +45,7 @@ import { enforceTaintApproval, type TaintGuard } from "./execution-taint.js";
 import type { AppConfig } from "../config/index.js";
 import type { CompliancePolicy } from "../compliance/policy-schema.js";
 import type { LlmProviderFactory, ProviderResolution, UsageAccumulator } from "./graph-engine.js";
+import type { ExecutionBudget } from "./execution-budget.js";
 import type { ToolIndex } from "./tool-index.js";
 import type {
   GenAiRequest,
@@ -2027,6 +2028,8 @@ export interface AgentImageInspectionHooks {
   nodeId?: string;
   /** The execution accumulator includes on-demand vision usage and cost. */
   usage?: UsageAccumulator;
+  /** Per-execution budget (T-036); vision usage counts against its token cap. */
+  executionBudget?: ExecutionBudget;
   onNodeDiagnostic?: (
     nodeId: string,
     diagnostic: { level: "error" | "warn" | "info"; code: string; message: string },
@@ -2347,6 +2350,7 @@ async function runImageInspection(
       hooks.usage.completionTokens += outputTokens;
       hooks.usage.totalTokens += inputTokens + outputTokens;
     }
+    hooks.executionBudget?.addTokens(inputTokens + outputTokens);
     const cost = estimateCost(
       hooks.config.llm.provider,
       hooks.config.llm.model,

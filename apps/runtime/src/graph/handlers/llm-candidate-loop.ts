@@ -809,6 +809,9 @@ export async function runCandidateLoop(
         runtime.usage.promptTokens += attemptUsage.promptTokens;
         runtime.usage.completionTokens += attemptUsage.completionTokens;
         runtime.usage.totalTokens += attemptUsage.totalTokens;
+        runtime.executionBudget?.addTokens(
+          attemptUsage.promptTokens + attemptUsage.completionTokens,
+        );
         if (attemptUsage.cachedPromptTokens !== undefined) {
           runtime.usage.cachedPromptTokens =
             (runtime.usage.cachedPromptTokens ?? 0) +
@@ -1227,6 +1230,10 @@ export async function runCandidateLoop(
             });
           },
         };
+        // Per-execution budget (T-036): checked before each attempt's model
+        // call; a call already in flight is never aborted.
+        runtime.executionBudget?.check("tokens");
+        runtime.executionBudget?.check("wallMs");
         const result = runInLlmTransportScope(transportScope, () =>
           streamText(streamParams),
         );

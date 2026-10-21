@@ -387,6 +387,7 @@ export async function plan(
       genUsage?.totalTokens && genUsage.totalTokens > 0
         ? genUsage.totalTokens
         : promptTokens + completionTokens;
+    runtime.executionBudget?.addTokens(promptTokens + completionTokens);
 
     // Surface the planner's token usage on the harness node so the live graph /
     // history can show tokens and the estimated per-call cost. The harness node
@@ -879,6 +880,7 @@ export async function narrateProgress(
       generationUsage?.totalTokens && generationUsage.totalTokens > 0
         ? generationUsage.totalTokens
         : promptTokens + completionTokens;
+    runtime.executionBudget?.addTokens(promptTokens + completionTokens);
 
     const cost = estimateCost(
       config.llm.provider,
@@ -1029,6 +1031,7 @@ export async function narrateProgress(
     runtime.usage.promptTokens += promptTokens;
     runtime.usage.completionTokens += completionTokens;
     runtime.usage.totalTokens += totalTokens;
+    runtime.executionBudget?.addTokens(promptTokens + completionTokens);
     runtime.metrics.recordLlmCall(
       config.llm.provider,
       config.llm.model,
@@ -1368,6 +1371,7 @@ export async function requestCoverageReport(
     generationUsage?.totalTokens && generationUsage.totalTokens > 0
       ? generationUsage.totalTokens
       : promptTokens + completionTokens;
+  runtime.executionBudget?.addTokens(promptTokens + completionTokens);
 
   const cost = estimateCost(
     llm.provider,

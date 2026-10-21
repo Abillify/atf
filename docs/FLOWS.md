@@ -66,6 +66,7 @@ edges: []
 | `dataClasses` | list of one of `public`, `internal`, `confidential`, `personal`, `sensitive`, `financial`, `legal`, `health` | no | Data classes this flow processes; matched by the compliance policy's data rules. |
 | `requiredScopes` | list of string 1–256 chars (≤ 100) | no | OAuth/OIDC scopes a caller needs to discover and run this flow; all are required. |
 | `recovery` | object | no | Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling. |
+| `budgets` | object | no | Per-execution budgets: once a limit is reached the execution stops before the next model or tool call and finishes with `finishReason: budget_exceeded`. |
 | `nodes` | list of object 1–100 | no | The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows. |
 | `edges` | list of object (≤ 500) | no | Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in. |
 | `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |

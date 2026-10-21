@@ -561,6 +561,9 @@ export async function setupLlmTools(params: {
       existingTools: aiTools,
       nodeId: node.id,
       usage: runtime.usage,
+      ...(runtime.executionBudget !== undefined
+        ? { executionBudget: runtime.executionBudget }
+        : {}),
       onNodeDiagnostic: runtime.onNodeDiagnostic,
       registry: runtime.imageRefs,
       config: imageInspection,
