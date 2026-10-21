@@ -41,6 +41,8 @@ import { parseMetadataHeader } from "./metadata.js";
 import {
   createEmbeddingClient,
   createFallbackEmbeddingClient,
+  runEmbeddingFallbackCanary,
+  type EmbeddingClient,
 } from "./embedding-client.js";
 import {
   createFallbackRerankerClient,
@@ -162,7 +164,15 @@ export function createApp(
   postgresClient: PostgresClient,
   breakers?: PrebuiltBreakers,
   invocationLedger?: InvocationLedger,
-): { app: Express; cleanup: () => void; tracer: Tracer } {
+): {
+  app: Express;
+  cleanup: () => void;
+  tracer: Tracer;
+  embeddingFallbackClients: {
+    primary: EmbeddingClient;
+    fallback: EmbeddingClient;
+  } | null;
+} {
   const app = express();
 
   const logger = withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
@@ -394,6 +404,7 @@ export function createApp(
         fallbackEmbeddingClient,
         logger,
         config.embedExpectedDimension ?? undefined,
+        (source) => httpMetrics.recordEmbeddingRequest(source),
       )
     : primaryEmbeddingClient;
 
@@ -1540,7 +1551,13 @@ export function createApp(
     });
   }
 
-  return { app, cleanup, tracer };
+  // Exposed for the startup embedding-fallback canary in main(); null when no
+  // fallback embedding provider is configured.
+  const embeddingFallbackClients = fallbackEmbeddingClient
+    ? { primary: primaryEmbeddingClient, fallback: fallbackEmbeddingClient }
+    : null;
+
+  return { app, cleanup, tracer, embeddingFallbackClients };
 }
 
 async function main(): Promise<void> {
@@ -1767,7 +1784,7 @@ async function main(): Promise<void> {
     invocationLedger = new MemoryInvocationLedger();
   }
 
-  const { app, cleanup, tracer } = createApp(
+  const { app, cleanup, tracer, embeddingFallbackClients } = createApp(
     config,
     postgresClient,
     {
@@ -1781,6 +1798,18 @@ async function main(): Promise<void> {
     },
     invocationLedger,
   );
+
+  // Startup canary: verify primary and fallback embed the probe text into the
+  // same vector space. A mismatch warns and (with EMBED_FALLBACK_SAME_SPACE)
+  // aborts startup; an unreachable endpoint only warns.
+  if (embeddingFallbackClients) {
+    await runEmbeddingFallbackCanary(
+      embeddingFallbackClients.primary,
+      embeddingFallbackClients.fallback,
+      logger,
+      { abortOnMismatch: config.embedFallbackSameSpace },
+    );
+  }
 
   // Optional TLS/mTLS listener (Req 11.8): plain HTTP when config.tls is null.
   const server = createServerWithOptionalTls(app, config.tls);

@@ -4,6 +4,7 @@
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import type pino from "pino";
 import { retryWithBackoff, type CircuitBreaker } from "./retry.js";
+import type { EmbeddingSource } from "./http-metrics.js";
 import { injectTraceHeaders } from "./trace-context.js";
 import { recordUsage } from "./usage-context.js";
 
@@ -122,6 +123,7 @@ export function createFallbackEmbeddingClient(
   fallback: EmbeddingClient,
   logger: pino.Logger,
   expectedDimension?: number,
+  onEmbeddingRequest?: (source: EmbeddingSource) => void,
 ): EmbeddingClient {
   function logFallback(reason: string, inputCount: number): void {
     logger.warn(
@@ -132,6 +134,7 @@ export function createFallbackEmbeddingClient(
 
   return {
     async embed(text: string, signal?: AbortSignal): Promise<EmbeddingResponse> {
+      onEmbeddingRequest?.("primary");
       const primaryResult = await primary.embed(text, signal);
       const primaryError = primaryResult.ok
         ? validateVectors([primaryResult.result.vector], 1, expectedDimension)
@@ -140,6 +143,7 @@ export function createFallbackEmbeddingClient(
       if (signal?.aborted) return { ok: false, error: primaryError };
 
       logFallback(primaryError.code, 1);
+      onEmbeddingRequest?.("fallback");
       const fallbackResult = await fallback.embed(text, signal);
       if (!fallbackResult.ok) return fallbackResult;
       const fallbackError = validateVectors(
@@ -161,6 +165,7 @@ export function createFallbackEmbeddingClient(
       texts: string[],
       signal?: AbortSignal,
     ): Promise<EmbeddingBatchResponse> {
+      onEmbeddingRequest?.("primary");
       const primaryResult = await primary.embedBatch(texts, signal);
       const primaryError = primaryResult.ok
         ? validateVectors(
@@ -173,6 +178,7 @@ export function createFallbackEmbeddingClient(
       if (signal?.aborted) return { ok: false, error: primaryError };
 
       logFallback(primaryError.code, texts.length);
+      onEmbeddingRequest?.("fallback");
       const fallbackResult = await fallback.embedBatch(texts, signal);
       if (!fallbackResult.ok) return fallbackResult;
       const fallbackError = validateVectors(
@@ -190,6 +196,70 @@ export function createFallbackEmbeddingClient(
       return fallbackResult;
     },
   };
+}
+
+/** Fixed text embedded by both endpoints to compare their vector spaces. */
+export const EMBEDDING_CANARY_TEXT = "ATF embedding canary";
+
+/** Vectors from primary and fallback must be at least this similar. */
+export const EMBEDDING_CANARY_MIN_COSINE = 0.99;
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Compares the vector spaces of the primary and fallback embedding endpoints
+ * at startup. A mismatch logs a warning and, when `abortOnMismatch` is set
+ * (EMBED_FALLBACK_SAME_SPACE=true), throws so the process refuses to start.
+ * An unreachable endpoint only logs a warning — the canary must not block
+ * startup when a provider is down.
+ */
+export async function runEmbeddingFallbackCanary(
+  primary: EmbeddingClient,
+  fallback: EmbeddingClient,
+  logger: pino.Logger,
+  opts: { abortOnMismatch: boolean },
+): Promise<void> {
+  const [primaryResult, fallbackResult] = await Promise.all([
+    primary.embed(EMBEDDING_CANARY_TEXT),
+    fallback.embed(EMBEDDING_CANARY_TEXT),
+  ]);
+  if (!primaryResult.ok) {
+    logger.warn(
+      { reason: primaryResult.error.message },
+      "Embedding fallback canary could not run (endpoint unreachable or invalid response); skipping space comparison",
+    );
+    return;
+  }
+  if (!fallbackResult.ok) {
+    logger.warn(
+      { reason: fallbackResult.error.message },
+      "Embedding fallback canary could not run (endpoint unreachable or invalid response); skipping space comparison",
+    );
+    return;
+  }
+  const primaryVector = primaryResult.result.vector;
+  const fallbackVector = fallbackResult.result.vector;
+  // Different dimensions can never be compared; treat the similarity as zero.
+  const cosine =
+    primaryVector.length === fallbackVector.length
+      ? cosineSimilarity(primaryVector, fallbackVector)
+      : 0;
+  if (cosine < EMBEDDING_CANARY_MIN_COSINE) {
+    const message = `Embedding fallback produces vectors in a different space (cosine ${cosine.toFixed(4)}); results after a failover are not comparable.`;
+    logger.warn(message);
+    if (opts.abortOnMismatch) throw new Error(message);
+  }
 }
 
 export function createEmbeddingClient(

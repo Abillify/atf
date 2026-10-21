@@ -47,6 +47,11 @@ function labels(method: string, route: string): string {
   return `method="${escapeLabel(method)}",route="${escapeLabel(route)}"`;
 }
 
+/** Which embedding endpoint served a request (per-source embedding metric). */
+export type EmbeddingSource = "primary" | "fallback";
+
+const EMBEDDING_SOURCES: readonly EmbeddingSource[] = ["primary", "fallback"];
+
 /** In-process, low-cardinality RED/USE metrics exported by /metrics. */
 export class HttpMetrics {
   private readonly requests = new Map<string, number>();
@@ -58,6 +63,7 @@ export class HttpMetrics {
   private readonly batchDuration: Histogram = { buckets: Array(batchBuckets.length).fill(0), count: 0, sum: 0 };
   private batchUnits = 0;
   private batchBacklog = 0;
+  private readonly embeddingRequests = new Map<EmbeddingSource, number>();
   private readonly loop = monitorEventLoopDelay({ resolution: 20 });
   constructor() { this.loop.enable(); }
 
@@ -115,6 +121,12 @@ export class HttpMetrics {
     this.batchBacklog = Number.isFinite(pending) && pending > 0 ? Math.floor(pending) : 0;
   }
 
+  /** Bump `search_embedding_requests_total{source}` for one embedding attempt. */
+  recordEmbeddingRequest(source: EmbeddingSource): void {
+    if (!EMBEDDING_SOURCES.includes(source)) return;
+    this.embeddingRequests.set(source, (this.embeddingRequests.get(source) ?? 0) + 1);
+  }
+
   render(): string {
     const lines = ["# HELP vectorsearch_http_requests_total HTTP requests by route and status class", "# TYPE vectorsearch_http_requests_total counter"];
     for (const [key, value] of this.requests) {
@@ -156,6 +168,15 @@ export class HttpMetrics {
       "# TYPE vectorsearch_batch_pending gauge",
       `vectorsearch_batch_pending ${this.batchBacklog}`,
     );
+    lines.push(
+      "# HELP search_embedding_requests_total Embedding requests by serving source",
+      "# TYPE search_embedding_requests_total counter",
+    );
+    for (const source of EMBEDDING_SOURCES) {
+      lines.push(
+        `search_embedding_requests_total{source="${escapeLabel(source)}"} ${this.embeddingRequests.get(source) ?? 0}`,
+      );
+    }
     lines.push(
       "# HELP vectorsearch_http_in_flight_requests Requests currently in flight",
       "# TYPE vectorsearch_http_in_flight_requests gauge",
