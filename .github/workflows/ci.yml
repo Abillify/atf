@@ -594,7 +594,9 @@ jobs:
           )
           # Default: no profile exported, replicaCount (2) declared everywhere.
           helm template atf deploy/helm/atf "${set_common[@]}" > /tmp/atf-replicas-default.yaml
-          ! grep -q 'name: ATF_PROFILE' /tmp/atf-replicas-default.yaml
+          if grep -q 'name: ATF_PROFILE' /tmp/atf-replicas-default.yaml; then
+            echo "/tmp/atf-replicas-default.yaml must not contain name: ATF_PROFILE"; exit 1
+          fi
           test "$(grep -A1 -E 'name: (MCPGATE_)?REPLICAS' /tmp/atf-replicas-default.yaml | grep -c 'value: "2"')" = 4
           # Autoscaling declares the HPA ceiling; global.profile reaches the four services.
           helm template atf deploy/helm/atf "${set_common[@]}" \
@@ -614,7 +616,9 @@ jobs:
           test "$(grep -c 'name: CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-replicas-default.yaml)" = 1
           helm template atf deploy/helm/atf "${set_common[@]}" \
             --set extract.config.converterAllowLocalHtml=false > /tmp/atf-converter-off.yaml
-          ! grep -q 'CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-converter-off.yaml
+          if grep -q 'CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-converter-off.yaml; then
+            echo "/tmp/atf-converter-off.yaml must not contain CONVERTER_ALLOW_LOCAL_HTML"; exit 1
+          fi
           # global.redis is off by default: nothing may export a Redis URL, so a
           # stock install stays honest about needing an explicit shared store.
           if grep -q 'RATE_LIMIT_REDIS_URL' /tmp/atf-replicas-default.yaml; then

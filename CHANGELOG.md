@@ -649,6 +649,7 @@ releases:
 - Erasure receipts signed with Ed25519 carry the key id (`kid`) in the envelope, and the public key of `ERASURE_RECEIPT_SIGNING_KEY` is published in `/.well-known/atf-evidence-jwks.json`, so receipts verify against the evidence JWKS alone.
 - `eval:run` against a server reads tool calls, finish reason and diagnostics from the execution's debug trace, so `toolCalled` assertions work outside the in-process runner.
 - Documentation no longer claims that the Helm chart carries no replica counts.
+- CI: negated grep assertions in the Helm rendering step now fail the job when the pattern is present.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
