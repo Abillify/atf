@@ -167,6 +167,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
       deps.policies?.approval.maxPending ?? 1000,
     );
   const prepareApproval = async (
+    dispatcher: McpToolDispatcher,
     ctx: AuthContext,
     tool: string,
     args: Record<string, unknown>,
@@ -189,7 +190,13 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
       const lookupArgs = renderValue(presentation.lookup.arguments, { args }) as Record<string, unknown>;
       const validation = validateArgs(executor.definition.inputSchema, lookupArgs);
       if (!validation.ok) throw new Error("Approval lookup arguments are invalid");
-      const lookupResult = await executor.execute(lookupArgs, ctx);
+      // Through the dispatcher so the lookup is subject to policy, rate limit and audit.
+      const lookupResult = await dispatcher.callTool(
+        { name: presentation.lookup.tool, arguments: lookupArgs },
+        undefined,
+        false,
+        true,
+      );
       if (lookupResult.isError) throw new Error("Approval lookup failed");
       const rows = (lookupResult.structuredContent as { rows?: unknown[] } | undefined)?.rows;
       if (rows && rows.length === 0)
@@ -562,6 +569,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
               structuredContent: { code: "APPROVAL_REQUIRED" },
               inputRequests: [
                   await prepareApproval(
+                    dispatcher,
                     ctx,
                     callInput.name,
                     callInput.arguments,
@@ -606,6 +614,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
                 structuredContent: { code: "APPROVAL_REQUIRED" },
                 inputRequests: [
                   await prepareApproval(
+                    dispatcher,
                     ctx,
                     callInput.name,
                     callInput.arguments,

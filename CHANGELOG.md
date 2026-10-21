@@ -239,6 +239,7 @@ releases:
 - With `TAINT_MODE=on-untrusted-source`, results of MCP servers without `contentTrust: trusted` now taint the execution (previously only results labelled untrusted by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
 - Search activity stream: events are filtered by the subscriber's tenant and carry only the names of metadata filters, not their values.
 - Gate checks required scopes before approval, so callers without the scopes no longer create approval requests or consume approval tokens.
+- Gate runs the approval lookup tool through the regular dispatcher (policy, rate limit, audit).
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

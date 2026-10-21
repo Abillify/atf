@@ -711,6 +711,18 @@ describe("MCP integration · stateless governance, primitives, and tasks", () =>
     expect(governanceDb.calls.length).toBe(callsBeforeExecution + 2); // replay performs enrichment only, never the write
   });
 
+  it("runs the approval lookup tool through the dispatcher, so it is audited", async () => {
+    const before = handle.bus.recent().length;
+    const response = await request(scopedToken, "tools/call", {
+      name: "approved_orders",
+      arguments: { id: 7 },
+    });
+    expect(response.status).toBe(200);
+    const events = handle.bus.recent().slice(before);
+    const lookupEvents = events.filter((event) => event.tool === "approved_orders_lookup");
+    expect(lookupEvents.map((event) => event.type)).toContain("tool_call");
+  });
+
   it("fails closed when approval enrichment finds no matching record", async () => {
     governanceRows.length = 0;
     try {
