@@ -69,8 +69,9 @@ as verify-only legacy so every pre-existing artefact stays verifiable.
    - erasure receipt: `ERASURE_RECEIPT_SIGNING_KEY` > `EVIDENCE_SIGNING_KEY` >
      `AUDIT_ANCHOR_SECRET` (HMAC) > unsigned
 
-5. **Offline verification CLI.** `atf verify-bundle <bundle.json>
-   --jwks <url|file> [--kid <kid>]` verifies Ed25519 bundles against the JWKS
+5. **Offline verification CLI.**
+   `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url|file> [--kid <kid>]`
+   (run in `apps/runtime` of a source checkout) verifies Ed25519 bundles against the JWKS
    (the bundle's own `kid` auto-selects the key); `--secret <secret>` remains
    for legacy HMAC artefacts. The Markdown rendering of a bundle names the
    matching verify command for its algorithm.

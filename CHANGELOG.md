@@ -265,8 +265,9 @@ releases:
   `GET /.well-known/atf-evidence-jwks.json` (OKP/Ed25519, `kid` =
   `base64url(sha256(publicKey))`, never the private part), so an auditor or
   customer verifies an artefact offline with no shared secret and no
-  dependency on the platform being reachable. `atf verify-bundle
-  <bundle.json> --jwks <url|file> [--kid <kid>]` verifies Ed25519 bundles
+  dependency on the platform being reachable.
+  `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url|file> [--kid <kid>]`
+  (run in `apps/runtime` of a source checkout) verifies Ed25519 bundles
   against the JWKS — the bundle's own `kid` auto-selects the key — while
   `--secret <secret>` keeps verifying legacy HMAC artefacts. Signed
   envelopes carry an `alg`/`algorithm` field (`ed25519` / `hmac-sha256`;
@@ -652,6 +653,7 @@ releases:
 - CI: negated grep assertions in the Helm rendering step now fail the job when the pattern is present.
 - `docs/THREAT-MODEL.md` matches the code again (approval separation, derived-PDF cache, converter gate, compliance policy, content-trust taint) and its tables render correctly; the Gate README no longer mentions a Runtime approval secret.
 - Runbooks reference existing endpoints and the Runtime audit chain; new runbooks cover a Redis outage and transaction-token rotation, and the incident runbook covers a compromised evidence key.
+- Documentation names the existing bundle verifier (`cli.ts verify-bundle`) instead of a non-existent `atf verify-bundle` command.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

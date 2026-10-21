@@ -98,7 +98,8 @@ old public key.
    `EVIDENCE_SIGNING_KEY` in the secret store; rolling-restart Runtime. A
    malformed key stops startup.
 4. Verify: the JWKS shows the new `kid`; a fresh evidence bundle verifies with
-   `atf verify-bundle <bundle.json> --jwks <url>`; for an archived bundle pass
+   `bun run scripts/cli.ts verify-bundle <bundle.json> --jwks <url>` (run in
+   `apps/runtime` of a source checkout); for an archived bundle pass
    the archived JWKS file (`--jwks <file>`), which selects the key by the bundle's
    own `kid`.
 5. Keep retired private keys only as long as policy requires; keep every retired
