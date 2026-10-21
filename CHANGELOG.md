@@ -358,6 +358,7 @@ releases:
   reference score and every assertion do. Existing cases are unchanged.
 - **Search: `TRANSACTION_JWKS_URI` and `TRANSACTION_ALGORITHMS`**, see Security.
 - `cli.ts validate` and `POST /flows/validate` warn about node `config` keys the node type does not read (with a "did you mean" suggestion). Keys starting with `x-` are reserved for author annotations and never reported.
+- Search: a PostgreSQL integration test pins lexical MRR@10 on the synthetic golden set (all-terms-first ranking at least 0.9 and never below the plain OR ranking).
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
