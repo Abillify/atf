@@ -23,6 +23,10 @@ import {
   DEFAULT_SUMMARY_TRIAGE_QUERIES,
   MAX_SUMMARY_TRIAGE_QUERIES,
 } from "./coverage.js";
+import {
+  type StatusLanguage,
+  statusText,
+} from "./status-text.js";
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -336,6 +340,11 @@ export interface HarnessConfig {
   verificationContextMaxChars?: number;
   /** Per-finding carry-forward cap; defaults to 6000 characters. */
   condensedFindingMaxChars?: number;
+  /**
+   * Language of the harness status and task labels. Absent = the mixed legacy
+   * texts, which stay byte-identical to previous runs.
+   */
+  statusLanguage?: StatusLanguage;
 }
 
 // ---------------------------------------------------------------------------
@@ -804,20 +813,40 @@ const STATUS_ICON: Record<TaskStatus, string> = {
  *
  * _Validates: Requirements 9.1_
  */
-export function formatTaskReference(task: Task): string {
+export function formatTaskReference(
+  task: Task,
+  lang?: StatusLanguage,
+): string {
   const fallbackStep = Number.parseInt(task.id.slice(1), 10);
   const displayStep =
     task.displayStep ?? (Number.isFinite(fallbackStep) ? fallbackStep : 1);
-  return `${task.id} · step ${displayStep}${task.replanned ? " (replanned)" : ""}`;
+  return statusText(
+    lang,
+    "taskReference",
+    {
+      id: task.id,
+      step: statusText(lang, "stepWord", { step: displayStep }, ""),
+      replanned: task.replanned
+        ? statusText(lang, "replannedSuffix", {}, "")
+        : "",
+    },
+    `${task.id} · step ${displayStep}${task.replanned ? " (replanned)" : ""}`,
+  );
 }
 
-export function renderTaskList(tasks: Task[]): string {
-  if (tasks.length === 0) return "(no tasks)";
+export function renderTaskList(
+  tasks: Task[],
+  lang?: StatusLanguage,
+): string {
+  if (tasks.length === 0)
+    return statusText(lang, "noTasks", {}, "(no tasks)");
   return tasks
     .map(
       (t) =>
-        `${STATUS_ICON[t.status]} ${formatTaskReference(t)}: ${t.description} → ${t.target}` +
-        (t.researchStatus === undefined ? "" : `\n  Status: ${t.researchStatus}`),
+        `${STATUS_ICON[t.status]} ${formatTaskReference(t, lang)}: ${t.description} → ${t.target}` +
+        (t.researchStatus === undefined
+          ? ""
+          : `\n  ${statusText(lang, "statusLabel", { status: t.researchStatus }, `Status: ${t.researchStatus}`)}`),
     )
     .join("\n");
 }
@@ -1041,6 +1070,10 @@ export function parseHarnessConfig(
 
   if (config.carryForward === "condensed" || config.carryForward === "full") {
     result.carryForward = config.carryForward;
+  }
+
+  if (config.statusLanguage === "en" || config.statusLanguage === "de") {
+    result.statusLanguage = config.statusLanguage;
   }
 
   if (config.resultMode === "delegated" || config.resultMode === "context") {

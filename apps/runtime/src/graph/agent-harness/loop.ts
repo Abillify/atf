@@ -118,6 +118,10 @@ import {
   resolveVerificationAttempts,
   selectTaskBatch,
 } from "./types.js";
+import {
+  coverageLabelText,
+  statusText,
+} from "./status-text.js";
 
 // ---------------------------------------------------------------------------
 // Handler factory — createAgentHarnessNodeHandler
@@ -411,7 +415,12 @@ export function createAgentHarnessNodeHandler(
     // reasoning delta, so this must happen before planning rather than after the
     // task list exists.
     emitHarnessStatus(
-      "Starting research. I first survey the document inventory, break the question into verifiable sub-aspects, and then prioritise the documents with the strongest relation. Afterwards I reconcile relevant original passages and possible counter-evidence before accepting a finding as dependable.",
+      statusText(
+        cfg.statusLanguage,
+        "startingResearch",
+        {},
+        "Starting research. I first survey the document inventory, break the question into verifiable sub-aspects, and then prioritise the documents with the strongest relation. Afterwards I reconcile relevant original passages and possible counter-evidence before accepting a finding as dependable.",
+      ),
     );
     // We track cost via a running delta from the plan calls and delegate calls
     let accumulatedCost = 0;
@@ -633,7 +642,12 @@ export function createAgentHarnessNodeHandler(
             seededTasks.push({
               id: `t${plannerlessSeq}`,
               displayStep: plannerlessSeq,
-              description: coverageTaskLabel(assignment, "Coverage"),
+              description: coverageLabelText(
+                cfg.statusLanguage,
+                assignment,
+                "coverage",
+                coverageTaskLabel(assignment, "Coverage"),
+              ),
               target:
                 coverageTargetForAssignment(assignment) ?? plannerlessTarget,
               status: "pending",
@@ -660,7 +674,12 @@ export function createAgentHarnessNodeHandler(
         seededTasks.push({
           id: `t${plannerlessSeq}`,
           displayStep: plannerlessSeq,
-          description: `Research step ${plannerlessSeq}`,
+          description: statusText(
+            cfg.statusLanguage,
+            "researchStepLabel",
+            { seq: plannerlessSeq },
+            `Research step ${plannerlessSeq}`,
+          ),
           target: plannerlessTarget,
           status: "pending",
         });
@@ -714,7 +733,14 @@ export function createAgentHarnessNodeHandler(
     }
 
     // --- Emit initial task list (Req 9.1) ---
-    emitHarnessStatus(`Task list:\n${renderTaskList(progress.tasks)}`);
+    emitHarnessStatus(
+      statusText(
+        cfg.statusLanguage,
+        "taskList",
+        { list: renderTaskList(progress.tasks, cfg.statusLanguage) },
+        `Task list:\n${renderTaskList(progress.tasks)}`,
+      ),
+    );
 
     // --- Write initial task list to state before the loop (Req 3.4, 10.3) ---
     // (The progress object is mutated in place and returned on every exit)
@@ -915,8 +941,22 @@ export function createAgentHarnessNodeHandler(
       }
       emitHarnessStatus(
         batch.length === 1
-          ? `Task ${formatTaskReference(task)} → in-progress`
-          : `Tasks ${batch.map((t) => formatTaskReference(t)).join(", ")} → in-progress (parallel)`,
+          ? statusText(
+              cfg.statusLanguage,
+              "taskInProgress",
+              { ref: formatTaskReference(task, cfg.statusLanguage) },
+              `Task ${formatTaskReference(task)} → in-progress`,
+            )
+          : statusText(
+              cfg.statusLanguage,
+              "tasksInProgressParallel",
+              {
+                refs: batch
+                  .map((t) => formatTaskReference(t, cfg.statusLanguage))
+                  .join(", "),
+              },
+              `Tasks ${batch.map((t) => formatTaskReference(t)).join(", ")} → in-progress (parallel)`,
+            ),
       );
 
       // The approval gate below handles a single task. `selectTaskBatch`
@@ -966,7 +1006,12 @@ export function createAgentHarnessNodeHandler(
             },
           });
           emitHarnessStatus(
-            `Task ${formatTaskReference(task)} → failed (approval rejected)`,
+            statusText(
+              cfg.statusLanguage,
+              "taskApprovalRejected",
+              { ref: formatTaskReference(task, cfg.statusLanguage) },
+              `Task ${formatTaskReference(task)} → failed (approval rejected)`,
+            ),
           );
 
           // Accumulate iteration for the rejected task
@@ -1009,7 +1054,14 @@ export function createAgentHarnessNodeHandler(
               // Advance the id counter so the NEXT re-plan cannot reuse these ids.
               issuedTaskIds += replanTasks.length;
               emitHarnessStatus(
-                `Updated task list:\n${renderTaskList(progress.tasks)}`,
+                statusText(
+                  cfg.statusLanguage,
+                  "updatedTaskList",
+                  {
+                    list: renderTaskList(progress.tasks, cfg.statusLanguage),
+                  },
+                  `Updated task list:\n${renderTaskList(progress.tasks)}`,
+                ),
               );
             }
           }
@@ -1037,8 +1089,18 @@ export function createAgentHarnessNodeHandler(
       // reuse and making runs irreproducible.
       emitHarnessStatus(
         batch.length === 1
-          ? `→ delegating to ${task.target}`
-          : `→ delegating in parallel to ${batch.map((t) => t.target).join(", ")}`,
+          ? statusText(
+              cfg.statusLanguage,
+              "delegating",
+              { target: task.target },
+              `→ delegating to ${task.target}`,
+            )
+          : statusText(
+              cfg.statusLanguage,
+              "delegatingParallel",
+              { targets: batch.map((t) => t.target).join(", ") },
+              `→ delegating in parallel to ${batch.map((t) => t.target).join(", ")}`,
+            ),
       );
 
       const outcomes = await Promise.all(
@@ -1355,19 +1417,60 @@ export function createAgentHarnessNodeHandler(
         const coverageDetail =
           coverageLedger === undefined
             ? ""
-            : ` — coverage: ${coverageSummary(coverageLedger)}`;
+            : statusText(
+                cfg.statusLanguage,
+                "coverageDetail",
+                { summary: coverageSummary(coverageLedger) },
+                ` — coverage: ${coverageSummary(coverageLedger)}`,
+              );
         const hypothesisDetail =
           hypothesisStatus === undefined
             ? ""
-            : ` — hypotheses (this step): ${hypothesisStatus.active} active, ${hypothesisStatus.confirmed} confirmed, ${hypothesisStatus.rejected} rejected; ` +
-              `detail [${hypothesisStatus.detailState.toLocaleUpperCase("de-DE")}]: ${compactStatusText(hypothesisStatus.detail, 180)}`;
+            : statusText(
+                cfg.statusLanguage,
+                "hypothesesDetail",
+                {
+                  active: hypothesisStatus.active,
+                  confirmed: hypothesisStatus.confirmed,
+                  rejected: hypothesisStatus.rejected,
+                  detailState: hypothesisStatus.detailState.toLocaleUpperCase(
+                    "de-DE",
+                  ),
+                  detail: compactStatusText(hypothesisStatus.detail, 180),
+                },
+                ` — hypotheses (this step): ${hypothesisStatus.active} active, ${hypothesisStatus.confirmed} confirmed, ${hypothesisStatus.rejected} rejected; ` +
+                  `detail [${hypothesisStatus.detailState.toLocaleUpperCase("de-DE")}]: ${compactStatusText(hypothesisStatus.detail, 180)}`,
+              );
         const coveredScope =
-          coverage.length > 0 ? ` — ${compactStatusText(coverage, 220)}` : "";
+          coverage.length > 0
+            ? statusText(
+                cfg.statusLanguage,
+                "coveredScope",
+                { scope: compactStatusText(coverage, 220) },
+                ` — ${compactStatusText(coverage, 220)}`,
+              )
+            : "";
+        const stepProgress = statusText(
+          cfg.statusLanguage,
+          "stepProgress",
+          {
+            step: progress.iterations,
+            max: cfg.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+            phase: phaseSentence,
+          },
+          `Step ${progress.iterations}/${cfg.maxIterations ?? DEFAULT_MAX_ITERATIONS}: ${phaseSentence}`,
+        );
         emitHarnessStatus(
-          `Research progress: ${
-            narratedProgress ??
-            `Step ${progress.iterations}/${cfg.maxIterations ?? DEFAULT_MAX_ITERATIONS}: ${phaseSentence}`
-          }${hypothesisDetail}${coveredScope}${coverageDetail}`,
+          statusText(
+            cfg.statusLanguage,
+            "researchProgress",
+            {
+              detail: `${narratedProgress ?? stepProgress}${hypothesisDetail}${coveredScope}${coverageDetail}`,
+            },
+            `Research progress: ${
+              narratedProgress ?? stepProgress
+            }${hypothesisDetail}${coveredScope}${coverageDetail}`,
+          ),
         );
       }
       // Deterministic coverage gauge for the debug trace: the EXACT number of
@@ -1402,7 +1505,14 @@ export function createAgentHarnessNodeHandler(
       // Emit status changes (Req 9.2)
       emitHarnessStatus(
         batch
-          .map((t) => `Task ${formatTaskReference(t)} → ${t.status}`)
+          .map((t) =>
+            statusText(
+              cfg.statusLanguage,
+              "taskStatusLine",
+              { ref: formatTaskReference(t, cfg.statusLanguage), status: t.status },
+              `Task ${formatTaskReference(t)} → ${t.status}`,
+            ),
+          )
           .join("\n"),
       );
 
@@ -1469,7 +1579,12 @@ export function createAgentHarnessNodeHandler(
               reseededTasks.push({
                 id: `t${plannerlessSeq}`,
                 displayStep: plannerlessSeq,
-                description: coverageTaskLabel(assignment, "Coverage"),
+                description: coverageLabelText(
+                  cfg.statusLanguage,
+                  assignment,
+                  "coverage",
+                  coverageTaskLabel(assignment, "Coverage"),
+                ),
                 target:
                   coverageTargetForAssignment(assignment) ?? plannerlessTarget,
                 status: "pending",
@@ -1486,7 +1601,12 @@ export function createAgentHarnessNodeHandler(
             reseededTasks.push({
               id: `t${plannerlessSeq}`,
               displayStep: plannerlessSeq,
-              description: `Research step ${plannerlessSeq}`,
+              description: statusText(
+                cfg.statusLanguage,
+                "researchStepLabel",
+                { seq: plannerlessSeq },
+                `Research step ${plannerlessSeq}`,
+              ),
               target: plannerlessTarget,
               status: "pending",
             });
@@ -1518,7 +1638,14 @@ export function createAgentHarnessNodeHandler(
             return stop(verified ? "completed" : "exhausted", progress, errors);
           }
           progress.tasks.push(...reseededTasks);
-          emitHarnessStatus(`Next research step (${plannerlessSeq}) …`);
+          emitHarnessStatus(
+            statusText(
+              cfg.statusLanguage,
+              "nextResearchStep",
+              { seq: plannerlessSeq },
+              `Next research step (${plannerlessSeq}) …`,
+            ),
+          );
           continue;
         }
         const anyCompleted = progress.tasks.some(
@@ -1557,7 +1684,12 @@ export function createAgentHarnessNodeHandler(
           }
         }
         emitHarnessStatus(
-          `Stop signal detected ("${cfg.stopSignal}") — research complete, re-plan skipped.`,
+          statusText(
+            cfg.statusLanguage,
+            "stopSignal",
+            { signal: cfg.stopSignal },
+            `Stop signal detected ("${cfg.stopSignal}") — research complete, re-plan skipped.`,
+          ),
         );
         // The stop signal says the WORKER considers itself done — the verifier
         // still gets the final say, otherwise a self-declared completion would
@@ -1614,7 +1746,14 @@ export function createAgentHarnessNodeHandler(
             issuedTaskIds += replanTasks.length;
             // Emit updated task list (Req 9.1)
             emitHarnessStatus(
-              `Updated task list:\n${renderTaskList(progress.tasks)}`,
+              statusText(
+                cfg.statusLanguage,
+                "updatedTaskList",
+                {
+                  list: renderTaskList(progress.tasks, cfg.statusLanguage),
+                },
+                `Updated task list:\n${renderTaskList(progress.tasks)}`,
+              ),
             );
           }
         }

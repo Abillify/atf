@@ -45,6 +45,7 @@ import {
   transformRagForPlanner,
 } from "./loop-planner-context.js";
 import { mergeReplan, normalize, renderTaskList } from "./types.js";
+import { coverageLabelText, statusText } from "./status-text.js";
 import type { HarnessConfig, HarnessProgress, StopReason } from "./types.js";
 import { plan, type PlannerBudget } from "./tools.js";
 
@@ -260,7 +261,16 @@ export const runVerification = async (
     },
   });
   emitHarnessStatus(
-    `→ Verifikation (Runde ${ctx.verificationRounds}/${maxVerificationAttempts}) via ${verification.target}`,
+    statusText(
+      ctx.cfg.statusLanguage,
+      "verificationRound",
+      {
+        round: ctx.verificationRounds,
+        max: maxVerificationAttempts,
+        target: verification.target,
+      },
+      `→ Verifikation (Runde ${ctx.verificationRounds}/${maxVerificationAttempts}) via ${verification.target}`,
+    ),
   );
 
   const verificationState = { ...ctx.state, messages: verifierMessages };
@@ -319,7 +329,14 @@ export const runVerification = async (
       ctx.coverageLedger === undefined ||
       isCoverageTerminal(ctx.coverageLedger, coverageConfig);
     if (coverageIsTerminal) {
-      emitHarnessStatus("Verifikation bestanden.");
+      emitHarnessStatus(
+        statusText(
+          ctx.cfg.statusLanguage,
+          "verificationPassed",
+          {},
+          "Verifikation bestanden.",
+        ),
+      );
       return "pass";
     }
     // A reviewer may assess quality, but it may never override deterministic
@@ -494,10 +511,20 @@ export const replanAfterVerification = async (
       id: `v${ctx.verificationRounds}-${ctx.plannerlessSeq}`,
       description:
         ctx.currentCoverageAssignment === undefined
-          ? `Nacharbeit nach Verifikation (${ctx.verificationRounds})`
-          : coverageTaskLabel(
+          ? statusText(
+              ctx.cfg.statusLanguage,
+              "reworkTaskDescription",
+              { round: ctx.verificationRounds },
+              `Nacharbeit nach Verifikation (${ctx.verificationRounds})`,
+            )
+          : coverageLabelText(
+              ctx.cfg.statusLanguage,
               ctx.currentCoverageAssignment,
-              "Coverage-Nacharbeit",
+              "coverageRework",
+              coverageTaskLabel(
+                ctx.currentCoverageAssignment,
+                "Coverage-Nacharbeit",
+              ),
             ),
       target:
         coverageTargetForAssignment(ctx.currentCoverageAssignment) ??
@@ -535,7 +562,12 @@ export const replanAfterVerification = async (
   progress.tasks = mergeReplan(progress.tasks, replanTasks);
   ctx.issuedTaskIds += replanTasks.length;
   emitHarnessStatus(
-    `Nacharbeit nach Verifikation:\n${renderTaskList(progress.tasks)}`,
+    statusText(
+      ctx.cfg.statusLanguage,
+      "reworkAfterVerification",
+      { list: renderTaskList(progress.tasks, ctx.cfg.statusLanguage) },
+      `Nacharbeit nach Verifikation:\n${renderTaskList(progress.tasks)}`,
+    ),
   );
   return true;
 };

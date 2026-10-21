@@ -1730,6 +1730,14 @@ const AGENT_HARNESS: NodeTypeDoc = {
       advanced: true,
       description: "Ceiling for the complete verifier state.",
     },
+    {
+      key: "statusLanguage",
+      kind: "enum",
+      label: "Status language",
+      options: ["en", "de"],
+      description:
+        "Language of the harness status and task labels. Absent = the mixed legacy texts.",
+    },
   ],
   examples: [
     {
