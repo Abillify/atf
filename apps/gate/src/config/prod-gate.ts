@@ -25,6 +25,7 @@
  */
 
 import {
+  profileShadowWarning,
   resolveOperationalProfile,
   type OperationalProfile,
 } from "@atf/security-kit";
@@ -76,10 +77,19 @@ export function resolveEnvironment(
  */
 export function checkProductionReadiness(
   config: AppConfig,
-  environment: OperationalProfile = resolveEnvironment(),
+  environmentOverride?: OperationalProfile,
+  /** Environment the MCPGATE_* checks read; injectable so tests need not touch `process.env`. */
+  env: NodeJS.ProcessEnv = process.env,
 ): ProductionReadinessReport {
+  const environment = environmentOverride ?? resolveEnvironment(env);
   const fatal: string[] = [];
   const warnings: string[] = [];
+  if (environmentOverride === undefined) {
+    const shadowed = profileShadowWarning(
+      resolveOperationalProfile(env, ["MCPGATE_ENV", "NODE_ENV"]),
+    );
+    if (shadowed !== undefined) warnings.push(shadowed);
+  }
   const tenantSqlDiagnostics: SqlTenantReadinessFinding[] = [];
   const isProd = environment === "production";
   const flag = (msg: string): void => {
@@ -539,9 +549,9 @@ export function checkProductionReadiness(
   }
 
   const transactionEnforcement =
-    process.env.MCPGATE_TRANSACTION_ENFORCEMENT ?? "off";
+    env.MCPGATE_TRANSACTION_ENFORCEMENT ?? "off";
   const transactionRedis =
-    process.env.MCPGATE_TRANSACTION_REDIS_URL ??
+    env.MCPGATE_TRANSACTION_REDIS_URL ??
     (config.server.rateLimit.store.type === "redis"
       ? config.server.rateLimit.store.redisUrl
       : undefined) ??
@@ -549,7 +559,7 @@ export function checkProductionReadiness(
   // Redeemed approval-token JTIs live in Redis when one is configured; the
   // memory fallback is per-process, so more than one replica would let the
   // same approval token be redeemed once per replica (Req 6.1).
-  const replicasRaw = process.env.MCPGATE_REPLICAS ?? "1";
+  const replicasRaw = env.MCPGATE_REPLICAS ?? "1";
   const replicas = Number.parseInt(replicasRaw, 10);
   if (Number.isNaN(replicas) || replicas < 1) {
     warnings.push(
@@ -610,8 +620,8 @@ export function checkProductionReadiness(
     // any other Gate. A JWKS (EdDSA/ES256) lets the Gate verify with public
     // keys only; the audience then keeps a token minted for one Gate from being
     // accepted by another (ADR-0035).
-    const secretSet = (process.env.MCPGATE_TRANSACTION_HS256_SECRET ?? "") !== "";
-    const algorithmsRaw = (process.env.MCPGATE_TRANSACTION_ALGORITHMS ?? "")
+    const secretSet = (env.MCPGATE_TRANSACTION_HS256_SECRET ?? "") !== "";
+    const algorithmsRaw = (env.MCPGATE_TRANSACTION_ALGORITHMS ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
@@ -624,7 +634,7 @@ export function checkProductionReadiness(
           "and drop HS256 once every issuer has switched (docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md).",
       );
     }
-    if (process.env.MCPGATE_TRANSACTION_AUDIENCE === "mcpgate") {
+    if (env.MCPGATE_TRANSACTION_AUDIENCE === "mcpgate") {
       warnings.push(
         'MCPGATE_TRANSACTION_AUDIENCE is "mcpgate", the audience the examples use for every Gate: a token minted for one ' +
           "Gate is then valid at all of them. Give each Gate its own audience and map it on the runtime with " +

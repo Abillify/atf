@@ -80,6 +80,13 @@ export interface ResolvedOperationalProfile {
    * operators can see which knob actually took effect.
    */
   source: string | undefined;
+  /**
+   * Name of a lower-precedence variable that says `production` while the
+   * effective profile is not `production` (for example `NODE_ENV=production`
+   * with `ATF_PROFILE=staging`). The production checks are then not enforced;
+   * services log {@link profileShadowWarning} so that is never silent.
+   */
+  shadowedProduction?: string;
 }
 
 function isOperationalProfile(value: string): value is OperationalProfile {
@@ -115,17 +122,39 @@ export function resolveOperationalProfile(
   env: Record<string, string | undefined> = process.env,
   serviceVars: readonly string[] = [],
 ): ResolvedOperationalProfile {
-  for (const variable of [OPERATIONAL_PROFILE_ENV_VAR, ...serviceVars]) {
+  const candidates = [OPERATIONAL_PROFILE_ENV_VAR, ...serviceVars];
+  for (const variable of candidates) {
     const raw = env[variable];
     if (raw === undefined) continue;
     const trimmed = raw.trim();
     if (trimmed.length === 0) continue;
     const profile = normalizeOperationalProfile(variable, trimmed);
+    const shadowedProduction =
+      profile === "production"
+        ? undefined
+        : candidates
+            .slice(candidates.indexOf(variable) + 1)
+            .find((other) => env[other]?.trim().toLowerCase() === "production");
     return {
       profile,
       isProduction: profile === "production",
       source: variable,
+      ...(shadowedProduction !== undefined ? { shadowedProduction } : {}),
     };
   }
   return { profile: "development", isProduction: false, source: undefined };
+}
+
+/**
+ * The startup warning for a downgraded production variable, or `undefined`
+ * when nothing is shadowed.
+ */
+export function profileShadowWarning(
+  resolved: ResolvedOperationalProfile,
+): string | undefined {
+  if (resolved.shadowedProduction === undefined) return undefined;
+  return (
+    `${resolved.shadowedProduction}=production is overridden by ` +
+    `${resolved.source}=${resolved.profile}; production checks are not enforced.`
+  );
 }

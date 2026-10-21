@@ -240,6 +240,7 @@ releases:
 - Search activity stream: events are filtered by the subscriber's tenant and carry only the names of metadata filters, not their values.
 - Gate checks required scopes before approval, so callers without the scopes no longer create approval requests or consume approval tokens.
 - Gate runs the approval lookup tool through the regular dispatcher (policy, rate limit, audit).
+- Services warn when `ATF_PROFILE` downgrades a production service variable (for example `NODE_ENV=production` with `ATF_PROFILE=staging`); `@atf/security-kit` 1.3.0 reports it as `shadowedProduction`.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

@@ -1450,3 +1450,25 @@ describe("checkProductionReadiness — REPLICAS / shared state (Phase 9)", () =>
     );
   });
 });
+
+describe("checkProductionReadiness · downgraded production variable", () => {
+  test("warns when ATF_PROFILE overrides APP_ENV=production", () => {
+    const { warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "staging" }),
+      undefined,
+      { ATF_PROFILE: "staging", APP_ENV: "production" },
+    );
+    expect(warnings).toContain(
+      "APP_ENV=production is overridden by ATF_PROFILE=staging; production checks are not enforced.",
+    );
+  });
+
+  test("is silent when nothing is downgraded", () => {
+    const { warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "staging" }),
+      undefined,
+      { ATF_PROFILE: "staging" },
+    );
+    expect(warnings.some((w) => w.includes("is overridden by"))).toBe(false);
+  });
+});

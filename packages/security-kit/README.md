@@ -1,6 +1,6 @@
 # @atf/security-kit
 
-Package `1.2.0`. Shared security building blocks of the ATF services: constant-time
+Package `1.3.0`. Shared security building blocks of the ATF services: constant-time
 comparison, base64url, the SSRF egress guard, multi-issuer JWT/OIDC verification, GCRA rate
 limiting (memory and Redis), the operational-profile resolver and production-gate rule
 primitives, COSE/CBOR for decision receipts, token exchange and log redaction.
@@ -20,7 +20,7 @@ a bundler never pulls `node:crypto` into a client bundle.
 | JWT / OIDC | `createJwtVerifier`, `JwtVerificationError`, `createDiscoveryClient`, `DiscoveryError`, `validateJwksUri`, `parseMaxAgeMs` | Multi-issuer verification with discovery and JWKS caching |
 | Token exchange | `TokenExchanger`, `ActorTokenProvider`, `createTokenEndpointResolver` | RFC 8693 token exchange and actor client-credentials tokens |
 | Rate limiting | `gcraCheck`, `createMemoryRateLimitBackend`, `createRedisRateLimitBackend`, `createLazyRedisRateLimitBackend`, `createRateLimitMiddleware` | GCRA limiter with an in-process and a shared Redis backend |
-| Production profile | `OPERATIONAL_PROFILES`, `OPERATIONAL_PROFILE_ENV_VAR`, `resolveOperationalProfile`, `normalizeOperationalProfile`, `UnknownOperationalProfileError` | One explicit operating mode for every service |
+| Production profile | `OPERATIONAL_PROFILES`, `OPERATIONAL_PROFILE_ENV_VAR`, `resolveOperationalProfile`, `normalizeOperationalProfile`, `profileShadowWarning`, `UnknownOperationalProfileError` | One explicit operating mode for every service |
 | Prod gate | `createProdGate`, `requireExplicitAuthMode`, `forbidWildcardCors`, `requireTicketSecret`, `requireEnabled`, `requireSecretLength`, `forbidSharedSecrets`, `requirePositiveTimeout`, `reportProdGate` | Rules that are fatal in `production` and warnings elsewhere |
 | TLS | `createServerWithOptionalTls`, `createClientTlsInit` | Optional (m)TLS for servers and clients |
 | Headers | `parseBooleanHeader`, `readHeader`, `readListHeader`, `decodeIfBase64`, `sanitizeHeaderValue` | Tolerant header parsing |
@@ -35,6 +35,12 @@ candidate; a non-blank unknown value throws `UnknownOperationalProfileError`, so
 switch the production gates off. The closed set is `development`, `staging`, `production`, `test`;
 only `production` enforces fatal findings, the others report them as warnings. `ATF_PROFILE` is
 unrelated to Runtime's `PROFILE`, which selects a configuration preset.
+
+When a lower-precedence variable says `production` while the effective profile is not (for
+example `NODE_ENV=production` with `ATF_PROFILE=staging`), the result carries
+`shadowedProduction` and `profileShadowWarning(resolved)` returns the startup warning
+`<VAR>=production is overridden by <SOURCE>=<profile>; production checks are not enforced.`
+Every service logs it.
 
 ## JWT verifier
 

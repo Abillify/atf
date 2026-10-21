@@ -17,6 +17,7 @@ import {
   OPERATIONAL_PROFILE_ENV_VAR,
   UnknownOperationalProfileError,
   normalizeOperationalProfile,
+  profileShadowWarning,
   resolveOperationalProfile,
 } from "../src/index.ts";
 
@@ -136,5 +137,48 @@ describe("resolveOperationalProfile", () => {
     );
     expect(r.profile).toBe("production");
     expect(r.isProduction).toBe(true);
+  });
+});
+
+describe("shadowed production", () => {
+  test("ATF_PROFILE=staging over NODE_ENV=production is reported", () => {
+    const r = resolveOperationalProfile(
+      { ATF_PROFILE: "staging", NODE_ENV: "production" },
+      ["NODE_ENV"],
+    );
+    expect(r.profile).toBe("staging");
+    expect(r.shadowedProduction).toBe("NODE_ENV");
+    expect(profileShadowWarning(r)).toBe(
+      "NODE_ENV=production is overridden by ATF_PROFILE=staging; production checks are not enforced.",
+    );
+  });
+
+  test("a service variable can shadow a lower one as well", () => {
+    const r = resolveOperationalProfile(
+      { MCPGATE_ENV: "development", NODE_ENV: " Production " },
+      ["MCPGATE_ENV", "NODE_ENV"],
+    );
+    expect(r.shadowedProduction).toBe("NODE_ENV");
+    expect(profileShadowWarning(r)).toContain("MCPGATE_ENV=development");
+  });
+
+  test("nothing is reported when production wins or nothing says production", () => {
+    const production = resolveOperationalProfile(
+      { ATF_PROFILE: "production", NODE_ENV: "development" },
+      ["NODE_ENV"],
+    );
+    expect(production.shadowedProduction).toBeUndefined();
+    expect(profileShadowWarning(production)).toBeUndefined();
+    const staging = resolveOperationalProfile({ ATF_PROFILE: "staging" }, ["NODE_ENV"]);
+    expect(profileShadowWarning(staging)).toBeUndefined();
+  });
+
+  test("a higher-precedence variable that says production is never shadowed", () => {
+    const r = resolveOperationalProfile(
+      { NODE_ENV: "development", ATF_PROFILE: "production" },
+      ["NODE_ENV"],
+    );
+    expect(r.isProduction).toBe(true);
+    expect(r.shadowedProduction).toBeUndefined();
   });
 });

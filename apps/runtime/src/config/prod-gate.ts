@@ -8,6 +8,7 @@
  * Requirements: 1.1, 1.2, 1.4, 1.5, 2.2, 2.3, 3.1
  */
 
+import { profileShadowWarning, resolveOperationalProfile } from "@atf/security-kit";
 import type { AppConfig } from "./schema.js";
 import { transactionTokenConfigFromEnv } from "../transaction/token.js";
 
@@ -61,6 +62,9 @@ export function checkProductionReadiness(
 } {
   const fatal: string[] = [];
   const warnings: string[] = [];
+
+  const shadowed = profileShadowWarning(resolveOperationalProfile(env, ["APP_ENV"]));
+  if (shadowed !== undefined) warnings.push(shadowed);
 
   const isProd = config.appEnv === "production";
   // The regulated presets promise a hardened posture: in the production

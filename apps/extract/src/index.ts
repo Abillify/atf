@@ -34,7 +34,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Server as HttpsServer } from "node:https";
-import { pinoLogRedaction, withMaskedChildBindings, createServerWithOptionalTls } from "@atf/security-kit";
+import {
+  pinoLogRedaction,
+  profileShadowWarning,
+  resolveOperationalProfile,
+  withMaskedChildBindings,
+  createServerWithOptionalTls,
+} from "@atf/security-kit";
 import {
   createTracer,
   formatTraceparent,
@@ -1383,6 +1389,10 @@ async function main(): Promise<void> {
   // into a log nobody reads. Non-production keeps the convenient defaults and
   // reports what WOULD be fatal, so the same config surfaces the same list
   // before it is promoted.
+  const profileShadow = profileShadowWarning(
+    resolveOperationalProfile(process.env, ["NODE_ENV"]),
+  );
+  if (profileShadow !== undefined) logger.warn({ readiness: true }, profileShadow);
   const readiness = checkProductionReadiness(config);
   for (const warning of readiness.warnings) {
     logger.warn({ readiness: true }, warning);

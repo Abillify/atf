@@ -1240,3 +1240,46 @@ describe("pending-approval replica gate", () => {
     }
   });
 });
+
+describe("injected environment", () => {
+  test("MCPGATE_REPLICAS is read from the injected env, not from process.env", () => {
+    const before = process.env.MCPGATE_REPLICAS;
+    const report = checkProductionReadiness(goodConfig(), "staging", {
+      MCPGATE_REPLICAS: "3",
+    });
+    expect(report.warnings.some((m) => m.includes("MCPGATE_REPLICAS=3 without Redis"))).toBe(true);
+    expect(process.env.MCPGATE_REPLICAS).toBe(before);
+    const single = checkProductionReadiness(goodConfig(), "staging", {});
+    expect(single.warnings.some((m) => m.includes("MCPGATE_REPLICAS=3"))).toBe(false);
+  });
+
+  test("the profile is resolved from the injected env when none is given", () => {
+    expect(
+      checkProductionReadiness(goodConfig(), undefined, { ATF_PROFILE: "staging" }).environment,
+    ).toBe("staging");
+    expect(
+      checkProductionReadiness(goodConfig(), undefined, { MCPGATE_ENV: "production" }).environment,
+    ).toBe("production");
+  });
+});
+
+describe("downgraded production variable", () => {
+  test("warns when ATF_PROFILE overrides NODE_ENV=production", () => {
+    const report = checkProductionReadiness(goodConfig(), undefined, {
+      ATF_PROFILE: "staging",
+      NODE_ENV: "production",
+    });
+    expect(report.environment).toBe("staging");
+    expect(report.warnings).toContain(
+      "NODE_ENV=production is overridden by ATF_PROFILE=staging; production checks are not enforced.",
+    );
+  });
+
+  test("an explicit environment argument adds no shadow warning", () => {
+    const report = checkProductionReadiness(goodConfig(), "staging", {
+      ATF_PROFILE: "staging",
+      NODE_ENV: "production",
+    });
+    expect(report.warnings.some((m) => m.includes("is overridden by"))).toBe(false);
+  });
+});

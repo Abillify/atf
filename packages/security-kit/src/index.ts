@@ -161,6 +161,7 @@ export {
   OPERATIONAL_PROFILE_ENV_VAR,
   UnknownOperationalProfileError,
   normalizeOperationalProfile,
+  profileShadowWarning,
   resolveOperationalProfile,
   type OperationalProfile,
   type ResolvedOperationalProfile,
