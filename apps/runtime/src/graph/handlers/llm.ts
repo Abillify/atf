@@ -67,7 +67,10 @@ import {
 } from "../require-tool-use.js";
 import { resolveToolSequenceContract } from "../tool-sequence-contract.js";
 
-import { resolveContextWindow } from "../context-window.js";
+import {
+  charsPerTokenFor,
+  resolveContextWindow,
+} from "../context-window.js";
 import { budgetForContextWindow } from "../tool-result-budget.js";
 import {
   parseLlmOutputSchema,
@@ -267,6 +270,7 @@ export function createLlmNodeHandler(
     )?.toolResultBudget;
     const derivedToolBudget = budgetForContextWindow(
       resolveContextWindow(llmConfig),
+      charsPerTokenFor(llmConfig),
     );
     const toolResultBudget = {
       perResultChars:

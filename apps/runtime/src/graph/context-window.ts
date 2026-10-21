@@ -43,6 +43,36 @@ import { estimateTokensFromText } from "../observability/cost.js";
 export const CHARS_PER_TOKEN = 4;
 
 /**
+ * Active default ratio, seeded from the `CHARS_PER_TOKEN` env var at startup
+ * via {@link setDefaultCharsPerToken}. The exported constant above stays the
+ * factory default; this mutable value is what the estimator actually uses.
+ */
+let defaultCharsPerToken = CHARS_PER_TOKEN;
+
+function isValidCharsPerToken(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= 8;
+}
+
+/**
+ * Overrides the process-wide default characters-per-token ratio (called once
+ * at startup from the loaded config). Values outside 1.0–8.0 are ignored so a
+ * bad env value can never distort the estimate.
+ */
+export function setDefaultCharsPerToken(value: number): void {
+  if (isValidCharsPerToken(value)) defaultCharsPerToken = value;
+}
+
+/**
+ * Resolves the characters-per-token ratio for an LLM config: the per-model
+ * `charsPerToken` field wins over the process-wide default (env var).
+ */
+export function charsPerTokenFor(llm?: { charsPerToken?: number }): number {
+  return isValidCharsPerToken(llm?.charsPerToken)
+    ? llm.charsPerToken
+    : defaultCharsPerToken;
+}
+
+/**
  * Tokens kept free for provider chat templates, tool schemas and estimator
  * error. Those bytes are not fully represented by the portable message
  * estimator, so reserving a small fixed margin prevents boundary overflows.
@@ -349,7 +379,9 @@ function truncateText(text: string, keepChars: number): string {
  */
 export function truncateMessagesToWindow(
   messages: ModelMessage[],
-  llmConfig: Pick<LlmConfig, "provider" | "model" | "parameters"> | undefined,
+  llmConfig:
+    | Pick<LlmConfig, "provider" | "model" | "parameters" | "charsPerToken">
+    | undefined,
   maxOutputTokens: number | undefined,
   safetyTokens = CONTEXT_OUTPUT_SAFETY_TOKENS,
 ): ContextTruncation {
@@ -386,7 +418,7 @@ export function truncateMessagesToWindow(
   // How many prompt tokens (hence chars) must go. Bias the char target low by
   // using the same coarse ratio the estimator uses, so one pass is enough.
   const tokensToRemove = estimatedTokensBefore - targetInputTokens;
-  let charsToRemove = tokensToRemove * CHARS_PER_TOKEN;
+  let charsToRemove = tokensToRemove * charsPerTokenFor(llmConfig);
 
   const next = [...messages];
   let removedChars = 0;

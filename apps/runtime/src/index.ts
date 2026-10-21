@@ -87,6 +87,7 @@ import {
 } from "./openapi.js";
 import { ensureBunGlobals } from "./bun-globals.js";
 import { createLlmProvider } from "./graph/llm-factory.js";
+import { setDefaultCharsPerToken } from "./graph/context-window.js";
 import { ExecutionAdmissionService } from "./graph/execution-admission.js";
 
 if (import.meta.main) {
@@ -95,6 +96,9 @@ if (import.meta.main) {
 
   // 1. Config
   const config = loadConfig();
+  // Seed the coarse token estimator with the configured chars-per-token ratio
+  // (per-model `charsPerToken` still overrides this default per node).
+  setDefaultCharsPerToken(config.charsPerToken ?? 4);
 
   // 1b. Egress_Guard (Req 7.1, 7.2): every outbound HTTP call goes through
   // this guard. Private/loopback targets need an explicit host exception in

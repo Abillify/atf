@@ -41,7 +41,7 @@
 import type { ModelMessage } from "ai";
 import type { BaseMessage } from "@langchain/core/messages";
 import { ToolMessage } from "@langchain/core/messages";
-import { CHARS_PER_TOKEN } from "./context-window.js";
+import { charsPerTokenFor } from "./context-window.js";
 
 // ---------------------------------------------------------------------------
 // Budget constants
@@ -99,6 +99,7 @@ export interface ToolResultBudget {
  */
 export function budgetForContextWindow(
   contextLength?: number,
+  charsPerToken?: number,
 ): ToolResultBudget {
   if (
     contextLength === undefined ||
@@ -111,7 +112,7 @@ export function budgetForContextWindow(
     };
   }
 
-  const windowChars = contextLength * CHARS_PER_TOKEN;
+  const windowChars = contextLength * charsPerTokenFor({ charsPerToken });
   return {
     // Clamp between the floor and the historical default: large models stay
     // byte-identical to pre-budget behaviour, small models shrink.

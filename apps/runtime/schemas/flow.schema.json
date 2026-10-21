@@ -209,6 +209,12 @@
                     },
                     "additionalProperties": {}
                   },
+                  "charsPerToken": {
+                    "description": "Characters-per-token estimate (1–8) for context fitting and tool-result budgets on this node; overrides the `CHARS_PER_TOKEN` env default.",
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 8
+                  },
                   "pool": {
                     "description": "Set by the parser when a pool shortcut is expanded; not written by hand.",
                     "type": "object",
@@ -394,6 +400,12 @@
                             "type": "string"
                           },
                           "additionalProperties": {}
+                        },
+                        "charsPerToken": {
+                          "description": "Characters-per-token estimate (1–8) for context fitting and tool-result budgets on this node; overrides the `CHARS_PER_TOKEN` env default.",
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 8
                         },
                         "pool": {
                           "description": "Set by the parser when a pool shortcut is expanded; not written by hand.",
@@ -595,6 +607,11 @@
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "charsPerToken": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 8
         },
         "weight": {
           "type": "number",

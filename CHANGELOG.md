@@ -378,6 +378,7 @@ releases:
 - Model pools accept `sticky: execution | conversation` to keep calls of one execution or conversation on the same endpoint (prefix-cache affinity); failover still applies.
 - Eval assertions `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g. `loop_blocked`) check the execution trace.
 - `config.toolArgs` accepts `"*"` and `"<server>/*"` keys; wildcard arguments apply to tools that declare them, exact refs still win.
+- `CHARS_PER_TOKEN` (default 4) and a per-model `charsPerToken` tune the token estimate used for context fitting and tool-result budgets.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

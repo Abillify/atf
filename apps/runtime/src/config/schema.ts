@@ -490,6 +490,12 @@ export interface AppConfig {
   llmMaxOutputChars?: number;
   /** Controls semantic response fallbacks while preserving transport retries. */
   llmStreamFallbackPolicy?: LlmStreamFallbackPolicy;
+  /**
+   * Characters per token for the coarse context/tool-budget estimator
+   * (1.0–8.0, default 4). Lower it for token-dense languages such as German.
+   * Overridable per model via `charsPerToken` in the LLM config.
+   */
+  charsPerToken?: number;
   fallbackLlm?: LlmConfig;
   fallbackChain?: LlmConfig[];
   maxQueueDepth?: number;
@@ -853,6 +859,11 @@ export const LlmConfigSchema = z.object({
   provider: z.string().min(1).max(64),
   model: z.string().min(1).max(256),
   parameters: LlmParametersSchema.optional(),
+  /**
+   * Per-model characters-per-token estimate overriding the `CHARS_PER_TOKEN`
+   * env default for this config only.
+   */
+  charsPerToken: z.number().min(1).max(8).optional(),
 });
 
 export const EmbeddingConfigSchema = z.object({
@@ -1796,6 +1807,10 @@ export const EnvSchema = z.object({
   LLM_STREAM_FALLBACK_POLICY: z
     .enum(["legacy", "report", "explicit", "disabled"])
     .default("legacy"),
+  // Characters per token for the coarse estimator used by context fitting and
+  // tool-result budgets. Default 4 suits English; lower it (e.g. 3) for
+  // token-dense languages such as German where 4 chars/token underestimates.
+  CHARS_PER_TOKEN: z.coerce.number().min(1).max(8).default(4),
   MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).max(100000).default(100),
   BUDGET_DAILY_PER_TENANT: z.coerce.number().min(0).max(1_000_000).default(0),
   // Display currency for every cost figure in the system. Purely a label:

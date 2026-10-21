@@ -75,6 +75,8 @@ interface ModelPresetDef {
   model: string;
   /** Tuning parameters intrinsic to this model family. */
   parameters?: Record<string, unknown>;
+  /** Characters-per-token estimate intrinsic to this model family. */
+  charsPerToken?: number;
 }
 
 /**
@@ -90,6 +92,8 @@ interface SingleShortcutDef {
   model: string;
   /** Optional extra parameters layered on top of the preset's. */
   parameters?: Record<string, unknown>;
+  /** Overrides the preset's characters-per-token estimate. */
+  charsPerToken?: number;
 }
 
 /** One member of a pool shortcut: a concrete pair or a reference to another shortcut. */
@@ -102,6 +106,8 @@ interface PoolMemberDef {
   model?: string;
   /** Optional extra parameters layered on top of the preset's. */
   parameters?: Record<string, unknown>;
+  /** Overrides the preset's/pool's characters-per-token estimate. */
+  charsPerToken?: number;
   /** Optional relative selection weight. */
   weight?: number;
 }
@@ -123,6 +129,11 @@ interface PoolShortcutDef {
    * members, an inner pool can override it, and a node can still override both.
    */
   parameters?: Record<string, unknown>;
+  /**
+   * Pool-level characters-per-token estimate layered onto every leaf; a
+   * member's or the node's own value wins over it.
+   */
+  charsPerToken?: number;
 }
 
 type ShortcutDef = SingleShortcutDef | PoolShortcutDef;
@@ -174,6 +185,16 @@ function coerceSection<T>(
   return out;
 }
 
+/** Reads an optional chars-per-token value (1.0–8.0); malformed values drop. */
+function readCharsPerToken(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 1 &&
+    value <= 8
+    ? value
+    : undefined;
+}
+
 function parseShortcutsData(raw: unknown): ModelShortcutsData {
   const root = isRecord(raw) ? raw : {};
   const engines = coerceSection<EngineDef>(root.engines, (e) =>
@@ -194,6 +215,9 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
             model: p.model,
             ...(isRecord(p.parameters)
               ? { parameters: p.parameters }
+              : {}),
+            ...(readCharsPerToken(p.charsPerToken) !== undefined
+              ? { charsPerToken: readCharsPerToken(p.charsPerToken) }
               : {}),
           }
         : null,
@@ -255,6 +279,9 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
             ...(isRecord(rawMember.parameters)
               ? { parameters: rawMember.parameters }
               : {}),
+            ...(readCharsPerToken(rawMember.charsPerToken) !== undefined
+              ? { charsPerToken: readCharsPerToken(rawMember.charsPerToken) }
+              : {}),
             ...(typeof rawMember.weight === "number" &&
             Number.isFinite(rawMember.weight) &&
             rawMember.weight > 0
@@ -271,6 +298,9 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
         ...(isRecord(poolSource?.parameters)
           ? { parameters: poolSource.parameters }
           : {}),
+        ...(readCharsPerToken(poolSource?.charsPerToken) !== undefined
+          ? { charsPerToken: readCharsPerToken(poolSource?.charsPerToken) }
+          : {}),
       };
     }
     // Plain form: engine + model (+ optional params).
@@ -279,6 +309,9 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
         engine: s.engine,
         model: s.model,
         ...(isRecord(s.parameters) ? { parameters: s.parameters } : {}),
+        ...(readCharsPerToken(s.charsPerToken) !== undefined
+          ? { charsPerToken: readCharsPerToken(s.charsPerToken) }
+          : {}),
       };
     }
     return null;
@@ -396,6 +429,7 @@ function expandConcrete(
   nodeParams: Record<string, unknown>,
   data: ModelShortcutsData,
   fileName: string,
+  shortcutCharsPerToken?: number,
 ): LlmConfig | null {
   const engine = data.engines[engineName];
   if (engine === undefined) {
@@ -428,6 +462,11 @@ function expandConcrete(
   }
   if (Object.keys(mergedParams).length > 0) {
     config.parameters = mergedParams;
+  }
+  // Shortcut/member-level chars-per-token overrides the preset's.
+  const charsPerToken = shortcutCharsPerToken ?? preset.charsPerToken;
+  if (charsPerToken !== undefined) {
+    config.charsPerToken = charsPerToken;
   }
   return config;
 }
@@ -474,6 +513,7 @@ function expandShortcutToConfig(
   fileName: string,
   visiting: ReadonlySet<string>,
   inheritedParams: Record<string, unknown> = {},
+  inheritedCharsPerToken?: number,
 ): LlmConfig | null {
   if (visiting.has(name)) {
     warn(fileName, `Model shortcut "${name}" has a cyclic reference`);
@@ -496,6 +536,7 @@ function expandShortcutToConfig(
       nodeParams,
       data,
       fileName,
+      shortcut.charsPerToken ?? inheritedCharsPerToken,
     );
   }
 
@@ -505,6 +546,9 @@ function expandShortcutToConfig(
     ...inheritedParams,
     ...(shortcut.parameters ?? {}),
   };
+  // This pool's chars-per-token overrides any inherited from an enclosing pool.
+  const poolCharsPerToken =
+    shortcut.charsPerToken ?? inheritedCharsPerToken;
 
   const candidates: LlmConfig[] = [];
   for (const member of shortcut.members) {
@@ -519,6 +563,7 @@ function expandShortcutToConfig(
         fileName,
         new Set([...visiting, name]),
         poolInherited,
+        poolCharsPerToken,
       );
       if (nested === null) return null;
       // An explicit member weight applies to the nested candidate as a whole.
@@ -542,6 +587,7 @@ function expandShortcutToConfig(
       nodeParams,
       data,
       fileName,
+      member.charsPerToken ?? poolCharsPerToken,
     );
     if (concrete === null) return null;
     candidates.push(concrete);
@@ -558,6 +604,9 @@ function expandShortcutToConfig(
     Object.keys(first.parameters).length > 0
   ) {
     config.parameters = first.parameters;
+  }
+  if (first.charsPerToken !== undefined) {
+    config.charsPerToken = first.charsPerToken;
   }
   config.pool = {
     strategy: shortcut.strategy,
@@ -605,6 +654,13 @@ function expandShortcutObject(
   }
   if (resolved.pool !== undefined) {
     obj.pool = resolved.pool;
+  }
+  // A node-level `charsPerToken` next to `shortcut` wins over the shortcut's.
+  if (
+    resolved.charsPerToken !== undefined &&
+    obj.charsPerToken === undefined
+  ) {
+    obj.charsPerToken = resolved.charsPerToken;
   }
 }
 

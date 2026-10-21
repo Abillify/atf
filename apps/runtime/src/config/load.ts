@@ -350,6 +350,7 @@ export function loadConfig(): AppConfig {
     llmHttpKeepAlive: env.LLM_HTTP_KEEP_ALIVE,
     llmMaxOutputChars: env.LLM_MAX_OUTPUT_CHARS,
     llmStreamFallbackPolicy: env.LLM_STREAM_FALLBACK_POLICY,
+    charsPerToken: env.CHARS_PER_TOKEN,
     fallbackLlm: env.FALLBACK_LLM,
     fallbackChain:
       env.FALLBACK_CHAIN.length > 0 ? env.FALLBACK_CHAIN : undefined,

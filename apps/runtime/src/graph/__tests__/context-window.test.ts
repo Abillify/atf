@@ -15,14 +15,18 @@ import type { ModelMessage } from "ai";
 import type { LlmConfig } from "../../types/flow.js";
 import {
   CHARS_PER_TOKEN,
+  CONTEXT_OUTPUT_SAFETY_TOKENS,
+  charsPerTokenFor,
   effectiveInputBudget,
   estimateMessageTokens,
   estimateMessagesTokens,
   measureContextPressure,
   readContextLengthOverride,
   resolveContextWindow,
+  setDefaultCharsPerToken,
   truncateMessagesToWindow,
 } from "../context-window.js";
+import { budgetForContextWindow } from "../tool-result-budget.js";
 import { getModelCapabilities } from "../model-capabilities.js";
 
 function cfg(
@@ -382,5 +386,120 @@ describe("truncateMessagesToWindow", () => {
 
     // The image message is not a string, so it is not the truncation target.
     expect(result.messages[1]).toBe(imageMessage);
+  });
+});
+
+describe("charsPerTokenFor", () => {
+  test("defaults to the exported CHARS_PER_TOKEN constant", () => {
+    expect(charsPerTokenFor()).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor({})).toBe(CHARS_PER_TOKEN);
+  });
+
+  test("a valid node-level charsPerToken wins over the default", () => {
+    expect(charsPerTokenFor({ charsPerToken: 2.5 })).toBe(2.5);
+  });
+
+  test("invalid node-level values fall back to the default", () => {
+    for (const bad of [0, -1, 8.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(charsPerTokenFor({ charsPerToken: bad })).toBe(
+        charsPerTokenFor(),
+      );
+    }
+  });
+
+  test("the process-wide default follows setDefaultCharsPerToken", () => {
+    try {
+      setDefaultCharsPerToken(3);
+      expect(charsPerTokenFor()).toBe(3);
+      // A node value still beats the env default.
+      expect(charsPerTokenFor({ charsPerToken: 2.5 })).toBe(2.5);
+    } finally {
+      setDefaultCharsPerToken(CHARS_PER_TOKEN);
+    }
+  });
+
+  test("setDefaultCharsPerToken ignores out-of-range values", () => {
+    setDefaultCharsPerToken(99);
+    expect(charsPerTokenFor()).toBe(CHARS_PER_TOKEN);
+  });
+});
+
+describe("configurable characters-per-token estimate", () => {
+  test("env default 3 scales tool-result budget chars to tokens × 3", () => {
+    try {
+      setDefaultCharsPerToken(3);
+      const b = budgetForContextWindow(20_000);
+      // Window chars = 20 000 × 3 = 60 000; fractions 0.15 / 0.3, above floors.
+      expect(b.perResultChars).toBe(Math.floor(60_000 * 0.15));
+      expect(b.perTurnChars).toBe(Math.floor(60_000 * 0.3));
+    } finally {
+      setDefaultCharsPerToken(CHARS_PER_TOKEN);
+    }
+  });
+
+  test("an explicit charsPerToken argument scales the budget too", () => {
+    const b = budgetForContextWindow(100_000, 2);
+    expect(b.perResultChars).toBe(Math.floor(200_000 * 0.15));
+  });
+
+  test("truncation removes tokens × charsPerToken characters", () => {
+    try {
+      setDefaultCharsPerToken(3);
+      // 300k chars = 100k tokens at 3 chars/token; window 60k tokens, no
+      // reservation → 40k tokens (120k chars) must go.
+      const messages = [
+        { role: "system", content: "x".repeat(300_000) } as ModelMessage,
+        { role: "user", content: "frage" } as ModelMessage,
+      ];
+      const before = estimateMessagesTokens(messages);
+      const tokensToRemove =
+        before - (60_000 - CONTEXT_OUTPUT_SAFETY_TOKENS);
+      const result = truncateMessagesToWindow(
+        messages,
+        {
+          provider: "openai",
+          model: "local",
+          parameters: { contextLength: 60_000 },
+        } as LlmConfig,
+        0,
+      );
+      expect(result.truncated).toBe(true);
+      // Chars removed scale with the configured ratio (3), minus the elision
+      // marker that replaces the cut span.
+      expect(result.removedChars).toBeLessThanOrEqual(tokensToRemove * 3);
+      expect(result.removedChars).toBeGreaterThan(tokensToRemove * 3 - 200);
+    } finally {
+      setDefaultCharsPerToken(CHARS_PER_TOKEN);
+    }
+  });
+
+  test("node-level charsPerToken 2.5 wins over the env default", () => {
+    try {
+      setDefaultCharsPerToken(3);
+      expect(charsPerTokenFor({ charsPerToken: 2.5 })).toBe(2.5);
+      const messages = [
+        { role: "system", content: "x".repeat(300_000) } as ModelMessage,
+        { role: "user", content: "frage" } as ModelMessage,
+      ];
+      const before = estimateMessagesTokens(messages);
+      const tokensToRemove =
+        before - (60_000 - CONTEXT_OUTPUT_SAFETY_TOKENS);
+      const result = truncateMessagesToWindow(
+        messages,
+        {
+          provider: "openai",
+          model: "local",
+          parameters: { contextLength: 60_000 },
+          charsPerToken: 2.5,
+        } as LlmConfig,
+        0,
+      );
+      expect(result.truncated).toBe(true);
+      // Scaled by the node's 2.5, not by the env default 3.
+      expect(result.removedChars).toBeLessThanOrEqual(tokensToRemove * 2.5);
+      expect(result.removedChars).toBeGreaterThan(tokensToRemove * 2.5 - 200);
+    } finally {
+      setDefaultCharsPerToken(CHARS_PER_TOKEN);
+    }
   });
 });

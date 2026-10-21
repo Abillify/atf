@@ -246,6 +246,7 @@ const LlmPoolCandidateSchema: z.ZodType<LlmConfig> = z.lazy(() =>
 		provider: ProviderSchema,
 		model: z.string().min(1).max(256),
 		parameters: LlmParametersSchema.optional(),
+		charsPerToken: z.number().min(1).max(8).optional(),
 		weight: z.number().finite().positive().optional(),
 		pool: z
 			.object({
@@ -270,6 +271,14 @@ export const LlmConfigSchema: z.ZodType<LlmConfig> = z
 		parameters: LlmParametersSchema.optional().describe(
 			"Generation parameters (temperature 0–2, maxTokens 1–65536, contextLength, reasoningEffort, chatTemplateKwargs, extraBody, visionInput, providerOptions); max. 20 keys.",
 		),
+		charsPerToken: z
+			.number()
+			.min(1)
+			.max(8)
+			.optional()
+			.describe(
+				"Characters-per-token estimate (1–8) for context fitting and tool-result budgets on this node; overrides the `CHARS_PER_TOKEN` env default.",
+			),
 		pool: z
 			.object({
 				strategy: PoolStrategySchema,

@@ -248,6 +248,18 @@ export const LLM_MODEL_FIELDS: ConfigField[] = [
     example: { temperature: 0.2, maxTokens: 4096 },
   },
   {
+    key: "llm.charsPerToken",
+    kind: "number",
+    label: "Chars per token",
+    min: 1,
+    max: 8,
+    step: 0.5,
+    advanced: true,
+    description:
+      "Characters-per-token estimate (1–8) used for context fitting and tool-result budgets on this node. Overrides the deployment's `CHARS_PER_TOKEN` env default (4) — set it for models whose tokenizer packs text denser or sparser, e.g. German-heavy corpora.",
+    example: 2.5,
+  },
+  {
     key: "llm.weight",
     kind: "number",
     label: "Pool weight",

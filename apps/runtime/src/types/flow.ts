@@ -162,6 +162,12 @@ export interface LlmConfig {
   model: string;
   /** Optional inference parameters */
   parameters?: LlmParameters;
+  /**
+   * Optional characters-per-token estimate (1.0–8.0) for context fitting and
+   * tool-result budgets on this node. Overrides the `CHARS_PER_TOKEN` env
+   * default; carried from a model shortcut unless the node sets its own value.
+   */
+  charsPerToken?: number;
   /** Optional relative pool weight. Ignored outside a pool. */
   weight?: number;
   /**
