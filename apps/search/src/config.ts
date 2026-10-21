@@ -97,6 +97,8 @@ export interface Config {
   rerankBatchSize: number; // RERANK_BATCH_SIZE (default: 16)
   /** Batch requests of one rerank call that run at once (1 = sequential). */
   rerankBatchConcurrency: number; // RERANK_BATCH_CONCURRENCY (default: 2, 1-8)
+  /** Rerank upstream calls in flight across the whole process (0 = unlimited). */
+  rerankGlobalConcurrency: number; // RERANK_GLOBAL_CONCURRENCY (default: 0)
   rerankInputSeparator: string; // RERANK_SEPARATOR (default: "\n")
   rerankCandidateMultiplier: number; // RERANK_CANDIDATE_MULTIPLIER (default: 4)
   /**
@@ -1431,6 +1433,10 @@ export function loadConfig(): Config {
     8,
     Math.max(1, parseNonNegIntEnv("RERANK_BATCH_CONCURRENCY", 2)),
   );
+  const rerankGlobalConcurrency = Math.max(
+    0,
+    parseNonNegIntEnv("RERANK_GLOBAL_CONCURRENCY", 0),
+  );
   const rerankInputSeparator = optionalString("RERANK_SEPARATOR") ?? "\n";
   const rerankDocumentsField =
     optionalString("RERANK_DOCUMENTS_FIELD") ?? "texts";
@@ -1654,6 +1660,7 @@ export function loadConfig(): Config {
     rerankModel,
     rerankBatchSize,
     rerankBatchConcurrency,
+    rerankGlobalConcurrency,
     rerankInputSeparator,
     rerankCandidateMultiplier,
     minRerankScore,

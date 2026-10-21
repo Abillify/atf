@@ -557,6 +557,7 @@ releases:
 - The `regulated` presets also set `TAINT_MODE=on-untrusted-source`, `AI_DISCLOSURE=header` and `COMPLIANCE_POLICY_REQUIRED=true`; in production they make a missing `AUDIT_ANCHOR_FILE`, an empty `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` fatal.
 - The configuration preset variable is now `ATF_PRESET`; `PROFILE` keeps working as a deprecated alias and logs a warning. Setting both to different values stops startup.
 - Runtime keeps per-node execution state per delegation instance, and the debug trace names the instance (`instance_id`) when an agent-harness task delegated to a node.
+- Search keeps the scores of successful rerank batches when one batch fails (`rerank.partial`), and `RERANK_GLOBAL_CONCURRENCY` bounds rerank calls per process.
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis

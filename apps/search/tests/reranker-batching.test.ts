@@ -5,20 +5,32 @@
  * `RERANK_BATCH_SIZE` documents (it was a hard-coded 16 that no setting
  * reached), and `RERANK_BATCH_CONCURRENCY` of them run at once instead of
  * 100 hits costing ⌈100/16⌉ serial round-trips. Scores must still land on the
- * right documents, and the first failing batch still fails the whole call.
+ * right documents, a failed batch degrades the call to a `partial` success,
+ * and `RERANK_GLOBAL_CONCURRENCY` bounds upstream calls process-wide.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
-import { createRerankerClient } from "../src/reranker-client.js";
+import {
+  configureRerankGlobalConcurrency,
+  createRerankerClient,
+} from "../src/reranker-client.js";
 
 const logger = pino({ level: "silent" });
 const realFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  // The semaphore is process-wide; reset it so one test's limit cannot leak.
+  configureRerankGlobalConcurrency(0);
 });
 
-function client(extra: { batchSize?: number; batchConcurrency?: number } = {}) {
+function client(
+  extra: {
+    batchSize?: number;
+    batchConcurrency?: number;
+    globalConcurrency?: number;
+  } = {},
+) {
   return createRerankerClient({
     rerankUrl: "http://rerank.test/rerank",
     rerankModel: "m",
@@ -112,19 +124,43 @@ describe("createRerankerClient · batching", () => {
     expect(ordered).toEqual(sorted);
   });
 
-  it("the first failing batch fails the whole call", async () => {
+  it("a failing batch yields a partial success with the other scores", async () => {
     installFetch({ failOnCall: 2 });
     const res = await client({ batchSize: 2, batchConcurrency: 1 }).rerank("q", docs(8));
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.partial).toBe(true);
+    // The second batch (docs 2 and 3) is missing; the rest are scored.
+    const indices = res.result.map((s) => s.index).sort((a, b) => a - b);
+    expect(indices).toEqual([0, 1, 4, 5, 6, 7]);
+  });
+
+  it("every batch is attempted even when one fails", async () => {
+    const seen = installFetch({ failOnCall: 1, delayMs: 20 });
+    const res = await client({ batchSize: 1, batchConcurrency: 2 }).rerank("q", docs(12));
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.partial).toBe(true);
+    // All 12 batches were attempted; only the failed one's score is missing.
+    expect(seen.calls()).toBe(12);
+    expect(res.result).toHaveLength(11);
+  });
+
+  it("a failure in every batch still fails the call", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
+    const res = await client({ batchSize: 2, batchConcurrency: 1 }).rerank("q", docs(4));
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe("RERANK_HTTP_ERROR");
   });
 
-  it("a failure with concurrent batches still fails the call and starts no further batches afterwards", async () => {
-    const seen = installFetch({ failOnCall: 1, delayMs: 20 });
-    const res = await client({ batchSize: 1, batchConcurrency: 2 }).rerank("q", docs(12));
-    expect(res.ok).toBe(false);
-    // Two were in flight when the first failed; the rest never started.
-    expect(seen.calls()).toBeLessThan(12);
+  it("RERANK_GLOBAL_CONCURRENCY bounds upstream calls across clients", async () => {
+    const seen = installFetch({ delayMs: 20 });
+    const a = client({ batchSize: 1, batchConcurrency: 4, globalConcurrency: 1 });
+    const b = client({ batchSize: 1, batchConcurrency: 4, globalConcurrency: 1 });
+    await Promise.all([a.rerank("q", docs(4)), b.rerank("q", docs(4))]);
+    expect(seen.calls()).toBe(8);
+    // The process-wide semaphore serialises every upstream call.
+    expect(seen.peak()).toBe(1);
   });
 
   it("a list that fits in one batch is a single request", async () => {

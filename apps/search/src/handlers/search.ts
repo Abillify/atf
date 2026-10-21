@@ -878,6 +878,8 @@ export interface RerankOutcome {
   results: SearchResult[];
   applied: boolean;
   complete: boolean;
+  /** True when some candidates were unscored but kept behind the scored ones. */
+  partial: boolean;
   scoredCount: number;
   inputCount: number;
   fallbackReason: RerankFallbackReason;
@@ -907,6 +909,7 @@ export async function rerankResultsWithStatus(
       results,
       applied: false,
       complete: false,
+      partial: false,
       scoredCount: 0,
       inputCount: results.length,
       fallbackReason: "failed",
@@ -939,22 +942,42 @@ export async function rerankResultsWithStatus(
       results,
       applied: false,
       complete: false,
+      partial: false,
       scoredCount: 0,
       inputCount: results.length,
       fallbackReason: "empty-or-invalid",
     };
   }
 
-  const complete = reranked.length === results.length;
+  // A partial rerank (some upstream batches failed) keeps the unscored
+  // candidates: they retain their retrieval (RRF) order and are placed behind
+  // every scored candidate, so a partial failure degrades ranking quality
+  // instead of dropping hits.
+  const partial = rerankResponse.partial === true;
+  const scoredCount = reranked.length;
+  const complete = validScores.size === results.length;
+  const finalResults =
+    partial && !complete
+      ? [
+          ...reranked,
+          ...results.filter((_r, index) => !validScores.has(index)),
+        ]
+      : reranked;
   logger.debug(
-    { count: reranked.length, inputCount: results.length, complete },
+    {
+      count: scoredCount,
+      inputCount: results.length,
+      complete,
+      partial,
+    },
     "Reranked search results",
   );
   return {
-    results: reranked,
+    results: finalResults,
     applied: true,
     complete,
-    scoredCount: reranked.length,
+    partial,
+    scoredCount,
     inputCount: results.length,
     fallbackReason: null,
   };

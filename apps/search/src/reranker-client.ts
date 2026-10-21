@@ -9,10 +9,61 @@ import { retryWithBackoff, type CircuitBreaker } from "./retry.js";
 import { injectTraceHeaders } from "./trace-context.js";
 import { recordUsage } from "./usage-context.js";
 
-/** Carries a failed batch response out of the concurrent mapping. */
-class RerankBatchFailure extends Error {
-  constructor(readonly response: RerankResponse) {
-    super("rerank batch failed");
+/**
+ * Process-wide limit on concurrent rerank upstream calls
+ * (RERANK_GLOBAL_CONCURRENCY). Unlike `RERANK_BATCH_CONCURRENCY`, which bounds
+ * the batches of a single call, this semaphore is shared by every reranker
+ * client in the process.
+ */
+class RerankSemaphore {
+  private available: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {
+    this.available = limit;
+  }
+
+  acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available -= 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) next();
+    else this.available = Math.min(this.available + 1, this.limit);
+  }
+}
+
+let rerankGlobalSemaphore: RerankSemaphore | null = null;
+
+/**
+ * Installs (or replaces) the process-wide rerank semaphore. A limit > 0
+ * bounds concurrent rerank upstream calls across all clients; 0 removes the
+ * limit again.
+ */
+export function configureRerankGlobalConcurrency(limit: number): void {
+  const n = Math.max(0, Math.floor(limit));
+  if (n === 0) {
+    rerankGlobalSemaphore = null;
+    return;
+  }
+  // The first non-zero limit wins: replacing a semaphore mid-flight would
+  // let slots held under the old budget escape their accounting.
+  if (!rerankGlobalSemaphore) rerankGlobalSemaphore = new RerankSemaphore(n);
+}
+
+async function withGlobalRerankSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const semaphore = rerankGlobalSemaphore;
+  if (!semaphore) return fn();
+  await semaphore.acquire();
+  try {
+    return await fn();
+  } finally {
+    semaphore.release();
   }
 }
 
@@ -71,6 +122,12 @@ export interface RerankerClientConfig {
    * A 100-hit rerank used to need ⌈100/16⌉ serial round-trips.
    */
   batchConcurrency?: number;
+  /**
+   * Process-wide cap on concurrent rerank upstream calls across every client
+   * (RERANK_GLOBAL_CONCURRENCY, default 0 = unlimited). The first client with
+   * a value > 0 installs the shared semaphore.
+   */
+  globalConcurrency?: number;
   /** Optional circuit breaker shared across all calls from this client. */
   circuitBreaker?: CircuitBreaker;
   inputTokenCost?: number;
@@ -95,6 +152,8 @@ export type RerankResponse =
       ok: true;
       result: RerankScore[];
       usage?: { inputTokens: number; outputTokens: number; cost?: number };
+      /** True when some batches failed and only their scores are missing. */
+      partial?: boolean;
     }
   | { ok: false; error: RerankError };
 
@@ -417,6 +476,9 @@ export function createRerankerClient(
     1,
     Math.floor(config.batchConcurrency ?? 2),
   );
+  if (config.globalConcurrency && config.globalConcurrency > 0) {
+    configureRerankGlobalConcurrency(config.globalConcurrency);
+  }
 
   return {
     async rerank(query: string, documents: string[]): Promise<RerankResponse> {
@@ -491,12 +553,8 @@ export function createRerankerClient(
             clearTimeout(timer);
           }
         };
-        return retryWithBackoff(
-          invokeBedrock,
-          isRetryable,
-          3,
-          100,
-          circuitBreaker,
+        return withGlobalRerankSlot(() =>
+          retryWithBackoff(invokeBedrock, isRetryable, 3, 100, circuitBreaker),
         );
       }
 
@@ -511,28 +569,31 @@ export function createRerankerClient(
         for (let offset = 0; offset < documents.length; offset += RERANK_BATCH_SIZE) {
           offsets.push(offset);
         }
-        // Batches run RERANK_BATCH_CONCURRENCY at a time; the results are
-        // consumed in batch order, and the first failed batch fails the call
-        // exactly as the sequential loop did (a failure also stops the
-        // batches that have not started yet).
+        // Batches run RERANK_BATCH_CONCURRENCY at a time and every batch is
+        // attempted. A failed batch no longer fails the whole call: its
+        // candidates keep no score, the successful scores are returned, and
+        // the response is marked `partial` so callers can place the unscored
+        // candidates behind the scored ones.
         const batchResults = await mapWithConcurrency(
           offsets,
           RERANK_BATCH_CONCURRENCY,
-          async (offset) => {
-            const result = await rerankBatch(
-              query,
-              documents.slice(offset, offset + RERANK_BATCH_SIZE),
-              offset,
-            );
-            if (!result.ok) throw new RerankBatchFailure(result);
-            return result;
-          },
-        ).catch((err: unknown) => {
-          if (err instanceof RerankBatchFailure) return err.response;
-          throw err;
-        });
-        if (!Array.isArray(batchResults)) return batchResults;
+          (offset) =>
+            withGlobalRerankSlot(() =>
+              rerankBatch(
+                query,
+                documents.slice(offset, offset + RERANK_BATCH_SIZE),
+                offset,
+              ),
+            ),
+        );
+        let anyBatchFailed = false;
+        let firstFailure: Extract<RerankResponse, { ok: false }> | undefined;
         for (const batchResult of batchResults) {
+          if (!batchResult.ok) {
+            anyBatchFailed = true;
+            firstFailure ??= batchResult;
+            continue;
+          }
           allScores.push(...batchResult.result);
           if (batchResult.usage) {
             hasUsage = true;
@@ -540,6 +601,11 @@ export function createRerankerClient(
             totalOutputTokens += batchResult.usage.outputTokens;
             totalCost += batchResult.usage.cost ?? 0;
           }
+        }
+        // Nothing was scored at all: surface the failure instead of an empty
+        // "partial success".
+        if (anyBatchFailed && allScores.length === 0 && firstFailure) {
+          return firstFailure;
         }
         return {
           ok: true,
@@ -553,10 +619,11 @@ export function createRerankerClient(
                 },
               }
             : {}),
+          ...(anyBatchFailed ? { partial: true } : {}),
         };
       }
 
-      return rerankBatch(query, documents, 0);
+      return withGlobalRerankSlot(() => rerankBatch(query, documents, 0));
     },
   };
 

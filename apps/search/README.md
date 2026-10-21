@@ -300,7 +300,9 @@ answer rather than the raw question; generations are cached per query for
 count), **late chunking** and **contextual retrieval** (give each chunk its document context so
 it is not read out of context), and **reranking** (a second, more precise ordering, synchronous
 or streamed, with an optional fallback reranker; many candidates go out as parallel batches of
-`RERANK_BATCH_SIZE`, at most `RERANK_BATCH_CONCURRENCY` at a time). Context expansion of the
+`RERANK_BATCH_SIZE`, at most `RERANK_BATCH_CONCURRENCY` at a time; a failed batch keeps its
+candidates behind the scored ones and marks the result `partial`, while
+`RERANK_GLOBAL_CONCURRENCY` bounds rerank calls across the whole process). Context expansion of the
 hits of one search runs at most 8 at a time (fixed). `/v2/search` honours
 `X-Valid-At` like the other search routes, and `collection_stats` reports which retrieval
 features a collection supports (`capabilities`: `unitRows`, `unitGraph`, `outline`, `pages`).
@@ -358,6 +360,7 @@ The v2 variables worth deciding deliberately:
 | `BATCH_WORKER_BACKOFF_MS` | 30000 | Retry delay after an embedding failure |
 | `BATCH_WORKER_EMBED_CONCURRENCY` | 4 | Chunks of one batch embedded in parallel |
 | `RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY` | 16, 2 | Candidates per rerank request, and requests in flight |
+| `RERANK_GLOBAL_CONCURRENCY` | 0 | Rerank calls in flight across the whole process (0 = unlimited) |
 | `HYDE_CACHE_TTL_SECONDS` | 600 | HyDE generation cache lifetime; 0 disables |
 | `SEARCH_MAX_QUERY_CHARS` | 400 | Longer queries are cut at the last space before the limit; responses carry `query_truncated` |
 | `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT` | 8 | Best-scoring chunks kept per document by `group_by_document` (1-64); a cut document reports `truncated` and `omitted_chunks` |

@@ -569,6 +569,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         available: boolean;
         applied: boolean;
         complete: boolean;
+        partial: boolean;
         scoredCount: number;
         inputCount: number;
         fallbackReason:
@@ -583,6 +584,7 @@ export function registerSearchTool(opts: McpToolContext): void {
             available: true,
             applied: pipe.rerank.applied,
             complete: pipe.rerank.complete,
+            partial: pipe.rerank.partial,
             scoredCount: pipe.rerank.scoredCount,
             inputCount: pipe.rerank.inputCount,
             fallbackReason: pipe.rerank.fallbackReason,
@@ -592,6 +594,7 @@ export function registerSearchTool(opts: McpToolContext): void {
             available: rerankerClient !== null,
             applied: false,
             complete: false,
+            partial: false,
             scoredCount: 0,
             inputCount: pipe.candidateCount,
             fallbackReason: rerankRequested
