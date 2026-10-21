@@ -297,7 +297,7 @@ embeds the same normalised query as the REST routes.
 Optional quality stages, each independently configurable: **HyDE** (search with a hypothetical
 answer rather than the raw question; generations are cached per query for
 `HYDE_CACHE_TTL_SECONDS`, default 600, 0 = off), **semantic chunking** (split on meaning, not character
-count), **late chunking** and **contextual retrieval** (give each chunk its document context so
+count), **contextual vector blending** (an alpha blend of chunk and whole-document embeddings, `LATE_CHUNKING_ALPHA`) and **contextual retrieval** (give each chunk its document context so
 it is not read out of context), and **reranking** (a second, more precise ordering, synchronous
 or streamed, with an optional fallback reranker; many candidates go out as parallel batches of
 `RERANK_BATCH_SIZE`, at most `RERANK_BATCH_CONCURRENCY` at a time; a failed batch keeps its
