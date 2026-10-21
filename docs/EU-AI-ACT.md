@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Elastic-2.0 -->
 # EU AI Act: roles, scope, and how ATF supports the obligations
 
 > Orientation for operators and their data-protection and compliance staff. It is **not legal advice**:
@@ -79,6 +80,39 @@ when you ask for it, is flag the response as AI-generated for the systems downst
   point where the text leaves your system. Whether your use case needs it, and which of the two
   forms, is your assessment, not the product's.
 
+### Art. 25: when a deployer can become a provider
+
+A distributor, importer, deployer or other third party is treated as the provider of a high-risk
+system if it puts its name or trademark on the system, substantially modifies it, or changes its
+intended purpose so it becomes high-risk. In ATF terms, re-purposing a flow — or building one whose
+purpose differs essentially from the documented intended purpose — can shift provider duties onto
+you. The flow versioning and audit trail (`flow_version`, `flow_digest`) help show who changed what.
+
+### Art. 27: fundamental-rights impact assessment
+
+Certain deployers (public bodies, and private operators of public services, credit-scoring,
+life/health insurance and similar high-risk uses) must run a fundamental-rights impact assessment
+before first use. ATF contributes the technical inputs — the compliance dossier, data-class and
+residency rules (`compliance-policy.yaml`), audit trail and explainability cards — but the
+assessment itself is performed by the deployer with its data-protection officer.
+
+### Art. 72/73: post-market monitoring and serious-incident reporting
+
+Providers of high-risk systems run a post-market monitoring plan and report serious incidents and
+malfunctions to authorities on tight deadlines. Deployers feed that process by monitoring operation
+and reporting to the provider. ATF's building blocks for both sides are the hash-chained audit log,
+the explain report (`GET /monitoring/explain/{executionId}`), SLO alerting, and the incident
+runbook (`runbooks/incident.md`). Which events count as serious incidents, and to whom you report,
+is outside the product's scope.
+
+### Art. 86: right to explanation of decisions
+
+Persons affected by decisions taken on the basis of a high-risk AI system have a right to
+explanation of the role the system played in the decision. The decision-provenance explainability
+card — `GET /monitoring/explain/{executionId}` — records why the answer came about: flow and
+version, models, sources and approval steps. Serving the explanation to the affected person, in
+your context and language, remains your process.
+
 ## 4. Evidence an auditor can be handed
 
 | Question | Where it is answered |
@@ -113,3 +147,5 @@ you classify as high-risk:
   registration. The dossier covers the evidence part of Annex IV; the descriptive part is yours.
 - Bias and representativeness checks (Art. 10) are not automated.
 - Log retention periods are set by you; the audit log does not expire entries on its own.
+
+Dates and scope follow Regulation (EU) 2024/1689 as published; check the current legislative status (e.g. the Commission's digital omnibus proposal) before relying on them.

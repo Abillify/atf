@@ -63,7 +63,7 @@ Runtime and Gate, 8 for Search and Extract, 4 for Control; CPU 70 %) and
 
 | Component | Replicas | Notes |
 | --- | --- | --- |
-| runtime | 2–6 (HPA) | rate limits and approvals shared through `REDIS_URL` (incl. the GitOps webhook limiter); not fully stateless: SSE sessions pin to a pod and the metrics ring, replay buffer and red-team schedule are per process (`runbooks/scaling.md`) — use sticky routing or accept reconnects |
+| runtime | 2–6 (HPA) | rate limits and approvals shared through `REDIS_URL` (incl. the GitOps webhook limiter); not fully stateless: SSE sessions pin to a pod and the metrics ring, replay buffer, red-team schedule, the decision-receipt transparency log and the media store are per process (`runbooks/scaling.md`) — use sticky routing or accept reconnects |
 | gate | 2 (HPA) | identity rate limits and redeemed approval tokens shared with `store.type=redis`; SSE sessions are per process (sticky routing for `/sse` and `/monitor/stream`) |
 | search | 2–8 (HPA) | no per-process user state; set `RATE_LIMIT_REDIS_URL` **and** `REPLICAS` above one replica (the production gate refuses `REPLICAS > 1` without it) so throttling is per-client fleet-wide; DB pool sized per replica — total connections must fit Postgres `max_connections` |
 | extract | 2–4 | job worker uses Postgres row locks, so replicas are safe; set `RATE_LIMIT_REDIS_URL` and `REPLICAS` above one replica; more replicas = more parallel jobs: peak vision calls ≈ `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas` against the VLM. `TEMP_DIR` (conversions, derived-PDF cache) is per pod |
@@ -180,7 +180,7 @@ self-serve usage.
 ## 5. Sizing worksheet (fill in your numbers)
 
 1. Measure one representative document end-to-end in a staging environment
-   with `TRACING_ENABLED=true`: the OTel spans (Task 16.7) show per-page VLM
+   with `TRACING_ENABLED=true`: the OTel spans show per-page VLM
    latency and per-request token usage (`gen_ai.*` attributes).
 2. Record: `tokens_in/page`, `tokens_out/page`, `chunks/doc`, `pages/doc`.
 3. Project monthly volume: documents, chunks, queries, flow executions.
@@ -205,3 +205,16 @@ self-serve usage.
   before optimising blindly.
 - Backups with tested restores — the cheapest insurance against the most
   expensive incident (corpus loss = full re-ingest = full VLM bill again).
+
+## 7. Operating effort
+
+Recurring platform work is small compared to the inference bill, but it is
+not zero. The tasks below come from the runbooks (`runbooks/`); the effort
+column is deliberately left unquantified — measure it in your deployment.
+
+| Role | Typical tasks | Indicative effort |
+| --- | --- | --- |
+| Platform operator | Version upgrades and verified-digest rollouts (`runbooks/` upgrade flow), scaling decisions (`runbooks/scaling.md`), Redis outage handling (`runbooks/redis-outage.md`) | to be measured per deployment |
+| Security / key custodian | Key rotation for signing, tokens and secrets (`runbooks/key-rotation.md`, `runbooks/transaction-token-rotation.md`) | to be measured per deployment |
+| On-call / SRE | Monitoring and alert response, incident handling (`runbooks/incident.md`) | to be measured per deployment |
+| Data custodian | Backup and restore drills (`runbooks/backup-restore.md`) | to be measured per deployment |

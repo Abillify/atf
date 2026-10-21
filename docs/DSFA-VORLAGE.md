@@ -6,7 +6,7 @@
 A working aid for the controller. ATF provides the technical building
 blocks; the legal assessment is the responsibility of the controller and the
 data protection officer. This template is adapted to the ATF architecture
-(0.16; the storage locations were updated for 0.18.1) — the notes it ships (`→ ATF:`) are not legal advice; they show which
+(0.18.1 plus unreleased changes as of 2026-10-20) — the notes it ships (`→ ATF:`) are not legal advice; they show which
 controls the platform contributes.
 
 ## 1. Description of the processing

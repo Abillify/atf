@@ -1,4 +1,4 @@
-# aiperator Dashboard — UI Style Guide
+# ATF Control — UI Style Guide
 
 Status: **authoritative**. Every page and component in `apps/control/` MUST comply.
 This guide defines the design language, the component contract, the responsive
@@ -434,19 +434,19 @@ The full SOTA interaction + tooling layer is implemented and enforced:
 - **⌘K command palette**, header **breadcrumbs**, a **collapsible/pinnable**
   desktop icon sidebar (persisted), and a **density** toggle
   (comfortable/compact, persisted) — all driven by one nav/token source.
-- Automated accessibility suites are available locally: axe-core checks the shell and sweep the
+- Automated accessibility suites: axe-core checks the shell and sweeps the
   current dashboard routes in `e2e/a11y-responsive.spec.ts` and `e2e/a11y-sweep.spec.ts` (the
-  third-party React Flow canvas is the documented exclusion). These Playwright suites are not
-  part of the repository's default CI workflow; run and review them for UI changes.
+  third-party React Flow canvas is the documented exclusion). The Control end-to-end and axe accessibility suites run in CI (job control-e2e).
 - Visual-regression snapshots of the shell (sidebar, command palette, mobile drawer) are
   available through `e2e/visual.spec.ts`, with baselines in
   `e2e/visual.spec.ts-snapshots/`. They are likewise an explicit local/release check rather
   than a default CI gate.
 - **Unit tests** (vitest) for the palette, breadcrumbs, modal behavior, and density.
 
-**Repository CI gates:** `tsc --noEmit`, `vitest`, and `next build`. For UI changes, additionally
-run the relevant Playwright suites (`test:e2e`) and inspect visual diffs; availability of a suite
-does not mean the default CI workflow executes it.
+**Repository CI gates:** `tsc --noEmit`, `vitest`, `next build`, and the `control-e2e` job
+(Control E2E and a11y, including the full-page axe sweep). Visual-regression specs are excluded
+from CI (their baselines are recorded on macOS); run them locally with `test:e2e` and inspect
+visual diffs for UI changes.
 
 Truly optional future ideas (not gaps): cross-platform visual baselines
 (Docker/Chromatic), and per-component axe assertions in unit tests.

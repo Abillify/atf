@@ -201,3 +201,12 @@ alias carrying exactly the same value. `evidencePackHash` refers exclusively to 
 response evidence pack returned by retrieval and must not be reused for the action contract or for
 its argument binding. During the migration, MCP metadata sends both action-contract names as well
 as the separate pack hash.
+
+## Implementation
+
+The shared MCP 2026 primitives — protocol version constants, the header and JSON-RPC error
+codes, and the transaction/deadline plumbing — live in the workspace package `@atf/mcp-2026`
+(`packages/mcp-2026/`); Runtime and the Gate build on it instead of duplicating the wire
+details. Each MCP server is addressed with its own transaction-token audience: the Runtime
+maps server names to audiences with `AGENT_TRANSACTION_AUDIENCES`, and the Gate validates
+the audience configured in `MCPGATE_TRANSACTION_AUDIENCE` (ADR-0035).
