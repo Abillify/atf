@@ -222,6 +222,31 @@ resolver must be a different principal of the same tenant with the scope
 Runtime that requests and resolves its own approvals would block itself; turn it on when people
 or a separate service decide.
 
+**Finding and reading an approval.** `io.modelcontextprotocol/approvals/list` returns the open
+approvals of the caller's tenant — their own requests, and with `requireDifferentApprover: true`
+every request of the tenant for holders of `approverScope`. It is paginated (`cursor`, at most 50
+per page, ordered by `createdAt`) and never exposes tool arguments. `io.modelcontextprotocol/approvals/get`
+is for the owner of a request only and answers the status (`pending`, `approved`, `denied`, `expired`);
+once approved it also carries the one-shot `approvalToken`, so the requester can pick it up without
+the approver forwarding it. Anything the caller may not see answers `-32003 approval not found`,
+which keeps the existence of another principal's request private.
+
+```json
+{ "jsonrpc": "2.0", "id": 1, "method": "io.modelcontextprotocol/approvals/list",
+  "params": { "cursor": "MTc2NjMwMDAwMDAwMHwxMjM0..." } }
+→ { "resultType": "complete",
+    "approvals": [{ "requestState": "1234…", "tool": "approved_orders", "owner": "…",
+                    "createdAt": "2026-12-21T10:00:00.000Z", "expiresAt": "2026-12-21T10:05:00.000Z" }],
+    "nextCursor": "…" }
+
+{ "jsonrpc": "2.0", "id": 2, "method": "io.modelcontextprotocol/approvals/get",
+  "params": { "requestState": "1234…" } }
+→ { "resultType": "complete", "status": "approved", "approvalToken": "eyJ…" }
+```
+
+As with every method of the endpoint, the `Mcp-Method` header must echo `method` and the
+`MCP-Protocol-Version` header must match `_meta`.
+
 **Content trust.** Results of executed tools carry
 `_meta["io.atf/content-trust"] = { "content_trust": "untrusted", "source": <tool type> }`. Tool
 output is data from outside the platform, so a client that taints on untrusted input (Runtime

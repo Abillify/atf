@@ -139,8 +139,28 @@ interface PendingApproval {
   args: Record<string, unknown>;
   fingerprint: string;
   evidenceContractHash?: string;
+  createdAt: number;
   expiresAt: number;
+  status: "pending" | "approved" | "denied";
+  /** Minted one-shot token, kept for the requester until `expiresAt`. */
+  token?: string;
 }
+
+/** Cursor for `approvals/list`: base64url of `createdAt|requestState`. */
+const encodeApprovalCursor = (entry: { createdAt: number; requestState: string }): string =>
+  Buffer.from(`${entry.createdAt}|${entry.requestState}`, "utf8").toString("base64url");
+
+const decodeApprovalCursor = (cursor: string): { createdAt: number; requestState: string } | undefined => {
+  const text = Buffer.from(cursor, "base64url").toString("utf8");
+  const sep = text.indexOf("|");
+  if (sep <= 0) return undefined;
+  const createdAt = Number(text.slice(0, sep));
+  if (!Number.isFinite(createdAt)) return undefined;
+  return { createdAt, requestState: text.slice(sep + 1) };
+};
+
+const APPROVAL_PAGE_SIZE = 50;
+
 class PendingApprovalStore {
   private readonly entries = new Map<string, PendingApproval>();
   constructor(private readonly ttlMs: number, private readonly maxEntries: number) {}
@@ -156,21 +176,28 @@ class PendingApprovalStore {
   ): PendingApproval {
     this.sweep();
     if (this.entries.size >= this.maxEntries) throw new TaskCapacityError();
+    const now = Date.now();
     const entry = {
       requestState: randomUUID(), owner, tenantId, tool,
       args: structuredClone(args),
       fingerprint: approvalArgsFingerprint(args),
       ...(evidenceContractHash !== undefined ? { evidenceContractHash } : {}),
-      expiresAt: Date.now() + this.ttlMs,
+      createdAt: now,
+      expiresAt: now + this.ttlMs,
+      status: "pending" as const,
     };
     this.entries.set(entry.requestState, entry);
     return entry;
   }
+  /**
+   * Consume a pending request for resolution: the entry survives (status and
+   * minted token) until `expiresAt` so the requester can poll it via
+   * `approvals/get`, but a second resolution attempt no longer succeeds.
+   */
   take(requestState: string, owner: string): PendingApproval | undefined {
     this.sweep();
     const entry = this.entries.get(requestState);
-    if (!entry || entry.owner !== owner) return undefined;
-    this.entries.delete(requestState);
+    if (!entry || entry.owner !== owner || entry.status !== "pending") return undefined;
     return entry;
   }
   /** Look at a pending request without consuming it (separation-of-duties checks). */
@@ -178,13 +205,51 @@ class PendingApprovalStore {
     this.sweep();
     return this.entries.get(requestState);
   }
+  /** Look at an entry without sweeping, so `approvals/get` can report `expired`. */
+  lookup(requestState: string): PendingApproval | undefined {
+    return this.entries.get(requestState);
+  }
   /** Consume a pending request on behalf of a resolver other than its owner. */
   takeForeign(requestState: string): PendingApproval | undefined {
     this.sweep();
     const entry = this.entries.get(requestState);
-    if (!entry) return undefined;
-    this.entries.delete(requestState);
+    if (entry?.status !== "pending") return undefined;
     return entry;
+  }
+  /** Record the outcome of a resolution; the entry is kept until `expiresAt`. */
+  markResolved(requestState: string, status: "approved" | "denied", token?: string) {
+    const entry = this.entries.get(requestState);
+    if (!entry) return;
+    entry.status = status;
+    if (token !== undefined) entry.token = token;
+  }
+  /**
+   * Open (still pending) approvals of one tenant, oldest first, max `limit`
+   * per page. `filter` decides which of the caller's tenant entries are
+   * visible to them.
+   */
+  list(
+    tenantId: string,
+    filter: (entry: PendingApproval) => boolean,
+    cursor?: string,
+    limit = APPROVAL_PAGE_SIZE,
+  ): { approvals: PendingApproval[]; nextCursor?: string } {
+    this.sweep();
+    let open = [...this.entries.values()]
+      .filter((entry) => entry.tenantId === tenantId && entry.status === "pending" && filter(entry))
+      .sort((a, b) => (a.createdAt === b.createdAt ? a.requestState.localeCompare(b.requestState) : a.createdAt - b.createdAt));
+    if (cursor !== undefined && cursor !== "") {
+      const after = decodeApprovalCursor(cursor);
+      if (!after) return { approvals: [] };
+      open = open.filter((entry) => entry.createdAt > after.createdAt
+        || (entry.createdAt === after.createdAt && entry.requestState > after.requestState));
+    }
+    const page = open.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      approvals: page,
+      ...(open.length > limit && last ? { nextCursor: encodeApprovalCursor(last) } : {}),
+    };
   }
   clear() { this.entries.clear(); }
 }
@@ -327,6 +392,8 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         if (deps.authorizationEnabled !== false && deps.policies)
           extensions["io.modelcontextprotocol/approvals"] = {
             resolve: true,
+            list: true,
+            get: true,
             resultType: "input_required",
             decisions: ["approved", "denied"],
           };
@@ -518,6 +585,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           },
         });
         if (decision === "denied") {
+          approvalStore.markResolved(pending.requestState, "denied");
           result = envelope(serverInfo, { requestState: pending.requestState, decision: "denied" });
         } else {
           if (!secret) throw new Error("Approval service is not configured");
@@ -533,6 +601,9 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
             secret,
             ttlMs: deps.policies?.approval.ttlMs ?? 300_000,
           });
+          // The requester can pick the one-shot token up via approvals/get;
+          // the response to the approver stays as-is (backwards compatible).
+          approvalStore.markResolved(pending.requestState, "approved", approvalToken);
           result = envelope(serverInfo, {
             requestState: pending.requestState,
             decision: "approved",
@@ -540,6 +611,44 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
             tokenMetaKey: APPROVAL_TOKEN_META_KEY,
           });
         }
+      } else if (
+        method === "io.modelcontextprotocol/approvals/list" &&
+        deps.authorizationEnabled !== false
+      ) {
+        const approverScope = deps.policies?.approval.approverScope;
+        const isApprover = deps.policies?.approval.requireDifferentApprover === true
+          && approverScope !== undefined
+          && ctx.scopes.includes(approverScope);
+        const caller = approvalOwner(ctx);
+        const page = approvalStore.list(
+          ctx.tenantId,
+          (entry) => entry.owner === caller || isApprover,
+          params.cursor === undefined ? undefined : String(params.cursor),
+        );
+        result = envelope(serverInfo, {
+          approvals: page.approvals.map((entry) => ({
+            requestState: entry.requestState,
+            tool: entry.tool,
+            owner: entry.owner,
+            createdAt: new Date(entry.createdAt).toISOString(),
+            expiresAt: new Date(entry.expiresAt).toISOString(),
+          })),
+          ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+        });
+      } else if (
+        method === "io.modelcontextprotocol/approvals/get" &&
+        deps.authorizationEnabled !== false
+      ) {
+        const requestState = String(params.requestState ?? "");
+        const entry = approvalStore.lookup(requestState);
+        // Foreign tenant or missing permission: no existence disclosure.
+        if (!entry || entry.tenantId !== ctx.tenantId || entry.owner !== approvalOwner(ctx))
+          return error(res, 404, body.id, -32003, "approval not found");
+        const status = entry.expiresAt <= Date.now() ? "expired" : entry.status;
+        result = envelope(serverInfo, {
+          status,
+          ...(status === "approved" && entry.token !== undefined ? { approvalToken: entry.token } : {}),
+        });
       } else if (method === "tools/call") {
         const callInput = {
           name: String(params.name),
