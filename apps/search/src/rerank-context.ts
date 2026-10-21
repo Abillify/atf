@@ -280,11 +280,13 @@ export function diversifyResults(
 
 /**
  * A section group returned by {@link groupResultsBySection}. `section_path` is
- * the "/"-joined path shared by every hit in `results`; `score` is the best
- * (max) hit score in the group, used to order the groups.
+ * the "/"-joined path shared by every hit in `results`; `base_ref` is the
+ * document the section belongs to; `score` is the best (max) hit score in the
+ * group, used to order the groups.
  */
 export interface SectionGroup {
   section_path: string;
+  base_ref: string;
   score: number;
   results: SearchResult[];
 }
@@ -301,27 +303,38 @@ export interface SectionGroup {
  * - Within a group, hits keep their incoming order (already score-sorted /
  *   diversified by the caller).
  * - Groups are ordered by their best hit score, descending.
+ * - Sections are scoped to their document (`base_ref`, falling back to
+ *   `reference`): the equally named "Einleitung" of two documents yields two
+ *   groups, not one.
  * - Hits with no section path are grouped under the empty-string key, ordered
  *   like any other group by their best score.
  *
  * Inputs are never mutated.
  */
 export function groupResultsBySection(results: SearchResult[]): SectionGroup[] {
-  const groups = new Map<string, SearchResult[]>();
+  const groups = new Map<
+    string,
+    { section_path: string; base_ref: string; results: SearchResult[] }
+  >();
   for (const r of results) {
-    const key = sectionPathString(r);
+    const section_path = sectionPathString(r);
+    const base_ref = r.base_ref || r.reference;
+    // NUL separator: a document reference can contain "/", so joining on the
+    // visible path alone would let two different (document, section) pairs
+    // collide.
+    const key = `${base_ref}\u0000${section_path}`;
     const existing = groups.get(key);
-    if (existing) existing.push(r);
-    else groups.set(key, [r]);
+    if (existing) existing.results.push(r);
+    else groups.set(key, { section_path, base_ref, results: [r] });
   }
 
   const out: SectionGroup[] = [];
-  for (const [section_path, groupResults] of groups) {
+  for (const { section_path, base_ref, results: groupResults } of groups.values()) {
     const score = groupResults.reduce(
       (best, r) => (r.score > best ? r.score : best),
       Number.NEGATIVE_INFINITY,
     );
-    out.push({ section_path, score, results: groupResults });
+    out.push({ section_path, base_ref, score, results: groupResults });
   }
   out.sort((a, b) => b.score - a.score);
   return out;

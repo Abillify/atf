@@ -676,12 +676,13 @@ export function registerSearchTool(opts: McpToolContext): void {
       });
 
       // Section grouping (task 3.5, Requirement 13.6): group the final
-      // (diversified, limited) results by section path for a single large
+      // (diversified, limited) results by section path, scoped to each hit's
       // document. Emitted as a parallel `sections` array; the flat `results`
       // stay unchanged so existing consumers are unaffected.
       const sections = groupBySection
         ? groupResultsBySection(pipe.results).map((g) => ({
             section_path: g.section_path,
+            base_ref: g.base_ref,
             score: g.score,
             references: g.results.map((r) => r.reference),
           }))
