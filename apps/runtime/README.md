@@ -45,6 +45,7 @@ bun run --filter @atf/runtime build
 | `/v1/receipts/*`, `/.well-known/atf-receipt-jwks.json` | Signed Decision Receipts and their public keys, when receipts are enabled |
 | `/.well-known/atf-evidence-jwks.json` | Public keys for the evidence-chain signature, so third parties can verify evidence bundles offline |
 | `/.well-known/atf-transaction-jwks.json` | Public keys for agent transaction tokens, so a Gate verifies them without a shared secret |
+| `/.well-known/atf-jwks.json` | Every public signing key above in one set, each with `kid`, `alg`, `use: "sig"` and `atf_purpose` (`evidence`, `erasure-receipt`, `decision-receipt`, `transaction`); the per-purpose endpoints stay |
 | `/v1/analysis-artifacts/*` | Stored analysis artifacts |
 | `/v1/me/*` | Self-service data access and erasure (DSAR) for the calling identity |
 | `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, named drafts (`/flows/:id/drafts`), sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |

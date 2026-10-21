@@ -54,7 +54,8 @@ import {
 } from "../observability/evidence-key.js";
 import { createReceiptsRouter } from "../routes/receipts.js";
 import { createResponsesRouter } from "../routes/responses.js";
-import { createTransactionJwksRouter } from "../routes/transaction-jwks.js";
+import { createAtfJwksRouter } from "../routes/atf-jwks.js";
+import { createTransactionJwksRouter, createTransactionJwksSource } from "../routes/transaction-jwks.js";
 import type { ReceiptSigningKey } from "../receipts/signing-key.js";
 import type { ReceiptStore } from "../receipts/receipt-store.js";
 import type { TransparencyLog } from "../receipts/transparency-log.js";
@@ -400,6 +401,17 @@ export async function registerInferenceRoutes(
       "Evidence-chain JWKS enabled at /.well-known/atf-evidence-jwks.json",
     );
   }
+  // One URL for every public signing key, each with its purpose. The
+  // per-purpose endpoints above and below stay as they are.
+  app.route(
+    "/",
+    createAtfJwksRouter({
+      evidenceKey,
+      erasureKey: erasureJwksKey,
+      receiptKey: receiptsEnabled && receiptStore !== undefined ? receiptSigningKey : undefined,
+      transactionJwks: createTransactionJwksSource(),
+    }),
+  );
 
   // Durable Agent Runtime — recovery sweeper (see job-store.ts /
   // job-recovery-sweeper.ts module doc comments). Only meaningful with a

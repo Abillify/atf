@@ -58,6 +58,13 @@ const META_RULES: Array<
     auth: "none",
   },
   {
+    prefix: "/.well-known/atf-jwks.json",
+    tag: "Security",
+    summary:
+      "All public signing keys with their purpose (atf_purpose: evidence, erasure-receipt, decision-receipt, transaction)",
+    auth: "none",
+  },
+  {
     prefix: "/monitoring/auth/",
     tag: "Security",
     summary: "Operator OIDC login (BFF) and auth configuration",

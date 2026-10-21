@@ -403,6 +403,7 @@ releases:
 - READMEs for `@atf/canonical-json`, `@atf/mcp-2026`, `@atf/security-kit` and `@atf/observability`.
 - Gate: an `mcpServers` import override accepts `pin` (SHA-256 of the downstream `description`, `inputSchema` and `annotations`); a tool whose advertised definition no longer matches is not exposed and an error with the seen digest is logged.
 - `@atf/canonical-json` ships a byte specification and test vectors for every mode.
+- Runtime publishes all public signing keys with their purpose at `/.well-known/atf-jwks.json`; the per-purpose JWKS endpoints remain.
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file

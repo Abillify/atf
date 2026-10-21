@@ -41,10 +41,14 @@ export interface TransactionJwksRouterOptions {
   env?: Record<string, string | undefined>;
 }
 
-export function createTransactionJwksRouter(
+/**
+ * The transaction key set as a function: `{ keys: [] }` in HS256 mode, the
+ * public JWK otherwise. Cached per (alg, PEM) so repeated polls do not
+ * re-import the key. Shared by this router and the combined `atf-jwks.json`.
+ */
+export function createTransactionJwksSource(
   options: TransactionJwksRouterOptions = {},
-): Hono {
-  const app = new Hono();
+): () => Promise<JSONWebKeySet> {
   // Cache the derived JWK set per (alg, PEM) so repeated polls do not
   // re-import the key on every request.
   let cacheKey: string | undefined;
@@ -81,12 +85,19 @@ export function createTransactionJwksRouter(
     }
     return cached;
   };
+  return () => jwks(options.env ?? process.env);
+}
+
+export function createTransactionJwksRouter(
+  options: TransactionJwksRouterOptions = {},
+): Hono {
+  const app = new Hono();
+  const source = createTransactionJwksSource(options);
 
   app.get("/.well-known/atf-transaction-jwks.json", async (c) => {
-    const env = options.env ?? process.env;
     let set: JSONWebKeySet;
     try {
-      set = await jwks(env);
+      set = await source();
     } catch (error) {
       // Fail closed: never serve a partial or guessed key set.
       return c.json(

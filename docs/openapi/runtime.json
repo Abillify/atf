@@ -878,6 +878,37 @@
         "x-enabled-when": "evidenceKey !== undefined || erasureJwksKey !== undefined"
       }
     },
+    "/.well-known/atf-jwks.json": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "summary": "All public signing keys with their purpose (atf_purpose: evidence, erasure-receipt, decision-receipt, transaction)",
+        "operationId": "get__well_known_atf_jwks_json",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/mcp": {
       "get": {
         "tags": [
