@@ -1094,6 +1094,24 @@ export async function registerManagementRoutes(
     logger.info("SLO reporting enabled at GET /monitoring/slo");
   }
 
+  // Governance posture report route
+  {
+    const { createPostureRouter } = await import("../routes/posture.js");
+    const { getFlowLoadFailures } =
+      await import("../graph/flow-parser/validate.js");
+    app.route(
+      "/",
+      createPostureRouter({
+        config,
+        authRequired: config.monitoringAuthRequired,
+        operatorAuth,
+        policyLoaded: () => compliancePolicyLoader.hasPolicy,
+        flowLoadFailures: () => getFlowLoadFailures().length,
+      }),
+    );
+    logger.info("Governance posture report enabled at GET /monitoring/posture");
+  }
+
   // FinOps forecasting + CO2/ESG accounting route
   {
     const { createFinopsRouter } = await import("../routes/finops.js");

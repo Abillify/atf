@@ -159,6 +159,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createRocketChatRouter` | — (full paths) | `assistantsResult?.rocketChat is set` | POST `/integrations/rocketchat/events` |
 | `createRocketChatConnectRouter` | — (full paths) | `connectReady && delegation is set` | GET `/connect/rocketchat/:requestId{[0-9a-fA-F-]+}`<br/>GET `/connect/rocketchat/callback`<br/>POST `/connect/rocketchat/complete` |
 | `createSloRouter` | — (full paths) | always | GET `/monitoring/slo` |
+| `createPostureRouter` | — (full paths) | always | GET `/monitoring/posture` |
 | `createFinopsRouter` | — (full paths) | always | GET `/admin/finops/forecast/:tenantId`<br/>GET `/admin/finops/co2` |
 | `createShadowRouter` | — (full paths) | always | GET `/monitoring/shadow`<br/>GET `/monitoring/shadow/comparisons`<br/>GET `/monitoring/shadow/:flowId` |
 | `createTriggersRouter` | — (full paths) | always | POST `/triggers/:flowId`<br/>GET `/triggers` |

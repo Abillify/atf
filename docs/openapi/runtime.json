@@ -10278,6 +10278,42 @@
         ]
       }
     },
+    "/monitoring/posture": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Monitoring, audit and observability endpoint",
+        "operationId": "get__monitoring_posture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/admin/finops/forecast/{tenantId}": {
       "get": {
         "tags": [
