@@ -14,10 +14,11 @@
  * DELIBERATE per endpoint become explicit configuration instead of divergent
  * code:
  *
- *  - `rerank.tokenCounter` / `rerank.minResults`: `/v2/search` fits the rerank
- *    inputs to the real token budget (and maps scores back to untrimmed
- *    originals) and only reranks when more than one candidate came back; the
- *    MCP tool reranks any non-empty list without fitting.
+ *  - `rerank.tokenCounter` / `rerank.minResults`: both endpoints fit the
+ *    rerank inputs to the real token budget when a `tokenCounter` is
+ *    configured (scores map back to untrimmed originals); `/v2/search`
+ *    additionally only reranks when more than one candidate came back, while
+ *    the MCP tool reranks any non-empty list.
  *  - `minScore.position`: `/v2/search` applies the relevance threshold AFTER
  *    the limit slice ("the limit is not consumed by dropped hits"); the MCP
  *    tool applies it BEFORE (so the page is filled from the qualified

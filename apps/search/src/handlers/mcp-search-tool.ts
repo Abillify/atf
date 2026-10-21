@@ -471,11 +471,12 @@ export function registerSearchTool(opts: McpToolContext): void {
       // Embed → sparse → candidates → rerank → document groups → diversify /
       // threshold → slice → expansion → figure lookup: the shared retrieval
       // core (see retrieval-pipeline.ts). The MCP-specific stage configuration:
-      // rerank WITHOUT token fitting or a minimum-candidate guard, the
-      // relevance threshold BEFORE the limit slice (so the page fills from the
-      // qualified set and `rerank_score_hits` can name every qualified
-      // document), document-group annotation on every hit, and figure
-      // resolution only in v2 mode when assets are enabled.
+      // rerank WITH token fitting (the `tokenCounter`, like /v2/search) but
+      // without a minimum-candidate guard, the relevance threshold BEFORE the
+      // limit slice (so the page fills from the qualified set and
+      // `rerank_score_hits` can name every qualified document), document-group
+      // annotation on every hit, and figure resolution only in v2 mode when
+      // assets are enabled.
       const expandMode =
         expand === undefined || expand === "none"
           ? undefined

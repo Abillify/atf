@@ -6,7 +6,10 @@ import { accessScopeForRequest } from "../access-scope.js";
 import type { Logger } from "pino";
 import type { EmbeddingClient } from "../embedding-client.js";
 import type { RerankerClient } from "../reranker-client.js";
-import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
+import type {
+  SparseEmbeddingClient,
+  SparseVector,
+} from "../sparse-embedding-client.js";
 import type { HydeClient } from "../hyde-client.js";
 import type {
   PostgresClient,
@@ -458,7 +461,10 @@ export function createSearchHandler(
       // Apply the same pre-processing used at ingest time: strip URLs and other
       // noise tokens so the embedding and FTS query match what is actually indexed.
       // The original `body` is preserved for logging, reranking, and the response.
-      let queryText = prepareFtsContent(body);
+      // When preprocessing strips everything (a query of pure noise characters,
+      // e.g. "???") embed the raw query instead of an empty string — an empty
+      // embedding input is invalid at the embedding server.
+      let queryText = prepareFtsContent(body) || body;
       let hydeExpanded: string | undefined;
 
       if (hydeRequested && hydeClient) {
@@ -479,49 +485,68 @@ export function createSearchHandler(
       }
 
       // 13. Embed query — skipped entirely for FTS-only mode since no vector is needed.
-      //     This avoids a pointless round-trip to the embedding server.
+      //     This avoids a pointless round-trip to the embedding server. The
+      //     dense and sparse query embeddings are independent backends: run
+      //     them side by side (like runRetrievalPipeline in /v2/search). A
+      //     sparse failure degrades (the dense list still ranks); a dense
+      //     failure is a 502, and the settled sparse promise is dropped.
       let vector: number[] = [];
+      let sparseVec: SparseVector | undefined;
       if (!ftsOnly) {
-        if (queryCache) {
+        const densePromise = (async (): Promise<
+          { ok: true; vector: number[] } | { ok: false; message: string }
+        > => {
           try {
-            vector = await queryCache.getOrEmbed(
-              queryText,
-              async () => {
-                const r = await embeddingClient.embed(queryText);
-                if (!r.ok) throw new Error(r.error.message);
-                return r.result.vector;
-              },
-              scope.tenantId,
-            );
+            if (queryCache) {
+              const v = await queryCache.getOrEmbed(
+                queryText,
+                async () => {
+                  const r = await embeddingClient.embed(queryText);
+                  if (!r.ok) throw new Error(r.error.message);
+                  return r.result.vector;
+                },
+                scope.tenantId,
+              );
+              return { ok: true, vector: v };
+            }
+            const embedResult = await embeddingClient.embed(queryText);
+            if (!embedResult.ok) {
+              return { ok: false, message: embedResult.error.message };
+            }
+            return { ok: true, vector: embedResult.result.vector };
           } catch (err) {
-            const message =
-              err instanceof Error ? err.message : "Embedding failed";
-            log.warn({ err }, "Embedding failed");
-            res.status(502).json({ error: `Embedding failed: ${message}` });
-            return;
+            return {
+              ok: false,
+              message:
+                err instanceof Error ? err.message : "Embedding failed",
+            };
           }
-        } else {
-          const embedResult = await embeddingClient.embed(queryText);
-          if (!embedResult.ok) {
-            log.warn({ error: embedResult.error }, "Embedding failed");
-            res.status(502).json({
-              error: `Embedding failed: ${embedResult.error.message}`,
-            });
-            return;
-          }
-          vector = embedResult.result.vector;
-        }
-      }
+        })();
+        const sparsePromise: Promise<
+          { vector?: SparseVector; failed?: unknown }
+        > =
+          sparseClient !== null && hybridRequested
+            ? (async () => {
+                const sparseRes = await sparseClient.embedSparse(queryText);
+                if (sparseRes.ok) return { vector: sparseRes.result };
+                return { failed: sparseRes.error };
+              })()
+            : Promise.resolve({});
 
-      // 14. Sparse embed (if sparse client configured and hybrid active)
-      let sparseVec = undefined;
-      if (sparseClient !== null && hybridRequested && !ftsOnly) {
-        const sparseRes = await sparseClient.embedSparse(queryText);
-        if (sparseRes.ok) {
-          sparseVec = sparseRes.result;
-        } else {
+        const [dense, sparse] = await Promise.all([
+          densePromise,
+          sparsePromise,
+        ]);
+        if (!dense.ok) {
+          log.warn({ error: dense.message }, "Embedding failed");
+          res.status(502).json({ error: `Embedding failed: ${dense.message}` });
+          return;
+        }
+        vector = dense.vector;
+        sparseVec = sparse.vector;
+        if (sparse.failed !== undefined) {
           log.warn(
-            { error: sparseRes.error },
+            { error: sparse.failed },
             "Sparse embedding failed; skipping sparse branch",
           );
         }

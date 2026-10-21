@@ -642,6 +642,29 @@ describe("runRetrievalPipeline", () => {
     ).rejects.toThrow(EmbeddingFailedError);
   });
 
+  it("embeds the embedText verbatim so a pure-noise query never embeds an empty string", async () => {
+    // The call-sites pass `prepareFtsContent(q) || q` as `embedText`: a query
+    // that preprocessing empties (e.g. only URLs) reaches the backend as the
+    // raw query. The pipeline must embed exactly that text, unchanged.
+    const embed = vi.fn(async () => ({ ok: true, result: { vector: [0.1] } }));
+    const embedSparse = vi.fn(async () => ({
+      ok: true,
+      result: { indices: [1], values: [1] },
+    }));
+    const { clients } = clientsFor([hit({ id: "a" })]);
+    clients.embeddingClient = { embed } as unknown as EmbeddingClient;
+    clients.sparseClient = { embedSparse } as never;
+    for (const embedText of ["???", "https://example.com/x"]) {
+      await runRetrievalPipeline(
+        clients,
+        silent,
+        cfg({ query: embedText, embedText, hybrid: true }),
+      );
+      expect(embed).toHaveBeenCalledWith(embedText);
+      expect(embedSparse).toHaveBeenCalledWith(embedText);
+    }
+  });
+
   it("does not look up figures unless asked to", async () => {
     const lookup = vi.fn(async () => ({ ok: true, result: [] }));
     const { clients } = clientsFor([hit({ id: "a" })]);

@@ -465,7 +465,9 @@ export function createSearchV2Handler(
       //    identifier list, so it resolves even when it does not match a
       //    recognizer class (e.g. lower-case "we-01/a").
       const searchQuery = identifier ? `${query} ${identifier}` : query;
-      const embedText = prepareFtsContent(searchQuery);
+      // Pure-noise queries preprocess to "" — embed the raw query instead of
+      // an empty string (an empty embedding input is invalid).
+      const embedText = prepareFtsContent(searchQuery) || searchQuery;
 
       const scope = accessScopeForRequest(req);
       const { userId, userGroups } = getPrincipal(req);
