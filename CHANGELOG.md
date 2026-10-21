@@ -690,6 +690,7 @@ releases:
 - `docs/README.md`, the root README and `ARCHITECTURE.md` reflect the current documents, gates, Redis behaviour and trust architecture.
 - Gate no longer returns internal error messages of failed tools to MCP clients: the client receives `Tool execution failed (reference <id>)`, the full text stays in the log and the monitor stream.
 - Gate keys the `hash` redaction strategy with `MCPGATE_REDACTION_HASH_SECRET` (HMAC-SHA256) and the production check warns while a tool hashes values without it; without the secret the digest is unchanged.
+- Control renders server-side texts in the locale of each request.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

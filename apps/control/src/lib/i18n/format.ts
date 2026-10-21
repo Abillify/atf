@@ -107,20 +107,47 @@ export function createFormatters(locale: Locale): Formatters {
  */
 let activeLocale: Locale = DEFAULT_LOCALE;
 
-/** Setzt die aktive Locale (von `LocaleProvider` aufgerufen). */
+/**
+ * On the server one process renders many requests, so a module global would
+ * hand the locale of one request to another. There the active locale lives in
+ * an `AsyncLocalStorage`, entered by the root layout and by `LocaleProvider`
+ * while the request renders. The store is created without a static import of
+ * `node:async_hooks` (this module is bundled for the browser as well).
+ */
+interface LocaleStore {
+  enterWith(locale: Locale): void;
+  getStore(): Locale | undefined;
+}
+
+function createServerLocaleStore(): LocaleStore | undefined {
+  if (typeof window !== "undefined") return undefined;
+  const hooks = (
+    globalThis as {
+      process?: {
+        getBuiltinModule?: (id: string) => { AsyncLocalStorage?: new () => LocaleStore } | undefined;
+      };
+    }
+  ).process?.getBuiltinModule?.("node:async_hooks");
+  return hooks?.AsyncLocalStorage ? new hooks.AsyncLocalStorage() : undefined;
+}
+
+const serverLocaleStore = createServerLocaleStore();
+
+/** Setzt die aktive Locale (Browser: global; Server: für den laufenden Request). */
 export function setActiveLocale(locale: Locale): void {
-  activeLocale = locale;
+  if (serverLocaleStore) serverLocaleStore.enterWith(locale);
+  else activeLocale = locale;
 }
 
 /** Die aktuell aktive Locale. */
 export function getActiveLocale(): Locale {
-  return activeLocale;
+  return serverLocaleStore ? (serverLocaleStore.getStore() ?? DEFAULT_LOCALE) : activeLocale;
 }
 
 const FORMATTERS: Partial<Record<Locale, Formatters>> = {};
 
 /** Formatters of the active locale (cached per locale). */
-export function formatters(locale: Locale = activeLocale): Formatters {
+export function formatters(locale: Locale = getActiveLocale()): Formatters {
   let f = FORMATTERS[locale];
   if (!f) {
     f = createFormatters(locale);
@@ -133,7 +160,7 @@ export function formatters(locale: Locale = activeLocale): Formatters {
 export function formatNumber(
   value: number,
   options?: NumberFormatOptions,
-  locale: Locale = activeLocale,
+  locale: Locale = getActiveLocale(),
 ): string {
   return formatters(locale).formatNumber(value, options);
 }
@@ -142,7 +169,7 @@ export function formatNumber(
 export function formatDateTime(
   value: string | number | Date,
   options?: DateTimeFormatOptions,
-  locale: Locale = activeLocale,
+  locale: Locale = getActiveLocale(),
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
@@ -153,7 +180,7 @@ export function formatDateTime(
 export function formatDate(
   value: string | number | Date,
   options?: DateTimeFormatOptions,
-  locale: Locale = activeLocale,
+  locale: Locale = getActiveLocale(),
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
@@ -164,7 +191,7 @@ export function formatDate(
 export function formatTime(
   value: string | number | Date,
   options?: DateTimeFormatOptions,
-  locale: Locale = activeLocale,
+  locale: Locale = getActiveLocale(),
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
@@ -176,7 +203,7 @@ export function formatCurrency(
   value: number,
   digits = 6,
   currency: Currency = activeCurrency(),
-  locale: Locale = activeLocale,
+  locale: Locale = getActiveLocale(),
 ): string {
   return formatters(locale).formatCurrency(value, digits, currency);
 }

@@ -12,7 +12,7 @@ import { ConfirmProvider, ToastProvider } from "../lib/ui";
 import { CSP_NONCE_REQUEST_HEADER } from "../lib/csp-policy";
 import { controlSessionMode } from "../lib/session-mode";
 import { CONTROL_SESSION_MODE_GLOBAL } from "../lib/client-session-mode";
-import { LocaleProvider } from "../lib/i18n";
+import { LocaleProvider, setActiveLocale } from "../lib/i18n";
 import { LOCALE_COOKIE, parseLocale } from "../lib/i18n/locales";
 
 export const metadata: Metadata = {
@@ -86,6 +86,9 @@ export default async function RootLayout({
   // Req 9.7: resolve the locale before first paint — the cookie is written by
   // LocaleProvider on switch, so a reload keeps the chosen language.
   const locale = parseLocale((await cookies()).get(LOCALE_COOKIE)?.value);
+  // Server components below this layout use the global helpers; bind the
+  // locale of THIS request (request-scoped on the server, see ./lib/i18n/format).
+  setActiveLocale(locale);
   return (
     <html lang={locale} suppressHydrationWarning>
       <head>

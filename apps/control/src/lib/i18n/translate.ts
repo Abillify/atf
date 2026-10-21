@@ -44,6 +44,6 @@ export function interpolate(message: string, params?: MessageParams): string {
  * language switch remounts the tree under the provider (see `key={locale}`
  * in LocaleProvider), so client callers pick up the new language.
  */
-export function translate(key: MessageKey, params?: MessageParams): string {
-  return interpolate(CATALOGS[getActiveLocale()][key] ?? en[key] ?? key, params);
+export function translate(key: MessageKey, params?: MessageParams, locale?: Locale): string {
+  return interpolate(CATALOGS[locale ?? getActiveLocale()][key] ?? en[key] ?? key, params);
 }
