@@ -296,7 +296,7 @@ count), **late chunking** and **contextual retrieval** (give each chunk its docu
 it is not read out of context), and **reranking** (a second, more precise ordering, synchronous
 or streamed, with an optional fallback reranker; many candidates go out as parallel batches of
 `RERANK_BATCH_SIZE`, at most `RERANK_BATCH_CONCURRENCY` at a time). Context expansion of the
-hits of one search runs `EXPAND_CONCURRENCY` (default 8) at a time. `/v2/search` honours
+hits of one search runs at most 8 at a time (fixed). `/v2/search` honours
 `X-Valid-At` like the other search routes, and `collection_stats` reports which retrieval
 features a collection supports (`capabilities`: `unitRows`, `unitGraph`, `outline`, `pages`).
 
@@ -356,7 +356,6 @@ The v2 variables worth deciding deliberately:
 | `HYDE_CACHE_TTL_SECONDS` | 600 | HyDE generation cache lifetime; 0 disables |
 | `SEARCH_MAX_QUERY_CHARS` | 400 | Longer queries are cut at the last space before the limit; responses carry `query_truncated` |
 | `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT` | 8 | Best-scoring chunks kept per document by `group_by_document` (1-64); a cut document reports `truncated` and `omitted_chunks` |
-| `EXPAND_CONCURRENCY` | 8 | Hits expanded in parallel per search |
 | `REVISION_TTL` | 1209600 (seconds, 14 days) | Lifetime of an uncommitted, un-heartbeated revision |
 | `REVISION_TTL_SWEEP_MS` | 3600000 | Cleaner interval; 0 disables |
 | `REVISION_BATCH_BODY_LIMIT` | 50mb | Largest NDJSON page batch |

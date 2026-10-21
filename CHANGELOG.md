@@ -303,8 +303,8 @@ releases:
   hypothetical-document generations (LRU 256, concurrent identical queries share
   one call); `BATCH_WORKER_EMBED_CONCURRENCY` (4) embeds a batch's chunks in
   parallel and the worker drains up to 25 batches per wake-up (honouring
-  `stop()`); `EXPAND_CONCURRENCY` (8) bounds the per-hit context expansion
-  (`src/concurrency.ts`, stops starting work after the first failure).
+  `stop()`); per-hit context expansion runs at most 8 hits in parallel (fixed,
+  `src/concurrency.ts`, stops starting work after the first failure).
   `/v2/search` reads `X-Valid-At` like the other search routes, and
   `collection_stats` reports `capabilities { unitRows, unitGraph, outline,
   pages }` so a client can tell which retrieval features a collection supports.

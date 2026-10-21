@@ -354,8 +354,9 @@ configuration and clients. Do these **before** rolling out:
     collection table (this service does not create it). Tables without one use the
     full-text path and log a warning once; create the index and it is used within
     a minute. New tuning settings (`RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY`,
-    `HYDE_CACHE_TTL_SECONDS`, `BATCH_WORKER_EMBED_CONCURRENCY`, `EXPAND_CONCURRENCY`)
-    have defaults that change nothing you must act on; `/v2/search` now honours
+    `HYDE_CACHE_TTL_SECONDS`, `BATCH_WORKER_EMBED_CONCURRENCY`) have defaults that
+    change nothing you must act on; context expansion runs at most 8 hits in
+    parallel (fixed); `/v2/search` now honours
     `X-Valid-At`, and grouped results mark gaps between non-adjacent chunks with
     `[…]`.
 12. **Runtime.** An erasure that reached no store returns `failed` (502), not
