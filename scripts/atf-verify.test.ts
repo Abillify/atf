@@ -14,6 +14,13 @@ import { parseReceiptSigningKey } from "../apps/runtime/src/receipts/signing-key
 import { signReceiptPayload } from "../apps/runtime/src/receipts/receipt-builder.ts";
 import { InMemoryTransparencyLog } from "../apps/runtime/src/receipts/transparency-log.ts";
 import type { DecisionReceiptPayload } from "../apps/runtime/src/receipts/types.ts";
+import { parseEvidenceSigningKey } from "../apps/runtime/src/observability/evidence-key.ts";
+import {
+  buildEvidenceBundle,
+  signEvidenceBundle,
+  type SignedEvidenceBundle,
+} from "../apps/runtime/src/observability/evidence-bundle.ts";
+import type { ExplainCard } from "../apps/runtime/src/observability/explain.ts";
 
 const CLI = join(import.meta.dir, "atf-verify.ts");
 // A fixed 32-byte Ed25519 seed (base64) so the kid is deterministic.
@@ -301,7 +308,7 @@ describe("atf-verify CLI", () => {
   it("fails with usage errors (exit 2)", async () => {
     const r1 = await runCli([]);
     expect(r1.exit).toBe(2);
-    expect(r1.stderr).toContain("--receipt is required");
+    expect(r1.stderr).toContain("--receipt or --bundle is required");
     const a = await makeArtifacts("r-usage");
     const r2 = await runCli(["--receipt", a.receiptPath, "--jwks", "/nope/x"]);
     expect(r2.exit).toBe(2);
@@ -312,5 +319,148 @@ describe("atf-verify CLI", () => {
     const r = await runCli(["--help"]);
     expect(r.exit).toBe(0);
     expect(r.stdout).toContain("atf-verify");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --bundle mode
+// ---------------------------------------------------------------------------
+
+function fixtureCard(executionId: string): ExplainCard {
+  return {
+    executionId,
+    flowId: "flows/test",
+    status: "completed",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: "2026-01-01T00:00:01.000Z",
+    totalLatencyMs: 1000,
+    totalCost: 0.01,
+    userName: "alice",
+    userPrompt: "hello",
+    steps: [],
+    modelsUsed: [],
+    routingDecisions: [],
+    auditEntries: [],
+    degraded: [],
+  };
+}
+
+interface BundleArtifacts {
+  dir: string;
+  bundlePath: string;
+  jwksPath: string;
+  kid: string;
+  signed: SignedEvidenceBundle;
+}
+
+/** Build and sign an Ed25519 Evidence Bundle and write the bundle JSON plus
+ * the evidence JWKS a holder would download. */
+async function makeBundleArtifacts(executionId: string): Promise<BundleArtifacts> {
+  const key = parseEvidenceSigningKey(SEED_B64);
+  if (key === undefined) throw new Error("fixture: evidence key parse failed");
+  const signed = signEvidenceBundle(
+    buildEvidenceBundle(fixtureCard(executionId), { now: () => 1_767_225_600_000 }),
+    key,
+  );
+  const dir = await mkdtemp(join(tmpdir(), "atf-verify-bundle-"));
+  const bundlePath = join(dir, "bundle.json");
+  const jwksPath = join(dir, "jwks.json");
+  await writeFile(bundlePath, JSON.stringify(signed));
+  await writeFile(
+    jwksPath,
+    JSON.stringify({
+      keys: [{ ...key.jwk, kid: key.kid, alg: "EdDSA", use: "sig" }],
+    }),
+  );
+  return { dir, bundlePath, jwksPath, kid: key.kid, signed };
+}
+
+describe("atf-verify --bundle", () => {
+  it("verifies a valid Ed25519 bundle (exit 0)", async () => {
+    const a = await makeBundleArtifacts("exec-bundle-ok");
+    const r = await runCli(["--bundle", a.bundlePath, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain("exec-bundle-ok");
+  });
+
+  it("emits a JSON report with --json", async () => {
+    const a = await makeBundleArtifacts("exec-bundle-json");
+    const r = await runCli([
+      "--bundle",
+      a.bundlePath,
+      "--jwks",
+      a.jwksPath,
+      "--json",
+    ]);
+    expect(r.exit).toBe(0);
+    const report = JSON.parse(r.stdout) as {
+      valid: boolean;
+      mode: string;
+      execution_id: string;
+      kid: string;
+      algorithm: string;
+      content_hash_valid: boolean;
+      signature_valid: boolean;
+    };
+    expect(report.valid).toBe(true);
+    expect(report.mode).toBe("bundle");
+    expect(report.execution_id).toBe("exec-bundle-json");
+    expect(report.kid).toBe(a.kid);
+    expect(report.algorithm).toBe("ed25519");
+    expect(report.content_hash_valid).toBe(true);
+    expect(report.signature_valid).toBe(true);
+  });
+
+  it("fails on a tampered bundle (exit 1)", async () => {
+    const a = await makeBundleArtifacts("exec-bundle-tampered");
+    const tampered = JSON.parse(
+      JSON.stringify(a.signed),
+    ) as SignedEvidenceBundle;
+    // Alter the embedded card but keep the stale content hash.
+    (tampered.bundle.card as { userPrompt: string | null }).userPrompt =
+      "tampered";
+    const tamperedPath = join(a.dir, "tampered.json");
+    await writeFile(tamperedPath, JSON.stringify(tampered));
+    const r = await runCli(["--bundle", tamperedPath, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("content does not match its recorded content hash");
+  });
+
+  it("fails with exit 2 for an unknown --kid", async () => {
+    const a = await makeBundleArtifacts("exec-bundle-wrongkid");
+    const r = await runCli([
+      "--bundle",
+      a.bundlePath,
+      "--jwks",
+      a.jwksPath,
+      "--kid",
+      "unknown-kid",
+    ]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain('no JWKS key with kid "unknown-kid"');
+  });
+
+  it("rejects mode-flag misuse (exit 2)", async () => {
+    const a = await makeBundleArtifacts("exec-bundle-modes");
+    const both = await runCli([
+      "--bundle",
+      a.bundlePath,
+      "--receipt",
+      join(a.dir, "receipt.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(both.exit).toBe(2);
+    expect(both.stderr).toContain("cannot be combined");
+
+    const noJwks = await runCli(["--bundle", a.bundlePath]);
+    expect(noJwks.exit).toBe(2);
+    expect(noJwks.stderr).toContain("--jwks is required");
+
+    const missing = await runCli(["--bundle", join(a.dir, "nope.json"), "--jwks", a.jwksPath]);
+    expect(missing.exit).toBe(2);
+    expect(missing.stderr).toContain("cannot read bundle file");
   });
 });

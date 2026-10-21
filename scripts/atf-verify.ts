@@ -20,9 +20,19 @@
  *                                    "tree_head")
  *   GET /.well-known/atf-receipt-jwks.json -> JWKS (URL or saved file)
  *
+ * Modes (exactly one is required):
+ *
+ *   --receipt <file>  Decision_Receipt verification (checks 1 and 2 above).
+ *   --bundle <file>   Signed Evidence Bundle (the JSON envelope with
+ *                     "bundle", "contentHash", "signature" and "kid"): the
+ *                     content hash and the Ed25519 signature are verified
+ *                     offline against the key from the JWKS.
+ *
  * Usage:
  *   atf-verify --receipt <file> --jwks <url|file> [--proof <file>]
  *              [--kid <kid>] [--json] [--help]
+ *   atf-verify --bundle <file> --jwks <url|file> [--kid <kid>] [--json]
+ *              [--help]
  *
  * Exit codes: 0 = everything verified, 1 = verification failed,
  * 2 = usage or input error.
@@ -48,40 +58,55 @@ import {
   type InclusionProofResult,
   verifyReceiptInclusion,
 } from "../apps/runtime/src/receipts/transparency-log.ts";
+import {
+  type SignedEvidenceBundle,
+  verifyEvidenceBundle,
+} from "../apps/runtime/src/observability/evidence-bundle.ts";
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
 const EXIT_USAGE = 2;
 
-const USAGE = `atf-verify — offline verification of ATF Decision_Receipts
+const USAGE = `atf-verify — offline verification of ATF artifacts
 
 Usage:
   atf-verify --receipt <file> --jwks <url|file> [options]
+  atf-verify --bundle <file> --jwks <url|file> [options]
+
+Modes (exactly one is required):
+  --receipt <file>  Decision_Receipt: JSON response from GET /v1/receipts/{id}
+                    ({"cose_base64": ...}) or raw COSE_Sign1 bytes.
+  --bundle <file>   Signed Evidence Bundle JSON (the envelope with "bundle",
+                    "contentHash", "signature" and "kid") as downloaded from
+                    the Runtime.
 
 Options:
-  --receipt <file>  Receipt: JSON response from GET /v1/receipts/{id}
-                    ({"cose_base64": ...}) or raw COSE_Sign1 bytes. Required.
   --jwks <url|file> JWKS used to verify the signature (http(s) URL or local
                     file). Required.
   --proof <file>    Inclusion proof from GET /v1/receipts/{id}/proof (JSON).
-                    When given, the Merkle inclusion and the signed tree head
-                    are verified too.
+                    Receipt mode only. When given, the Merkle inclusion and
+                    the signed tree head are verified too.
   --kid <kid>       Override the key id selected from the JWKS (default: the
-                    kid in the receipt's protected header).
+                    kid in the artifact).
   --json            Emit a machine-readable JSON report instead of text.
   --help            Show this help.
 
 Exit codes:
-  0  receipt signature and inclusion (if requested) verified
-  1  verification failed (bad signature, bad proof, unknown format)
+  0  signature (and inclusion, if requested) verified
+  1  verification failed (bad signature, bad proof, altered content)
   2  usage or input error (missing file, unreadable JWKS, no matching key)
 `;
 
 /** Input/usage problems: the artifact could not even be examined. */
 class UsageError extends Error {}
 
+/** Exactly one verification mode is selected on the command line. */
+type Mode = "receipt" | "bundle";
+
 interface CliOptions {
-  receipt: string;
+  mode: Mode;
+  receipt?: string;
+  bundle?: string;
   jwks: string;
   proof?: string;
   kid?: string;
@@ -103,6 +128,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case "--receipt":
         opts.receipt = needValue(arg, argv[++i]);
         break;
+      case "--bundle":
+        opts.bundle = needValue(arg, argv[++i]);
+        break;
       case "--jwks":
         opts.jwks = needValue(arg, argv[++i]);
         break;
@@ -123,14 +151,27 @@ function parseArgs(argv: readonly string[]): CliOptions {
         throw new UsageError(`unknown argument: ${arg}`);
     }
   }
-  if (opts.help === true) return { receipt: "", jwks: "", json: false, help: true };
-  if (opts.receipt === undefined) throw new UsageError("--receipt is required");
+  if (opts.help === true) {
+    return { mode: "receipt", jwks: "", json: false, help: true };
+  }
+  // Exactly one mode flag is required.
+  if (opts.receipt !== undefined && opts.bundle !== undefined) {
+    throw new UsageError("--receipt and --bundle cannot be combined; choose one mode");
+  }
+  if (opts.receipt === undefined && opts.bundle === undefined) {
+    throw new UsageError("--receipt or --bundle is required");
+  }
   if (opts.jwks === undefined) throw new UsageError("--jwks is required");
+  if (opts.proof !== undefined && opts.bundle !== undefined) {
+    throw new UsageError("--proof is only valid with --receipt");
+  }
   return {
-    receipt: opts.receipt,
+    mode: opts.bundle !== undefined ? "bundle" : "receipt",
     jwks: opts.jwks,
     json: opts.json === true,
     help: false,
+    ...(opts.receipt !== undefined ? { receipt: opts.receipt } : {}),
+    ...(opts.bundle !== undefined ? { bundle: opts.bundle } : {}),
     ...(opts.proof !== undefined ? { proof: opts.proof } : {}),
     ...(opts.kid !== undefined ? { kid: opts.kid } : {}),
   };
@@ -167,6 +208,52 @@ async function loadReceiptBytes(path: string): Promise<Uint8Array> {
     return base64UrlDecode(b64);
   }
   return raw;
+}
+
+/**
+ * Load the signed Evidence Bundle envelope written by the Runtime
+ * (`GET /v1/executions/{id}/evidence-bundle`). Structural problems are input
+ * errors (exit 2); a well-formed envelope may still fail verification (exit 1).
+ */
+async function loadBundleFile(path: string): Promise<SignedEvidenceBundle> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read bundle file: ${path}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new UsageError(`bundle file is not valid JSON: ${path}`);
+  }
+  const top = (doc ?? {}) as Record<string, unknown>;
+  if (
+    top.bundle === null ||
+    typeof top.bundle !== "object" ||
+    Array.isArray(top.bundle)
+  ) {
+    throw new UsageError(`bundle file has no "bundle" object: ${path}`);
+  }
+  if (typeof top.contentHash !== "string" || top.contentHash === "") {
+    throw new UsageError(`bundle file has no "contentHash" string: ${path}`);
+  }
+  if (typeof top.signature !== "string" || top.signature === "") {
+    throw new UsageError(`bundle file has no "signature" string: ${path}`);
+  }
+  if (top.algorithm !== "ed25519" && top.algorithm !== "hmac-sha256") {
+    throw new UsageError(`bundle file has an unsupported "algorithm": ${path}`);
+  }
+  if (top.kid !== undefined && typeof top.kid !== "string") {
+    throw new UsageError(`bundle file has a non-string "kid": ${path}`);
+  }
+  if (top.algorithm === "hmac-sha256") {
+    throw new UsageError(
+      'bundles signed with "hmac-sha256" need the shared secret; verify them with the Runtime',
+    );
+  }
+  return doc as unknown as SignedEvidenceBundle;
 }
 
 /** The DOM JsonWebKey type has no `kid`; JWKS entries always carry one. */
@@ -327,7 +414,7 @@ interface Report {
 
 async function run(opts: CliOptions): Promise<Report> {
   const errors: string[] = [];
-  const coseBytes = await loadReceiptBytes(opts.receipt);
+  const coseBytes = await loadReceiptBytes(opts.receipt ?? "");
 
   let message: ReturnType<typeof cborDecodeSign1>;
   try {
@@ -456,6 +543,90 @@ async function run(opts: CliOptions): Promise<Report> {
   };
 }
 
+interface BundleReport {
+  valid: boolean;
+  mode: "bundle";
+  execution_id: string | null;
+  generated_at: string | null;
+  algorithm: string | null;
+  kid: string | null;
+  content_hash_valid: boolean;
+  signature_valid: boolean;
+  verifier: string | null;
+  errors: string[];
+}
+
+async function runBundle(opts: CliOptions): Promise<BundleReport> {
+  const signed = await loadBundleFile(opts.bundle ?? "");
+  const jwks = await loadJwks(opts.jwks);
+  const kid = opts.kid ?? signed.kid;
+  const jwk = selectKey(jwks.keys, kid);
+  let rawKey: Uint8Array;
+  try {
+    rawKey = jwkToEd25519RawKey(jwk);
+  } catch {
+    throw new UsageError(`JWKS key "${jwk.kid ?? "?"}" is not an OKP/Ed25519 key`);
+  }
+
+  const check = verifyEvidenceBundle(signed, rawKey);
+  const errors: string[] = [];
+  // Distinguish the failure reasons for a human-readable report: the content
+  // hash check is independent of the signature, so report both when the
+  // bundle is broken.
+  let contentHashValid = true;
+  let signatureValid = true;
+  if (!check.valid) {
+    if (check.reason === "content_hash_mismatch") {
+      contentHashValid = false;
+      signatureValid = false;
+      errors.push("content does not match its recorded content hash");
+    } else {
+      signatureValid = false;
+      errors.push("signature does not verify against this key");
+    }
+  }
+
+  const bundle = signed.bundle as unknown as Record<string, unknown>;
+  return {
+    valid: check.valid,
+    mode: "bundle",
+    execution_id:
+      typeof bundle.executionId === "string" ? bundle.executionId : null,
+    generated_at:
+      typeof bundle.generatedAt === "string" ? bundle.generatedAt : null,
+    algorithm: signed.algorithm,
+    kid: kid ?? signed.kid ?? null,
+    content_hash_valid: contentHashValid,
+    signature_valid: signatureValid,
+    verifier: opts.jwks,
+    errors,
+  };
+}
+
+function printBundleText(report: BundleReport, opts: CliOptions): void {
+  const line = (label: string, value: string): string =>
+    `  ${label.padEnd(14)}${value}`;
+  console.log("ATF Evidence Bundle verification (offline)");
+  console.log("");
+  console.log(line("bundle:", opts.bundle ?? "-"));
+  console.log(line("execution:", report.execution_id ?? "-"));
+  console.log(line("generated:", report.generated_at ?? "-"));
+  console.log(line("algorithm:", report.algorithm ?? "-"));
+  console.log("");
+  console.log(line("jwks:", report.verifier ?? "-"));
+  console.log(line("kid:", report.kid ?? "-"));
+  console.log(
+    line("content hash:", report.content_hash_valid ? "VALID" : "INVALID"),
+  );
+  console.log(line("signature:", report.signature_valid ? "VALID" : "INVALID"));
+  if (report.errors.length > 0) {
+    console.log("");
+    for (const e of report.errors) console.error(`  ! ${e}`);
+  }
+  console.log("");
+  console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   let out = "";
   for (const b of bytes) out += b.toString(16).padStart(2, "0");
@@ -467,7 +638,7 @@ function printText(report: Report, opts: CliOptions): void {
     `  ${label.padEnd(14)}${value}`;
   console.log("ATF Decision_Receipt verification (offline)");
   console.log("");
-  console.log(line("receipt:", opts.receipt));
+  console.log(line("receipt:", opts.receipt ?? "-"));
   for (const [k, v] of Object.entries(report.summary)) {
     console.log(line(k, v));
   }
@@ -504,6 +675,15 @@ async function main(): Promise<number> {
   if (opts.help) {
     console.log(USAGE);
     return EXIT_VALID;
+  }
+  if (opts.mode === "bundle") {
+    const report = await runBundle(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printBundleText(report, opts);
+    }
+    return report.valid ? EXIT_VALID : EXIT_INVALID;
   }
   const report = await run(opts);
   if (opts.json) {
