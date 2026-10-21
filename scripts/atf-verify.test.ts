@@ -14,7 +14,10 @@ import { parseReceiptSigningKey } from "../apps/runtime/src/receipts/signing-key
 import { signReceiptPayload } from "../apps/runtime/src/receipts/receipt-builder.ts";
 import { InMemoryTransparencyLog } from "../apps/runtime/src/receipts/transparency-log.ts";
 import type { DecisionReceiptPayload } from "../apps/runtime/src/receipts/types.ts";
-import { parseEvidenceSigningKey } from "../apps/runtime/src/observability/evidence-key.ts";
+import {
+  parseEvidenceSigningKey,
+  type Ed25519EvidenceKey,
+} from "../apps/runtime/src/observability/evidence-key.ts";
 import {
   buildEvidenceBundle,
   signEvidenceBundle,
@@ -28,6 +31,11 @@ import {
   type ErasureReceiptEnvelope,
 } from "../apps/runtime/src/compliance/erasure-receipt.ts";
 import type { ErasureReceiptPayload } from "../packages/erasure-contract/src/receipt.ts";
+import {
+  InMemoryAuditLog,
+  signAuditAnchor,
+  type AuditRecord,
+} from "../apps/runtime/src/observability/audit-log.ts";
 
 const CLI = join(import.meta.dir, "atf-verify.ts");
 // A fixed 32-byte Ed25519 seed (base64) so the kid is deterministic.
@@ -316,7 +324,7 @@ describe("atf-verify CLI", () => {
     const r1 = await runCli([]);
     expect(r1.exit).toBe(2);
     expect(r1.stderr).toContain(
-      "--receipt, --bundle or --erasure-receipt is required",
+      "--receipt, --bundle, --erasure-receipt or --audit-export is required",
     );
     const a = await makeArtifacts("r-usage");
     const r2 = await runCli(["--receipt", a.receiptPath, "--jwks", "/nope/x"]);
@@ -694,5 +702,214 @@ describe("atf-verify --erasure-receipt", () => {
     const typ = await runCli(["--erasure-receipt", wrongTyp, "--jwks", a.jwksPath]);
     expect(typ.exit).toBe(2);
     expect(typ.stderr).toContain('no "typ" of "atf-erasure-receipt/1.0.0"');
+  });
+});
+
+interface AuditArtifacts {
+  dir: string;
+  exportPath: string;
+  jwksPath: string;
+  kid: string;
+  records: AuditRecord[];
+  key: Ed25519EvidenceKey;
+}
+
+/**
+ * Build an audit-log export the way GET /monitoring/audit/export?format=jsonl
+ * serves it (JSONL from InMemoryAuditLog.list(), newest first) plus a JWKS
+ * file for anchor verification.
+ */
+async function makeAuditArtifacts(label: string): Promise<AuditArtifacts> {
+  const log = new InMemoryAuditLog();
+  for (let i = 0; i < 5; i++) {
+    log.record({
+      actor: `actor-${i}`,
+      role: "operator",
+      action: i % 2 === 0 ? "flows.publish" : "replay.run",
+      target: `target-${i}`,
+      details: { index: i, note: `${label}-${i}` },
+    });
+  }
+  const newestFirst = await log.list();
+  const body =
+    newestFirst.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  const dir = await mkdtemp(join(tmpdir(), "atf-verify-audit-"));
+  const exportPath = join(dir, "audit.jsonl");
+  await writeFile(exportPath, body);
+  const key = parseEvidenceSigningKey(SEED_B64);
+  if (key === undefined) throw new Error("fixture signing key missing");
+  const jwksPath = join(dir, "jwks.json");
+  await writeFile(
+    jwksPath,
+    JSON.stringify({ keys: [{ ...key.jwk, kid: key.kid, alg: "EdDSA", use: "sig" }] }),
+  );
+  const records = newestFirst.toReversed();
+  return { dir, exportPath, jwksPath, kid: key.kid, records, key };
+}
+
+describe("atf-verify --audit-export", () => {
+  it("verifies an intact export chain (exit 0)", async () => {
+    const a = await makeAuditArtifacts("ok");
+    const r = await runCli(["--audit-export", a.exportPath]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain("records:      5");
+    expect(r.stdout).toContain(`ids:          ${a.records[0]?.id} .. ${a.records[a.records.length - 1]?.id}`);
+  });
+
+  it("emits a JSON report with --json", async () => {
+    const a = await makeAuditArtifacts("json");
+    const r = await runCli(["--audit-export", a.exportPath, "--json"]);
+    expect(r.exit).toBe(0);
+    const report = JSON.parse(r.stdout) as {
+      valid: boolean;
+      mode: string;
+      lines: number;
+      first_id: number;
+      last_id: number;
+      checked: number;
+      legacy_form: number;
+      broken_at_id: number | null;
+    };
+    expect(report.valid).toBe(true);
+    expect(report.mode).toBe("audit-export");
+    expect(report.lines).toBe(5);
+    expect(report.first_id).toBe(a.records[0]?.id);
+    expect(report.last_id).toBe(a.records[a.records.length - 1]?.id);
+    expect(report.checked).toBe(5);
+    expect(report.legacy_form).toBe(0);
+    expect(report.broken_at_id).toBeNull();
+  });
+
+  it("fails on a modified record and names the first divergent id (exit 1)", async () => {
+    const a = await makeAuditArtifacts("tampered");
+    const lines = (await readFile(a.exportPath, "utf8"))
+      .split("\n")
+      .filter((l) => l !== "");
+    // newest-first: modify the third line (id 3) without rehashing
+    const rec = JSON.parse(lines[2] ?? "") as AuditRecord;
+    const tamperedPath = join(a.dir, "tampered.jsonl");
+    lines[2] = JSON.stringify({ ...rec, actor: "mallory" });
+    await writeFile(tamperedPath, lines.join("\n") + "\n");
+    const r = await runCli(["--audit-export", tamperedPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain(`chain broken at record ${rec.id}`);
+    expect(r.stderr).toContain("hash_mismatch");
+  });
+
+  it("verifies an Ed25519 anchor against the export (exit 0)", async () => {
+    const a = await makeAuditArtifacts("anchor");
+    const tip = a.records[a.records.length - 1];
+    if (tip === undefined) throw new Error("fixture missing tip");
+    const anchor = signAuditAnchor(tip, a.key);
+    const anchorPath = join(a.dir, "anchors.jsonl");
+    await writeFile(anchorPath, JSON.stringify(anchor) + "\n");
+    const r = await runCli([
+      "--audit-export",
+      a.exportPath,
+      "--anchor",
+      anchorPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain("anchor:       valid");
+  });
+
+  it("fails when the chain was rewritten after the anchor (exit 1)", async () => {
+    const a = await makeAuditArtifacts("anchor-broken");
+    const tip = a.records[a.records.length - 1];
+    if (tip === undefined) throw new Error("fixture missing tip");
+    const anchor = signAuditAnchor(tip, a.key);
+    const anchorPath = join(a.dir, "anchors.jsonl");
+    await writeFile(anchorPath, JSON.stringify(anchor) + "\n");
+    // Tamper with an earlier record: the chain check fails first.
+    const lines = (await readFile(a.exportPath, "utf8"))
+      .split("\n")
+      .filter((l) => l !== "");
+    const rec = JSON.parse(lines[3] ?? "") as AuditRecord;
+    lines[3] = JSON.stringify({ ...rec, action: "evil.action" });
+    await writeFile(a.exportPath, lines.join("\n") + "\n");
+    const r = await runCli([
+      "--audit-export",
+      a.exportPath,
+      "--anchor",
+      anchorPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain(`chain broken at record ${rec.id}`);
+  });
+
+  it("reports HMAC anchors as unverifiable offline (exit 2)", async () => {
+    const a = await makeAuditArtifacts("anchor-hmac");
+    const tip = a.records[a.records.length - 1];
+    if (tip === undefined) throw new Error("fixture missing tip");
+    const anchor = signAuditAnchor(tip, "shared-secret");
+    const anchorPath = join(a.dir, "anchors.jsonl");
+    await writeFile(anchorPath, JSON.stringify(anchor) + "\n");
+    const r = await runCli([
+      "--audit-export",
+      a.exportPath,
+      "--anchor",
+      anchorPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain("HMAC anchors need the shared secret");
+  });
+
+  it("rejects malformed input and bad flag combinations (exit 2)", async () => {
+    const a = await makeAuditArtifacts("usage");
+
+    const missing = await runCli(["--audit-export", join(a.dir, "nope.jsonl")]);
+    expect(missing.exit).toBe(2);
+    expect(missing.stderr).toContain("cannot read audit export file");
+
+    const badLine = join(a.dir, "bad.jsonl");
+    await writeFile(badLine, `${JSON.stringify(a.records[0])}\nnot json\n`);
+    const bad = await runCli(["--audit-export", badLine]);
+    expect(bad.exit).toBe(2);
+    expect(bad.stderr).toContain("audit export line 2 is not valid JSON");
+
+    const notRecord = join(a.dir, "not-record.jsonl");
+    await writeFile(notRecord, '{"hello":"world"}\n');
+    const nr = await runCli(["--audit-export", notRecord]);
+    expect(nr.exit).toBe(2);
+    expect(nr.stderr).toContain("audit export line 1 is not an audit record");
+
+    const anchorOnly = await runCli([
+      "--receipt",
+      join(a.dir, "receipt.json"),
+      "--anchor",
+      join(a.dir, "anchors.jsonl"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(anchorOnly.exit).toBe(2);
+    expect(anchorOnly.stderr).toContain("--anchor is only valid with --audit-export");
+
+    const noJwks = await runCli([
+      "--audit-export",
+      a.exportPath,
+      "--anchor",
+      join(a.dir, "anchors.jsonl"),
+    ]);
+    expect(noJwks.exit).toBe(2);
+    expect(noJwks.stderr).toContain("--jwks is required");
+
+    const combined = await runCli([
+      "--audit-export",
+      a.exportPath,
+      "--receipt",
+      join(a.dir, "receipt.json"),
+    ]);
+    expect(combined.exit).toBe(2);
+    expect(combined.stderr).toContain("cannot be combined");
   });
 });

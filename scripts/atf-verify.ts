@@ -32,6 +32,12 @@
  *                     "payload", "signature"}): the Ed25519 signature over
  *                     the canonical JSON payload is verified offline against
  *                     the key from the JWKS and the payload is schema-checked.
+ *   --audit-export <file>
+ *                     Audit-log export (JSONL from
+ *                     GET /monitoring/audit/export?format=jsonl): the hash
+ *                     chain is re-verified offline. With --anchor, anchors
+ *                     written by the AUDIT_ANCHOR_FILE writer are verified
+ *                     against the Ed25519 key from the JWKS.
  *
  * Usage:
  *   atf-verify --receipt <file> --jwks <url|file> [--proof <file>]
@@ -40,6 +46,8 @@
  *              [--help]
  *   atf-verify --erasure-receipt <file> --jwks <url|file> [--kid <kid>]
  *              [--json] [--help]
+ *   atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>]
+ *              [--kid <kid>] [--json] [--help]
  *
  * Exit codes: 0 = everything verified, 1 = verification failed,
  * 2 = usage or input error.
@@ -76,6 +84,12 @@ import {
   ErasureReceiptPayloadSchema,
   canonicalizeJson,
 } from "../packages/erasure-contract/src/receipt.ts";
+import {
+  type AuditChainAnchor,
+  type AuditRecord,
+  verifyAuditAnchor,
+  verifyAuditChain,
+} from "../apps/runtime/src/observability/audit-log.ts";
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -87,6 +101,8 @@ Usage:
   atf-verify --receipt <file> --jwks <url|file> [options]
   atf-verify --bundle <file> --jwks <url|file> [options]
   atf-verify --erasure-receipt <file> --jwks <url|file> [options]
+  atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>]
+             [options]
 
 Modes (exactly one is required):
   --receipt <file>  Decision_Receipt: JSON response from GET /v1/receipts/{id}
@@ -99,10 +115,23 @@ Modes (exactly one is required):
                     "alg", "kid", "payload" and "signature"): the Ed25519
                     signature over the canonical JSON payload is verified
                     offline and the payload is schema-checked.
+  --audit-export <file>
+                    Audit-log export in JSON Lines format (the body of
+                    GET /monitoring/audit/export?format=jsonl, one compact
+                    JSON AuditRecord per line). The hash chain is recomputed
+                    offline; the report lists the line count, the first and
+                    last record id and the number of rows that only verify
+                    under the legacy hash form.
 
 Options:
   --jwks <url|file> JWKS used to verify the signature (http(s) URL or local
-                    file). Required.
+                    file). Required except for --audit-export without
+                    --anchor.
+  --anchor <file>   Audit chain anchor file written by the
+                    AUDIT_ANCHOR_FILE writer (JSON Lines of anchors). The
+                    newest anchor is verified against the record with the
+                    same id in the export and the Ed25519 key from the JWKS.
+                    --audit-export mode only.
   --proof <file>    Inclusion proof from GET /v1/receipts/{id}/proof (JSON).
                     Receipt mode only. When given, the Merkle inclusion and
                     the signed tree head are verified too.
@@ -121,13 +150,15 @@ Exit codes:
 class UsageError extends Error {}
 
 /** Exactly one verification mode is selected on the command line. */
-type Mode = "receipt" | "bundle" | "erasure-receipt";
+type Mode = "receipt" | "bundle" | "erasure-receipt" | "audit-export";
 
 interface CliOptions {
   mode: Mode;
   receipt?: string;
   bundle?: string;
   erasureReceipt?: string;
+  auditExport?: string;
+  anchor?: string;
   jwks: string;
   proof?: string;
   kid?: string;
@@ -154,6 +185,12 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break;
       case "--erasure-receipt":
         opts.erasureReceipt = needValue(arg, argv[++i]);
+        break;
+      case "--audit-export":
+        opts.auditExport = needValue(arg, argv[++i]);
+        break;
+      case "--anchor":
+        opts.anchor = needValue(arg, argv[++i]);
         break;
       case "--jwks":
         opts.jwks = needValue(arg, argv[++i]);
@@ -183,6 +220,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     opts.receipt !== undefined ? "--receipt" : undefined,
     opts.bundle !== undefined ? "--bundle" : undefined,
     opts.erasureReceipt !== undefined ? "--erasure-receipt" : undefined,
+    opts.auditExport !== undefined ? "--audit-export" : undefined,
   ].filter((flag): flag is string => flag !== undefined);
   if (modeFlags.length > 1) {
     throw new UsageError(
@@ -190,11 +228,22 @@ function parseArgs(argv: readonly string[]): CliOptions {
     );
   }
   if (modeFlags.length === 0) {
-    throw new UsageError("--receipt, --bundle or --erasure-receipt is required");
+    throw new UsageError(
+      "--receipt, --bundle, --erasure-receipt or --audit-export is required",
+    );
   }
-  if (opts.jwks === undefined) throw new UsageError("--jwks is required");
   if (opts.proof !== undefined && opts.receipt === undefined) {
     throw new UsageError("--proof is only valid with --receipt");
+  }
+  if (opts.anchor !== undefined && opts.auditExport === undefined) {
+    throw new UsageError("--anchor is only valid with --audit-export");
+  }
+  // A chain-only audit export verification needs no key; every other mode
+  // (and audit exports with anchors) verifies a signature and needs a JWKS.
+  const jwksOptional =
+    opts.auditExport !== undefined && opts.anchor === undefined;
+  if (opts.jwks === undefined && !jwksOptional) {
+    throw new UsageError("--jwks is required");
   }
   return {
     mode:
@@ -202,8 +251,10 @@ function parseArgs(argv: readonly string[]): CliOptions {
         ? "bundle"
         : opts.erasureReceipt !== undefined
           ? "erasure-receipt"
-          : "receipt",
-    jwks: opts.jwks,
+          : opts.auditExport !== undefined
+            ? "audit-export"
+            : "receipt",
+    jwks: opts.jwks ?? "",
     json: opts.json === true,
     help: false,
     ...(opts.receipt !== undefined ? { receipt: opts.receipt } : {}),
@@ -211,6 +262,10 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...(opts.erasureReceipt !== undefined
       ? { erasureReceipt: opts.erasureReceipt }
       : {}),
+    ...(opts.auditExport !== undefined
+      ? { auditExport: opts.auditExport }
+      : {}),
+    ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
     ...(opts.proof !== undefined ? { proof: opts.proof } : {}),
     ...(opts.kid !== undefined ? { kid: opts.kid } : {}),
   };
@@ -337,6 +392,94 @@ async function loadErasureReceiptFile(path: string): Promise<ErasureReceiptEnvel
     throw new UsageError(`erasure receipt file has a non-string "kid": ${path}`);
   }
   return doc as unknown as ErasureReceiptEnvelope;
+}
+
+/**
+ * Load an audit-log export in JSON Lines format — the body of
+ * GET /monitoring/audit/export?format=jsonl (one compact JSON AuditRecord
+ * per line, newest first, trailing newline). Structural problems are input
+ * errors (exit 2). Returns the records sorted ASCENDING by id, which is the
+ * order verifyAuditChain expects.
+ */
+async function loadAuditExportFile(path: string): Promise<AuditRecord[]> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read audit export file: ${path}`);
+  }
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  if (lines.length === 0) {
+    throw new UsageError(`audit export file is empty: ${path}`);
+  }
+  const records: AuditRecord[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let doc: unknown;
+    try {
+      doc = JSON.parse(lines[i]);
+    } catch {
+      throw new UsageError(
+        `audit export line ${i + 1} is not valid JSON: ${path}`,
+      );
+    }
+    const rec = (doc ?? {}) as Record<string, unknown>;
+    if (
+      typeof rec.id !== "number" ||
+      typeof rec.at !== "string" ||
+      typeof rec.hash !== "string" ||
+      typeof rec.prevHash !== "string" ||
+      typeof rec.actor !== "string" ||
+      typeof rec.action !== "string"
+    ) {
+      throw new UsageError(
+        `audit export line ${i + 1} is not an audit record: ${path}`,
+      );
+    }
+    records.push(doc as AuditRecord);
+  }
+  records.sort((a, b) => a.id - b.id);
+  return records;
+}
+
+/**
+ * Load an anchor file written by the AUDIT_ANCHOR_FILE writer (JSON Lines,
+ * one AuditChainAnchor per line, oldest first). Returns all anchors in file
+ * order; the newest (last) one is the relevant checkpoint.
+ */
+async function loadAnchorFile(path: string): Promise<AuditChainAnchor[]> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read anchor file: ${path}`);
+  }
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  if (lines.length === 0) {
+    throw new UsageError(`anchor file is empty: ${path}`);
+  }
+  const anchors: AuditChainAnchor[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let doc: unknown;
+    try {
+      doc = JSON.parse(lines[i]);
+    } catch {
+      throw new UsageError(
+        `anchor file line ${i + 1} is not valid JSON: ${path}`,
+      );
+    }
+    const rec = (doc ?? {}) as Record<string, unknown>;
+    if (
+      typeof rec.uptoId !== "number" ||
+      typeof rec.tipHash !== "string" ||
+      typeof rec.signature !== "string"
+    ) {
+      throw new UsageError(
+        `anchor file line ${i + 1} is not an audit chain anchor: ${path}`,
+      );
+    }
+    anchors.push(doc as AuditChainAnchor);
+  }
+  return anchors;
 }
 
 /** The DOM JsonWebKey type has no `kid`; JWKS entries always carry one. */
@@ -792,6 +935,121 @@ function printErasureReceiptText(
   console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
 }
 
+interface AuditExportReport {
+  valid: boolean;
+  mode: "audit-export";
+  /** Number of records in the export. */
+  lines: number;
+  first_id: number | null;
+  last_id: number | null;
+  /** Number of records the chain walk verified. */
+  checked: number;
+  /** Records that only verify under the legacy (pre-canonicalization) hash form. */
+  legacy_form: number;
+  broken_at_id: number | null;
+  broken_at_reason: string | null;
+  /** Present only with --anchor. */
+  anchor_status?: "valid" | "invalid";
+  anchor_upto_id?: number;
+  anchor_kid?: string | null;
+  verifier: string | null;
+  errors: string[];
+}
+
+async function runAuditExport(opts: CliOptions): Promise<AuditExportReport> {
+  const records = await loadAuditExportFile(opts.auditExport ?? "");
+  const verification = verifyAuditChain(records);
+
+  const errors: string[] = [];
+  if (!verification.valid && verification.brokenAt !== undefined) {
+    errors.push(
+      `chain broken at record ${verification.brokenAt.id} (${verification.brokenAt.reason})${
+        verification.message !== undefined ? `: ${verification.message}` : ""
+      }`,
+    );
+  }
+
+  const report: AuditExportReport = {
+    valid: verification.valid,
+    mode: "audit-export",
+    lines: records.length,
+    first_id: records.length > 0 ? (records[0]?.id ?? null) : null,
+    last_id: records.length > 0 ? (records[records.length - 1]?.id ?? null) : null,
+    checked: verification.checked,
+    legacy_form: verification.legacyForm ?? 0,
+    broken_at_id: verification.brokenAt?.id ?? null,
+    broken_at_reason: verification.brokenAt?.reason ?? null,
+    verifier: opts.anchor !== undefined ? opts.jwks : null,
+    errors,
+  };
+
+  if (opts.anchor === undefined) {
+    return report;
+  }
+  const anchors = await loadAnchorFile(opts.anchor);
+  const anchor = anchors[anchors.length - 1] as AuditChainAnchor;
+  report.anchor_upto_id = anchor.uptoId;
+  report.anchor_kid = anchor.kid ?? null;
+  if ((anchor.alg ?? "hmac-sha256") !== "ed25519") {
+    throw new UsageError(
+      "HMAC anchors need the shared secret; use the Runtime API",
+    );
+  }
+  const jwks = await loadJwks(opts.jwks);
+  const jwk = selectKey(jwks.keys, opts.kid ?? anchor.kid);
+  let publicKey: Uint8Array;
+  try {
+    publicKey = jwkToEd25519RawKey(jwk);
+  } catch {
+    throw new UsageError(
+      `JWKS key "${jwk.kid ?? "?"}" is not a usable Ed25519 public key`,
+    );
+  }
+  const tip = records.find((rec) => rec.id === anchor.uptoId);
+  const result = verifyAuditAnchor(anchor, tip, publicKey);
+  report.anchor_status = result.valid ? "valid" : "invalid";
+  if (!result.valid) {
+    errors.push(`anchor for record ${anchor.uptoId} is invalid (${result.reason ?? "unknown"})`);
+    report.valid = false;
+  }
+  return report;
+}
+
+function printAuditExportText(
+  report: AuditExportReport,
+  opts: CliOptions,
+): void {
+  const line = (label: string, value: string): string =>
+    `  ${label.padEnd(14)}${value}`;
+  console.log("ATF audit export verification (offline)");
+  console.log("");
+  console.log(line("export:", opts.auditExport ?? "-"));
+  console.log(line("records:", String(report.lines)));
+  console.log(
+    line(
+      "ids:",
+      report.first_id !== null && report.last_id !== null
+        ? `${report.first_id} .. ${report.last_id}`
+        : "-",
+    ),
+  );
+  console.log(line("verified:", String(report.checked)));
+  console.log(line("legacy form:", String(report.legacy_form)));
+  console.log(line("chain:", report.broken_at_id === null ? "VALID" : `BROKEN at ${report.broken_at_id}`));
+  if (opts.anchor !== undefined) {
+    console.log(line("anchor file:", opts.anchor));
+    console.log(line("anchor:", report.anchor_status ?? "-"));
+    console.log(line("upto id:", String(report.anchor_upto_id ?? "-")));
+    console.log(line("kid:", report.anchor_kid ?? "-"));
+  }
+  if (report.errors.length > 0) {
+    console.log("");
+    for (const e of report.errors) console.error(`  ! ${e}`);
+  }
+  console.log("");
+  console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
+}
+
 function printBundleText(report: BundleReport, opts: CliOptions): void {
   const line = (label: string, value: string): string =>
     `  ${label.padEnd(14)}${value}`;
@@ -880,6 +1138,15 @@ async function main(): Promise<number> {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printErasureReceiptText(report, opts);
+    }
+    return report.valid ? EXIT_VALID : EXIT_INVALID;
+  }
+  if (opts.mode === "audit-export") {
+    const report = await runAuditExport(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printAuditExportText(report, opts);
     }
     return report.valid ? EXIT_VALID : EXIT_INVALID;
   }
