@@ -282,6 +282,13 @@ instead of logging it.
 [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) lists it in full. The YAML schema is
 defined in `src/config/schema.ts`.
 
+When running more than one replica, set `MCPGATE_REPLICAS`: the readiness gate then warns when
+approval state would be per-process (redeemed approval tokens and pending 2026-approvals need a
+shared Redis), and it warns when a database tool has pagination enabled while
+`server.pagination.secret` is unset — every replica would sign cursors with its own random key,
+so a page request that lands on another replica fails with "Invalid pagination cursor". Set a
+stable secret.
+
 ## Further reading
 
 - [`docs/MCP-2026-CONTEXT-LAYER.md`](../../docs/MCP-2026-CONTEXT-LAYER.md) — MCP context layer

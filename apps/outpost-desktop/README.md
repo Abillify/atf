@@ -33,10 +33,11 @@ browser extension.
 - The WebView asks the host for the sidecar's loopback URL and control
   token (`control_info`) and then calls the sidecar's control API itself
   with `fetch` and `Authorization: Bearer` (`src/api-client.ts`): status,
-  sync, pause/resume, login and configuration. It never sees the Extract or
-  cloud-source credentials, and the sidecar's API is not reachable from
-  the network. The control token, however, is readable by any script that
-  runs in the WebView, so a script injected into the UI could drive the
+  sync, pause/resume, login and configuration. The sidecar's API is not
+  reachable from the network. Cloud credentials (S3 secret, Google Drive
+  service-account JSON) are typed into the WebView and sent write-only to the
+  local sidecar; they are not read back. The Control API token is available to
+  the WebView's JavaScript, so a script injected into the UI could drive the
   control API (start or pause syncs, change the configuration) — keep the
   UI free of third-party content, and see the CSP in `tauri.conf.json`.
 - The host spawns the sidecar with a fresh 32-byte IPC token on its first

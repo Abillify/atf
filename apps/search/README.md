@@ -247,6 +247,11 @@ Every tool also accepts `collection`. The read tools (`get_outline`, `get_sectio
 `get_summary`, `get_summaries`) accept `valid_at` (RFC 3339 with offset) and read the version
 valid at that instant, as search's `valid_at` selects it.
 
+Every read and navigation response carries the content-trust labels (ADR-0032):
+`content_trust: "untrusted"` plus an `injection_risk` hint (`none`/`suspected`) computed over
+the returned text at query time — the same labelling `search` applies. A `none` is a hint, not
+a guarantee; consumers (Runtime taint, Gate) act on the labels.
+
 ## Temporal document versions
 
 Every ingested document may declare `X-Valid-From` (batch/NDJSON items use `valid_from`; an item overrides the shared header). Values must be RFC 3339 date-times with an explicit `Z` or numeric offset, for example `2026-03-01T09:00:00+01:00`; offset-less timestamps are rejected with HTTP 400. The database stores the nullable value on every chunk. Legacy rows use `effective_valid_from = COALESCE(valid_from, created)`.
@@ -369,6 +374,9 @@ The v2 variables worth deciding deliberately:
 | `CONTEXT_HEADER_MAX_FRACTION` | 0.15 | Share of the chunk token budget the contextual header may use |
 | `TRANSACTION_JWKS_URI`, `TRANSACTION_ALGORITHMS` | (unset), derived | Verify ES256/EdDSA transaction tokens against the Runtime's JWKS; the algorithms accepted at the same time |
 | `CONTEXTUAL_CHUNK_LLM` | false | One `SUMMARY_*` model call per chunk for a placement sentence; expensive |
+| `RATE_LIMIT_REDIS_URL` | (unset) | Shared backend for rate limiting; without it the limiter is per-process (ADR-0031) |
+| `REPLICAS` | 1 | Expected replica count; with more replicas and no shared Redis the production warnings fire |
+| `EMBED_FALLBACK_SAME_SPACE` | false | Startup aborts when `EMBED_FALLBACK_MODEL` differs from `EMBED_MODEL` unless this asserts both servers serve the same underlying model — a different fallback model would silently mix embedding spaces |
 
 ## Further reading
 

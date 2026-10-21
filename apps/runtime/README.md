@@ -43,6 +43,8 @@ bun run --filter @atf/runtime build
 | `/v1/rag/*`, `/v1/memory/*` | Retrieval and memory stores, when a vector or memory store is configured |
 | `/v1/assistants/*`, `/v1/org-skills/*` | Per-user assistants, when the assistants subsystem is enabled |
 | `/v1/receipts/*`, `/.well-known/atf-receipt-jwks.json` | Signed Decision Receipts and their public keys, when receipts are enabled |
+| `/.well-known/atf-evidence-jwks.json` | Public keys for the evidence-chain signature, so third parties can verify evidence bundles offline |
+| `/.well-known/atf-transaction-jwks.json` | Public keys for agent transaction tokens, so a Gate verifies them without a shared secret |
 | `/v1/analysis-artifacts/*` | Stored analysis artifacts |
 | `/v1/me/*` | Self-service data access and erasure (DSAR) for the calling identity |
 | `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, named drafts (`/flows/:id/drafts`), sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |
@@ -108,6 +110,28 @@ startup error.
 - `ATF_PRESET` applies a bundle of defaults (`dev`, `secure`, `regulated`,
   `regulated-multitenant`, `performance`); explicit variables always win.
   `PROFILE` is a deprecated alias of it
+
+Settings that changed with the 0.18.x hardening, worth knowing early:
+
+- `EVIDENCE_SIGNING_KEY` — HMAC secret for the evidence-chain signature;
+  `scripts/cli.ts verify-bundle <bundle.json>` verifies an exported evidence
+  bundle against it (or against the public keys from
+  `/.well-known/atf-evidence-jwks.json`)
+- `COMPLIANCE_POLICY_REQUIRED` — with it set, production refuses to start
+  without a loaded compliance policy; without it the Runtime only logs at startup
+- `TRANSACTION_SIGNING_ALG` — algorithm for agent transaction tokens; the
+  public key is published at `/.well-known/atf-transaction-jwks.json`
+- `AGENT_TRANSACTION_AUDIENCES` — JSON object mapping MCP server names to the
+  audience their transaction tokens carry (per-server audience, ADR-0035)
+- `REPLICAS` — expected replica count; feeds the shared-backend warnings of
+  the production gate (ADR-0031)
+- `REDIS_URL` — shared backend for rate limits and the circuit breaker;
+  without it these stores are per-process
+- `AUDIT_PSEUDONYM_PEPPER` — pepper for audit-log pseudonyms; rotate with care
+  (existing pseudonyms stop matching after a rotation)
+- Shadowed flows: `flows/shadow.json` maps a production flow to a shadow
+  counterpart; shadow runs execute asynchronously and never affect the user
+  answer — state and stats are under `/monitoring/*`
 - With the production profile (`ATF_PROFILE=production`; without it `APP_ENV=production`) a
   readiness gate refuses to start under unsafe settings such as
   open CORS or unverified JWTs (`src/config/prod-gate.ts`)
