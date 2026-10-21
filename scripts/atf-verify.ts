@@ -27,12 +27,19 @@
  *                     "bundle", "contentHash", "signature" and "kid"): the
  *                     content hash and the Ed25519 signature are verified
  *                     offline against the key from the JWKS.
+ *   --erasure-receipt <file>
+ *                     Signed erasure receipt envelope ({"typ", "alg", "kid",
+ *                     "payload", "signature"}): the Ed25519 signature over
+ *                     the canonical JSON payload is verified offline against
+ *                     the key from the JWKS and the payload is schema-checked.
  *
  * Usage:
  *   atf-verify --receipt <file> --jwks <url|file> [--proof <file>]
  *              [--kid <kid>] [--json] [--help]
  *   atf-verify --bundle <file> --jwks <url|file> [--kid <kid>] [--json]
  *              [--help]
+ *   atf-verify --erasure-receipt <file> --jwks <url|file> [--kid <kid>]
+ *              [--json] [--help]
  *
  * Exit codes: 0 = everything verified, 1 = verification failed,
  * 2 = usage or input error.
@@ -62,6 +69,13 @@ import {
   type SignedEvidenceBundle,
   verifyEvidenceBundle,
 } from "../apps/runtime/src/observability/evidence-bundle.ts";
+import { createPublicKey, verify as ed25519Verify } from "node:crypto";
+import type { ErasureReceiptEnvelope } from "../apps/runtime/src/compliance/erasure-receipt.ts";
+import {
+  ERASURE_RECEIPT_TYPE,
+  ErasureReceiptPayloadSchema,
+  canonicalizeJson,
+} from "../packages/erasure-contract/src/receipt.ts";
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -72,6 +86,7 @@ const USAGE = `atf-verify — offline verification of ATF artifacts
 Usage:
   atf-verify --receipt <file> --jwks <url|file> [options]
   atf-verify --bundle <file> --jwks <url|file> [options]
+  atf-verify --erasure-receipt <file> --jwks <url|file> [options]
 
 Modes (exactly one is required):
   --receipt <file>  Decision_Receipt: JSON response from GET /v1/receipts/{id}
@@ -79,6 +94,11 @@ Modes (exactly one is required):
   --bundle <file>   Signed Evidence Bundle JSON (the envelope with "bundle",
                     "contentHash", "signature" and "kid") as downloaded from
                     the Runtime.
+  --erasure-receipt <file>
+                    Signed erasure receipt JSON (the envelope with "typ",
+                    "alg", "kid", "payload" and "signature"): the Ed25519
+                    signature over the canonical JSON payload is verified
+                    offline and the payload is schema-checked.
 
 Options:
   --jwks <url|file> JWKS used to verify the signature (http(s) URL or local
@@ -101,12 +121,13 @@ Exit codes:
 class UsageError extends Error {}
 
 /** Exactly one verification mode is selected on the command line. */
-type Mode = "receipt" | "bundle";
+type Mode = "receipt" | "bundle" | "erasure-receipt";
 
 interface CliOptions {
   mode: Mode;
   receipt?: string;
   bundle?: string;
+  erasureReceipt?: string;
   jwks: string;
   proof?: string;
   kid?: string;
@@ -130,6 +151,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break;
       case "--bundle":
         opts.bundle = needValue(arg, argv[++i]);
+        break;
+      case "--erasure-receipt":
+        opts.erasureReceipt = needValue(arg, argv[++i]);
         break;
       case "--jwks":
         opts.jwks = needValue(arg, argv[++i]);
@@ -155,23 +179,38 @@ function parseArgs(argv: readonly string[]): CliOptions {
     return { mode: "receipt", jwks: "", json: false, help: true };
   }
   // Exactly one mode flag is required.
-  if (opts.receipt !== undefined && opts.bundle !== undefined) {
-    throw new UsageError("--receipt and --bundle cannot be combined; choose one mode");
+  const modeFlags = [
+    opts.receipt !== undefined ? "--receipt" : undefined,
+    opts.bundle !== undefined ? "--bundle" : undefined,
+    opts.erasureReceipt !== undefined ? "--erasure-receipt" : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
+  if (modeFlags.length > 1) {
+    throw new UsageError(
+      `${modeFlags.join(" and ")} cannot be combined; choose one mode`,
+    );
   }
-  if (opts.receipt === undefined && opts.bundle === undefined) {
-    throw new UsageError("--receipt or --bundle is required");
+  if (modeFlags.length === 0) {
+    throw new UsageError("--receipt, --bundle or --erasure-receipt is required");
   }
   if (opts.jwks === undefined) throw new UsageError("--jwks is required");
-  if (opts.proof !== undefined && opts.bundle !== undefined) {
+  if (opts.proof !== undefined && opts.receipt === undefined) {
     throw new UsageError("--proof is only valid with --receipt");
   }
   return {
-    mode: opts.bundle !== undefined ? "bundle" : "receipt",
+    mode:
+      opts.bundle !== undefined
+        ? "bundle"
+        : opts.erasureReceipt !== undefined
+          ? "erasure-receipt"
+          : "receipt",
     jwks: opts.jwks,
     json: opts.json === true,
     help: false,
     ...(opts.receipt !== undefined ? { receipt: opts.receipt } : {}),
     ...(opts.bundle !== undefined ? { bundle: opts.bundle } : {}),
+    ...(opts.erasureReceipt !== undefined
+      ? { erasureReceipt: opts.erasureReceipt }
+      : {}),
     ...(opts.proof !== undefined ? { proof: opts.proof } : {}),
     ...(opts.kid !== undefined ? { kid: opts.kid } : {}),
   };
@@ -254,6 +293,50 @@ async function loadBundleFile(path: string): Promise<SignedEvidenceBundle> {
     );
   }
   return doc as unknown as SignedEvidenceBundle;
+}
+
+/**
+ * Load the signed erasure receipt envelope served by the Runtime
+ * (`GET /v1/me/data/erasures/{id}`). Structural problems are input errors
+ * (exit 2); a well-formed envelope may still fail verification (exit 1).
+ */
+async function loadErasureReceiptFile(path: string): Promise<ErasureReceiptEnvelope> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read erasure receipt file: ${path}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new UsageError(`erasure receipt file is not valid JSON: ${path}`);
+  }
+  const top = (doc ?? {}) as Record<string, unknown>;
+  if (top.typ !== ERASURE_RECEIPT_TYPE) {
+    throw new UsageError(
+      `erasure receipt file has no "typ" of "${ERASURE_RECEIPT_TYPE}": ${path}`,
+    );
+  }
+  if (top.alg === "HS256") {
+    throw new UsageError(
+      "HMAC receipts need the shared secret; use the Runtime API",
+    );
+  }
+  if (top.alg !== "Ed25519") {
+    throw new UsageError(`erasure receipt file has an unsupported "alg": ${path}`);
+  }
+  if (top.payload === null || typeof top.payload !== "object" || Array.isArray(top.payload)) {
+    throw new UsageError(`erasure receipt file has no "payload" object: ${path}`);
+  }
+  if (typeof top.signature !== "string" || top.signature === "") {
+    throw new UsageError(`erasure receipt file has no "signature" string: ${path}`);
+  }
+  if (top.kid !== undefined && typeof top.kid !== "string") {
+    throw new UsageError(`erasure receipt file has a non-string "kid": ${path}`);
+  }
+  return doc as unknown as ErasureReceiptEnvelope;
 }
 
 /** The DOM JsonWebKey type has no `kid`; JWKS entries always carry one. */
@@ -603,6 +686,112 @@ async function runBundle(opts: CliOptions): Promise<BundleReport> {
   };
 }
 
+interface ErasureReceiptReport {
+  valid: boolean;
+  mode: "erasure-receipt";
+  receipt_id: string | null;
+  request_id: string | null;
+  tenant_id: string | null;
+  scope: string | null;
+  status: string | null;
+  completed_at: string | null;
+  algorithm: string | null;
+  kid: string | null;
+  signature_valid: boolean;
+  verifier: string | null;
+  errors: string[];
+}
+
+async function runErasureReceipt(opts: CliOptions): Promise<ErasureReceiptReport> {
+  const envelope = await loadErasureReceiptFile(opts.erasureReceipt ?? "");
+  const jwks = await loadJwks(opts.jwks);
+  const kid = opts.kid ?? envelope.kid;
+  const jwk = selectKey(jwks.keys, kid);
+  let publicKey: ReturnType<typeof createPublicKey>;
+  try {
+    publicKey = createPublicKey({ key: jwk, format: "jwk" });
+  } catch {
+    throw new UsageError(`JWKS key "${jwk.kid ?? "?"}" is not a usable Ed25519 public key`);
+  }
+
+  const errors: string[] = [];
+  // The signature covers the canonical JSON bytes of the payload, exactly as
+  // produced by signReceipt() in the Runtime.
+  const signingBytes = Buffer.from(canonicalizeJson(envelope.payload), "utf8");
+  let signatureValid = true;
+  try {
+    signatureValid = ed25519Verify(
+      null,
+      signingBytes,
+      publicKey,
+      Buffer.from(envelope.signature, "base64url"),
+    );
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) {
+    errors.push("signature does not verify against this key");
+  }
+
+  // The payload must additionally satisfy the contract schema, so a receipt
+  // that verifies but attests something malformed is still rejected.
+  const parsed = ErasureReceiptPayloadSchema.safeParse(envelope.payload);
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const at = issue.path.length > 0 ? ` at ${issue.path.join(".")}` : "";
+      errors.push(`payload is not a valid erasure receipt${at}: ${issue.message}`);
+    }
+  }
+
+  const payload = (envelope.payload ?? {}) as Record<string, unknown>;
+  return {
+    valid: signatureValid && parsed.success,
+    mode: "erasure-receipt",
+    receipt_id:
+      typeof payload.receiptId === "string" ? payload.receiptId : null,
+    request_id:
+      typeof payload.requestId === "string" ? payload.requestId : null,
+    tenant_id: typeof payload.tenantId === "string" ? payload.tenantId : null,
+    scope: typeof payload.scope === "string" ? payload.scope : null,
+    status: typeof payload.status === "string" ? payload.status : null,
+    completed_at:
+      typeof payload.completedAt === "string" ? payload.completedAt : null,
+    algorithm: envelope.alg,
+    kid: kid ?? envelope.kid ?? null,
+    signature_valid: signatureValid,
+    verifier: opts.jwks,
+    errors,
+  };
+}
+
+function printErasureReceiptText(
+  report: ErasureReceiptReport,
+  opts: CliOptions,
+): void {
+  const line = (label: string, value: string): string =>
+    `  ${label.padEnd(14)}${value}`;
+  console.log("ATF erasure receipt verification (offline)");
+  console.log("");
+  console.log(line("receipt:", opts.erasureReceipt ?? "-"));
+  console.log(line("receipt id:", report.receipt_id ?? "-"));
+  console.log(line("request:", report.request_id ?? "-"));
+  console.log(line("tenant:", report.tenant_id ?? "-"));
+  console.log(line("scope:", report.scope ?? "-"));
+  console.log(line("status:", report.status ?? "-"));
+  console.log(line("completed:", report.completed_at ?? "-"));
+  console.log(line("algorithm:", report.algorithm ?? "-"));
+  console.log("");
+  console.log(line("jwks:", report.verifier ?? "-"));
+  console.log(line("kid:", report.kid ?? "-"));
+  console.log(line("signature:", report.signature_valid ? "VALID" : "INVALID"));
+  if (report.errors.length > 0) {
+    console.log("");
+    for (const e of report.errors) console.error(`  ! ${e}`);
+  }
+  console.log("");
+  console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
+}
+
 function printBundleText(report: BundleReport, opts: CliOptions): void {
   const line = (label: string, value: string): string =>
     `  ${label.padEnd(14)}${value}`;
@@ -682,6 +871,15 @@ async function main(): Promise<number> {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printBundleText(report, opts);
+    }
+    return report.valid ? EXIT_VALID : EXIT_INVALID;
+  }
+  if (opts.mode === "erasure-receipt") {
+    const report = await runErasureReceipt(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printErasureReceiptText(report, opts);
     }
     return report.valid ? EXIT_VALID : EXIT_INVALID;
   }

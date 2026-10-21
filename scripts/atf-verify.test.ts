@@ -21,6 +21,13 @@ import {
   type SignedEvidenceBundle,
 } from "../apps/runtime/src/observability/evidence-bundle.ts";
 import type { ExplainCard } from "../apps/runtime/src/observability/explain.ts";
+import {
+  ed25519ReceiptKey,
+  hmacReceiptKey,
+  signReceipt,
+  type ErasureReceiptEnvelope,
+} from "../apps/runtime/src/compliance/erasure-receipt.ts";
+import type { ErasureReceiptPayload } from "../packages/erasure-contract/src/receipt.ts";
 
 const CLI = join(import.meta.dir, "atf-verify.ts");
 // A fixed 32-byte Ed25519 seed (base64) so the kid is deterministic.
@@ -308,7 +315,9 @@ describe("atf-verify CLI", () => {
   it("fails with usage errors (exit 2)", async () => {
     const r1 = await runCli([]);
     expect(r1.exit).toBe(2);
-    expect(r1.stderr).toContain("--receipt or --bundle is required");
+    expect(r1.stderr).toContain(
+      "--receipt, --bundle or --erasure-receipt is required",
+    );
     const a = await makeArtifacts("r-usage");
     const r2 = await runCli(["--receipt", a.receiptPath, "--jwks", "/nope/x"]);
     expect(r2.exit).toBe(2);
@@ -462,5 +471,228 @@ describe("atf-verify --bundle", () => {
     const missing = await runCli(["--bundle", join(a.dir, "nope.json"), "--jwks", a.jwksPath]);
     expect(missing.exit).toBe(2);
     expect(missing.stderr).toContain("cannot read bundle file");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --erasure-receipt mode
+// ---------------------------------------------------------------------------
+
+// The receipt id must be a UUID (contract schema); the fixture derives one
+// deterministically from a label so tests can assert on it.
+function fixtureReceiptId(label: string): string {
+  const hex = Buffer.from(label.padEnd(36, "-").slice(0, 36), "utf8").toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function fixtureErasurePayload(receiptId: string): ErasureReceiptPayload {
+  return {
+    receiptId,
+    requestId: "5f0c7a52-2c6e-4e6a-9b98-3b1a2c3d4e5f",
+    tenantId: "acme",
+    scope: "subject",
+    subjectHashes: ["a".repeat(64)],
+    completedAt: "2026-01-01T00:00:00.000Z",
+    results: [{ store: "search", status: "ok", erased: 3 }],
+    status: "complete",
+  };
+}
+
+async function makeErasureArtifacts(label: string): Promise<{
+  dir: string;
+  receiptId: string;
+  receiptPath: string;
+  jwksPath: string;
+  kid: string;
+  envelope: ErasureReceiptEnvelope;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "atf-verify-erasure-"));
+  const receiptId = fixtureReceiptId(label);
+  const key = ed25519ReceiptKey(SEED_B64);
+  if (key === undefined) throw new Error("fixture signing key missing");
+  const envelope = signReceipt(fixtureErasurePayload(receiptId), key);
+  const receiptPath = join(dir, "receipt.json");
+  await writeFile(receiptPath, JSON.stringify(envelope));
+  // The Ed25519 receipt kid is the same thumbprint as the evidence key, so a
+  // single-key evidence JWKS verifies the receipt.
+  const evidenceKey = parseEvidenceSigningKey(SEED_B64);
+  if (evidenceKey === undefined) throw new Error("fixture JWKS key missing");
+  const jwksPath = join(dir, "jwks.json");
+  await writeFile(
+    jwksPath,
+    JSON.stringify({
+      keys: [{ ...evidenceKey.jwk, kid: evidenceKey.kid, alg: "EdDSA", use: "sig" }],
+    }),
+  );
+  return { dir, receiptId, receiptPath, jwksPath, kid: evidenceKey.kid, envelope };
+}
+
+describe("atf-verify --erasure-receipt", () => {
+  it("verifies a valid Ed25519 erasure receipt (exit 0)", async () => {
+    const a = await makeErasureArtifacts("erasure-ok");
+    const r = await runCli([
+      "--erasure-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain(a.receiptId);
+  });
+
+  it("emits a JSON report with --json", async () => {
+    const a = await makeErasureArtifacts("erasure-json");
+    const r = await runCli([
+      "--erasure-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+      "--json",
+    ]);
+    expect(r.exit).toBe(0);
+    const report = JSON.parse(r.stdout) as {
+      valid: boolean;
+      mode: string;
+      receipt_id: string;
+      tenant_id: string;
+      scope: string;
+      status: string;
+      algorithm: string;
+      kid: string;
+      signature_valid: boolean;
+    };
+    expect(report.valid).toBe(true);
+    expect(report.mode).toBe("erasure-receipt");
+    expect(report.receipt_id).toBe(a.receiptId);
+    expect(report.tenant_id).toBe("acme");
+    expect(report.scope).toBe("subject");
+    expect(report.status).toBe("complete");
+    expect(report.algorithm).toBe("Ed25519");
+    expect(report.kid).toBe(a.kid);
+    expect(report.signature_valid).toBe(true);
+  });
+
+  it("uses the single JWKS key when the envelope has no kid", async () => {
+    const a = await makeErasureArtifacts("erasure-nokid");
+    // An HS256-style envelope has no kid; simulate the Ed25519 case by
+    // stripping the kid from a valid envelope and re-signing with the same key.
+    const key = ed25519ReceiptKey(SEED_B64);
+    if (key === undefined) throw new Error("fixture signing key missing");
+    const noKid = { ...signReceipt(a.envelope.payload, key), kid: undefined };
+    const path = join(a.dir, "no-kid.json");
+    await writeFile(path, JSON.stringify(noKid));
+    const r = await runCli(["--erasure-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+  });
+
+  it("fails on a modified payload with stale signature (exit 1)", async () => {
+    const a = await makeErasureArtifacts("erasure-tampered");
+    const tampered = JSON.parse(JSON.stringify(a.envelope)) as {
+      payload: { tenantId: string };
+    };
+    tampered.payload.tenantId = "evil";
+    const path = join(a.dir, "tampered.json");
+    await writeFile(path, JSON.stringify(tampered));
+    const r = await runCli(["--erasure-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("signature does not verify against this key");
+  });
+
+  it("fails on a schema-invalid payload even with a valid signature (exit 1)", async () => {
+    const a = await makeErasureArtifacts("erasure-badschema");
+    const key = ed25519ReceiptKey(SEED_B64);
+    if (key === undefined) throw new Error("fixture signing key missing");
+    // Sign a payload that does not satisfy the contract schema (bad scope).
+    const bad = {
+      ...fixtureErasurePayload("erasure-badschema"),
+      scope: "everything",
+    } as unknown as ErasureReceiptPayload;
+    const envelope = signReceipt(bad, key);
+    const path = join(a.dir, "bad-schema.json");
+    await writeFile(path, JSON.stringify(envelope));
+    const r = await runCli(["--erasure-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("payload is not a valid erasure receipt");
+  });
+
+  it("rejects HS256 receipts with the shared-secret message (exit 2)", async () => {
+    const a = await makeErasureArtifacts("erasure-hmac");
+    const hmacKey = hmacReceiptKey("s".repeat(32));
+    if (hmacKey === undefined) throw new Error("fixture HMAC key missing");
+    const envelope = signReceipt(a.envelope.payload, hmacKey);
+    const path = join(a.dir, "hmac.json");
+    await writeFile(path, JSON.stringify(envelope));
+    const r = await runCli(["--erasure-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain(
+      "HMAC receipts need the shared secret; use the Runtime API",
+    );
+  });
+
+  it("fails with exit 2 for an unknown --kid", async () => {
+    const a = await makeErasureArtifacts("erasure-wrongkid");
+    const r = await runCli([
+      "--erasure-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+      "--kid",
+      "unknown-kid",
+    ]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain('no JWKS key with kid "unknown-kid"');
+  });
+
+  it("rejects mode-flag misuse and bad input (exit 2)", async () => {
+    const a = await makeErasureArtifacts("erasure-modes");
+    const both = await runCli([
+      "--erasure-receipt",
+      a.receiptPath,
+      "--bundle",
+      join(a.dir, "bundle.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(both.exit).toBe(2);
+    expect(both.stderr).toContain("cannot be combined");
+
+    const proof = await runCli([
+      "--erasure-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+      "--proof",
+      join(a.dir, "proof.json"),
+    ]);
+    expect(proof.exit).toBe(2);
+    expect(proof.stderr).toContain("--proof is only valid with --receipt");
+
+    const missing = await runCli([
+      "--erasure-receipt",
+      join(a.dir, "nope.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(missing.exit).toBe(2);
+    expect(missing.stderr).toContain("cannot read erasure receipt file");
+
+    const notJson = join(a.dir, "not-json.json");
+    await writeFile(notJson, "hello");
+    const bad = await runCli(["--erasure-receipt", notJson, "--jwks", a.jwksPath]);
+    expect(bad.exit).toBe(2);
+    expect(bad.stderr).toContain("erasure receipt file is not valid JSON");
+
+    const wrongTyp = join(a.dir, "wrong-typ.json");
+    await writeFile(
+      wrongTyp,
+      JSON.stringify({ ...a.envelope, typ: "atf-something-else/1.0.0" }),
+    );
+    const typ = await runCli(["--erasure-receipt", wrongTyp, "--jwks", a.jwksPath]);
+    expect(typ.exit).toBe(2);
+    expect(typ.stderr).toContain('no "typ" of "atf-erasure-receipt/1.0.0"');
   });
 });
