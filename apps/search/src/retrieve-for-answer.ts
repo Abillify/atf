@@ -256,8 +256,11 @@ export interface RetrieveForAnswerInput {
 export interface RetrieveForAnswerDeps {
   /** Hybrid search without rerank and grouping, `limit` results, best first. */
   search(query: string, limit: number): Promise<SearchResult[]>;
-  /** Scores `texts` against `question` (higher is better, same order); absent = no rerank. */
-  rerank?: ((question: string, texts: string[]) => Promise<number[] | undefined>) | undefined;
+  /**
+   * Reorders `results` by relevance to `question` (best first); `undefined` =
+   * the reranker did not apply (not configured, too few results, failed).
+   */
+  rerank?: ((question: string, results: SearchResult[]) => Promise<SearchResult[] | undefined>) | undefined;
   countTokens(text: string): Promise<number>;
 }
 
@@ -294,16 +297,22 @@ export async function retrieveForAnswer(
   let reranked = false;
   if (deps.rerank !== undefined && candidates.length > 1) {
     const head = candidates.slice(0, RERANK_TOP_N);
-    const scores = await deps.rerank(
+    const ordered = await deps.rerank(
       input.question,
-      head.map((chunk) => chunk.result.content),
+      head.map((chunk) => chunk.result),
     );
-    if (scores !== undefined && scores.length === head.length) {
-      const order = head
-        .map((chunk, position) => ({ chunk, score: scores[position] as number, position }))
-        .sort((a, b) => b.score - a.score || a.position - b.position)
-        .map((entry) => entry.chunk);
-      candidates = [...order, ...candidates.slice(RERANK_TOP_N)];
+    if (ordered !== undefined) {
+      const byId = new Map(head.map((chunk) => [chunk.result.id, chunk]));
+      const reordered: FusedChunk[] = [];
+      for (const result of ordered) {
+        const chunk = byId.get(result.id);
+        if (chunk !== undefined) {
+          reordered.push(chunk);
+          byId.delete(result.id);
+        }
+      }
+      // A chunk the reranker did not return keeps its fusion position after the ranked ones.
+      candidates = [...reordered, ...byId.values(), ...candidates.slice(RERANK_TOP_N)];
       reranked = true;
     }
   }

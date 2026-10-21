@@ -105,6 +105,7 @@ import { getUsageContext } from "../usage-context.js";
 import { newActivityId } from "./activity-stream.js";
 import { registerNavigationTools } from "./mcp-nav.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
+import { registerRetrieveForAnswerTool } from "./mcp-retrieve-for-answer-tool.js";
 import { registerTransactionTools } from "./mcp-transaction.js";
 import { registerSearchTool } from "./mcp-search-tool.js";
 import { registerIngestTools } from "./mcp-ingest.js";
@@ -150,6 +151,7 @@ export const SEARCH_TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> 
     "get_asset",
     "transaction_capabilities",
     "retrieve_evidence",
+    "retrieve_for_answer",
     "verified_evidence_pack",
   ];
   return {
@@ -435,6 +437,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
   };
   registerTransactionTools(toolCtx);
   registerSearchTool(toolCtx);
+  registerRetrieveForAnswerTool(toolCtx);
   registerIngestTools(toolCtx);
   registerCatalogTools(toolCtx);
 

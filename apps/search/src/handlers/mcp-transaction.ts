@@ -71,7 +71,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
       },
       budgets: ["maxDurationMs","maxRetrievalDocuments"],
       scopeMatrix: {
-        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_thread","get_document_asset","get_documents","get_summary","get_summaries","get_outline","get_section","get_pages","get_context","list_figures","get_asset","get_table","find_identifier","follow_ref"], anyOf: ["retrieve","search","read","tool:<name>"] },
+        read: { tools: ["transaction_capabilities","retrieve_evidence","retrieve_for_answer","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_thread","get_document_asset","get_documents","get_summary","get_summaries","get_outline","get_section","get_pages","get_context","list_figures","get_asset","get_table","find_identifier","follow_ref"], anyOf: ["retrieve","search","read","tool:<name>"] },
         ingest: { tools: ["ingest"], anyOf: ["write","ingest","tool:ingest"] },
         delete: { tools: ["delete_document"], anyOf: ["write","delete","tool:delete_document"] },
         legacyOptionalCalls: "unchanged",

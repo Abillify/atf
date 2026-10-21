@@ -262,12 +262,24 @@ describe("retrieveForAnswer", () => {
   });
 
   it("reranks the fused head against the ORIGINAL question", async () => {
-    const rerank = vi.fn(async (_q: string, texts: string[]) => texts.map((t) => (t.startsWith("Recht") ? 1 : 0)));
+    const rerank = vi.fn(async (_q: string, results: SearchResult[]) =>
+      [...results].sort((a, b) => Number(b.content.startsWith("Recht")) - Number(a.content.startsWith("Recht"))),
+    );
     const { deps: d } = deps({ rerank });
     const out = await retrieveForAnswer(d, { question });
     expect(rerank).toHaveBeenCalledTimes(1);
     expect(rerank.mock.calls[0]?.[0]).toBe(question);
     expect(out.evidence[0]?.id).toBe("r1");
+    expect(out.reranked).toBe(true);
+    // The reranker saw the fused, de-duplicated head, not the raw lists.
+    expect(rerank.mock.calls[0]?.[1].map((r) => r.id).sort()).toEqual(["p1", "r1", "shared"]);
+  });
+
+  it("a chunk the reranker leaves out keeps its fusion position behind the ranked ones", async () => {
+    const rerank = async (_q: string, results: SearchResult[]) => results.filter((r) => r.id === "r1");
+    const { deps: d } = deps({ rerank });
+    const out = await retrieveForAnswer(d, { question });
+    expect(out.evidence.map((e) => e.id)).toEqual(["r1", "shared", "p1"]);
     expect(out.reranked).toBe(true);
   });
 
