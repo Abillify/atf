@@ -16,6 +16,7 @@
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { resolveAssistantScope } from "../../assistants/types.js";
 import type { FlowNode } from "../../types/flow.js";
+import { NODE_INSTANCE_KEY } from "../graph-engine/node-instance.js";
 import type { AgentState, ExecRuntime } from "../graph-engine.js";
 import { delegate } from "./tools.js";
 
@@ -103,12 +104,21 @@ export const createDelegationRunner = ({
     delegateState: AgentState,
     delegateConfig: LangGraphRunnableConfig,
   ): Promise<{ update: Partial<AgentState>; ok: boolean }> => {
+    // The task key names this delegation instance so the engine can keep the
+    // target node's execution state separate from concurrent delegations.
+    const configWithInstance: LangGraphRunnableConfig = {
+      ...delegateConfig,
+      configurable: {
+        ...(delegateConfig.configurable ?? {}),
+        [NODE_INSTANCE_KEY]: taskKey,
+      },
+    };
     try {
       if (durableBinding === undefined) {
         return await delegate(
           target,
           delegateState,
-          delegateConfig,
+          configWithInstance,
           runtime,
           nodeMap,
           registry,
@@ -149,7 +159,7 @@ export const createDelegationRunner = ({
         const result = await delegate(
           target,
           delegateState,
-          delegateConfig,
+          configWithInstance,
           runtime,
           nodeMap,
           registry,

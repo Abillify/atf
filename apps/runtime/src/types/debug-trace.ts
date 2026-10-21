@@ -268,6 +268,11 @@ export interface DebugNodeTrace {
   node_id: string;
   /** Node type: "llm", "retrieval", "classifier", "tool", "memory", … */
   node_type?: string;
+  /**
+   * Delegation instance (agent-harness task id) when the same node ran more
+   * than once concurrently.
+   */
+  instance_id?: string;
   /** Execution status. */
   status: "running" | "completed" | "error";
   /** ISO-8601 start timestamp. */

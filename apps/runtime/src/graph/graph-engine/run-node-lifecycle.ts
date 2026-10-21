@@ -31,6 +31,7 @@ import type { HashedImageRefRegistry } from "../image-reference.js";
 import { providerAttemptsSummary } from "./tool-usage.js";
 import type { AgentState } from "./state.js";
 import type { NodeRunState } from "./run-state.js";
+import { nodeStateKey } from "./node-instance.js";
 
 /**
  * Creates the per-execution node lifecycle callbacks. Deps are
@@ -110,13 +111,24 @@ export function createNodeLifecycle(deps: {
     nodeErrorInfo,
     nodeGroundedness,
   } = st;
+  /**
+   * Execution-state keys currently started per node id. A delegation
+   * instance lives under `nodeId#instance`; terminal callbacks that arrive
+   * with the plain node id (stream loop, timeout cleanup) finalize every
+   * key still live for that node. Without instances each node id maps to
+   * exactly `{ nodeId }`, i.e. the behaviour before instance keying.
+   */
+  const stateKeysByNodeId = new Map<string, Set<string>>();
+  /** Reverse lookup for callbacks that pass a state key instead of a node id. */
+  const nodeIdByStateKey = new Map<string, string>();
 
     // --- Groundedness callback.
     const onGroundedness = async (
       nodeId: string,
       report: GroundednessReport,
+      instance?: string,
     ): Promise<void> => {
-      nodeGroundedness.set(nodeId, {
+      nodeGroundedness.set(nodeStateKey(nodeId, instance), {
         score: report.score,
         passed: report.passed,
         checked_sentences: report.checkedSentences,
@@ -235,24 +247,48 @@ export function createNodeLifecycle(deps: {
       // received (its own writes land after this point).
       edgeFlowBaselines.set(nodeId, countersOf(state));
     };
+    /** Marks an execution-state key as live for its node id. */
+    const registerStateKey = (nodeId: string, stateKey: string): void => {
+      nodeIdByStateKey.set(stateKey, nodeId);
+      const keys = stateKeysByNodeId.get(nodeId);
+      if (keys === undefined) {
+        stateKeysByNodeId.set(nodeId, new Set([stateKey]));
+      } else {
+        keys.add(stateKey);
+      }
+    };
+    /** Removes an execution-state key from the live registry. */
+    const unregisterStateKey = (nodeId: string, stateKey: string): void => {
+      nodeIdByStateKey.delete(stateKey);
+      const keys = stateKeysByNodeId.get(nodeId);
+      if (keys === undefined) return;
+      keys.delete(stateKey);
+      if (keys.size === 0) stateKeysByNodeId.delete(nodeId);
+    };
     const onNodeStart = (
       nodeId: string,
       context?: DebugNodeAttemptContext,
+      instance?: string,
     ): void => {
+      const stateKey = nodeStateKey(nodeId, instance);
       // Delegation can announce a target immediately before the target handler
-      // announces itself. Both callbacks describe the same live attempt.
-      if (activeNodeIds.has(nodeId)) return;
+      // announces itself. Both callbacks describe the same live attempt: a key
+      // that is already live is ignored, and a start without an instance joins
+      // the node that is already active.
+      if (nodeIdByStateKey.has(stateKey)) return;
+      if (instance === undefined && activeNodeIds.has(nodeId)) return;
 
-      st.clearNodeAttemptState(nodeId);
-      nodeAttemptContexts.set(nodeId, context ?? { trigger: "graph-lifecycle" });
-      const attempt = (nodeAttempts.get(nodeId) ?? 0) + 1;
-      nodeAttempts.set(nodeId, attempt);
+      st.clearNodeAttemptState(stateKey);
+      nodeAttemptContexts.set(stateKey, context ?? { trigger: "graph-lifecycle" });
+      const attempt = (nodeAttempts.get(stateKey) ?? 0) + 1;
+      nodeAttempts.set(stateKey, attempt);
       const startTime = new Date().toISOString();
-      nodeStartTimes.set(nodeId, startTime);
+      nodeStartTimes.set(stateKey, startTime);
       activeNodeIds.add(nodeId);
+      registerStateKey(nodeId, stateKey);
       st.lastActiveNodeId = nodeId;
       st.nodeSequence += 1;
-      nodeSequences.set(nodeId, st.nodeSequence);
+      nodeSequences.set(stateKey, st.nodeSequence);
 
       const nodeType = nodeTypes.get(nodeId);
       const progress = (
@@ -292,16 +328,17 @@ export function createNodeLifecycle(deps: {
       // number); a retried attempt appends its own entry.
       getDebugStore()?.upsertNode(executionId, {
         node_id: nodeId,
+        ...(instance !== undefined ? { instance_id: instance } : {}),
         ...(nodeTypes.has(nodeId) ? { node_type: nodeTypes.get(nodeId) } : {}),
         status: "running",
         started_at: startTime,
         finished_at: null,
         latency_ms: null,
-        ...(nodeAttempts.has(nodeId)
-          ? { attempt: nodeAttempts.get(nodeId) }
+        ...(nodeAttempts.has(stateKey)
+          ? { attempt: nodeAttempts.get(stateKey) }
           : {}),
-        ...(nodeSequences.has(nodeId)
-          ? { sequence: nodeSequences.get(nodeId) }
+        ...(nodeSequences.has(stateKey)
+          ? { sequence: nodeSequences.get(stateKey) }
           : {}),
         tool_calls: [],
       });
@@ -315,8 +352,8 @@ export function createNodeLifecycle(deps: {
           end_time: null,
           latency_ms: null,
           label: nodeLabels.get(nodeId),
-          ...(nodeSequences.has(nodeId)
-            ? { sequence: nodeSequences.get(nodeId) }
+          ...(nodeSequences.has(stateKey)
+            ? { sequence: nodeSequences.get(stateKey) }
             : {}),
           ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
           ...(userPromptPreview !== undefined
@@ -328,24 +365,29 @@ export function createNodeLifecycle(deps: {
       );
     };
 
-    const emitNodeEnd = (
+    const finalizeNode = (
       nodeId: string,
+      stateKey: string,
       errorMessage?: string,
     ): Promise<void> => {
-      const existingFinalization = nodeFinalizationPromises.get(nodeId);
+      const existingFinalization = nodeFinalizationPromises.get(stateKey);
       if (existingFinalization !== undefined) return existingFinalization;
-      if (!activeNodeIds.has(nodeId)) return Promise.resolve();
+      // The trace names the delegation instance the state belongs to; the
+      // plain node id stays the identity of the flow node itself.
+      const separator = stateKey.indexOf("#");
+      const instanceId =
+        separator >= 0 ? stateKey.slice(separator + 1) : undefined;
 
       const finalization = (async (): Promise<void> => {
         const startTime =
-          nodeStartTimes.get(nodeId) ?? new Date().toISOString();
+          nodeStartTimes.get(stateKey) ?? new Date().toISOString();
         const latencyMs = Date.now() - new Date(startTime).getTime();
 
         let nodeCost: number | undefined;
-      const nodeModelKey = nodeModels.get(nodeId);
+      const nodeModelKey = nodeModels.get(stateKey);
       if (
         nodeModelKey !== undefined &&
-        (nodeInputTokens.has(nodeId) || nodeOutputTokens.has(nodeId))
+        (nodeInputTokens.has(stateKey) || nodeOutputTokens.has(stateKey))
       ) {
         const slash = nodeModelKey.indexOf("/");
         const provider = slash >= 0 ? nodeModelKey.slice(0, slash) : "";
@@ -355,8 +397,8 @@ export function createNodeLifecycle(deps: {
           provider,
           modelName,
           {
-            prompt_tokens: nodeInputTokens.get(nodeId) ?? 0,
-            completion_tokens: nodeOutputTokens.get(nodeId) ?? 0,
+            prompt_tokens: nodeInputTokens.get(stateKey) ?? 0,
+            completion_tokens: nodeOutputTokens.get(stateKey) ?? 0,
           },
           pricingOverrides,
         );
@@ -396,7 +438,7 @@ export function createNodeLifecycle(deps: {
       // (no behaviour change) so it is visible in the execution trace.
       if (errorMessage === undefined && citations.size > 0) {
         const nodeType = nodeTypes.get(nodeId);
-        const responseText = nodeFullResponses.get(nodeId);
+        const responseText = nodeFullResponses.get(stateKey);
         if (
           (nodeType === "llm" || nodeType === "agent-harness") &&
           typeof responseText === "string" &&
@@ -406,7 +448,7 @@ export function createNodeLifecycle(deps: {
             (match) => Number(match[1]),
           );
           if (markers.length === 0) {
-            st.recordNodeDiagnostic(nodeId, {
+            st.recordNodeDiagnostic(stateKey, {
               level: "warn",
               code: "answer_without_citation_markers",
               message:
@@ -431,7 +473,7 @@ export function createNodeLifecycle(deps: {
               ),
             ].sort((a, b) => a - b);
             if (outOfRange.length > 0) {
-              st.recordNodeDiagnostic(nodeId, {
+              st.recordNodeDiagnostic(stateKey, {
                 level: "warn",
                 code: "citation_marker_out_of_range",
                 message:
@@ -454,9 +496,10 @@ export function createNodeLifecycle(deps: {
 
       const debugStore = getDebugStore();
       if (debugStore !== undefined) {
-        const errInfo = nodeErrorInfo.get(nodeId);
+        const errInfo = nodeErrorInfo.get(stateKey);
         debugStore.upsertNode(executionId, {
           node_id: nodeId,
+          ...(instanceId !== undefined ? { instance_id: instanceId } : {}),
           ...(nodeTypes.has(nodeId)
             ? { node_type: nodeTypes.get(nodeId) }
             : {}),
@@ -464,59 +507,63 @@ export function createNodeLifecycle(deps: {
           started_at: startTime,
           finished_at: new Date().toISOString(),
           latency_ms: latencyMs,
-          ...(nodeAttempts.has(nodeId)
-            ? { attempt: nodeAttempts.get(nodeId) }
+          ...(nodeAttempts.has(stateKey)
+            ? { attempt: nodeAttempts.get(stateKey) }
             : {}),
-          ...(providerAttemptsSummary(nodeDiagnostics.get(nodeId)) ?? {}),
-          ...(nodeAttemptContexts.has(nodeId)
+          ...(providerAttemptsSummary(nodeDiagnostics.get(stateKey)) ?? {}),
+          ...(nodeAttemptContexts.has(stateKey)
             ? {
-                attempt_trigger: nodeAttemptContexts.get(nodeId)?.trigger,
-                ...(nodeAttemptContexts.get(nodeId)?.parent_node_id !== undefined
+                attempt_trigger: nodeAttemptContexts.get(stateKey)?.trigger,
+                ...(nodeAttemptContexts.get(stateKey)?.parent_node_id !==
+                undefined
                   ? {
                       parent_node_id:
-                        nodeAttemptContexts.get(nodeId)?.parent_node_id,
+                        nodeAttemptContexts.get(stateKey)?.parent_node_id,
                     }
                   : {}),
-                ...(nodeAttemptContexts.get(nodeId)?.delegation_id !== undefined
+                ...(nodeAttemptContexts.get(stateKey)?.delegation_id !==
+                undefined
                   ? {
                       delegation_id:
-                        nodeAttemptContexts.get(nodeId)?.delegation_id,
+                        nodeAttemptContexts.get(stateKey)?.delegation_id,
                     }
                   : {}),
               }
             : {}),
-          ...(nodeSequences.has(nodeId)
-            ? { sequence: nodeSequences.get(nodeId) }
+          ...(nodeSequences.has(stateKey)
+            ? { sequence: nodeSequences.get(stateKey) }
             : {}),
-          ...(nodeModels.has(nodeId) ? { model: nodeModels.get(nodeId) } : {}),
-          ...(nodeInputTokens.has(nodeId)
-            ? { input_tokens: nodeInputTokens.get(nodeId) }
+          ...(nodeModels.has(stateKey)
+            ? { model: nodeModels.get(stateKey) }
             : {}),
-          ...(nodeOutputTokens.has(nodeId)
-            ? { output_tokens: nodeOutputTokens.get(nodeId) }
+          ...(nodeInputTokens.has(stateKey)
+            ? { input_tokens: nodeInputTokens.get(stateKey) }
+            : {}),
+          ...(nodeOutputTokens.has(stateKey)
+            ? { output_tokens: nodeOutputTokens.get(stateKey) }
             : {}),
           ...(nodeCost !== undefined ? { cost: nodeCost } : {}),
-          ...(nodeFullPrompts.has(nodeId)
-            ? { full_prompt: nodeFullPrompts.get(nodeId) }
+          ...(nodeFullPrompts.has(stateKey)
+            ? { full_prompt: nodeFullPrompts.get(stateKey) }
             : {}),
-          ...(nodeFullResponses.has(nodeId)
-            ? { full_response: nodeFullResponses.get(nodeId) }
+          ...(nodeFullResponses.has(stateKey)
+            ? { full_response: nodeFullResponses.get(stateKey) }
             : {}),
-          ...(nodeFullReasoning.has(nodeId)
-            ? { full_reasoning: nodeFullReasoning.get(nodeId) }
+          ...(nodeFullReasoning.has(stateKey)
+            ? { full_reasoning: nodeFullReasoning.get(stateKey) }
             : {}),
-          ...(nodeGroundedness.has(nodeId)
-            ? { groundedness: nodeGroundedness.get(nodeId) }
+          ...(nodeGroundedness.has(stateKey)
+            ? { groundedness: nodeGroundedness.get(stateKey) }
             : {}),
-          tool_calls: nodeDebugToolCalls.get(nodeId) ?? [],
-          ...(nodeToolSelections.has(nodeId)
-            ? { tool_selection: nodeToolSelections.get(nodeId) }
+          tool_calls: nodeDebugToolCalls.get(stateKey) ?? [],
+          ...(nodeToolSelections.has(stateKey)
+            ? { tool_selection: nodeToolSelections.get(stateKey) }
             : {}),
-          ...(nodeClassifications.has(nodeId)
-            ? { classifier: nodeClassifications.get(nodeId) }
+          ...(nodeClassifications.has(stateKey)
+            ? { classifier: nodeClassifications.get(stateKey) }
             : {}),
-          ...(nodeDiagnostics.has(nodeId)
-            ? { diagnostics: nodeDiagnostics.get(nodeId) }
+          ...(nodeDiagnostics.has(stateKey)
+            ? { diagnostics: nodeDiagnostics.get(stateKey) }
             : {}),
           ...(errorMessage !== undefined
             ? { error_message: errorMessage }
@@ -562,26 +609,30 @@ export function createNodeLifecycle(deps: {
         end_time: new Date().toISOString(),
         latency_ms: latencyMs,
         ...(errorMessage !== undefined ? { error_message: errorMessage } : {}),
-        ...(nodeModels.has(nodeId) ? { model: nodeModels.get(nodeId) } : {}),
-        ...(nodeInputTokens.has(nodeId)
-          ? { input_tokens: nodeInputTokens.get(nodeId) }
+        ...(nodeModels.has(stateKey)
+          ? { model: nodeModels.get(stateKey) }
           : {}),
-        ...(nodeOutputTokens.has(nodeId)
-          ? { output_tokens: nodeOutputTokens.get(nodeId) }
+        ...(nodeInputTokens.has(stateKey)
+          ? { input_tokens: nodeInputTokens.get(stateKey) }
+          : {}),
+        ...(nodeOutputTokens.has(stateKey)
+          ? { output_tokens: nodeOutputTokens.get(stateKey) }
           : {}),
         ...(nodeCost !== undefined ? { cost: nodeCost } : {}),
-        ...((nodeToolCalls.get(nodeId)?.length ?? 0) > 0
-          ? { tool_calls: nodeToolCalls.get(nodeId) }
+        ...((nodeToolCalls.get(stateKey)?.length ?? 0) > 0
+          ? { tool_calls: nodeToolCalls.get(stateKey) }
           : {}),
-        ...(nodePrompts.has(nodeId) ? { prompt: nodePrompts.get(nodeId) } : {}),
-        ...(nodeResponses.has(nodeId)
-          ? { response: nodeResponses.get(nodeId) }
+        ...(nodePrompts.has(stateKey)
+          ? { prompt: nodePrompts.get(stateKey) }
           : {}),
-        ...(nodeRoutingDecisions.has(nodeId)
-          ? { routing_decision: nodeRoutingDecisions.get(nodeId) }
+        ...(nodeResponses.has(stateKey)
+          ? { response: nodeResponses.get(stateKey) }
           : {}),
-        ...(nodeSequences.has(nodeId)
-          ? { sequence: nodeSequences.get(nodeId) }
+        ...(nodeRoutingDecisions.has(stateKey)
+          ? { routing_decision: nodeRoutingDecisions.get(stateKey) }
+          : {}),
+        ...(nodeSequences.has(stateKey)
+          ? { sequence: nodeSequences.get(stateKey) }
           : {}),
         label: nodeLabels.get(nodeId),
         ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
@@ -595,12 +646,38 @@ export function createNodeLifecycle(deps: {
         // A node remains active until every terminal side effect has either
         // completed or failed. Timeout cleanup can therefore neither miss it
         // nor emit a second terminal event while finalization is in flight.
-        activeNodeIds.delete(nodeId);
-        nodeStartTimes.delete(nodeId);
-        nodeFinalizationPromises.delete(nodeId);
+        unregisterStateKey(nodeId, stateKey);
+        if (!stateKeysByNodeId.has(nodeId)) activeNodeIds.delete(nodeId);
+        nodeStartTimes.delete(stateKey);
+        nodeFinalizationPromises.delete(stateKey);
       });
-      nodeFinalizationPromises.set(nodeId, finalization);
+      nodeFinalizationPromises.set(stateKey, finalization);
       return finalization;
+    };
+
+    const emitNodeEnd = (
+      nodeId: string,
+      errorMessage?: string,
+      instance?: string,
+    ): Promise<void> => {
+      if (instance !== undefined) {
+        const stateKey = nodeStateKey(nodeId, instance);
+        if (!nodeIdByStateKey.has(stateKey)) return Promise.resolve();
+        return finalizeNode(nodeId, stateKey, errorMessage);
+      }
+      // Terminal callbacks that name only the node finalize every execution
+      // still live for it — without instances that is exactly one key, the
+      // node id itself.
+      const liveKeys = [
+        ...(stateKeysByNodeId.get(nodeId) ?? new Set<string>([nodeId])),
+      ];
+      if (liveKeys.length === 0) return Promise.resolve();
+      if (liveKeys.length === 1) {
+        return finalizeNode(nodeId, liveKeys[0], errorMessage);
+      }
+      return Promise.all(
+        liveKeys.map((stateKey) => finalizeNode(nodeId, stateKey, errorMessage)),
+      ).then(() => undefined);
     };
 
     // Synthetic terminal marker for the execution rollup (see
