@@ -6,3 +6,4 @@ b85b5a2233ed3e87493ce602bc3b5a5c3dc66206:apps/runtime/src/bootstrap/observabilit
 b85b5a2233ed3e87493ce602bc3b5a5c3dc66206:apps/runtime/src/routes/explain.ts:generic-api-key:153
 a49a740710efacd5b59831ea8622409719850d8d:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:79
 a49a740710efacd5b59831ea8622409719850d8d:apps/runtime/src/observability/audit-anchor.ts:generic-api-key:88
+a29870acd0a3439fe4bb8edef01b0cb6fd71480b:.gitleaksignore:generic-api-key:2
