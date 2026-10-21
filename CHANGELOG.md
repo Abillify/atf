@@ -246,6 +246,7 @@ releases:
 - Gate no longer closes an SSE session when a request with a bad token or another identity names its session id; only the owner's own connection ends it.
 - The egress guard blocks the documentation address ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) in addition to the private and reserved ranges it already refused.
 - The audit chain accepts the legacy hash form only for rows written before the first canonical row.
+- Eval regex assertions reject nested-quantifier patterns and match at most 100 000 characters.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

@@ -357,3 +357,33 @@ describe("POST /admin/eval/matrix-runs validation", () => {
     expect(JSON.stringify(await bad.json())).toContain("task t9: assert[0]");
   });
 });
+
+describe("regex assertion guards", () => {
+  test("patterns with a quantified group that contains a quantifier are rejected", () => {
+    for (const pattern of ["(a+)+$", "(.*)*", "(\\w+\\s*)+", "([a-z]+)*x", "(a|b*)+", "(x+){2,}"]) {
+      const parsed = parseTaskAssertions([{ type: "regex", pattern }]);
+      expect(parsed.ok, pattern).toBe(false);
+      if (!parsed.ok) expect(JSON.stringify(parsed), pattern).toContain("pattern may backtrack catastrophically");
+      expect(parseTaskAssertions([{ type: "jsonPath", path: "$.a", matches: pattern }]).ok, pattern).toBe(false);
+    }
+  });
+
+  test("ordinary patterns stay valid", () => {
+    for (const pattern of ["^\\d{3}-\\d{4}$", "foo|bar", "(abc)", "(abc)?", "(a|b)c", "[a-z]+@[a-z]+\\.com", "\\(x\\)+"]) {
+      expect(parseTaskAssertions([{ type: "regex", pattern }]).ok, pattern).toBe(true);
+    }
+  });
+
+  test("a regex assertion sees at most the first 100 000 characters", () => {
+    const text = `${"x".repeat(100_000)}tail`;
+    expect(check({ type: "regex", pattern: "tail$" }, { text }).passed).toBe(false);
+    expect(check({ type: "regex", pattern: "^x{100000}$" }, { text }).passed).toBe(true);
+    const short = `${"x".repeat(10)}tail`;
+    expect(check({ type: "regex", pattern: "tail$" }, { text: short }).passed).toBe(true);
+  });
+
+  test("the cap applies to jsonPath matches as well", () => {
+    const text = JSON.stringify({ a: `${"y".repeat(100_000)}end` });
+    expect(check({ type: "jsonPath", path: "$.a", matches: "end$" }, { text }).passed).toBe(false);
+  });
+});

@@ -123,6 +123,17 @@ export interface EvalReport {
   cases: CaseResult[];
 }
 
+/**
+ * Regex assertions match at most this many characters of the model output: the
+ * pattern is an operator's, the text is not, and an unbounded input turns a
+ * slow pattern into a stuck eval run.
+ */
+export const EVAL_REGEX_MAX_INPUT_CHARS = 100_000;
+
+function regexInput(text: string): string {
+  return text.length > EVAL_REGEX_MAX_INPUT_CHARS ? text.slice(0, EVAL_REGEX_MAX_INPUT_CHARS) : text;
+}
+
 /** What an assertion can look at. Trace fields are absent when the executor reports none. */
 export interface AssertionContext {
   text: string;
@@ -208,7 +219,7 @@ export function evaluateAssertion(
         : fail("response did not equal expected value");
     case "regex": {
       try {
-        return new RegExp(assertion.pattern, assertion.flags).test(ctx.text)
+        return new RegExp(assertion.pattern, assertion.flags).test(regexInput(ctx.text))
           ? pass()
           : fail(`text did not match /${assertion.pattern}/`);
       } catch {
@@ -246,7 +257,7 @@ export function evaluateAssertion(
       }
       if (assertion.matches !== undefined) {
         try {
-          return new RegExp(assertion.matches, assertion.flags).test(String(current))
+          return new RegExp(assertion.matches, assertion.flags).test(regexInput(String(current)))
             ? pass()
             : fail(`${assertion.path} did not match /${assertion.matches}/`);
         } catch {

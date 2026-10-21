@@ -12,17 +12,32 @@ import { parseJsonPath, type Assertion } from "./eval-runner.js";
 
 const text = z.string().min(1).max(2_000);
 const flags = z.string().max(8).regex(/^[dgimsuy]*$/, "unsupported regex flags");
-const pattern = z.string().min(1).max(500).refine(
-  (value) => {
-    try {
-      new RegExp(value);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  { message: "invalid regular expression" },
-);
+/**
+ * A group that contains a quantifier and is itself quantified — `(a+)+`,
+ * `(.*)*`, `(\\w+\\s*)+` — is the classic source of catastrophic backtracking.
+ * A heuristic, not a proof: it refuses the common shapes, and the matched text
+ * is capped separately ({@link EVAL_REGEX_MAX_INPUT_CHARS}).
+ */
+const NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\))[+*{]/;
+
+const pattern = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) => {
+      try {
+        new RegExp(value);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "invalid regular expression" },
+  )
+  .refine((value) => !NESTED_QUANTIFIER.test(value), {
+    message: "pattern may backtrack catastrophically",
+  });
 
 const AssertionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("contains"), value: text, caseSensitive: z.boolean().optional() }).strict(),
