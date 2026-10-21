@@ -20,6 +20,7 @@ import type {
   StaticToken,
   TenantIsolationConfig,
 } from "../config/schema.ts";
+import { normalizeIssuer } from "../config/schema.ts";
 import {
   normalizeHeaders,
   verifiedTenantClaim,
@@ -118,7 +119,13 @@ export function enforceIssuerTenant(
   if (!tenantIsolation.enabled || Object.keys(binding).length === 0) {
     return;
   }
-  const allowed = typeof issuer === "string" ? binding[issuer] : undefined;
+  // Issuers compare without trailing slashes, so `https://id.example/` and
+  // `https://id.example` are the same issuer on both sides.
+  const wanted = typeof issuer === "string" ? normalizeIssuer(issuer) : undefined;
+  const allowed =
+    wanted === undefined
+      ? undefined
+      : Object.entries(binding).find(([key]) => normalizeIssuer(key) === wanted)?.[1];
   if (allowed === undefined) {
     throw new AuthError("Token issuer is not bound to a tenant", 401);
   }

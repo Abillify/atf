@@ -410,6 +410,20 @@ export function checkProductionReadiness(
     }
   }
 
+  // The name, email and preferred_username claims are editable by the user at
+  // many identity providers; a tool binding on them lets users impersonate each
+  // other. Bind the subject or a stable id instead.
+  const mutableClaim = /:ctx\.claims\.(name|email|preferred_username)\b/;
+  for (const tool of config.tools) {
+    const claim = mutableClaim.exec(JSON.stringify(tool))?.[1];
+    if (claim !== undefined) {
+      warnings.push(
+        `Tool ${tool.name} binds the mutable identity claim ${claim}; users can often change it. ` +
+          "Bind :ctx.subject or a stable id instead.",
+      );
+    }
+  }
+
   for (const [name, db] of Object.entries(config.databases)) {
     if (db.statementTimeoutMs === 0) {
       flag(

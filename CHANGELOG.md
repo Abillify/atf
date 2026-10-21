@@ -241,6 +241,7 @@ releases:
 - Gate checks required scopes before approval, so callers without the scopes no longer create approval requests or consume approval tokens.
 - Gate runs the approval lookup tool through the regular dispatcher (policy, rate limit, audit).
 - Services warn when `ATF_PROFILE` downgrades a production service variable (for example `NODE_ENV=production` with `ATF_PROFILE=staging`); `@atf/security-kit` 1.3.0 reports it as `shadowedProduction`.
+- `@atf/security-kit` 1.4.0: the rate-limit middleware accepts `failMode: "closed"` and answers 503 when its shared backend throws (default stays `"open"`). The Gate normalizes `tenantIsolation.issuerTenants` keys (trailing slash), compares issuers without it, and refuses to start when a key is not a configured issuer. The Gate production check warns when a tool binds a mutable identity claim (`:ctx.claims.name`, `.email`, `.preferred_username`).
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared

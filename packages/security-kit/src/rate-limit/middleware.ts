@@ -93,6 +93,14 @@ export interface RateLimitMiddlewareOptions {
    * For logging/metrics. Not called for the memory backend, which cannot throw.
    */
   onBackendError?: (err: unknown) => void;
+  /**
+   * What the middleware does when the shared backend throws: `"open"` (the
+   * default, the historical behaviour) lets the request pass; `"closed"`
+   * answers 503 and counts it as unavailable, protection first. A backend that
+   * applies its own `failMode` (the kit's Redis backend) never throws, so this
+   * only governs backends that do.
+   */
+  failMode?: "open" | "closed";
 }
 
 const DEFAULT_REJECT_BODY: Record<string, unknown> = {
@@ -118,6 +126,7 @@ export function createRateLimitMiddleware(
     nowUs,
     backend: sharedBackend,
     onBackendError,
+    failMode = "open",
   } = options;
 
   const config = { limit: max, burstMs: windowMs };
@@ -166,9 +175,10 @@ export function createRateLimitMiddleware(
       return;
     }
     // Async backend: await the shared decision. A backend error fails OPEN
-    // (the request proceeds) so a store outage degrades to "no limiting"
-    // rather than blocking all traffic — the kit's Redis backend applies its
-    // own failMode internally and does not rely on this path. Reaching this
+    // by default (the request proceeds) so a store outage degrades to "no
+    // limiting" rather than blocking all traffic; `failMode: "closed"` answers
+    // 503 instead. The kit's Redis backend applies its own failMode
+    // internally and does not rely on this path. Reaching this
     // branch without a backend is impossible (the memory backend always
     // provides `takeSync`), but guard anyway instead of asserting.
     if (sharedBackend === undefined) {
@@ -185,6 +195,10 @@ export function createRateLimitMiddleware(
       },
       (err: unknown) => {
         onBackendError?.(err);
+        if (failMode === "closed") {
+          res.status(503).json({ error: "Rate limiting unavailable" });
+          return;
+        }
         next();
       },
     );

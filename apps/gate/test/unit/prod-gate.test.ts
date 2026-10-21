@@ -1283,3 +1283,41 @@ describe("downgraded production variable", () => {
     expect(report.warnings.some((m) => m.includes("is overridden by"))).toBe(false);
   });
 });
+
+describe("mutable identity claims in tool bindings", () => {
+  const withQuery = (query: string) =>
+    goodConfig({
+      tools: [
+        {
+          name: "mine",
+          type: "database",
+          database: "main",
+          query,
+          requiredScopes: ["orders:read"],
+        },
+      ],
+    });
+
+  test("warns for :ctx.claims.email, name and preferred_username", () => {
+    for (const claim of ["email", "name", "preferred_username"]) {
+      const warnings = checkProductionReadiness(
+        withQuery(`SELECT 1 WHERE owner = :ctx.claims.${claim} AND t = :ctx.tenantId`),
+        "production",
+      ).warnings;
+      expect(warnings).toContain(
+        `Tool mine binds the mutable identity claim ${claim}; users can often change it. ` +
+          "Bind :ctx.subject or a stable id instead.",
+      );
+    }
+  });
+
+  test("is silent for the subject and for claims that merely start with the same letters", () => {
+    for (const binding of [":ctx.subject", ":ctx.claims.namespace", ":ctx.claims.email_verified"]) {
+      const warnings = checkProductionReadiness(
+        withQuery(`SELECT 1 WHERE owner = ${binding} AND t = :ctx.tenantId`),
+        "production",
+      ).warnings;
+      expect(warnings.some((m) => m.includes("mutable identity claim"))).toBe(false);
+    }
+  });
+});

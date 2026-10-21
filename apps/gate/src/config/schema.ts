@@ -421,6 +421,11 @@ export const AuthorizationConfigSchema = z
   .object({ enabled: boolish.default(true) })
   .default({ enabled: true });
 
+/** Issuer identifiers compare without trailing slashes (`https://id.example/` = `https://id.example`). */
+export function normalizeIssuer(issuer: string): string {
+  return issuer.trim().replace(/\/+$/, "");
+}
+
 export const TenantIsolationConfigSchema = z
   .object({
     enabled: boolish.default(false),
@@ -439,7 +444,14 @@ export const TenantIsolationConfigSchema = z
      * a token whose issuer is not listed, or whose tenant is not allowed for
      * it, is refused. Only enforced with `enabled: true`.
      */
-    issuerTenants: z.record(z.string(), z.array(z.string().trim().min(1))).default({}),
+    issuerTenants: z
+      .record(z.string(), z.array(z.string().trim().min(1)))
+      .default({})
+      .transform((binding) =>
+        Object.fromEntries(
+          Object.entries(binding).map(([issuer, tenants]) => [normalizeIssuer(issuer), tenants]),
+        ),
+      ),
     /** Databases whose connection is physically dedicated to one tenant. */
     isolatedDatabases: z.array(z.string().trim().min(1)).default([]),
     /** Semantic SQL tenant-binding diagnostics: report findings or fail readiness. */
@@ -1830,6 +1842,27 @@ export const AppConfigSchema = z.object({
    */
   mcpServers: z.array(McpServerImportSchema).optional(),
   tools: z.array(ToolConfigSchema).default([]),
+}).superRefine((cfg, ctx) => {
+  // An issuer binding for an issuer nothing verifies is a typo that silently
+  // leaves the intended issuer unbound; fail at startup instead.
+  const bindings = Object.keys(cfg.tenantIsolation.issuerTenants);
+  if (bindings.length === 0) return;
+  const configured = new Set<string>();
+  const oauth = cfg.auth.oauth;
+  if (oauth?.issuer) configured.add(normalizeIssuer(oauth.issuer));
+  for (const target of oauth?.additionalIssuers ?? []) {
+    if (target.issuer) configured.add(normalizeIssuer(String(target.issuer)));
+  }
+  if (cfg.monitoring.oidc) configured.add(normalizeIssuer(cfg.monitoring.oidc.issuer));
+  for (const key of bindings) {
+    if (!configured.has(key)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `tenantIsolation.issuerTenants has a key that is not a configured issuer: ${key}`,
+        path: ["tenantIsolation", "issuerTenants", key],
+      });
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

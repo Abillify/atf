@@ -146,3 +146,46 @@ describe("Authenticator · tenantIsolation.issuerTenants", () => {
     expect(ctx.tenantId).toBe("default");
   });
 });
+
+describe("issuerTenants configuration", () => {
+  const baseConfig = (issuerTenants: Record<string, string[]>, issuer = "https://id.example.com/") => ({
+    server: { port: 3000 },
+    tenantIsolation: { enabled: true, claimNames: ["tenant"], issuerTenants },
+    auth: {
+      mode: "oauth",
+      oauth: {
+        issuer,
+        audience: "gate",
+        jwksUri: "https://id.example.com/jwks",
+      },
+    },
+  });
+
+  it("normalizes trailing slashes in the keys", async () => {
+    const { AppConfigSchema } = await import("../../src/config/schema.ts");
+    const parsed = AppConfigSchema.parse(baseConfig({ "https://id.example.com/": ["acme"] }));
+    expect(Object.keys(parsed.tenantIsolation.issuerTenants)).toEqual(["https://id.example.com"]);
+  });
+
+  it("accepts a key that matches the configured issuer despite a trailing slash", async () => {
+    const { AppConfigSchema } = await import("../../src/config/schema.ts");
+    expect(() => AppConfigSchema.parse(baseConfig({ "https://id.example.com": ["acme"] }))).not.toThrow();
+  });
+
+  it("refuses a key that is not a configured issuer", async () => {
+    const { AppConfigSchema } = await import("../../src/config/schema.ts");
+    expect(() => AppConfigSchema.parse(baseConfig({ "https://other.example.com": ["acme"] }))).toThrow(
+      "tenantIsolation.issuerTenants has a key that is not a configured issuer: https://other.example.com",
+    );
+  });
+
+  it("enforces the binding for a token issuer that differs only by a trailing slash", async () => {
+    const { enforceIssuerTenant } = await import("../../src/auth/authenticator.ts");
+    const isolation = TenantIsolationConfigSchema.parse({
+      enabled: true,
+      issuerTenants: { "https://id.example.com": ["acme"] },
+    });
+    expect(() => enforceIssuerTenant("https://id.example.com/", "acme", isolation)).not.toThrow();
+    expect(() => enforceIssuerTenant("https://id.example.com/", "other", isolation)).toThrow(AuthError);
+  });
+});

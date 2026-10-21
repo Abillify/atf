@@ -1,6 +1,6 @@
 # @atf/security-kit
 
-Package `1.3.0`. Shared security building blocks of the ATF services: constant-time
+Package `1.4.0`. Shared security building blocks of the ATF services: constant-time
 comparison, base64url, the SSRF egress guard, multi-issuer JWT/OIDC verification, GCRA rate
 limiting (memory and Redis), the operational-profile resolver and production-gate rule
 primitives, COSE/CBOR for decision receipts, token exchange and log redaction.
@@ -64,7 +64,8 @@ package by name, so a service that sets a Redis URL must install it.
 When Redis errors, the Redis backend applies its own `failMode`: `"closed"` (the default) denies,
 `"open"` allows. The middleware itself, when handed an async backend that throws, lets the
 request pass and calls `onBackendError`, so an outage of a backend without its own `failMode`
-degrades to "no limiting" rather than blocking traffic.
+degrades to "no limiting" rather than blocking traffic. The middleware option `failMode: "closed"`
+answers 503 instead (default `"open"`).
 
 ## Usage
 

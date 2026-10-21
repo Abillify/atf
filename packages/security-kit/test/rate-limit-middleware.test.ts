@@ -217,6 +217,51 @@ describe("createRateLimitMiddleware", () => {
     expect((errors[0] as Error).message).toBe("redis down");
   });
 
+  test("failMode closed answers 503 when the async backend throws", async () => {
+    const errors: unknown[] = [];
+    const { middleware } = createRateLimitMiddleware({
+      max: 1,
+      windowMs: 60_000,
+      failMode: "closed",
+      backend: {
+        take: async () => {
+          throw new Error("redis down");
+        },
+      },
+      onBackendError: (err) => {
+        errors.push(err);
+      },
+    });
+    const res = fakeRes();
+    let passed = false;
+    await middleware(fakeReq({ ip: "10.0.0.1" }), res, () => {
+      passed = true;
+    });
+    expect(passed).toBe(false);
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ error: "Rate limiting unavailable" });
+    expect(errors).toHaveLength(1);
+  });
+
+  test("failMode open (explicit) behaves like the default", async () => {
+    const { middleware } = createRateLimitMiddleware({
+      max: 1,
+      windowMs: 60_000,
+      failMode: "open",
+      backend: {
+        take: async () => {
+          throw new Error("redis down");
+        },
+      },
+    });
+    const res = fakeRes();
+    let passed = false;
+    await middleware(fakeReq({ ip: "10.0.0.1" }), res, () => {
+      passed = true;
+    });
+    expect(passed).toBe(true);
+  });
+
   test("injected backend with takeSync keeps the synchronous fast path", async () => {
     const { createMemoryRateLimitBackend } =
       await import("../src/rate-limit/memory.ts");
