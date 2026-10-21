@@ -278,18 +278,18 @@ with Zod validation and its own tests, plus five shared implementation packages
 | --- | --- | --- | --- |
 | `@atf/identity-contract` | 1.2.0 | 1.1.0 (accepts 1.0.0) | Verified principal and identity compatibility records |
 | `@atf/transaction-contract` | 1.1.0 | 1.0.0 | Transaction envelope compatibility records |
-| `@atf/evidence-contract` | 1.1.0 | 1.0.0 | Evidence and lineage compatibility records |
+| `@atf/evidence-contract` | 1.1.1 | 1.0.0 | Evidence and lineage compatibility records |
 | `@atf/schema-compatibility` | 1.0.0 | — | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | — | Explicit adapters between the contracts above |
-| `@atf/extract-contract` | 2.3.0 | 2.3.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath (wire 1.1.0) |
-| `@atf/erasure-contract` | 1.0.0 | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
+| `@atf/extract-contract` | 2.4.0 | 2.4.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath (wire 1.1.0) |
+| `@atf/erasure-contract` | 1.0.1 | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
 
 The package version tracks the package; the wire constant is the version written into
 messages. They move independently, and `bun run verify:version` checks the constants of
 the packages that declare one.
 
 The remaining packages are shared implementations rather than wire contracts:
-`@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers),
+`@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers, rate limiting (memory/Redis), production-profile resolver, JWT verification, COSE/CBOR, log redaction),
 `@atf/observability` (OpenTelemetry tracing bootstrap, W3C Trace Context, OTLP/HTTP JSON),
 `@atf/outpost-core` (0.1.0, the sync-agent core shared by the Outpost runtime and the
 desktop sidecar), `@atf/canonical-json` (1.0.0, the canonical-JSON serializers the

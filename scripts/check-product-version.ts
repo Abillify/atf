@@ -304,6 +304,37 @@ for (const contract of CONTRACT_PACKAGES) {
 	}
 }
 
+// The contract table in ARCHITECTURE.md repeats each package version. Compare
+// the "Package version" column with the manifests so the table cannot drift
+// (the wire column is not checked here; the loop above covers the constants).
+{
+	const architecture = await readFile(resolve(root, "ARCHITECTURE.md"), "utf8");
+	const rows = [
+		...architecture.matchAll(
+			/^\|\s*`@atf\/([a-z0-9-]+)`\s*\|\s*(\d+\.\d+\.\d+)\s*\|/gm,
+		),
+	];
+	for (const [, name, listed] of rows) {
+		let actual: string | undefined;
+		try {
+			actual = (
+				JSON.parse(
+					await readFile(resolve(root, "packages", name ?? "", "package.json"), "utf8"),
+				) as { version?: string }
+			).version;
+		} catch {
+			problems.push(`ARCHITECTURE.md lists @atf/${name}, but packages/${name}/package.json cannot be read`);
+			continue;
+		}
+		if (actual !== listed) {
+			problems.push(`ARCHITECTURE.md lists @atf/${name} ${listed}, package.json has ${actual}`);
+		}
+	}
+	if (rows.length === 0) {
+		problems.push("ARCHITECTURE.md: contract package table not found — update scripts/check-product-version.ts");
+	}
+}
+
 if (problems.length > 0) {
 	console.error(
 		`Product version is ${version}; ${problems.length} problem(s):\n${problems.map((p) => `  - ${p}`).join("\n")}`,

@@ -677,6 +677,7 @@ releases:
 - Search `group_by_section` no longer merges equally named sections of different documents.
 - Search keeps revisions apart when `include_all_versions` is set (diversification and document grouping).
 - Gate monitor and playground derive the tenant like the MCP authenticator (claim names, issuer-tenant binding), pass the verified claims to tools, and read groups from `monitoring.oidc.groupsClaim`.
+- `ARCHITECTURE.md` lists the current contract package versions, and `verify:version` now fails when that table drifts from the package manifests.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
