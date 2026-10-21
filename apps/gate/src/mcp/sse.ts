@@ -255,12 +255,10 @@ export function createSseRouter(deps: SseDeps): Router {
     } catch (err) {
       const status = err instanceof AuthError ? err.status : 401;
       const message = err instanceof Error ? err.message : String(err);
-      sessions.delete(sessionId);
-      try {
-        session.transport.close?.();
-      } catch {
-        /* best-effort */
-      }
+      // The request failed authentication or belongs to another identity, so it
+      // is not proven to come from the session's owner. It is refused, but the
+      // session stays: closing it here would let anyone who learned a session
+      // id end someone else's session with a bad token.
       bus.publish({
         tenantId: session.ctx.tenantId,
         type: "auth_failure",
