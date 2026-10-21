@@ -589,6 +589,24 @@ export class McpToolDispatcher {
         structuredContent: { code: "POLICY_DENIED" },
       };
     }
+    // Scopes before approval: a caller without them must not create an approval
+    // request or burn a one-shot approval token. A policy deny still wins.
+    const scopeError = missingScopesResult(requiredScopes, this.context);
+    if (scopeError) {
+      const message =
+        scopeError.content[0]?.text ?? "Missing required scope(s)";
+      bus.publish({
+        tenantId: this.context.tenantId,
+        type: "error",
+        sessionId: this.requestId,
+        username: this.context.username,
+        tool: name,
+        status: "error",
+        durationMs: Date.now() - started,
+        message,
+      });
+      return scopeError;
+    }
     if (
       effect === "approval" &&
       !(await policy?.verifyApproval(
@@ -609,22 +627,6 @@ export class McpToolDispatcher {
           approvalRequest: policy?.approvalRequest(this.context, name, args),
         },
       };
-    }
-    const scopeError = missingScopesResult(requiredScopes, this.context);
-    if (scopeError) {
-      const message =
-        scopeError.content[0]?.text ?? "Missing required scope(s)";
-      bus.publish({
-        tenantId: this.context.tenantId,
-        type: "error",
-        sessionId: this.requestId,
-        username: this.context.username,
-        tool: name,
-        status: "error",
-        durationMs: Date.now() - started,
-        message,
-      });
-      return scopeError;
     }
 
     try {
