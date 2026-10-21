@@ -4,8 +4,9 @@
 # Runbook: Incident Handling
 
 Goal: contain, understand, and recover — while keeping the audit trail usable as
-evidence. The audit log lives in the **Gate** database and is hash-chained; the
-Runtime anchor file signs snapshots of that chain. Preserve both early.
+evidence. The audit log is the Runtime's hash-chained audit table in PostgreSQL
+(verify with `GET /monitoring/audit/verify`); the Gate writes JSONL audit lines
+but has no database. Preserve both early.
 
 ## Roles
 
@@ -30,9 +31,9 @@ Runtime anchor file signs snapshots of that chain. Preserve both early.
      JSONL file (`monitoring.audit.file`) too; the Gate itself has no database.
    - Copy `AUDIT_ANCHOR_FILE` off-host.
    - `kubectl logs`/`docker logs` for all five services, current + previous pod.
-2. **Verify the audit chain**: Runtime monitoring status → anchor
-   `verifyLatest`. A failed verification means the audit trail itself is in
-   scope; treat all data as potentially read.
+2. **Verify the audit chain**: `GET /monitoring/audit/verify` on the Runtime.
+   A failed verification means the audit trail itself is in scope; treat all
+   data as potentially read.
 3. **Contain, minimally**:
    - Rotate `OIDC_SESSION_SECRET` → invalidates every active session
      (`key-rotation.md`). This is the fastest global logout.
@@ -49,12 +50,44 @@ Runtime anchor file signs snapshots of that chain. Preserve both early.
 
 | Question | Where to look |
 | --- | --- |
-| Who did what, when | Gate audit log (per-tenant, per-subject) |
+| Who did what, when | Runtime audit log (`GET /monitoring/audit`, export `GET /monitoring/audit/export`) |
 | What did a flow decide | Runtime evidence/dossier per execution id |
 | Was PII exposed | PII-Vault entries + output-guardrail events for the execution |
 | Which flows changed | Flow version history in Control; `flow_version` in execution traces |
 | Outbound calls made | Runtime egress log (`security/egress.ts` records) |
 | MCP/tool activity | Gate monitor UI (`/monitor`), tool authorization policy decisions |
+| Tool calls through the Gate | Gate JSONL audit (per instance) |
+
+## Evidence signing key compromised
+
+`EVIDENCE_SIGNING_KEY` signs audit anchors, evidence bundles and (unless
+overridden) erasure receipts. If it is compromised:
+
+1. Generate a new `EVIDENCE_SIGNING_KEY` (`openssl genpkey -algorithm ed25519`)
+   and set it in the secret store (`key-rotation.md`).
+2. Archive the old JWKS fetched from
+   `GET /.well-known/atf-evidence-jwks.json` with the date — the endpoint
+   publishes only the current key, and old artefacts verify only against the
+   archived public key.
+3. Rolling-restart the Runtime so it signs with the new key.
+4. Fix the point in time from which the old key is untrusted: artefacts signed
+   with the old `kid` **after** the compromise window are not trustworthy, even
+   though they verify cryptographically.
+5. Re-anchor the audit chain: let the anchor service write a fresh anchor and
+   confirm `GET /monitoring/audit/verify` reports `ok`.
+
+## Tokens leaked into the audit log
+
+Earlier versions wrote raw `Authorization` headers (or bearer-token prefixes)
+into the audit `actor` field; see the actor-correction item in
+`docs/UPGRADE.md`. If audit rows contain live tokens:
+
+1. Rotate every operator token that appears in the audit rows — the log is
+   readable by anyone with `GET /monitoring/audit` and by the log shipper.
+2. Restrict `GET /monitoring/audit` and the audit log-shipper stream until the
+   rotation is complete.
+3. The rows stay in the hash chain (removing them breaks it); a purge needs the
+   documented `audit_log_purge` procedure with its pre-purge anchor.
 
 ## Erasure requests during an incident
 

@@ -31,9 +31,10 @@ then require a shared Redis (see `global.redis`).
    least-connection balancing; sticky sessions are required only for `/sse`
    and `/monitor/stream` (per-process connection state). Run
    `RED_TEAM_SCHEDULE_FLOWS` on a single replica (the gate warns otherwise).
-2. Scale Runtime on queue depth, not CPU: `GET /monitoring/queue` exposes
-   pending executions; a good HPA target is "pending > 2× replicas sustained 2
-   min". CPU is misleading because executions wait on LLM I/O.
+2. Scale Runtime on queue depth, not CPU: the Prometheus metric
+   `aiperator_queue_depth` (`GET /metrics`) exposes pending executions; a good
+   HPA target is "pending > 2× replicas sustained 2 min". CPU is misleading
+   because executions wait on LLM I/O.
 3. Scale Extract on job backlog (`extract.jobs` rows in `queued`/`running`).
    Conversion is CPU-bound — give Extract pods CPU limits, not shared bursts, so
    one big PDF cannot starve neighbours.

@@ -27,7 +27,8 @@ are short-lived (they exist to re-identify PII within one execution's lifetime).
 
 Do **not** rotate while executions are mid-decision if re-identification after
 restart matters to them; the safest window is after the queue is empty
-(`GET /monitoring/queue` on Runtime).
+(queue depth is the Prometheus metric `aiperator_queue_depth`, scraped via
+`GET /metrics` on Runtime).
 
 ## OIDC (`OIDC_CLIENT_SECRET`, `OIDC_SESSION_SECRET`)
 
@@ -37,7 +38,9 @@ Two different secrets — rotate both, in this order:
    your IdP (Authentik/Keycloak support two active secrets). Set
    `OIDC_CLIENT_SECRET` to the new value in Runtime, Gate, Search, Extract (the
    auth block is deliberately identical across services), restart, then revoke
-   the old secret in the IdP.
+   the old secret in the IdP. The Gate reads its OIDC client secret from the
+   environment variable named in monitoring.oidc / auth config
+   (`clientSecretEnv`), not from `OIDC_CLIENT_SECRET`.
 2. **Session secret** (`OIDC_SESSION_SECRET`): rotating this **invalidates all
    active sessions** — users must log in again. Announce it, set the new value,
    rolling-restart Runtime and Gate. Old cookies fail signature verification and
@@ -53,8 +56,10 @@ AES-256-GCM primitive as the vault). Unlike the vault, BYOK records are
 
 1. Generate the new key and set it as `BYOK_ENCRYPTION_KEY` **only after** step 2
    if your deployment supports dual keys; otherwise:
-2. Export the tenant key inventory (`GET /v1/byok` as admin), decrypt with the
-   old key, and re-register each key so it is re-encrypted with the new one.
+2. Export the tenant key inventory (`GET /admin/tenants/{id}/provider-keys` as
+   admin), decrypt with the old key, and re-register each key
+   (`PUT /admin/tenants/{id}/provider-keys/{provider}`) so it is re-encrypted
+   with the new one.
 3. Restart Runtime; allow `BYOK_CACHE_TTL_SECONDS` (default 60 s) for caches to
    expire.
 4. Verify one BYOK-backed completion per affected tenant.
@@ -72,8 +77,8 @@ verifiability of **historical** anchors:
    their original signatures. Verification of an old anchor requires the old
    secret — keep rotated secrets in the secret store marked `retired-<date>`,
    never delete them.
-4. Verify: `verifyLatest()` (exposed via the Runtime monitoring status) must
-   report the chain valid against the current anchor.
+4. Verify: `GET /monitoring/audit/verify` must report the chain valid against
+   the current anchor.
 
 ## Evidence chain (`EVIDENCE_SIGNING_KEY`)
 `EVIDENCE_SIGNING_KEY` is the Ed25519 key (PEM PKCS#8, or a base64 32-byte seed)
@@ -114,11 +119,12 @@ receipts.
    `DECISION_RECEIPTS_ENABLED=true`.
 4. Verify: `GET /.well-known/atf-receipt-jwks.json` shows the new `kid`, and a new
    chat yields a receipt that verifies against it.
-`ERASURE_RECEIPT_SIGNING_KEY` signs erasure receipts the same way. When it is
-unset, erasure receipts are signed with an HMAC derived from
-`AUDIT_ANCHOR_SECRET` (the algorithm is recorded in the receipt envelope), so
-rotating the anchor secret changes that signature too. Keep retired keys for
-verifying earlier receipts.
+`ERASURE_RECEIPT_SIGNING_KEY` signs erasure receipts the same way. Signing key
+precedence is `ERASURE_RECEIPT_SIGNING_KEY` → `EVIDENCE_SIGNING_KEY` → an HMAC
+derived from `AUDIT_ANCHOR_SECRET`; the algorithm and the `kid` are recorded in
+the receipt envelope, and when the key is set its public key is also published
+in the evidence JWKS. Rotating any key in that chain changes the signature of
+newly issued receipts. Keep retired keys for verifying earlier receipts.
 ## API key pepper (`API_KEY_PEPPER`)
 With a pepper, API keys are stored as HMAC-SHA-256 hashes (`api_keys.hash_alg =
 hmac-sha256`). Keys created before the pepper was set carry plain SHA-256 hashes
@@ -157,6 +163,18 @@ client CA bundle for mTLS) and rolling-restart the service, one replica at a
 time. Add a new client CA to the bundle before issuing client certificates from
 it, and remove the old CA only after all clients have switched. Verify with a
 handshake against each replica.
+## Transaction keys (`TRANSACTION_SIGNING_KEY`, `MCPGATE_TRANSACTION_HS256_SECRET`)
+
+Transaction tokens are signed by the Runtime (`TRANSACTION_SIGNING_KEY` with
+`TRANSACTION_SIGNING_ALG`) and verified by each service that enforces them —
+the Gate with `MCPGATE_TRANSACTION_HS256_SECRET` / `MCPGATE_TRANSACTION_JWKS_URI`,
+Search with `TRANSACTION_HS256_SECRET` / `TRANSACTION_JWKS_URI`. Because the
+verifiers accept a set of algorithms at the same time, rotation is a sequenced
+migration rather than a single restart: every verifier must accept both the old
+and the new algorithm before the issuer switches over, and only then may the old
+one be removed. See the
+[transaction-token rotation runbook](./transaction-token-rotation.md) for the
+ordered procedure.
 ## Rotation frequency (recommended)
 
 | Secret | Interval | Immediate on |
@@ -167,6 +185,7 @@ handshake against each replica.
 | BYOK encryption key | 180 days | Any tenant key leak |
 | Audit anchor secret | 365 days | Anchor file tampering suspicion |
 | Receipt signing key | 365 days | Key exposure |
+| Evidence signing key | yearly or on suspicion | Old public key must stay available to verify old artefacts (archive the JWKS) |
 | Service tokens (`API_TOKEN`) | 180 days | Token leak |
 | Control session secret | 180 days | Any session hijack report |
 | TLS certificates | before expiry | Key exposure |

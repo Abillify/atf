@@ -59,6 +59,8 @@ Contract packages: [identity](../packages/identity-contract/README.md),
 | [runbooks/key-rotation.md](runbooks/key-rotation.md) | Rotating PII-vault, OIDC, BYOK and audit-anchor keys |
 | [runbooks/incident.md](runbooks/incident.md) | Security incident handling: first 15 minutes, evidence, close-out |
 | [runbooks/scaling.md](runbooks/scaling.md) | Per-service sizing, queue-depth scaling, anti-patterns |
+| [runbooks/redis-outage.md](runbooks/redis-outage.md) | Per-service behaviour, alerting and recovery during a Redis outage |
+| [runbooks/transaction-token-rotation.md](runbooks/transaction-token-rotation.md) | Sequenced transaction-token rotation across Runtime, Gate and Search |
 
 ## Architecture decisions
 
