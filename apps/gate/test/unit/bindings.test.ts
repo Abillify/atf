@@ -77,3 +77,47 @@ describe("compileQuery", () => {
     expect(bindings).toEqual(['{"a":1}']);
   });
 });
+
+describe("bearer token bindings", () => {
+  it("refuses :ctx.rawToken and :ctx.headers.authorization at compile time", () => {
+    expect(() => compileQuery("SELECT :ctx.rawToken", {}, ctx)).toThrow(
+      "Binding :ctx.rawToken is not allowed",
+    );
+    expect(() =>
+      compileQuery("SELECT :ctx.headers.authorization", {}, { ...ctx, headers: { authorization: "Bearer x" } }),
+    ).toThrow("Binding :ctx.headers.authorization is not allowed");
+    expect(() => compileQuery("SELECT :ctx.headers.Authorization", {}, ctx)).toThrow(
+      "Binding :ctx.headers.authorization is not allowed",
+    );
+  });
+
+  it("still resolves other headers and claims", () => {
+    const { bindings } = compileQuery("SELECT :ctx.headers.x-request-id", {}, {
+      ...ctx,
+      headers: { "x-request-id": "r-1" },
+    });
+    expect(bindings).toEqual(["r-1"]);
+  });
+});
+
+describe("bearer token bindings in the configuration", () => {
+  const parse = async (query: string) => {
+    const { AppConfigSchema } = await import("../../src/config/schema.ts");
+    return AppConfigSchema.safeParse({
+      server: { port: 3000 },
+      auth: { mode: "static", static: { tokens: [{ token: "t", username: "u" }] } },
+      databases: { main: { client: "pg", connection: "postgres://app:pw@db/app" } },
+      tools: [{ name: "t1", type: "database", database: "main", query }],
+    });
+  };
+
+  it("rejects a tool that binds the raw token when the configuration loads", async () => {
+    const result = await parse("SELECT :ctx.rawToken");
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("Binding :ctx.rawToken is not allowed");
+  });
+
+  it("accepts a tool with ordinary bindings", async () => {
+    expect((await parse("SELECT :ctx.username")).success).toBe(true);
+  });
+});

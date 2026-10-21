@@ -1851,6 +1851,20 @@ export const AppConfigSchema = z.object({
   mcpServers: z.array(McpServerImportSchema).optional(),
   tools: z.array(ToolConfigSchema).default([]),
 }).superRefine((cfg, ctx) => {
+  // A binding on the caller's bearer token would copy the credential into SQL
+  // parameters, URLs and bodies; refuse it when the configuration loads.
+  const forbiddenBinding = /:ctx\.(rawToken|headers\.authorization)\b/i;
+  cfg.tools.forEach((tool, index) => {
+    const hit = forbiddenBinding.exec(JSON.stringify(tool));
+    if (hit?.[1] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Binding :ctx.${hit[1]} is not allowed (tool '${tool.name}')`,
+        path: ["tools", index],
+      });
+    }
+  });
+
   // An issuer binding for an issuer nothing verifies is a typo that silently
   // leaves the intended issuer unbound; fail at startup instead.
   const bindings = Object.keys(cfg.tenantIsolation.issuerTenants);

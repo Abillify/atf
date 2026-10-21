@@ -40,8 +40,24 @@ export function verifiedTenantClaim(
   return unique[0];
 }
 
+/**
+ * Context paths that hand out the caller's bearer token. Binding them would
+ * copy the credential into SQL parameters, URLs, bodies and from there into
+ * logs and downstream systems; tools that need it use the dedicated token
+ * exchange or passthrough features.
+ */
+export const FORBIDDEN_CONTEXT_PATHS: readonly string[] = ["rawToken", "headers.authorization"];
+
+/** The forbidden context path `path` names, or undefined (case-insensitive). */
+export function forbiddenContextPath(path: string): string | undefined {
+  const lowered = path.trim().toLowerCase();
+  return FORBIDDEN_CONTEXT_PATHS.find((forbidden) => forbidden.toLowerCase() === lowered);
+}
+
 /** Resolve a dotted context path while preventing request headers becoming security authority. */
 export function resolveContextPath(ctx: AuthContext, path: string): unknown {
+  const forbidden = forbiddenContextPath(path);
+  if (forbidden !== undefined) throw new Error(`Binding :ctx.${forbidden} is not allowed`);
   if (path.startsWith("headers.")) {
     const normalizedHeader = path.slice("headers.".length).replace(/[^a-z0-9]/gi, "").toLowerCase();
     const aliases = [
