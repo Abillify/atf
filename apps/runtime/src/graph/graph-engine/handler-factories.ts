@@ -30,7 +30,7 @@ import type {
   ChatMessage,
   TokenUsage,
 } from "../../types/openai.js";
-import type { AppConfig } from "../../config/index.js";
+import type { AppConfig, McpServerConfig } from "../../config/index.js";
 import type { FlowRegistry } from "../flow-parser.js";
 import { applyFlowVariables } from "../flow-parser.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
@@ -1047,6 +1047,10 @@ class GraphEngineServiceImpl implements GraphEngineService {
       ...(this.appConfig.taintMode === "on-untrusted-source"
         ? { taintMode: "on-untrusted-source" as const }
         : {}),
+      // Per-server content trust for `TAINT_MODE=on-untrusted-source`: only a
+      // server explicitly marked `contentTrust: "trusted"` counts as trusted;
+      // an unknown server is untrusted.
+      contentTrustOf: buildContentTrustLookup(this.appConfig.mcpServers),
     };
 
     // --- Compile once (cached by checksum) + pass runtime via configurable ---
@@ -1557,6 +1561,20 @@ class GraphEngineServiceImpl implements GraphEngineService {
       throw err;
     }
   }
+}
+
+/**
+ * Content-trust lookup for `TAINT_MODE=on-untrusted-source`: a server is
+ * trusted only when its config explicitly says `contentTrust: "trusted"`;
+ * anything else (including unknown server names) is untrusted.
+ */
+export function buildContentTrustLookup(
+  mcpServers: McpServerConfig[],
+): (server: string) => "trusted" | "untrusted" {
+  const trusted = new Set(
+    mcpServers.filter((s) => s.contentTrust === "trusted").map((s) => s.name),
+  );
+  return (server: string) => (trusted.has(server) ? "trusted" : "untrusted");
 }
 
 // ---------------------------------------------------------------------------

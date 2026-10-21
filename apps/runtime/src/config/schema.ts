@@ -152,6 +152,12 @@ export interface McpServerConfig {
    */
   allowAnonymous?: boolean;
   /**
+   * Whether results of this server count as trusted for
+   * `TAINT_MODE=on-untrusted-source`. Absent = untrusted: an unlabelled
+   * result taints the execution.
+   */
+  contentTrust?: "trusted" | "untrusted";
+  /**
    * Forward the caller's own SSO/OAuth token (the bearer with which the request
    * authenticated against aiperator) to this MCP server as the
    * `Authorization: Bearer <token>` header, instead of injecting it as the
@@ -819,6 +825,12 @@ export const McpServerConfigSchema = z.object({
   injectedParams: z.record(z.string(), z.unknown()).optional(),
   headers: z.record(z.string(), z.string()).optional(),
   allowAnonymous: z.boolean().optional(),
+  /**
+   * Whether results of this server count as trusted for
+   * `TAINT_MODE=on-untrusted-source`. Absent = untrusted: an unlabelled
+   * result taints the execution.
+   */
+  contentTrust: z.enum(["trusted", "untrusted"]).optional(),
   forwardAuthToken: z.boolean().optional(),
   tokenExchange: TokenExchangeConfigSchema.optional(),
 });

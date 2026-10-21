@@ -18,13 +18,22 @@ import {
 import { createExecutionTaint } from "../execution-taint.js";
 import { loadConfig } from "../../config/index.js";
 
-function runtimeWith(mode: "on-untrusted-source" | undefined) {
-  const diagnostics: Array<{ code?: string; level?: string }> = [];
+function runtimeWith(
+  mode: "on-untrusted-source" | undefined,
+  trustedServers: string[] = [],
+) {
+  const diagnostics: Array<{
+    code?: string;
+    level?: string;
+    details?: Record<string, unknown>;
+  }> = [];
   const counters: Array<{ name: string; labels?: Record<string, string> }> = [];
   const taint = createExecutionTaint();
   const runtime = {
     taint,
     ...(mode !== undefined ? { taintMode: mode } : {}),
+    contentTrustOf: (server: string) =>
+      trustedServers.includes(server) ? ("trusted" as const) : ("untrusted" as const),
     onNodeDiagnostic: (_id: string, d: { code?: string; level?: string }) => diagnostics.push(d),
     metrics: { recordCounter: (name: string, labels?: Record<string, string>) => counters.push({ name, labels }) },
   } as never;
@@ -63,11 +72,39 @@ describe("markTaintFromUntrustedSource", () => {
     expect(wrapped.taint.tainted).toBe(true);
   });
 
-  test("an unlabelled result, or a label that is not 'untrusted', does not taint", () => {
-    const { runtime, taint } = runtimeWith("on-untrusted-source");
+  test("an unlabelled result from a trusted server, or a label that is not 'untrusted', does not taint", () => {
+    const { runtime, taint } = runtimeWith("on-untrusted-source", ["gate"]);
     markTaintFromUntrustedSource(runtime, "n", "gate/x", "plain text", undefined);
     markTaintFromUntrustedSource(runtime, "n", "gate/x", "plain text", { [GATE_CONTENT_TRUST_META_KEY]: { content_trust: "trusted" } });
     markTaintFromUntrustedSource(runtime, "n", "gate/x", { content_trust: "trusted" }, { other: 1 });
+    expect(taint.tainted).toBe(false);
+  });
+
+  test("on-untrusted-source: a server without contentTrust taints on an unlabelled result (reason server-untrusted)", () => {
+    const { runtime, taint, diagnostics } = runtimeWith("on-untrusted-source");
+    markTaintFromUntrustedSource(runtime, "n", "crm/lookup", "plain text", undefined);
+    expect(taint.tainted).toBe(true);
+    expect(taint.sources).toEqual(["crm/lookup"]);
+    expect(diagnostics[0]?.code).toBe("untrusted_source");
+    expect(diagnostics[0]?.details?.reason).toBe("server-untrusted");
+  });
+
+  test("on-untrusted-source: a trusted server does not taint on an unlabelled result", () => {
+    const { runtime, taint } = runtimeWith("on-untrusted-source", ["crm"]);
+    markTaintFromUntrustedSource(runtime, "n", "crm/lookup", "plain text", undefined);
+    expect(taint.tainted).toBe(false);
+  });
+
+  test("on-untrusted-source: a trusted server still taints when the result is labelled untrusted (reason labelled)", () => {
+    const { runtime, taint, diagnostics } = runtimeWith("on-untrusted-source", ["crm"]);
+    markTaintFromUntrustedSource(runtime, "n", "crm/lookup", "rows", gateLabel);
+    expect(taint.tainted).toBe(true);
+    expect(diagnostics[0]?.details?.reason).toBe("labelled");
+  });
+
+  test("on-finding mode is unchanged: no taint without a finding, even for an untrusted server", () => {
+    const { runtime, taint } = runtimeWith(undefined);
+    markTaintFromUntrustedSource(runtime, "n", "crm/lookup", "plain text", undefined);
     expect(taint.tainted).toBe(false);
   });
 });

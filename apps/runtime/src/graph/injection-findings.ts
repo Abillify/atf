@@ -96,29 +96,40 @@ function metaLabelsUntrusted(meta: unknown): boolean {
   );
 }
 /**
- * `TAINT_MODE=on-untrusted-source`: taint the run when content labelled
- * untrusted reaches the model — a Search response (`content_trust: "untrusted"`
- * in the payload) or any Gate tool result (`_meta["io.atf/content-trust"]`) —
- * instead of waiting for the injection scan to find something. A no-op in the
- * default `on-finding` mode. `meta` is the MCP result `_meta`, when the client
- * passed it through.
+ * `TAINT_MODE=on-untrusted-source`: taint the run when untrusted content
+ * reaches the model — content labelled untrusted (a Search response
+ * `content_trust: "untrusted"` in the payload or a Gate tool result
+ * `_meta["io.atf/content-trust"]`) or any result from an MCP server that is
+ * not explicitly `contentTrust: "trusted"` — instead of waiting for the
+ * injection scan to find something. A no-op in the default `on-finding` mode.
+ * `meta` is the MCP result `_meta`, when the client passed it through.
  */
 export function markTaintFromUntrustedSource(
-  runtime: Pick<ExecRuntime, "onNodeDiagnostic" | "metrics" | "taint" | "taintMode">,
+  runtime: Pick<
+    ExecRuntime,
+    "onNodeDiagnostic" | "metrics" | "taint" | "taintMode" | "contentTrustOf"
+  >,
   nodeId: string,
   sourceRef: string,
   content: unknown,
   meta?: unknown,
 ): void {
   if (runtime.taintMode !== "on-untrusted-source") return;
-  if (!metaLabelsUntrusted(meta) && !payloadHasUntrustedLabel(content, 0)) return;
+  const labelled = metaLabelsUntrusted(meta) || payloadHasUntrustedLabel(content, 0);
+  // A directly attached server without `contentTrust: "trusted"` counts as
+  // untrusted: an unlabelled result from it taints the run too.
+  const server = sourceRef.split("/")[0] ?? "";
+  const serverTrusted = runtime.contentTrustOf?.(server) === "trusted";
+  if (!labelled && serverTrusted) return;
+  const reason = labelled ? "labelled" : "server-untrusted";
   runtime.taint?.mark(sourceRef);
   runtime.onNodeDiagnostic?.(nodeId, {
     level: "info",
     code: "untrusted_source",
     message:
-      `Content from ${sourceRef} is labelled untrusted; TAINT_MODE=on-untrusted-source ` +
-      `taints the run, so write tools now require approval.`,
+      `Content from ${sourceRef} is ${labelled ? "labelled untrusted" : "from a server that is not marked contentTrust: trusted"}; ` +
+      `TAINT_MODE=on-untrusted-source taints the run, so write tools now require approval.`,
+    details: { reason },
   });
   runtime.metrics?.recordCounter("aiperator_untrusted_source_total", {
     source: sourceRef.startsWith("retrieval/") ? "retrieval" : "tool",

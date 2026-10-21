@@ -92,7 +92,10 @@ Three settings shape what the platform does with untrusted content and what it t
 - `TAINT_MODE` (`on-finding`, the default, or `on-untrusted-source`) decides what taints an
   execution for `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`: an injection finding by the scanner, or
   additionally any result the Gate labels untrusted (`_meta["io.atf/content-trust"]`) and any
-  retrieval result. The stricter mode asks for approval on every write after a read of outside
+  retrieval result. With `TAINT_MODE=on-untrusted-source`, results of MCP servers without
+  `contentTrust: trusted` now taint the execution (previously only results labelled untrusted
+  by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
+  The stricter mode asks for approval on every write after a read of outside
   content, not only after a detected attack.
 - `AI_DISCLOSURE` (`off`, `header`, `field`) marks successful completions as AI-generated for
   downstream systems: `X-AI-Generated: true` on `/v1/chat/completions` and `/v1/responses`, or

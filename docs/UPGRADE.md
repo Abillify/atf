@@ -392,7 +392,11 @@ configuration and clients. Do these **before** rolling out:
     taints it as soon as a result labelled untrusted is read, so
     `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL` then fires for every write after any
     such read, not only after a detected injection: expect more approval prompts
-    in flows that read documents and then write.
+    in flows that read documents and then write. With
+    `TAINT_MODE=on-untrusted-source`, results of MCP servers without
+    `contentTrust: trusted` now taint the execution (previously only results
+    labelled untrusted by Search or the Gate). Mark internal, curated servers
+    with `contentTrust: trusted`.
 16. **AI disclosure (optional).** `AI_DISCLOSURE=header` adds `X-AI-Generated: true`
     to successful `/v1/chat/completions` and `/v1/responses` responses;
     `field` adds `metadata.ai_generated: true` to a non-streaming JSON body (a

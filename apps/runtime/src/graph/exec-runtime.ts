@@ -556,6 +556,14 @@ export interface ExecRuntime {
    */
   taintMode?: "on-untrusted-source";
   /**
+   * Content trust of an MCP server (its name, the part of a `sourceRef` before
+   * the first `/`): `contentTrust: "trusted"` in the server config, `untrusted`
+   * otherwise — an unknown server counts as untrusted. Consulted by
+   * `markTaintFromUntrustedSource` under `TAINT_MODE=on-untrusted-source`.
+   * Absent → every server counts as untrusted.
+   */
+  contentTrustOf?: (server: string) => "trusted" | "untrusted";
+  /**
    * How retrieved chunks are handed to the model: `spotlight` wraps them in a
    * delimited untrusted-data block, `legacy` keeps the plain `[n] text` list.
    * Absent → `legacy`.
