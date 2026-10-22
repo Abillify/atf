@@ -322,7 +322,7 @@ The remaining packages are shared implementations rather than wire contracts:
 `@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers, rate limiting (memory/Redis), production-profile resolver, JWT verification, COSE/CBOR, log redaction),
 `@atf/observability` (OpenTelemetry tracing bootstrap, W3C Trace Context, OTLP/HTTP JSON),
 `@atf/outpost-core` (0.1.0, the sync-agent core shared by the Outpost runtime and the
-desktop sidecar), `@atf/canonical-json` (1.0.0, the canonical-JSON serializers the
+desktop sidecar), `@atf/canonical-json` (1.0.1, the canonical-JSON serializers the
 platform's hashes are computed over — every mode is byte-identical to the call-site variant
 it replaced, because these bytes back signed receipts, audit chains, and cache keys), and
 `@atf/mcp-2026` (1.0.0, the shared MCP 2026-07-28 stateless-HTTP core — header validation,

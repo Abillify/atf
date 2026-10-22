@@ -44,8 +44,10 @@ DSAR. Overall status is `complete` only when every store is `ok` or
 data in cleartext — only `sha256(tenantId + "|" + identifier)` via
 `erasureSubjectHash()`. The byte source for signing is
 `canonicalizeJson(payload)` (recursively sorted keys, no whitespace). Signing
-is Ed25519 (`ERASURE_RECEIPT_SIGNING_KEY`) with the audit-anchor HMAC as
-documented fallback; the algorithm lives in the envelope, not the payload.
+is Ed25519 with the key precedence `ERASURE_RECEIPT_SIGNING_KEY` →
+`EVIDENCE_SIGNING_KEY` → audit-anchor HMAC (`AUDIT_ANCHOR_SECRET`) as documented
+fallback; the algorithm and, for Ed25519, the key id (`kid`) live in the
+envelope, not the payload.
 
 ## Usage
 

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Elastic-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Abillify Technology GmbH -->
 
-# Upgrade guide 0.3 → current (0.18, next release in progress)
+# Upgrade guide 0.3 → 0.19
 
 Database migrations are additive and run under a PostgreSQL advisory lock,
 so a migration job and booting replicas serialize safely. Who runs them is
@@ -247,11 +247,13 @@ but the HTTP surface changes:
   `vs_assets` only; backing Extract out to the synchronous v1 path stops crop
   storage entirely (see the migration guide's Rollback section).
 
-### 0.18 → next (unreleased)
+### 0.18 → 0.19
 
 Review `[Unreleased]` in the [CHANGELOG](../CHANGELOG.md), in particular its
-**Migration** subsection. No schema migration is part of this change; the work is
-configuration and clients. Do these **before** rolling out:
+**Migration** subsection. The Runtime adds two migrations: 48 creates
+`audit_chain_meta` (the canonical cut-off of the audit chain, item 6) and 49 adds
+`erasure_requests.lease_token` (fencing of erasure runs). Search, Extract and the Gate
+add none; the rest is configuration and clients. Do these **before** rolling out:
 
 1. **Check the profile values.** `ATF_PROFILE` (new), `APP_ENV`, `MCPGATE_ENV` and
    `NODE_ENV` must be `development`, `staging`, `production` or `test`
@@ -281,7 +283,10 @@ configuration and clients. Do these **before** rolling out:
    production Search or Extract pod without `RATE_LIMIT_REDIS_URL` no longer
    starts**: provide the shared store (`extraEnv` or a secret), or set
    `replicaCount: 1`. `extraEnv` renders last and overrides the exported values.
-   `RATE_LIMIT_REDIS_URL` itself is not exported by the chart. The shared limiters
+   With `global.redis.enabled: true` and `global.redis.urlSecret` (name and key of an
+   existing Secret holding the URL) the chart exports the URL as `REDIS_URL` to the
+   Runtime and as `RATE_LIMIT_REDIS_URL` to Search and Extract; without it, provide
+   `RATE_LIMIT_REDIS_URL` through `extraEnv` or a secret. The shared limiters
    fail **open** when Redis is unreachable (they log and allow), the same
    availability posture as the in-memory limiter they replace; for Extract that
    means a Redis outage removes the request throttle, so alert on the error log.
@@ -302,6 +307,16 @@ configuration and clients. Do these **before** rolling out:
    Migration 48 adds `audit_chain_meta`: the first row written after the upgrade records its id as
    the canonical cut-off, and from then on the legacy hash form is accepted only for rows below it
    (`legacy hash form after cut-off at id <n>` otherwise).
+   **Do not run 0.18 and 0.19 Runtime pods side by side for this step.** The chart rolls out with
+   `maxSurge: 1, maxUnavailable: 0`, so an old pod can write a legacy-form audit row after a new
+   pod has set the cut-off, and verification then reports `legacy_hash_after_cutoff` for it. Scale
+   the Runtime to 0 (or run this one rollout with a `Recreate` strategy) and start the new version
+   only after every old pod has stopped. If it happened anyway — or after a rollback to 0.18 and a
+   second upgrade — check that every reported row was written by an old pod during that window
+   (actor, time), then move the cut-off to the first row written after the last old pod stopped:
+   `UPDATE audit_chain_meta SET value = '<id>' WHERE key = 'canonical_cutoff_id'`. Record the
+   change and the reason in your change log; the rows below the new cut-off verify in the legacy
+   form, and nothing else in the chain changes.
 7. **Search ranking.** The lexical branch ORs the query terms and no longer parses
    `websearch` syntax (`"phrase"`, `-term`, `OR`). Hybrid and FTS rankings change
    for natural-language questions (the lexical list is no longer empty). Re-run
@@ -355,10 +370,13 @@ configuration and clients. Do these **before** rolling out:
     `nonce`; the IdP must support S256 and return the `nonce` claim. With several
     trusted OAuth issuers and tenant isolation, list each issuer's tenants in
     `tenantIsolation.issuerTenants` (fatal in production when empty).
-11. **Search.** The BM25 lexical path needs a `USING bm25` index on the
-    collection table (this service does not create it). Tables without one use the
-    full-text path and log a warning once; create the index and it is used within
-    a minute. New tuning settings (`RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY`,
+11. **Search.** `FTS_RANKER=bm25` needs the ParadeDB `pg_search` extension and a
+    `USING bm25` index on the collection table, created with pg_search's mandatory
+    `key_field` parameter (this service creates neither). VectorChord-bm25 indexes are ignored. Tables
+    without such an index use the full-text path and log a warning once; create the
+    index and it is used within a minute. The lexical list ranks chunks that contain
+    all query terms first (AND before OR) and uses at most 32 distinct terms of a
+    query. New tuning settings (`RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY`,
     `HYDE_CACHE_TTL_SECONDS`, `BATCH_WORKER_EMBED_CONCURRENCY`) have defaults that
     change nothing you must act on; context expansion runs at most 8 hits in
     parallel (fixed); `/v2/search` now honours
@@ -488,7 +506,7 @@ configuration and clients. Do these **before** rolling out:
 26. **Runtime: `regulated` presets.** `ATF_PRESET=regulated` (and
     `regulated-multitenant`) now also set `TAINT_MODE=on-untrusted-source`,
     `AI_DISCLOSURE=header` and `COMPLIANCE_POLICY_REQUIRED=true`, and in the
-    production Betriebsprofil they turn a missing `AUDIT_ANCHOR_FILE`, an empty
+    production operational profile they turn a missing `AUDIT_ANCHOR_FILE`, an empty
     `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` from warnings
     into start aborts. Set those four before upgrading, or override the preset
     values explicitly — an explicit environment variable always wins.
@@ -505,6 +523,84 @@ configuration and clients. Do these **before** rolling out:
     existing rows keep their old index until re-ingested. A language migration
     (`bun run fts:language`) recomputes `ts_search` from the content alone and
     drops the `D` weighting until those chunks are ingested again.
+29. **Gate: credential bindings stop the start.** A tool binding on `:ctx.rawToken`,
+    on the whole header object `:ctx.headers`, or on `:ctx.headers.authorization`,
+    `:ctx.headers.proxy-authorization` or `:ctx.headers.cookie` is rejected when the
+    configuration loads (`Binding :ctx.<path> is not allowed (tool '<name>')`) and at
+    call time. Single other headers such as `:ctx.headers.x-request-id` stay bindable.
+    Tools that need the caller's credential use token exchange or passthrough.
+    Search the Gate configuration for `:ctx.` before upgrading.
+30. **Gate: `tenantIsolation.issuerTenants` keys must be configured issuers.** A key
+    that is neither `auth.oauth.issuer`, one of `auth.oauth.additionalIssuers` nor
+    `monitoring.oidc.issuer` stops the start
+    (`tenantIsolation.issuerTenants has a key that is not a configured issuer: <key>`).
+    Issuers compare without a trailing slash.
+31. **Gate monitor OIDC login.** The session tenant now comes from the verified
+    tenant claim and the issuer binding, as for API tokens. With
+    `tenantIsolation.enabled` (required in production) an ID token without one of
+    the `tenantIsolation.claimNames` is refused, where it used to fall back to the
+    default tenant; with a non-empty `issuerTenants` the monitor issuer must be
+    listed (`"*"` for operators who see every tenant). Both cases answer 401
+    `ID token verification failed`; the log names the reason. Configure the
+    workforce IdP to send the tenant claim and add `monitoring.oidc.issuer` to
+    `issuerTenants` before upgrading, or operators lose access to the monitor.
+32. **Gate: behaviour changes without a configuration change.**
+    - Tool errors reach MCP clients as `Tool execution failed (reference <id>)`;
+      the details are in the Gate log under that reference.
+    - A call without the tool's `requiredScopes` is refused before any approval is
+      requested; no pending approval is created for it.
+    - An approval request resolves exactly once, also across replicas: a second
+      concurrent `approvals/resolve` answers 404 (`-32004`). With Redis, more than
+      `policies.approval.maxPending` (default 1000) open requests of a tenant answer
+      503 until older ones resolve or expire.
+    - Approval tokens record the resolver's owner (`aown`). With
+      `policies.approval.requireDifferentApprover`, a token without it whose
+      approver is the requester is rejected; tokens live for `ttlMs` (default 5 min),
+      so this affects only tokens minted shortly before the rollout.
+    - The production gate warns while `auth.oauth.allowedTokenTypes` is empty
+      (access tokens are not type-checked) and while a database tool uses the `hash`
+      redaction strategy without `MCPGATE_REDACTION_HASH_SECRET`. Setting the secret
+      switches the digest to HMAC-SHA256, so hashed values in results change once.
+    - `server.rateLimit.perIdentity.failMode` defaults to `closed`: with the Redis
+      store unreachable the per-identity limiter rejects requests; set `open` to
+      prefer availability.
+33. **Search: request handling.**
+    - Queries longer than `SEARCH_MAX_QUERY_CHARS` (default 400) are cut at a word
+      boundary, never rejected; v1 answers then carry `X-Query-Truncated: true`, v2
+      and MCP results `query_truncated: true`. Flows that append context to the
+      query should raise the limit or move the context out of the query.
+    - Transaction tokens without a `typ` header are rejected (tokens minted by the
+      ATF Runtime carry `typ: at+jwt`).
+    - `group_by_document` keeps at most `SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT`
+      (default 8) chunks per document, so the context of a grouped answer can get
+      shorter.
+    - MCP `search` results are compact JSON; `SEARCH_MCP_PRETTY_JSON=true` restores
+      the indentation (also for `trace` and `document_diff`).
+    - Results name their revision (`revision_id`), and `document_diff` reports
+      `truncated: true` instead of silently cutting long documents. Both are
+      additive.
+34. **Runtime: audit pseudonyms.** Erasure and policy audit entries carry hashes and
+    pseudonyms instead of subject identifiers. Set `AUDIT_PSEUDONYM_PEPPER` (random,
+    at least 32 characters), back it up with the other signing secrets and keep it
+    stable: without it the pseudonym is an unkeyed SHA-256, and changing it changes
+    the pseudonyms of later entries, so they no longer link to earlier ones.
+35. **Extract: derived-PDF cache and delete semantics.**
+    - The derived-PDF cache (item 8) is keyed by the source digest, the converter
+      identity and, for HTML sources, the sanitizer revision, so a LibreOffice
+      update or a sanitizer change converts again instead of reusing an old PDF.
+      Its limits are enforced when a conversion is written, at start and every
+      `RETENTION_SWEEP_INTERVAL_MINUTES`.
+    - `DELETE /v2/documents/{reference}` on behalf of an end user removes jobs,
+      upload sessions and source bytes only when Search actually deleted the
+      reference; when Search deleted nothing for that caller the answer is 404 and
+      Extract keeps its jobs, upload sessions and source bytes. A service call without an end-user identity still
+      cleans up a reference Search never held.
+36. **Runtime: streaming progress is opt-in.** Agent-harness progress reaches a
+    streaming chat client as the SSE event `atf.progress` only when the request sends
+    `X-ATF-Progress: 1` or `metadata.atf_progress: true`; without it the stream holds
+    only OpenAI-compatible chunks, because OpenAI SDKs pass every `data:` frame on as a
+    chunk. The debug trace (`progress` per node) and `GET /v1/jobs/{id}` report
+    progress regardless.
 
 ### Not yet shared between replicas (roadmap)
 
@@ -530,8 +626,8 @@ Also decided and documented, not changed here:
 - **Converter.** The Helm chart keeps `extract.config.converterAllowLocalHtml: true`
   because it converts inside the Extract pod. Running the converter as a sidecar
   (`CONVERTER_MODE=isolated`) is the follow-up that lets you turn it off.
-- **Not done:** the Search M3 token cap and AND-first matching, and a multi-key
-  JWKS for `EVIDENCE_SIGNING_KEY`, were considered and left as they are.
+- **Not done:** a multi-key JWKS for `EVIDENCE_SIGNING_KEY` was considered and
+  left as it is.
 
 **Derived-PDF cache retention.** The cache holds the full text of converted
 documents as PDF. `DELETE /v2/documents/{id}` and `POST /v1/erasure` remove the
@@ -545,13 +641,16 @@ shares with the converter sidecar — is cleaned by these limits too, but keep i
 in the erasure procedure.
 
 **Contracts.** `@atf/extract-contract` 2.4.0 (additive: `pages` as a window,
-`firstPage` on `document.begin`/`document.end`), `@atf/security-kit` 1.1.0,
+`firstPage` on `document.begin`/`document.end`), `@atf/security-kit` 1.4.0,
 `@atf/evidence-contract` 1.1.1, `@atf/erasure-contract` 1.0.1; wire constants and
-bytes of signed payloads are unchanged. `@atf/transaction-contract` is unchanged. New workspace packages `@atf/canonical-json` and `@atf/mcp-2026`.
+bytes of signed payloads are unchanged. `@atf/transaction-contract` is unchanged. New workspace packages `@atf/canonical-json` 1.0.1 and `@atf/mcp-2026` 1.0.0.
 
-**Rollback.** Nothing here writes new tables or columns (the erasure table gains a
-new status value, `in_progress`, which the previous version reads as `partial`).
-Rolling back keeps
+**Rollback.** Migration 48 (`audit_chain_meta`) and migration 49
+(`erasure_requests.lease_token`) stay in place; the older binary ignores the table and
+the column, and the erasure table's new status value `in_progress` reads as `partial`
+there. The audit cut-off stays recorded: rows a 0.18 binary writes after a rollback are
+legacy-form rows above the cut-off, so a later upgrade reports them as
+`legacy_hash_after_cutoff` — move the cut-off as described in item 6. Rolling back keeps
 Ed25519 anchors, bundles and receipts written in the meantime: an older binary
 does not understand `alg: "ed25519"` and reports them as unverifiable — keep the
 new binary around for audits, or verify them offline with the `atf-verify`
@@ -590,6 +689,10 @@ in a source checkout: `bun run scripts/atf-verify.ts`). The
 | `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering. Rows after the canonical cut-off must verify canonically |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
 | Flow missing after upgrade, `/health/ready` shows `flow_load: degraded` (the file and the "Unknown config keys" reason are in the flow load log) | Production profile rejects config keys the node type does not read | Fix the key or prefix it with `x-`; check with `cli.ts validate` |
+| Gate does not start: `Binding :ctx.… is not allowed (tool '…')` | A tool binds the caller's token, the whole header object or the `authorization`/`proxy-authorization`/`cookie` header | Remove the binding; use token exchange or passthrough for credentials (item 29) |
+| Gate does not start: `tenantIsolation.issuerTenants has a key that is not a configured issuer` | An issuer-binding key matches no OAuth or monitor issuer (typo, or an issuer that was removed) | Fix or remove the key (item 30) |
+| Monitor login answers 401 `ID token verification failed` after the upgrade | The monitor ID token has no tenant claim, or its issuer is missing from a non-empty `issuerTenants` | Send the tenant claim from the IdP and bind the monitor issuer (item 31) |
+| `verifyChain` reports `legacy_hash_after_cutoff` | A 0.18 Runtime pod wrote an audit row after a 0.19 pod set the canonical cut-off (rolling update or rollback) | Stop all old pods; move the cut-off past the rollout window after checking the rows (item 6) |
 
 ## Rollback
 

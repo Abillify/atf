@@ -57,9 +57,13 @@ provider, conversion-callback, or `source_url` configuration, escape from the do
 conversion path,
 secret disclosure, and privilege escalation in the operator plane. Two mechanisms bound the
 blast radius of such findings and are therefore in scope:
-- **Evidence signing.** Runtime evidence bundles are signed (COSE_Sign1, Ed25519); verification
-  keys are published at `GET /.well-known/atf-evidence-jwks.json`. Forging or replaying signed
-  evidence, or weakening signature verification, is in scope.
+- **Evidence signing.** Evidence bundles, audit anchors and erasure receipts are signed with
+  Ed25519 (with a `kid`) when `EVIDENCE_SIGNING_KEY` is set, otherwise with the legacy
+  HMAC-SHA256 secret (erasure receipts prefer `ERASURE_RECEIPT_SIGNING_KEY` when it is set);
+  decision receipts are COSE_Sign1 (Ed25519, `RECEIPT_SIGNING_KEY`).
+  Verification keys are published at `GET /.well-known/atf-evidence-jwks.json`,
+  `GET /.well-known/atf-receipt-jwks.json` and, combined, `GET /.well-known/atf-jwks.json`.
+  Forging or replaying signed evidence, or weakening signature verification, is in scope.
 - **Content trust / taint.** Untrusted tool and retrieval results taint the execution
   (`_meta["io.atf/content-trust"]` between services; `TAINT_MODE`,
   `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`). Bypassing taint — e.g. a tainted result performing

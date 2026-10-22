@@ -123,8 +123,8 @@ your context and language, remains your process.
 | Was the log altered | Chain verification and the anchor file; `EVIDENCE_SIGNING_KEY` (Ed25519) makes anchors and bundles verifiable offline via `/.well-known/atf-evidence-jwks.json` |
 | Was personal data erased | Signed erasure receipts (`GET /v1/me/data/erasures/{id}`); receipts carry pseudonymous hashes (SHA-256 of tenant id and identifier — pseudonymous personal data, not anonymous), never the identifier |
 | How good is the flow | Eval run history per dataset, shown in the dossier |
-| Was a flow version tested before release | Ed25519-signed release receipts from `atf flows release` (bench gate over recorded conversations, SemVer check, baseline comparison) prove that a specific flow version and digest passed its bench; third parties verify them offline with `atf-verify --release-receipt <file> --jwks <url|file>` |
-| Which controls are active | Governance posture report — `GET /monitoring/posture` or `cli.ts posture` scores evidence key, anchors, egress, taint, disclosure, policy, receipts and shared state as ok/warn/fail |
+| Was a flow version tested before release | Ed25519-signed release receipts from `bun run scripts/cli.ts flows release` (in `apps/runtime`) (bench gate over recorded conversations, SemVer check, baseline comparison) prove that a specific flow version and digest passed its bench; third parties verify them offline with `atf-verify --release-receipt <file> --jwks <url|file>` |
+| Which controls are active | Governance posture report — `GET /monitoring/posture` or `cli.ts posture` scores evidence key, anchors, egress, taint, disclosure, policy, receipts, shared state, flow load, audit pseudonym pepper, PII vault, approval gate, authentication mode and replicas as ok/warn/fail, and embeds the production-gate result |
 | Everything in one place | `GET /admin/compliance/dossier?format=json\|markdown` |
 
 ## 5. Switches that make the controls binding
@@ -134,7 +134,7 @@ you classify as high-risk:
 
 | Setting | Effect |
 | --- | --- |
-| `ATF_PRESET=regulated` / `regulated-multitenant` | Preset that fills the control bundle above (`TAINT_MODE=on-untrusted-source`, `AI_DISCLOSURE=header`, `COMPLIANCE_POLICY_REQUIRED=true` and the guardrail/PII/retention flags); explicit env values still win. In the production Betriebsprofil the preset makes a missing `AUDIT_ANCHOR_FILE`, an empty `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` fatal instead of warnings |
+| `ATF_PRESET=regulated` / `regulated-multitenant` | Preset that fills the control bundle above (`TAINT_MODE=on-untrusted-source`, `AI_DISCLOSURE=header`, `COMPLIANCE_POLICY_REQUIRED=true` and the guardrail/PII/retention flags); explicit env values still win. In the production operational profile the preset makes a missing `AUDIT_ANCHOR_FILE`, an empty `EGRESS_ALLOWED_HOSTS` and a missing `EVIDENCE_SIGNING_KEY` fatal instead of warnings |
 | `ATF_PROFILE=production` | Turns the production-readiness gates on (authentication, tenant isolation, RLS, audit anchoring warnings) |
 | `COMPLIANCE_POLICY_REQUIRED=true` | Production refuses to start without a loaded `compliance-policy.yaml`, so residency and data-class rules cannot be silently absent |
 | `EGRESS_ALLOWED_HOSTS` | Restricts guarded outbound calls to the destinations in your record of processing; empty means every public host |

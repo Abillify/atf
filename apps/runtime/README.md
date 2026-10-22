@@ -77,8 +77,11 @@ The two Rocket.Chat groups are documented in
 
 ### Streaming progress events
 
-While an agent-harness node works, the streaming chat response carries structured progress
-alongside the ordinary OpenAI chunks as a dedicated SSE event:
+While an agent-harness node works, a streaming chat response can carry structured progress
+alongside the ordinary OpenAI chunks as a dedicated SSE event. The event is opt-in per
+request: send the header `X-ATF-Progress: 1` or set `metadata.atf_progress: true` (browser
+clients behind CORS use the metadata field). Without it the stream carries only
+OpenAI-compatible chunks.
 
 ```text
 event: atf.progress
@@ -94,9 +97,11 @@ data: {"phase":"research","tasksDone":3,"tasksTotal":7,"coverage":{"covered":2,"
 | `etaMs` | Linear ETA `(elapsedMs / tasksDone) * (tasksTotal - tasksDone)`; only present once at least two tasks are done |
 | `message` | The free-text status line that triggered the event, unchanged |
 
-OpenAI-compatible clients ignore unknown SSE event names, so this is safe to consume
-optionally. The last event per node is also stored on the debug trace
-(`DebugNodeTrace.progress`).
+Only opt in with a client that reads the SSE event name: the OpenAI SDKs pass every `data:`
+frame on as a completion chunk, and a frame without `choices` breaks code such as
+`chunk.choices[0]`. Independent of the opt-in, the last event per node is stored on the
+debug trace (`DebugNodeTrace.progress`) and an asynchronous job reports it as `progress` on
+`GET /v1/jobs/{id}`.
 
 ## Configuration
 
@@ -114,13 +119,20 @@ startup error.
 
 Settings that changed with the 0.18.x hardening, worth knowing early:
 
-- `EVIDENCE_SIGNING_KEY` — HMAC secret for the evidence-chain signature;
+- `EVIDENCE_SIGNING_KEY` — Ed25519 key for the evidence-chain signature (without it the
+  legacy HMAC secrets sign);
   `scripts/cli.ts verify-bundle <bundle.json>` verifies an exported evidence
   bundle against it (or against the public keys from
   `/.well-known/atf-evidence-jwks.json`)
 - `scripts/cli.ts posture` — reports which governance controls are active
   (evidence key, anchors, egress, taint, disclosure, policy, receipts, shared
-  state) as ok/warn/fail; add `--server <url>` to query a running instance
+  state, flow load, audit pseudonym pepper, PII vault, approval gate,
+  authentication mode, replicas) as ok/warn/fail, each with an `area`, plus the
+  operational profile, the preset and the production-gate result
+  (`productionGate.fatal`/`warnings`); add `--server <url>` to query a running
+  instance. The check ids are snake_case (`evidence_key`, `shared_state`, …),
+  and a missing evidence key or a flow that failed to load is `fail` in every
+  profile — stricter than a warn-unless-regulated rule
 - `COMPLIANCE_POLICY_REQUIRED` — with it set, production refuses to start
   without a loaded compliance policy; without it the Runtime only logs at startup
 - `TRANSACTION_SIGNING_ALG` — algorithm for agent transaction tokens; the

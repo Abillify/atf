@@ -98,6 +98,7 @@ atf-verify --receipt <file> --jwks <url|file> [--proof <file>] [--kid <kid>] [--
 atf-verify --bundle <file> --jwks <url|file> [--kid <kid>] [--json]
 atf-verify --erasure-receipt <file> --jwks <url|file> [--kid <kid>] [--json]
 atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>] [--kid <kid>] [--json]
+atf-verify --release-receipt <file> --jwks <url|file> [--kid <kid>] [--json]
 ```
 
 - `--bundle` re-computes the canonical content hash of the bundle and verifies

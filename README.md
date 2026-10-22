@@ -263,6 +263,7 @@ atf-verify --receipt <file> --jwks <url|file> [--proof <file>]   # decision rece
 atf-verify --bundle <file> --jwks <url|file>                     # signed evidence bundle
 atf-verify --erasure-receipt <file> --jwks <url|file>            # erasure receipt
 atf-verify --audit-export <file> [--anchor <file>]               # audit log (+ anchors)
+atf-verify --release-receipt <file> --jwks <url|file>          # flow release receipt
 ```
 
 Exit codes: `0` verified, `1` verification failed, `2` usage or input error.

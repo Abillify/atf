@@ -107,7 +107,7 @@ stream.
    limit, and is not reached by document deletion or subject erasure; on a
    persistent `TEMP_DIR` (which `CONVERTER_MODE=isolated` shares with the
    sidecar) the operator needs a cleanup job and a place for it in the erasure
-   procedure (`docs/UPGRADE.md`, "0.18 → next"). A size/TTL eviction and an
+   procedure (`docs/UPGRADE.md`, "0.18 → 0.19"). A size/TTL eviction and an
    erasure hook are not implemented.
    Under `CONVERTER_MODE=isolated` the cache still works because the
    scratch directory is mounted at an identical absolute path in both the

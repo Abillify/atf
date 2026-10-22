@@ -150,7 +150,9 @@ releases:
   with the persisted model response of every page and both outboxes, which
   cascade — its upload sessions and `.part` files and the source bytes no other
   job uses, after Search answered (also when Search never held the reference; not
-  when the Search call failed, so the retry still finds everything), plus the
+  when the Search call failed, so the retry still finds everything; on behalf of
+  an end user only when Search deleted the reference in that caller's scope,
+  otherwise the answer is 404 and Extract keeps them), plus the
   cached PDF conversions of its sources. `POST /v1/erasure` removes the same
   derived PDFs. New retention rules bound the rest: `JOB_RETENTION_DAYS` (default
   `0` = keep) sweeps finished jobs, `UPLOAD_SESSION_MAX_AGE_HOURS` (default 72)
@@ -229,12 +231,12 @@ releases:
   the upgrade guide, with the two new THREAT-MODEL rows (the `show_figure` capability
   link and the trusted-writer ACL override), each backed by file and line.
 - With the production profile a flow whose node `config` contains a key the node type does not read is no longer loaded; it is reported as a flow load failure (readiness `flow_load: degraded`). Elsewhere the load logs a warning.
-- Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`), and the lexical OR list uses at most 32 terms (longest first).
+- Search bounds query cost: `SEARCH_MAX_QUERY_CHARS` (default 400) cuts longer queries at the last space (reported as `query_truncated`, on v1 as the header `X-Query-Truncated: true`), and the lexical OR list uses at most 32 terms (longest first).
 - Search: the HyDE and query-embedding caches key entries by tenant and query, so cache hits no longer reveal across tenants which questions were asked.
 - Search verifies the `typ` header of transaction tokens (`at+jwt` or `txn+jwt`) and answers 503 `TRANSACTION_KEYS_UNAVAILABLE` (retryable) when the JWKS is unreachable, instead of reporting an invalid token.
 - Gate warns in production while `monitoring.oidc.requiredGroups` is empty (every identity-provider user could open the monitor).
 - Gate monitor stream filters events by the OIDC session's tenant (`monitoring.tenantScope`, default `session`) and replaces tool results with a SHA-256 digest and size unless `monitoring.includeToolContent` is true.
-- Gate: with `policies.approval.requireDifferentApprover` an approval token whose approver is the requester is rejected even if it was issued before the flag was enabled; production warns while the flag is off and approval rules exist, and when pending approvals are per process with more than one replica.
+- Gate: with `policies.approval.requireDifferentApprover` an approval token whose approver is the requester is rejected even if it was issued before the flag was enabled (the token records the resolver's owner as `aown`); production warns while the flag is off and approval rules exist, and when pending approvals are per process with more than one replica.
 - Runtime no longer writes the erased subject (user id, e-mail, external ids, issuer) into the audit log; erasure entries carry subject hashes and a keyed pseudonym (`AUDIT_PSEUDONYM_PEPPER`), and policy denials use the user id instead of the e-mail as actor.
 - With `TAINT_MODE=on-untrusted-source`, results of MCP servers without `contentTrust: trusted` now taint the execution (previously only results labelled untrusted by Search or the Gate). Mark internal, curated servers with `contentTrust: trusted`.
 - Search activity stream: events are filtered by the subscriber's tenant and carry only the names of metadata filters, not their values.
@@ -242,20 +244,20 @@ releases:
 - Gate runs the approval lookup tool through the regular dispatcher (policy, rate limit, audit).
 - Services warn when `ATF_PROFILE` downgrades a production service variable (for example `NODE_ENV=production` with `ATF_PROFILE=staging`); `@atf/security-kit` 1.3.0 reports it as `shadowedProduction`.
 - `@atf/security-kit` 1.4.0: the rate-limit middleware accepts `failMode: "closed"` and answers 503 when its shared backend throws (default stays `"open"`). The Gate normalizes `tenantIsolation.issuerTenants` keys (trailing slash), compares issuers without it, and refuses to start when a key is not a configured issuer. The Gate production check warns when a tool binds a mutable identity claim (`:ctx.claims.name`, `.email`, `.preferred_username`).
-- Gate refuses tool bindings on the caller's bearer token (`:ctx.rawToken`, `:ctx.headers.authorization`) when the configuration loads and when a binding is resolved.
+- Gate refuses tool bindings that hand out the caller's credentials (`:ctx.rawToken`, the whole `:ctx.headers` object, and the `authorization`, `proxy-authorization` and `cookie` headers) when the configuration loads and when a binding is resolved; other single headers stay bindable.
 - Gate no longer closes an SSE session when a request with a bad token or another identity names its session id; only the owner's own connection ends it.
 - The egress guard blocks the documentation address ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) in addition to the private and reserved ranges it already refused.
 - The audit chain accepts the legacy hash form only for rows written before the first canonical row.
 - Eval regex assertions reject nested-quantifier patterns and match at most 100 000 characters.
 - `/health/ready` reports only the number of failed flow files (`flow_load_failures`); file names and reasons stay in the flow load log instead of the unauthenticated probe.
-- Extract's HTML sanitizer also drops javascript:, vbscript: and data: link targets (including entity-encoded forms); sanitizer revision 3 invalidates derived PDFs rendered by revision 2.
+- Extract's HTML sanitizer also drops javascript:, vbscript: and data: link targets (including entity-encoded forms and numeric character references without a closing `;`).
 
 ### Added
 
 - Control shows a flow-health page: load failures, database flows shadowing files, versions/digests and the latest eval result per flow.
 - `atf-verify` verifies Evidence Bundles, Ed25519 erasure receipts and audit-log exports (with anchors) offline, in addition to decision receipts; releases ship a Linux x64 binary.
-- Evidence-bound flow releases: bench files (`flows/bench/<flow>.bench.yaml`), `cli.ts flows release` (bench gate, semver check against a base revision, baseline comparison) and Ed25519-signed release receipts verifiable with `atf-verify --release-receipt`.
-- Search traceability: `trace` follows an identifier across two points in time (added/removed/changed occurrences) and `document_diff` (MCP and `GET /v2/documents/{base_ref}/diff`) compares a document's units between two points in time.
+- Evidence-bound flow releases: bench files (`flows/bench/<flow>.bench.yaml`), `cli.ts flows release` (bench gate, semver check against a base revision, baseline comparison) and Ed25519-signed release receipts verifiable with `atf-verify --release-receipt`. Version, digest and the base-revision check use the resolved flow (included sub-flows, prompts and model shortcuts), and a receipt is only signed when every bench case reports that `flow_version` and `flow_digest` in its debug trace.
+- Search traceability: `trace` follows an identifier across two points in time (added/removed/changed occurrences; a hit counts only when the content contains the identifier itself, and activity events record only its length) and `document_diff` (MCP and `GET /v2/documents/{base_ref}/diff`) compares a document's units between two points in time with one query per side, also for units outside a section, and reports `truncated` when a side exceeds the unit limit.
 - Search `FTS_CONTEXTUAL_HEADER=on` adds the document title and section path (weight D) to the lexical index of newly ingested chunks.
 - Search `FTS_COMPOUND_SPLIT=query` splits long German compounds in the query against the collection's lexicon and adds the parts to the lexical OR list.
 
@@ -394,11 +396,11 @@ releases:
 - Runtime hides Search navigation tools that the pinned collection cannot serve, based on `collection_stats.capabilities` (cached, `COLLECTION_CAPABILITY_TTL_MS`, fail-open).
 - Gate 2026 endpoint: `approvals/list` (own requests, or the tenant's requests for holders of `approverScope` when `requireDifferentApprover` is on) and `approvals/get` (status and, once approved, the one-shot approval token for the requester).
 - Gate keeps pending approvals of the 2026 endpoint in Redis when a Redis URL is configured (`MCPGATE_TRANSACTION_REDIS_URL`, `server.rateLimit.store`, or `monitoring.cluster`), so request and resolve may hit different replicas.
-- Agent harness: `coverageQueue.lanes` (1–8, default 1) works on several coverage assignments of the plannerless queue concurrently, each as its own delegation instance; results are merged in assignment order.
-- Agent harness emits structured progress (`phase`, tasks done/total, coverage, elapsed time, ETA) as the SSE event `atf.progress` and records the last value per node in the debug trace.
+- Agent harness: `coverageQueue.lanes` (1–8, default 1) works on several coverage assignments of the plannerless queue concurrently, each as its own delegation instance with separate tokens, prompts and trace entries; results are merged in assignment order.
+- Agent harness emits structured progress (`phase`, tasks done/total, coverage, elapsed time, ETA) and records the last value per node in the debug trace. Streaming chat clients receive it as the SSE event `atf.progress` only when they opt in with `X-ATF-Progress: 1` or `metadata.atf_progress: true`; without the opt-in the stream carries only OpenAI-compatible chunks.
 - `GET /v1/jobs/{id}` reports `progress` of a running agent-harness job (updated at most every 2 s).
 - Agent harness `statusLanguage` (`en` or `de`) renders all status and task labels in one language; without it the previous texts stay unchanged.
-- Flows accept `budgets` (`maxTokens`, `maxToolCalls`, `maxWallMs`): the execution stops before the next model or tool call once a limit is reached and finishes with `finishReason: budget_exceeded`.
+- Flows accept `budgets` (`maxTokens`, `maxToolCalls`, `maxWallMs`): the execution stops before the next model or tool call once a limit is reached and finishes with `finishReason: budget_exceeded`. Token and wall-clock limits are checked before every model step of a tool loop, and an exhausted tool-call budget ends the loop instead of being reported to the model as a tool error.
 - Model pools accept `sticky: execution | conversation` to keep calls of one execution or conversation on the same endpoint (prefix-cache affinity); failover still applies.
 - Eval assertions `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g. `loop_blocked`) check the execution trace.
 - `config.toolArgs` accepts `"*"` and `"<server>/*"` keys; wildcard arguments apply to tools that declare them, exact refs still win.
@@ -419,7 +421,8 @@ releases:
 - Search groups documents ingested with the same `split_of` metadata as `split_document` and lists siblings in `get_documents`.
 - Search `retrieve_for_answer` (MCP) and `POST /v2/retrieve`: rule-based question decomposition, multi-query reciprocal-rank fusion, optional rerank against the original question, de-duplication and packing into a token budget.
 - LLM nodes accept `cascade`: an answer with too few citations, a failed sources check, a weak top grounding score or a length cut-off is regenerated once with `escalateTo` (diagnostic `cascade_escalated`, metric `aiperator_cascade_escalations_total`).
-- Governance posture report: `GET /monitoring/posture` and `cli.ts posture` list which controls are active (evidence key, anchors, egress, taint, disclosure, policy, receipts, shared state) as ok/warn/fail.
+- Governance posture report: `GET /monitoring/posture` and `cli.ts posture` list which controls are active (evidence key, anchors, egress, taint, disclosure, policy, receipts, shared state, flow load, audit pseudonym pepper, PII vault, approval gate, authentication mode, replicas) as ok/warn/fail with an `area` per check, and name the operational profile, the preset and the production-gate result.
+- Search results carry the `revision_id` of their revision.
 
 ### Changed
 
@@ -599,6 +602,7 @@ releases:
 - The audit-anchor production warning recommends EVIDENCE_SIGNING_KEY.
 - Dependabot uses the bun ecosystem; CI uploads HIGH image findings as SARIF without failing.
 - GitHub releases use the version's CHANGELOG section as release notes.
+- Extract renders page windows with fewer subprocesses: page sizes come from the window's `pdfinfo`, and runs of oversized pages are rendered as one window at their adaptive DPI.
 
 ### Fixed
 
@@ -721,10 +725,14 @@ releases:
 - Control renders server-side texts in the locale of each request.
 - Long erasure runs renew their lease after every store group and stop when another worker took over.
 - The supply-chain generator ignores installed packages that are not in bun.lock.
+- Search full-text cursor paging returns every hit exactly once: the cursor follows the all-terms ranking tier, compares scores at the precision of `ts_rank_cd`, and ids sort numerically.
+- Gate resolves a pending approval exactly once, also across replicas (a concurrent second `approvals/resolve` answers 404); the Redis approval store enforces `policies.approval.maxPending` per tenant (503) and expires its index.
+- Extract enforces the derived-PDF cache limits at start and every `RETENTION_SWEEP_INTERVAL_MINUTES`, not only when a conversion is written; files a running job of another renderer holds stay in place.
+- Documentation: `docs/UPGRADE.md` has a "0.18 → 0.19" section with Runtime migrations 48 and 49, the audit cut-off rollout rule and its repair, the Gate start aborts and monitor login change, and the Search, Runtime and Extract behaviour changes; `SECURITY.md` describes the evidence and receipt signature formats correctly; `docs/THREAT-MODEL.md` covers audit pseudonyms, the compliance-policy readiness check and the Gate monitor stream; `flows release` and `atf-verify --release-receipt` are named correctly.
 
 ### Migration
 
-Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
+Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → 0.19") before rolling this
 out. The changes below can stop an existing deployment from starting or change
 what it returns, without any code change on your side:
 
@@ -830,6 +838,10 @@ what it returns, without any code change on your side:
 - Search MCP `search` results are compact JSON now; set `SEARCH_MCP_PRETTY_JSON=true` if a client relied on the 2-space indentation.
 - `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` as a string now; clients that compared with the boolean `true` must compare with the string.
 - `/health/ready` no longer lists the file names and reasons of flows that fail to load; alerting on `flow_load: degraded` keeps working, and the details are in the flow load log.
+- Gate: a tool binding on `:ctx.rawToken`, `:ctx.headers`, or the `authorization`, `proxy-authorization` or `cookie` header stops the start (`Binding :ctx.<path> is not allowed`). Remove it before upgrading; use token exchange or passthrough for credentials.
+- Gate: a `tenantIsolation.issuerTenants` key that is not a configured OAuth or monitor issuer stops the start (`... not a configured issuer`).
+- Gate monitor OIDC login: with tenant isolation an ID token without a tenant claim is refused (it used to fall back to the default tenant), and a non-empty `issuerTenants` must list `monitoring.oidc.issuer`. Configure the IdP and the binding before upgrading, or operators lose monitor access.
+- Runtime audit chain: do not run 0.18 and 0.19 Runtime pods side by side during this upgrade (scale to 0 or use a `Recreate` rollout); an old pod writing after the canonical cut-off makes verification report `legacy_hash_after_cutoff`. UPGRADE item 6 describes the repair.
 
 ## [0.18.1] — 2026-10-18
 

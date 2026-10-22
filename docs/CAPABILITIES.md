@@ -470,7 +470,7 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   name), `maxTokens`, `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g.
   `loop_blocked`, which checks the execution trace); a cell passes when its reference score
   and every assertion do.
-- **Evidence-bound flow releases.** `atf flows release` gates a flow release on a versioned
+- **Evidence-bound flow releases.** `bun run scripts/cli.ts flows release` (in `apps/runtime`) gates a flow release on a versioned
   bench file (`flows/bench/<flowId>.bench.yaml`): recorded conversations with assertions,
   a required pass rate plus optional p50 latency/token thresholds, a SemVer check against a
   base revision, and a baseline comparison that rejects pass-rate regressions. A passing gate
@@ -674,8 +674,10 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
 - **SLO tracking** and alert webhooks.
 - **Governance posture report.** `GET /monitoring/posture` (and `cli.ts posture`) list
   which governance controls are active — evidence key, anchors, egress, taint,
-  disclosure, policy, receipts, shared state — as ok/warn/fail, so the configured
-  control set is provable at a point in time.
+  disclosure, policy, receipts, shared state, flow load, audit pseudonym pepper,
+  PII vault, approval gate, authentication mode, replicas — as ok/warn/fail, together
+  with the operational profile, the preset and the production-gate result, so the
+  configured control set is provable at a point in time.
 
 ## Operator interface
 
