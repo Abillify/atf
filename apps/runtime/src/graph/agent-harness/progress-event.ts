@@ -92,6 +92,22 @@ export function harnessProgressSseFrame(progress: HarnessProgress): string {
   return `event: atf.progress\ndata: ${JSON.stringify(progress)}\n\n`;
 }
 
+/**
+ * Whether a streaming client asked for `atf.progress` events. Off by default:
+ * OpenAI SDKs hand every `data:` frame to the caller as a completion chunk,
+ * and a frame without `choices` breaks typical client code. A client opts in
+ * with the header `X-ATF-Progress: 1` (or `true`) or with
+ * `metadata.atf_progress: true` (or `"true"`).
+ */
+export function harnessProgressRequested(
+  header: string | undefined,
+  metadata: Record<string, unknown> | undefined,
+): boolean {
+  const h = header?.trim().toLowerCase();
+  if (h === "1" || h === "true") return true;
+  const m = metadata?.atf_progress;
+  return m === true || m === "true";
+}
 /** Delivers a progress event to whoever is transporting it out of the run. */
 export type HarnessProgressSink = (progress: HarnessProgress) => void;
 

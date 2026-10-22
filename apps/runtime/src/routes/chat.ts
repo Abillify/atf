@@ -51,6 +51,7 @@ import {
   executeStreaming,
   executeNonStreaming,
 } from "./chat/streaming.js";
+import { harnessProgressRequested } from "../graph/agent-harness/progress-event.js";
 
 import {
   evaluateInputGuardrail,
@@ -690,6 +691,10 @@ export function createChatRouter(
           setRunUsage: (u) => {
             runUsage = u;
           },
+          progressEvents: harnessProgressRequested(
+            ctx.req.header("X-ATF-Progress"),
+            metadata,
+          ),
         },
       );
     }

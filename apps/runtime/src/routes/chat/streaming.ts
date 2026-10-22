@@ -186,6 +186,12 @@ export interface StreamingParams {
   resolvedModel: string;
   finalize: (responseText: string, hadError: boolean) => Promise<void>;
   setRunUsage: (usage: TokenUsage) => void;
+  /**
+   * Send structured harness progress as `event: atf.progress` frames. Opt-in
+   * per request (see `harnessProgressRequested`); without it the stream
+   * carries only OpenAI-compatible chunks.
+   */
+  progressEvents?: boolean;
 }
 
 /**
@@ -204,6 +210,7 @@ export function executeStreaming(
     resolvedModel,
     finalize,
     setRunUsage,
+    progressEvents = false,
   } = params;
   const { graphEngine, monitoring, runtimeGuardrailOverride } = deps;
   const heartbeatMs = deps.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS;
@@ -232,15 +239,16 @@ export function executeStreaming(
       write: serializedWrite,
     };
 
-    // Structured harness progress travels on its own SSE event so OpenAI
-    // clients can read it without parsing the reasoning text. They ignore
-    // unknown event names, so the content stream is unaffected.
-    const unregisterProgress = registerHarnessProgressSink(
-      requestCtx.executionId,
-      (progress) => {
-        serializedWrite(harnessProgressSseFrame(progress)).catch(() => {});
-      },
-    );
+    // Structured harness progress travels on its own SSE event, but only for
+    // clients that asked for it: OpenAI SDKs pass every `data:` frame on as a
+    // completion chunk regardless of the event name, and a frame without
+    // `choices` breaks typical client code. The debug trace and async jobs
+    // record progress either way.
+    const unregisterProgress = progressEvents
+      ? registerHarnessProgressSink(requestCtx.executionId, (progress) => {
+          serializedWrite(harnessProgressSseFrame(progress)).catch(() => {});
+        })
+      : () => {};
 
     // Open a replay buffer for this execution so reconnecting clients
     // can resume mid-stream with Last-Event-ID.
