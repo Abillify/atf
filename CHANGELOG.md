@@ -18,7 +18,23 @@ releases:
 
 ## [Unreleased]
 
-### Dependencies
+## [0.19.1] - 2026-10-23
+
+### Added
+
+- **Images / Supply chain**: shipped container images now carry a machine-readable
+  license inventory. The release workflow scans every published service image with
+  Trivy (`--scanners license`, checksum-pinned) and adds the per-image
+  `atf-<service>-licenses.cdx.json` to the checksummed supply-chain bundle; the CI
+  image-scan job smoke-tests the same scan on the extract image. The new
+  [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md) documents the image bases, the
+  poppler (GPL-2.0-or-later/MPL-2.0) and LibreOffice (MPL-2.0/LGPL-3.0-or-later)
+  packages in the extract image, why `execFile` process-boundary invocation keeps
+  them outside ATF's derivative-work boundary, and where Debian's license texts and
+  source availability live. Closes the gap between the npm/Cargo notices (which
+  cover the dependency tree only) and the OS packages an image actually distributes.
+
+### Changed
 
 - **All workspaces**: consolidated dependency refresh applied directly from the
   open Dependabot PRs (not merged): `ai` 7.0.143 and the `@ai-sdk/*` provider
@@ -46,18 +62,6 @@ releases:
   four quickstart stages.
 
 ### Documentation
-
-- **Images / Supply chain**: shipped container images now carry a machine-readable
-  license inventory. The release workflow scans every published service image with
-  Trivy (`--scanners license`, checksum-pinned) and adds the per-image
-  `atf-<service>-licenses.cdx.json` to the checksummed supply-chain bundle; the CI
-  image-scan job smoke-tests the same scan on the extract image. The new
-  [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md) documents the image bases, the
-  poppler (GPL-2.0-or-later/MPL-2.0) and LibreOffice (MPL-2.0/LGPL-3.0-or-later)
-  packages in the extract image, why `execFile` process-boundary invocation keeps
-  them outside ATF's derivative-work boundary, and where Debian's license texts and
-  source availability live. Closes the gap between the npm/Cargo notices (which
-  cover the dependency tree only) and the OS packages an image actually distributes.
 
 - **Images**: `DEPLOYMENT.md`, `DEVELOPMENT.md`, and `docs/IMAGE-LICENSES.md`
   now name the `oven/bun` 1.4.3 base the production Dockerfiles actually pin,
@@ -4278,7 +4282,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Abillify/atf/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/abillify/atf/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/abillify/atf/compare/v0.17.0...v0.18.0
