@@ -10,17 +10,25 @@
 import { describe, expect, test } from "bun:test";
 import {
   aggregateStats,
+  buildReleaseReceipt,
   compareBaseline,
   compareSemVer,
+  computeBenchDigest,
   evaluateThresholds,
+  FlowReleaseReceiptSchema,
   percentile50,
+  releaseReceiptSigningBytes,
   runBenchCases,
+  signReleaseReceipt,
   totalTokensOf,
+  verifyReleaseReceiptSignature,
   versionGateProblem,
+  type FlowReleaseReceipt,
   type ReleaseStats,
 } from "../flow-release.js";
 import type { BenchFile } from "../bench-contract.js";
 import type { FlowExecutionResult, FlowExecutor } from "../eval-runner.js";
+import { parseEvidenceSigningKey } from "../../observability/evidence-key.js";
 
 describe("compareSemVer", () => {
   test("orders numeric cores", () => {
@@ -250,5 +258,112 @@ describe("runBenchCases + aggregateStats", () => {
     });
     const bare = await runBenchCases(bench, noUsage, 1);
     expect(aggregateStats(bare.report, bare.stats).tokensP50).toBe(0);
+  });
+});
+
+describe("release receipts (T-353)", () => {
+  // Fixed synthetic seed (R13): deterministic key, kid and signature.
+  const key = parseEvidenceSigningKey(Buffer.alloc(32, 7).toString("base64"));
+  if (key === undefined) throw new Error("fixture signing key missing");
+
+  const unsigned = buildReleaseReceipt({
+    flowId: "demo",
+    flowVersion: "1.2.4",
+    flowDigest: "sha256:aaa",
+    baseRef: "v1.2.3",
+    baseFlowVersion: "1.2.3",
+    benchDigest: "sha256:bbb",
+    results: { cases: 3, passed: 3, passRate: 1, latencyMsP50: 12, tokensP50: 20 },
+    thresholds: { passRate: 1, maxLatencyMsP50: 30_000 },
+    createdAt: "2026-02-22T12:00:00.000Z",
+  });
+
+  test("computeBenchDigest is deterministic and sha256-formatted", () => {
+    const bench: BenchFile = {
+      version: 1,
+      flow: "demo",
+      cases: [{ id: "a", messages: [{ role: "user", content: "hi" }] }],
+      thresholds: { passRate: 1 },
+    };
+    const d1 = computeBenchDigest(bench);
+    const d2 = computeBenchDigest({ ...bench, cases: [...bench.cases] });
+    expect(d1).toBe(d2);
+    expect(d1).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(computeBenchDigest({ ...bench, flow: "other" })).not.toBe(d1);
+  });
+
+  test("sign adds an EdDSA signature with the key thumbprint kid", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    expect(receipt.signature.alg).toBe("EdDSA");
+    expect(receipt.signature.kid).toBe(key.kid);
+    expect(receipt.signature.value.length).toBeGreaterThan(0);
+    expect(FlowReleaseReceiptSchema.safeParse(receipt).success).toBe(true);
+  });
+
+  test("verify accepts the signature over the canonical bytes without signature", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+    // The signing input excludes the signature field itself.
+    const bytes = releaseReceiptSigningBytes(receipt);
+    expect(bytes).not.toContain("signature");
+    expect(bytes).toContain('"flowId":"demo"');
+  });
+
+  test("verify rejects a tampered field", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    const tampered: FlowReleaseReceipt = {
+      ...receipt,
+      results: { ...receipt.results, passRate: 0.5 },
+    };
+    expect(verifyReleaseReceiptSignature(tampered, key.publicKeyRaw)).toBe(false);
+  });
+
+  test("verify rejects a different key", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    const other = parseEvidenceSigningKey(Buffer.alloc(32, 8).toString("base64"));
+    if (other === undefined) throw new Error("fixture signing key missing");
+    expect(verifyReleaseReceiptSignature(receipt, other.publicKeyRaw)).toBe(false);
+  });
+
+  test("omitted optional fields stay absent and verify", () => {
+    const minimal = buildReleaseReceipt({
+      flowId: "demo",
+      flowVersion: "1.0.0",
+      flowDigest: "sha256:ccc",
+      benchDigest: "sha256:ddd",
+      results: { cases: 1, passed: 1, passRate: 1, latencyMsP50: 1, tokensP50: 0 },
+      thresholds: { passRate: 1 },
+      createdAt: "2026-02-22T12:00:00.000Z",
+    });
+    expect("baseRef" in minimal).toBe(false);
+    expect("baseFlowVersion" in minimal).toBe(false);
+    const receipt = signReleaseReceipt(minimal, key);
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+    expect(FlowReleaseReceiptSchema.safeParse(receipt).success).toBe(true);
+  });
+
+  test("schema rejects malformed receipts", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({ ...receipt, type: "other" }).success,
+    ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({ ...receipt, version: 2 }).success,
+    ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({
+        ...receipt,
+        results: { ...receipt.results, passRate: 2 },
+      }).success,
+    ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({
+        ...receipt,
+        signature: { ...receipt.signature, alg: "HS256" },
+      }).success,
+    ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({ ...receipt, unknown: true }).success,
+    ).toBe(false);
   });
 });

@@ -58,12 +58,19 @@ import { computeFlowDigest } from "../src/graph/flow-revision.js";
 import { createHttpExecutor } from "../src/eval/run.js";
 import {
   aggregateStats,
+  buildReleaseReceipt,
   compareBaseline,
+  computeBenchDigest,
   evaluateThresholds,
   runBenchCases,
+  signReleaseReceipt,
   versionGateProblem,
   type ReleaseBaseline,
 } from "../src/eval/flow-release.js";
+import {
+  parseEvidenceSigningKey,
+  type Ed25519EvidenceKey,
+} from "../src/observability/evidence-key.js";
 import type { FlowDefinition } from "../src/types/flow.js";
 
 // ---------------------------------------------------------------------------
@@ -1219,6 +1226,7 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
   const headDigest = computeFlowDigest(headRaw as FlowDefinition);
 
   // 3. Version-Gate gegen --base (git show <base>:<pfad>).
+  let baseVersion: string | undefined;
   if (args.base !== undefined && args.base !== "") {
     const gitCwd = path.dirname(path.resolve(flowPath));
     const rel = path.relative(gitCwd, path.resolve(flowPath)) || path.basename(flowPath);
@@ -1240,7 +1248,7 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
       console.error(`${fail} Failed to parse base flow: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
-    const baseVersion = flowMetadataVersion(baseRaw);
+    baseVersion = flowMetadataVersion(baseRaw);
     const baseDigest = computeFlowDigest(baseRaw as FlowDefinition);
     const problem = versionGateProblem({
       digestChanged: baseDigest !== headDigest,
@@ -1306,21 +1314,63 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     }
   }
 
-  // 6. Mit --signing-key-file: Release-Receipt schreiben (T-353), sonst nur Bericht.
-  if (args.signingKeyFile !== undefined && args.signingKeyFile !== "") {
-    console.warn(`${warn} Release receipt signing arrives with T-353; report only for now.`);
-  }
-
   if (failures.length > 0) {
     if (args.json) {
       console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: false, failures }, null, 2));
     }
     return 1;
   }
+
+  // 6. Mit --signing-key-file: signiertes Release-Receipt schreiben (T-353),
+  //    sonst nur Bericht. Nur ein passierter Gate erzeugt ein Receipt.
+  let receiptOut: string | undefined;
+  if (args.signingKeyFile !== undefined && args.signingKeyFile !== "") {
+    if (headVersion === undefined || headVersion === "") {
+      console.error(`${fail} Cannot sign a release receipt: the flow file has no metadata.version`);
+      return 1;
+    }
+    let key: Ed25519EvidenceKey | undefined;
+    try {
+      key = parseEvidenceSigningKey(fs.readFileSync(args.signingKeyFile, "utf8").trim());
+    } catch (err) {
+      console.error(`${fail} Failed to read signing key ${args.signingKeyFile}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    if (key === undefined) {
+      console.error(`${fail} Signing key file ${args.signingKeyFile} is empty`);
+      return 1;
+    }
+    const receipt = signReleaseReceipt(
+      buildReleaseReceipt({
+        flowId,
+        flowVersion: headVersion,
+        flowDigest: headDigest,
+        ...(args.base !== undefined && args.base !== "" ? { baseRef: args.base } : {}),
+        ...(baseVersion !== undefined ? { baseFlowVersion: baseVersion } : {}),
+        benchDigest: computeBenchDigest(bench),
+        results: stats,
+        thresholds: bench.thresholds,
+        createdAt: new Date().toISOString(),
+      }),
+      key,
+    );
+    receiptOut =
+      args.out !== undefined && args.out !== ""
+        ? args.out
+        : path.join(process.cwd(), `${flowId}.release-receipt.json`);
+    try {
+      fs.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    } catch (err) {
+      console.error(`${fail} Failed to write release receipt ${receiptOut}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+
   if (args.json) {
-    console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: true, failures: [] }, null, 2));
+    console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: true, failures: [], ...(receiptOut !== undefined ? { receiptPath: receiptOut } : {}) }, null, 2));
   } else {
     console.log(`${ok} Release gate passed.`);
+    if (receiptOut !== undefined) console.log(`${ok} Release receipt written to ${receiptOut}`);
   }
   return 0;
 }

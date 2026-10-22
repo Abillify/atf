@@ -2,14 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure release-gate logic for `atf flows release` (T-352, E6).
+ * Pure release-gate logic for `atf flows release` (T-352, E6) plus the
+ * signed release receipt (T-353, E6 step 6).
  *
  * Everything here is side-effect free: SemVer comparison, percentile
- * statistics, threshold evaluation and baseline comparison. The CLI in
- * `scripts/cli.ts` supplies I/O (flow files, git, HTTP executor) and turns
- * the structured outcome into exit codes and output.
+ * statistics, threshold evaluation, baseline comparison and receipt
+ * building/signing over bytes. The CLI in `scripts/cli.ts` supplies I/O
+ * (flow files, git, HTTP executor, key files) and turns the structured
+ * outcome into exit codes and output.
  */
 
+import { type KeyObject, createHash } from "node:crypto";
+import { z } from "zod";
 import type { BenchFile, BenchThresholds } from "./bench-contract.js";
 import {
   type EvalCase,
@@ -17,6 +21,12 @@ import {
   type FlowExecutor,
   runEval,
 } from "./eval-runner.js";
+import { canonicalizeForBundleHash } from "../observability/evidence-bundle.js";
+import {
+  type Ed25519EvidenceKey,
+  signEvidenceBytes,
+  verifyEvidenceBytes,
+} from "../observability/evidence-key.js";
 
 /** SemVer shape accepted by the release gate (same as the CLI's SEMVER_RE). */
 export const RELEASE_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -326,4 +336,179 @@ export function aggregateStats(
     latencyMsP50: percentile50(caseStats.map((c) => c.latencyMs)),
     tokensP50: tokens.length > 0 ? percentile50(tokens) : 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Signed release receipt (T-353, E6 step 6)
+// ---------------------------------------------------------------------------
+
+/** Format discriminator of a flow release receipt. */
+export const RELEASE_RECEIPT_TYPE = "atf.flow-release-receipt";
+
+/** Current release receipt format version. Bump on breaking shape changes. */
+export const RELEASE_RECEIPT_VERSION = 1 as const;
+
+/** EdDSA (Ed25519) is the only signing algorithm for release receipts. */
+export const RELEASE_RECEIPT_ALG = "EdDSA";
+
+/**
+ * A signed flow release receipt (E6 design): the outcome of a passing
+ * release gate, bound to the flow digest and the bench file digest and
+ * signed with an Ed25519 evidence key. Holders verify it offline with
+ * `atf-verify --release-receipt` against the issuer's JWKS. There is
+ * deliberately no transparency-log entry (Anhang B).
+ */
+export interface FlowReleaseReceipt {
+  type: typeof RELEASE_RECEIPT_TYPE;
+  version: typeof RELEASE_RECEIPT_VERSION;
+  flowId: string;
+  flowVersion: string;
+  flowDigest: string;
+  baseRef?: string;
+  baseFlowVersion?: string;
+  benchDigest: string;
+  results: ReleaseStats;
+  thresholds: BenchThresholds;
+  createdAt: string;
+  signature: {
+    alg: typeof RELEASE_RECEIPT_ALG;
+    kid: string;
+    value: string;
+  };
+}
+
+/**
+ * Schema mirroring {@link FlowReleaseReceipt}. The thresholds sub-object is
+ * spelled out here because `BenchThresholdsSchema` is not exported from
+ * `bench-contract.ts`; the constraints are identical.
+ */
+export const FlowReleaseReceiptSchema = z
+  .object({
+    type: z.literal(RELEASE_RECEIPT_TYPE),
+    version: z.literal(RELEASE_RECEIPT_VERSION),
+    flowId: z.string().min(1).max(200),
+    flowVersion: z.string().min(1),
+    flowDigest: z.string().min(1),
+    baseRef: z.string().min(1).optional(),
+    baseFlowVersion: z.string().min(1).optional(),
+    benchDigest: z.string().min(1),
+    results: z
+      .object({
+        cases: z.number().int().nonnegative(),
+        passed: z.number().int().nonnegative(),
+        passRate: z.number().min(0).max(1),
+        latencyMsP50: z.number().finite().nonnegative(),
+        tokensP50: z.number().finite().nonnegative(),
+      })
+      .strict(),
+    thresholds: z
+      .object({
+        passRate: z.number().min(0).max(1),
+        maxLatencyMsP50: z.number().int().positive().finite().optional(),
+        maxTokensP50: z.number().int().positive().finite().optional(),
+      })
+      .strict(),
+    createdAt: z.string().min(1),
+    signature: z
+      .object({
+        alg: z.literal(RELEASE_RECEIPT_ALG),
+        kid: z.string().min(1),
+        value: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Digest of a bench file: `sha256:<hex>` over its canonical JSON, the same
+ * format as {@link computeFlowDigest} for flows. Pinning the bench file in
+ * the receipt makes the exact gate definition (cases + thresholds)
+ * verifiable later, not just the numbers it produced.
+ */
+export function computeBenchDigest(bench: BenchFile): string {
+  return `sha256:${createHash("sha256")
+    .update(canonicalizeForBundleHash(bench))
+    .digest("hex")}`;
+}
+
+/** Input for {@link buildReleaseReceipt}: everything except the signature. */
+export interface ReleaseReceiptInput {
+  flowId: string;
+  flowVersion: string;
+  flowDigest: string;
+  baseRef?: string;
+  baseFlowVersion?: string;
+  benchDigest: string;
+  results: ReleaseStats;
+  thresholds: BenchThresholds;
+  createdAt: string;
+}
+
+/**
+ * Builds the unsigned receipt document (E6 shape). Optional fields absent
+ * at build time are omitted entirely rather than set to `undefined`, so the
+ * canonical signing bytes stay stable.
+ */
+export function buildReleaseReceipt(
+  input: ReleaseReceiptInput,
+): Omit<FlowReleaseReceipt, "signature"> {
+  return {
+    type: RELEASE_RECEIPT_TYPE,
+    version: RELEASE_RECEIPT_VERSION,
+    flowId: input.flowId,
+    flowVersion: input.flowVersion,
+    flowDigest: input.flowDigest,
+    ...(input.baseRef !== undefined ? { baseRef: input.baseRef } : {}),
+    ...(input.baseFlowVersion !== undefined
+      ? { baseFlowVersion: input.baseFlowVersion }
+      : {}),
+    benchDigest: input.benchDigest,
+    results: input.results,
+    thresholds: input.thresholds,
+    createdAt: input.createdAt,
+  };
+}
+
+/**
+ * Canonical bytes covered by the signature: the receipt without its
+ * `signature` field, canonicalized exactly like evidence bundles
+ * (`canonicalJson`). Verifiers must reproduce these bytes identically.
+ */
+export function releaseReceiptSigningBytes(
+  receipt: Omit<FlowReleaseReceipt, "signature"> | FlowReleaseReceipt,
+): string {
+  const { signature: _signature, ...unsigned } = receipt as FlowReleaseReceipt;
+  return canonicalizeForBundleHash(unsigned);
+}
+
+/**
+ * Signs a release receipt with an Ed25519 evidence key. The signature
+ * covers the canonical bytes of the receipt without the `signature` field;
+ * the result satisfies {@link FlowReleaseReceiptSchema}.
+ */
+export function signReleaseReceipt(
+  unsigned: Omit<FlowReleaseReceipt, "signature">,
+  key: Ed25519EvidenceKey,
+): FlowReleaseReceipt {
+  const value = signEvidenceBytes(key, releaseReceiptSigningBytes(unsigned));
+  return {
+    ...unsigned,
+    signature: { alg: RELEASE_RECEIPT_ALG, kid: key.kid, value },
+  };
+}
+
+/**
+ * Verifies the Ed25519 signature of a release receipt against a public key
+ * (raw 32 bytes or a KeyObject). Never throws; malformed signatures simply
+ * verify as `false`.
+ */
+export function verifyReleaseReceiptSignature(
+  receipt: FlowReleaseReceipt,
+  publicKey: Uint8Array | KeyObject,
+): boolean {
+  return verifyEvidenceBytes(
+    publicKey,
+    releaseReceiptSigningBytes(receipt),
+    receipt.signature.value,
+  );
 }

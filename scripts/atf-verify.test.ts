@@ -36,6 +36,11 @@ import {
   signAuditAnchor,
   type AuditRecord,
 } from "../apps/runtime/src/observability/audit-log.ts";
+import {
+  buildReleaseReceipt,
+  signReleaseReceipt,
+  type FlowReleaseReceipt,
+} from "../apps/runtime/src/eval/flow-release.ts";
 
 const CLI = join(import.meta.dir, "atf-verify.ts");
 // A fixed 32-byte Ed25519 seed (base64) so the kid is deterministic.
@@ -324,7 +329,7 @@ describe("atf-verify CLI", () => {
     const r1 = await runCli([]);
     expect(r1.exit).toBe(2);
     expect(r1.stderr).toContain(
-      "--receipt, --bundle, --erasure-receipt or --audit-export is required",
+      "--receipt, --bundle, --erasure-receipt, --release-receipt or --audit-export is required",
     );
     const a = await makeArtifacts("r-usage");
     const r2 = await runCli(["--receipt", a.receiptPath, "--jwks", "/nope/x"]);
@@ -702,6 +707,198 @@ describe("atf-verify --erasure-receipt", () => {
     const typ = await runCli(["--erasure-receipt", wrongTyp, "--jwks", a.jwksPath]);
     expect(typ.exit).toBe(2);
     expect(typ.stderr).toContain('no "typ" of "atf-erasure-receipt/1.0.0"');
+  });
+});
+
+async function makeReleaseArtifacts(label: string): Promise<{
+  dir: string;
+  receiptPath: string;
+  jwksPath: string;
+  kid: string;
+  receipt: FlowReleaseReceipt;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "atf-verify-release-"));
+  const key = parseEvidenceSigningKey(SEED_B64);
+  if (key === undefined) throw new Error("fixture signing key missing");
+  const receipt = signReleaseReceipt(
+    buildReleaseReceipt({
+      flowId: `flow-${label}`,
+      flowVersion: "1.2.4",
+      flowDigest: "sha256:aaa",
+      baseRef: "v1.2.3",
+      baseFlowVersion: "1.2.3",
+      benchDigest: "sha256:bbb",
+      results: { cases: 3, passed: 3, passRate: 1, latencyMsP50: 12, tokensP50: 20 },
+      thresholds: { passRate: 1, maxLatencyMsP50: 30_000 },
+      createdAt: "2026-02-22T12:00:00.000Z",
+    }),
+    key,
+  );
+  const receiptPath = join(dir, "release-receipt.json");
+  await writeFile(receiptPath, JSON.stringify(receipt));
+  const jwksPath = join(dir, "jwks.json");
+  await writeFile(
+    jwksPath,
+    JSON.stringify({
+      keys: [{ ...key.jwk, kid: key.kid, alg: "EdDSA", use: "sig" }],
+    }),
+  );
+  return { dir, receiptPath, jwksPath, kid: key.kid, receipt };
+}
+
+describe("atf-verify --release-receipt", () => {
+  it("verifies a valid signed release receipt (exit 0)", async () => {
+    const a = await makeReleaseArtifacts("release-ok");
+    const r = await runCli([
+      "--release-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain("flow-release-ok");
+  });
+
+  it("emits a JSON report with --json", async () => {
+    const a = await makeReleaseArtifacts("release-json");
+    const r = await runCli([
+      "--release-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+      "--json",
+    ]);
+    expect(r.exit).toBe(0);
+    const report = JSON.parse(r.stdout) as {
+      valid: boolean;
+      mode: string;
+      flow_id: string;
+      flow_version: string;
+      flow_digest: string;
+      base_ref: string;
+      base_flow_version: string;
+      bench_digest: string;
+      pass_rate: number;
+      created_at: string;
+      algorithm: string;
+      kid: string;
+      signature_valid: boolean;
+    };
+    expect(report.valid).toBe(true);
+    expect(report.mode).toBe("release-receipt");
+    expect(report.flow_id).toBe("flow-release-json");
+    expect(report.flow_version).toBe("1.2.4");
+    expect(report.flow_digest).toBe("sha256:aaa");
+    expect(report.base_ref).toBe("v1.2.3");
+    expect(report.base_flow_version).toBe("1.2.3");
+    expect(report.bench_digest).toBe("sha256:bbb");
+    expect(report.pass_rate).toBe(1);
+    expect(report.created_at).toBe("2026-02-22T12:00:00.000Z");
+    expect(report.algorithm).toBe("EdDSA");
+    expect(report.kid).toBe(a.kid);
+    expect(report.signature_valid).toBe(true);
+  });
+
+  it("fails on a tampered field with stale signature (exit 1)", async () => {
+    const a = await makeReleaseArtifacts("release-tampered");
+    const tampered = JSON.parse(JSON.stringify(a.receipt)) as FlowReleaseReceipt;
+    tampered.results.passRate = 0.5;
+    const path = join(a.dir, "tampered.json");
+    await writeFile(path, JSON.stringify(tampered));
+    const r = await runCli(["--release-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("signature does not verify against this key");
+  });
+
+  it("fails on a schema-invalid document even with a valid signature (exit 1)", async () => {
+    const a = await makeReleaseArtifacts("release-badschema");
+    const key = parseEvidenceSigningKey(SEED_B64);
+    if (key === undefined) throw new Error("fixture signing key missing");
+    // Sign a document that does not satisfy the receipt schema (passRate > 1).
+    const bad = signReleaseReceipt(
+      buildReleaseReceipt({
+        flowId: "flow-release-badschema",
+        flowVersion: "1.0.0",
+        flowDigest: "sha256:aaa",
+        benchDigest: "sha256:bbb",
+        results: { cases: 1, passed: 1, passRate: 2, latencyMsP50: 1, tokensP50: 0 },
+        thresholds: { passRate: 1 },
+        createdAt: "2026-02-22T12:00:00.000Z",
+      }),
+      key,
+    );
+    const path = join(a.dir, "bad-schema.json");
+    await writeFile(path, JSON.stringify(bad));
+    const r = await runCli(["--release-receipt", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("document is not a valid release receipt");
+  });
+
+  it("fails with exit 2 for an unknown --kid", async () => {
+    const a = await makeReleaseArtifacts("release-wrongkid");
+    const r = await runCli([
+      "--release-receipt",
+      a.receiptPath,
+      "--jwks",
+      a.jwksPath,
+      "--kid",
+      "unknown-kid",
+    ]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain('no JWKS key with kid "unknown-kid"');
+  });
+
+  it("rejects mode-flag misuse and bad input (exit 2)", async () => {
+    const a = await makeReleaseArtifacts("release-modes");
+    const both = await runCli([
+      "--release-receipt",
+      a.receiptPath,
+      "--bundle",
+      join(a.dir, "bundle.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(both.exit).toBe(2);
+    expect(both.stderr).toContain("cannot be combined");
+
+    const missing = await runCli([
+      "--release-receipt",
+      join(a.dir, "nope.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(missing.exit).toBe(2);
+    expect(missing.stderr).toContain("cannot read release receipt file");
+
+    const notJson = join(a.dir, "not-json.json");
+    await writeFile(notJson, "hello");
+    const bad = await runCli(["--release-receipt", notJson, "--jwks", a.jwksPath]);
+    expect(bad.exit).toBe(2);
+    expect(bad.stderr).toContain("release receipt file is not valid JSON");
+
+    const wrongType = join(a.dir, "wrong-type.json");
+    await writeFile(
+      wrongType,
+      JSON.stringify({ ...a.receipt, type: "atf.something-else" }),
+    );
+    const typ = await runCli([
+      "--release-receipt",
+      wrongType,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(typ.exit).toBe(2);
+    expect(typ.stderr).toContain('no "type" of "atf.flow-release-receipt"');
+
+    const noSig = join(a.dir, "no-sig.json");
+    const { signature: _signature, ...unsigned } = a.receipt;
+    await writeFile(noSig, JSON.stringify(unsigned));
+    const sig = await runCli(["--release-receipt", noSig, "--jwks", a.jwksPath]);
+    expect(sig.exit).toBe(2);
+    expect(sig.stderr).toContain('no "signature" object');
   });
 });
 

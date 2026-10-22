@@ -32,6 +32,13 @@
  *                     "payload", "signature"}): the Ed25519 signature over
  *                     the canonical JSON payload is verified offline against
  *                     the key from the JWKS and the payload is schema-checked.
+ *   --release-receipt <file>
+ *                     Signed flow release receipt (JSON with "type":
+ *                     "atf.flow-release-receipt" and a "signature" object):
+ *                     the Ed25519 signature over the canonical JSON receipt
+ *                     (without the signature field) is verified offline
+ *                     against the key from the JWKS and the document is
+ *                     schema-checked.
  *   --audit-export <file>
  *                     Audit-log export (JSONL from
  *                     GET /monitoring/audit/export?format=jsonl): the hash
@@ -45,6 +52,8 @@
  *   atf-verify --bundle <file> --jwks <url|file> [--kid <kid>] [--json]
  *              [--help]
  *   atf-verify --erasure-receipt <file> --jwks <url|file> [--kid <kid>]
+ *              [--json] [--help]
+ *   atf-verify --release-receipt <file> --jwks <url|file> [--kid <kid>]
  *              [--json] [--help]
  *   atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>]
  *              [--kid <kid>] [--json] [--help]
@@ -90,6 +99,12 @@ import {
   verifyAuditAnchor,
   verifyAuditChain,
 } from "../apps/runtime/src/observability/audit-log.ts";
+import {
+  type FlowReleaseReceipt,
+  FlowReleaseReceiptSchema,
+  RELEASE_RECEIPT_TYPE,
+  releaseReceiptSigningBytes,
+} from "../apps/runtime/src/eval/flow-release.ts";
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -101,6 +116,7 @@ Usage:
   atf-verify --receipt <file> --jwks <url|file> [options]
   atf-verify --bundle <file> --jwks <url|file> [options]
   atf-verify --erasure-receipt <file> --jwks <url|file> [options]
+  atf-verify --release-receipt <file> --jwks <url|file> [options]
   atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>]
              [options]
 
@@ -115,6 +131,13 @@ Modes (exactly one is required):
                     "alg", "kid", "payload" and "signature"): the Ed25519
                     signature over the canonical JSON payload is verified
                     offline and the payload is schema-checked.
+  --release-receipt <file>
+                    Signed flow release receipt JSON ("type":
+                    "atf.flow-release-receipt", written by
+                    "atf flows release --signing-key-file"): the Ed25519
+                    signature over the canonical JSON receipt without its
+                    "signature" field is verified offline and the document
+                    is schema-checked.
   --audit-export <file>
                     Audit-log export in JSON Lines format (the body of
                     GET /monitoring/audit/export?format=jsonl, one compact
@@ -150,13 +173,19 @@ Exit codes:
 class UsageError extends Error {}
 
 /** Exactly one verification mode is selected on the command line. */
-type Mode = "receipt" | "bundle" | "erasure-receipt" | "audit-export";
+type Mode =
+  | "receipt"
+  | "bundle"
+  | "erasure-receipt"
+  | "release-receipt"
+  | "audit-export";
 
 interface CliOptions {
   mode: Mode;
   receipt?: string;
   bundle?: string;
   erasureReceipt?: string;
+  releaseReceipt?: string;
   auditExport?: string;
   anchor?: string;
   jwks: string;
@@ -185,6 +214,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break;
       case "--erasure-receipt":
         opts.erasureReceipt = needValue(arg, argv[++i]);
+        break;
+      case "--release-receipt":
+        opts.releaseReceipt = needValue(arg, argv[++i]);
         break;
       case "--audit-export":
         opts.auditExport = needValue(arg, argv[++i]);
@@ -220,6 +252,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     opts.receipt !== undefined ? "--receipt" : undefined,
     opts.bundle !== undefined ? "--bundle" : undefined,
     opts.erasureReceipt !== undefined ? "--erasure-receipt" : undefined,
+    opts.releaseReceipt !== undefined ? "--release-receipt" : undefined,
     opts.auditExport !== undefined ? "--audit-export" : undefined,
   ].filter((flag): flag is string => flag !== undefined);
   if (modeFlags.length > 1) {
@@ -229,7 +262,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   }
   if (modeFlags.length === 0) {
     throw new UsageError(
-      "--receipt, --bundle, --erasure-receipt or --audit-export is required",
+      "--receipt, --bundle, --erasure-receipt, --release-receipt or --audit-export is required",
     );
   }
   if (opts.proof !== undefined && opts.receipt === undefined) {
@@ -251,9 +284,11 @@ function parseArgs(argv: readonly string[]): CliOptions {
         ? "bundle"
         : opts.erasureReceipt !== undefined
           ? "erasure-receipt"
-          : opts.auditExport !== undefined
-            ? "audit-export"
-            : "receipt",
+          : opts.releaseReceipt !== undefined
+            ? "release-receipt"
+            : opts.auditExport !== undefined
+              ? "audit-export"
+              : "receipt",
     jwks: opts.jwks ?? "",
     json: opts.json === true,
     help: false,
@@ -261,6 +296,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...(opts.bundle !== undefined ? { bundle: opts.bundle } : {}),
     ...(opts.erasureReceipt !== undefined
       ? { erasureReceipt: opts.erasureReceipt }
+      : {}),
+    ...(opts.releaseReceipt !== undefined
+      ? { releaseReceipt: opts.releaseReceipt }
       : {}),
     ...(opts.auditExport !== undefined
       ? { auditExport: opts.auditExport }
@@ -392,6 +430,49 @@ async function loadErasureReceiptFile(path: string): Promise<ErasureReceiptEnvel
     throw new UsageError(`erasure receipt file has a non-string "kid": ${path}`);
   }
   return doc as unknown as ErasureReceiptEnvelope;
+}
+
+/**
+ * Load a signed flow release receipt written by
+ * `atf flows release --signing-key-file`. Structural problems are input
+ * errors (exit 2); a well-formed receipt may still fail verification (exit 1).
+ */
+async function loadReleaseReceiptFile(path: string): Promise<FlowReleaseReceipt> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read release receipt file: ${path}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new UsageError(`release receipt file is not valid JSON: ${path}`);
+  }
+  const top = (doc ?? {}) as Record<string, unknown>;
+  if (top.type !== RELEASE_RECEIPT_TYPE) {
+    throw new UsageError(
+      `release receipt file has no "type" of "${RELEASE_RECEIPT_TYPE}": ${path}`,
+    );
+  }
+  const signature = top.signature;
+  if (signature === null || typeof signature !== "object" || Array.isArray(signature)) {
+    throw new UsageError(`release receipt file has no "signature" object: ${path}`);
+  }
+  const sig = signature as Record<string, unknown>;
+  if (sig.alg !== "EdDSA") {
+    throw new UsageError(
+      `release receipt file has an unsupported signature algorithm: ${path}`,
+    );
+  }
+  if (typeof sig.kid !== "string" || sig.kid === "") {
+    throw new UsageError(`release receipt file has no "signature.kid": ${path}`);
+  }
+  if (typeof sig.value !== "string" || sig.value === "") {
+    throw new UsageError(`release receipt file has no "signature.value": ${path}`);
+  }
+  return doc as unknown as FlowReleaseReceipt;
 }
 
 /**
@@ -935,6 +1016,129 @@ function printErasureReceiptText(
   console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
 }
 
+interface ReleaseReceiptReport {
+  valid: boolean;
+  mode: "release-receipt";
+  flow_id: string | null;
+  flow_version: string | null;
+  flow_digest: string | null;
+  base_ref: string | null;
+  base_flow_version: string | null;
+  bench_digest: string | null;
+  pass_rate: number | null;
+  created_at: string | null;
+  algorithm: string | null;
+  kid: string | null;
+  signature_valid: boolean;
+  verifier: string | null;
+  errors: string[];
+}
+
+async function runReleaseReceipt(opts: CliOptions): Promise<ReleaseReceiptReport> {
+  const receipt = await loadReleaseReceiptFile(opts.releaseReceipt ?? "");
+  const jwks = await loadJwks(opts.jwks);
+  const kid = opts.kid ?? receipt.signature.kid;
+  const jwk = selectKey(jwks.keys, kid);
+  let publicKey: ReturnType<typeof createPublicKey>;
+  try {
+    publicKey = createPublicKey({ key: jwk, format: "jwk" });
+  } catch {
+    throw new UsageError(`JWKS key "${jwk.kid ?? "?"}" is not a usable Ed25519 public key`);
+  }
+
+  const errors: string[] = [];
+  // The signature covers the canonical JSON bytes of the receipt without its
+  // "signature" field, exactly as produced by signReleaseReceipt().
+  const signingBytes = Buffer.from(releaseReceiptSigningBytes(receipt), "utf8");
+  let signatureValid = true;
+  try {
+    signatureValid = ed25519Verify(
+      null,
+      signingBytes,
+      publicKey,
+      Buffer.from(receipt.signature.value, "base64url"),
+    );
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) {
+    errors.push("signature does not verify against this key");
+  }
+
+  // The document must additionally satisfy the receipt schema, so a receipt
+  // that verifies but attests something malformed is still rejected.
+  const parsed = FlowReleaseReceiptSchema.safeParse(receipt);
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const at = issue.path.length > 0 ? ` at ${issue.path.join(".")}` : "";
+      errors.push(`document is not a valid release receipt${at}: ${issue.message}`);
+    }
+  }
+
+  return {
+    valid: signatureValid && parsed.success,
+    mode: "release-receipt",
+    flow_id: typeof receipt.flowId === "string" ? receipt.flowId : null,
+    flow_version:
+      typeof receipt.flowVersion === "string" ? receipt.flowVersion : null,
+    flow_digest:
+      typeof receipt.flowDigest === "string" ? receipt.flowDigest : null,
+    base_ref: typeof receipt.baseRef === "string" ? receipt.baseRef : null,
+    base_flow_version:
+      typeof receipt.baseFlowVersion === "string"
+        ? receipt.baseFlowVersion
+        : null,
+    bench_digest:
+      typeof receipt.benchDigest === "string" ? receipt.benchDigest : null,
+    pass_rate:
+      typeof receipt.results?.passRate === "number"
+        ? receipt.results.passRate
+        : null,
+    created_at:
+      typeof receipt.createdAt === "string" ? receipt.createdAt : null,
+    algorithm: receipt.signature?.alg ?? null,
+    kid: kid ?? receipt.signature?.kid ?? null,
+    signature_valid: signatureValid,
+    verifier: opts.jwks,
+    errors,
+  };
+}
+
+function printReleaseReceiptText(
+  report: ReleaseReceiptReport,
+  opts: CliOptions,
+): void {
+  const line = (label: string, value: string): string =>
+    `  ${label.padEnd(14)}${value}`;
+  console.log("ATF flow release receipt verification (offline)");
+  console.log("");
+  console.log(line("receipt:", opts.releaseReceipt ?? "-"));
+  console.log(line("flow:", report.flow_id ?? "-"));
+  console.log(line("version:", report.flow_version ?? "-"));
+  console.log(line("digest:", report.flow_digest ?? "-"));
+  console.log(line("base ref:", report.base_ref ?? "-"));
+  console.log(line("base version:", report.base_flow_version ?? "-"));
+  console.log(line("bench digest:", report.bench_digest ?? "-"));
+  console.log(
+    line(
+      "pass rate:",
+      report.pass_rate === null ? "-" : `${(report.pass_rate * 100).toFixed(1)}%`,
+    ),
+  );
+  console.log(line("created:", report.created_at ?? "-"));
+  console.log(line("algorithm:", report.algorithm ?? "-"));
+  console.log("");
+  console.log(line("jwks:", report.verifier ?? "-"));
+  console.log(line("kid:", report.kid ?? "-"));
+  console.log(line("signature:", report.signature_valid ? "VALID" : "INVALID"));
+  if (report.errors.length > 0) {
+    console.log("");
+    for (const e of report.errors) console.error(`  ! ${e}`);
+  }
+  console.log("");
+  console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
+}
+
 interface AuditExportReport {
   valid: boolean;
   mode: "audit-export";
@@ -1138,6 +1342,15 @@ async function main(): Promise<number> {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printErasureReceiptText(report, opts);
+    }
+    return report.valid ? EXIT_VALID : EXIT_INVALID;
+  }
+  if (opts.mode === "release-receipt") {
+    const report = await runReleaseReceipt(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printReleaseReceiptText(report, opts);
     }
     return report.valid ? EXIT_VALID : EXIT_INVALID;
   }

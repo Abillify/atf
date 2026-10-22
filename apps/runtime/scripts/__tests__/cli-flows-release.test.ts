@@ -9,13 +9,20 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  verifyReleaseReceiptSignature,
+  type FlowReleaseReceipt,
+} from "../../src/eval/flow-release.js";
+import { parseEvidenceSigningKey } from "../../src/observability/evidence-key.js";
 
 const cli = join(import.meta.dir, "..", "cli.ts");
 
@@ -222,5 +229,78 @@ describe("flows release", () => {
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("passRate regressed from baseline 100.0% to 0.0%");
+  });
+
+  test("--signing-key-file writes a verifiable release receipt", async () => {
+    const keyPath = join(dir, "signing.key");
+    // Fixed synthetic seed (R13).
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--json",
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout.toString().replace(/^[^{]*/, ""));
+    expect(payload.receiptPath).toBe(receiptPath);
+
+    const receipt = JSON.parse(
+      readFileSync(receiptPath, "utf8"),
+    ) as FlowReleaseReceipt;
+    expect(receipt.type).toBe("atf.flow-release-receipt");
+    expect(receipt.flowId).toBe("demo");
+    expect(receipt.flowVersion).toBe("1.2.3");
+    expect(receipt.signature.alg).toBe("EdDSA");
+    const key = parseEvidenceSigningKey(Buffer.alloc(32, 7).toString("base64"));
+    if (key === undefined) throw new Error("fixture signing key missing");
+    expect(receipt.signature.kid).toBe(key.kid);
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+  });
+
+  test("--signing-key-file with an empty key file exits 1", async () => {
+    const keyPath = join(dir, "empty.key");
+    writeFileSync(keyPath, "");
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("is empty");
+  });
+
+  test("a failed gate does not write a receipt", async () => {
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    writeFileSync(
+      join(dir, "bench", "demo.bench.yaml"),
+      BENCH.replace("value: Hallo", "value: never-matches"),
+    );
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(existsSync(receiptPath)).toBe(false);
   });
 });
