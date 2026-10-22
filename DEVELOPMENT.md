@@ -11,7 +11,7 @@ Versions are declared in `package.json`, `.nvmrc`, and `.node-version`. Do not u
 yarn; the workspace resolves exclusively from `bun.lock`.
 
 The toolchain pin (`packageManager`, CI `BUN_VERSION`) is Bun 1.4.0. The production images under
-`deploy/images/` intentionally build and run on the digest-pinned `oven/bun:1.4.2` base: a patch
+`deploy/images/` intentionally build and run on the digest-pinned `oven/bun:1.4.3` base: a patch
 release inside the declared `engines` range (`>=1.4.0 <2`). Both are pinned on purpose; change
 them deliberately, not as a side effect.
 

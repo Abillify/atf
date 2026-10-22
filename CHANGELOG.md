@@ -59,6 +59,10 @@ releases:
   source availability live. Closes the gap between the npm/Cargo notices (which
   cover the dependency tree only) and the OS packages an image actually distributes.
 
+- **Images**: `DEPLOYMENT.md`, `DEVELOPMENT.md`, and `docs/IMAGE-LICENSES.md`
+  now name the `oven/bun` 1.4.3 base the production Dockerfiles actually pin,
+  instead of the previous 1.4.2.
+
 ## [0.19.0] - 2026-10-22
 
 ### Security
