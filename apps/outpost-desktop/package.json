@@ -16,8 +16,8 @@
   "dependencies": {
     "@tauri-apps/api": "2.8.0",
     "lucide-react": "1.48.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
