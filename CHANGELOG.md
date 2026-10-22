@@ -37,6 +37,14 @@ releases:
   and the `media-tool` test mock now emits the flat V3 file-part `data` the
   v3→v4 adapter expects instead of a pre-tagged union.
 
+### Fixed
+
+- **Deploy**: the quickstart `extract` stage in `deploy/examples/Dockerfile`
+  kept `USER root` after its build-time apt block, so the image ran as root and
+  the Trivy misconfiguration gate (DS-0002) failed the source scan. The stage
+  now drops back to the base image's unprivileged `bun` user, like the other
+  four quickstart stages.
+
 ### Documentation
 
 - **Images / Supply chain**: shipped container images now carry a machine-readable
