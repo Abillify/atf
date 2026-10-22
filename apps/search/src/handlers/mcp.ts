@@ -109,6 +109,7 @@ import { registerRetrieveForAnswerTool } from "./mcp-retrieve-for-answer-tool.js
 import { registerTransactionTools } from "./mcp-transaction.js";
 import { registerSearchTool } from "./mcp-search-tool.js";
 import { registerTraceTool } from "./mcp-trace-tool.js";
+import { registerDocumentDiffTool } from "./mcp-document-diff-tool.js";
 import { registerIngestTools } from "./mcp-ingest.js";
 import { registerCatalogTools } from "./mcp-catalog.js";
 
@@ -149,6 +150,7 @@ export const SEARCH_TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> 
     "get_table",
     "find_identifier",
     "trace",
+    "document_diff",
     "follow_ref",
     "get_asset",
     "transaction_capabilities",
@@ -440,6 +442,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
   registerTransactionTools(toolCtx);
   registerSearchTool(toolCtx);
   registerTraceTool(toolCtx);
+  registerDocumentDiffTool(toolCtx);
   registerRetrieveForAnswerTool(toolCtx);
   registerIngestTools(toolCtx);
   registerCatalogTools(toolCtx);

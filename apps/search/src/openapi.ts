@@ -2843,6 +2843,82 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
         },
       },
+      "/v2/documents/{ref}/diff": {
+        get: {
+          tags: ["Revisions v2"],
+          operationId: "documentDiff",
+          summary: "Compare a document's units between two points in time",
+          description:
+            "Loads the document's units at both time points and aligns them by " +
+            "section, then unit id, then reading order. Units only in the later " +
+            "point are added, units only in the earlier point are removed, units " +
+            "whose content differs are changed (with before/after excerpts of at " +
+            "most 300 characters); the rest are counted as unchanged_count. " +
+            "Only units whose ACL admits the caller are compared.",
+          parameters: [
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "collection",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+            },
+            {
+              name: "from",
+              in: "query",
+              required: true,
+              description: "Earlier point in time (RFC 3339).",
+              schema: { type: "string", format: "date-time" },
+            },
+            {
+              name: "to",
+              in: "query",
+              required: true,
+              description: "Later point in time (RFC 3339).",
+              schema: { type: "string", format: "date-time" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "The unit-level diff between the two time points",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      base_ref: { type: "string" },
+                      from: { type: "string", format: "date-time" },
+                      to: { type: "string", format: "date-time" },
+                      added: {
+                        type: "array",
+                        items: { type: "object", additionalProperties: true },
+                      },
+                      removed: {
+                        type: "array",
+                        items: { type: "object", additionalProperties: true },
+                      },
+                      changed: {
+                        type: "array",
+                        items: { type: "object", additionalProperties: true },
+                      },
+                      unchanged_count: { type: "integer" },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Invalid base_ref, from or to" },
+            "401": { description: "Unauthenticated" },
+            "403": { description: "Not authorized for the tenant/collection" },
+            "503": revisionError("Database unreachable; retry.", REVISION_503),
+          },
+        },
+      },
 
       // ── v2 assets (Requirements 5.8, 14.1–14.5) ──────────────────────────────
       "/v2/assets/{assetId}": {

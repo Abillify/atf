@@ -154,3 +154,203 @@ export async function traceIdentifier(
   const occurrencesB = await search(input.identifier, input.valid_at_b, input.limit);
   return diffTraceOccurrences(occurrencesA, occurrencesB);
 }
+
+// ── document_diff: unit-level diff between two points in time (T-362) ──────
+
+/**
+ * The unit shape the diff consumes — structurally satisfied by `NavUnitRow`
+ * (the navigation methods' row type) without importing pg types here.
+ */
+export interface DiffableUnit {
+  unit_id: string | null;
+  unit_type: string | null;
+  section_id: string | null;
+  table_id: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  content: string;
+  metadata: { [key: string]: unknown };
+}
+
+/** Diff of two unit sets of the same document. */
+export interface DocumentUnitDiff {
+  added: DiffableUnit[];
+  removed: DiffableUnit[];
+  changed: Array<{ key: string; before: DiffableUnit; after: DiffableUnit }>;
+  unchanged_count: number;
+}
+
+/** Flatten content and keep at most `maxChars` from the head; "…" marks a cut. */
+export function headExcerpt(
+  content: string,
+  maxChars: number = TRACE_EXCERPT_MAX_CHARS,
+): string {
+  const flat = normalizeForHash(content);
+  return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
+}
+
+function unitOrdinal(u: DiffableUnit): number | null {
+  const o = u.metadata?.ordinal;
+  return typeof o === "number" ? o : null;
+}
+
+/**
+ * Fallback alignment key (the spec's "chunk_index" step): v2 units carry no
+ * chunk index, so the per-section ordinal stands in, scoped by unit type and
+ * table id to stay unique within a section. Null when no ordinal is present.
+ */
+function unitPairKey(u: DiffableUnit): string | null {
+  const ordinal = unitOrdinal(u);
+  if (ordinal === null) return null;
+  return `${u.unit_type ?? ""}${"\u0000"}${u.table_id ?? ""}${"\u0000"}${ordinal}`;
+}
+
+/**
+ * Pair two ordered unit lists of one alignment group (one section, or the
+ * section-less units). Ladder: exact `unit_id` match (unit ids embed the
+ * revision id, so an identical id means the identical row is visible at both
+ * instants), then the ordinal-based pair key, then reading-order position.
+ * Paired units with differing content hashes are `changed`, equal ones count
+ * as unchanged; unpaired leftovers are removed (a-side) / added (b-side).
+ */
+function pairUnitLists(
+  groupKey: string,
+  aList: readonly DiffableUnit[],
+  bList: readonly DiffableUnit[],
+  useOrdinal: boolean,
+  acc: {
+    added: DiffableUnit[];
+    removed: DiffableUnit[];
+    changed: DocumentUnitDiff["changed"];
+    unchanged: number;
+  },
+): void {
+  const aById = new Map<string, DiffableUnit>();
+  const aRest: DiffableUnit[] = [];
+  for (const u of aList) {
+    if (u.unit_id !== null && !aById.has(u.unit_id)) aById.set(u.unit_id, u);
+    else aRest.push(u);
+  }
+
+  const bRest: DiffableUnit[] = [];
+  for (const u of bList) {
+    const id = u.unit_id;
+    const match = id !== null ? aById.get(id) : undefined;
+    if (match !== undefined && id !== null) {
+      aById.delete(id);
+      if (contentHash(match.content) !== contentHash(u.content)) {
+        acc.changed.push({ key: `${groupKey}${"\u0000"}${id}`, before: match, after: u });
+      } else {
+        acc.unchanged += 1;
+      }
+    } else {
+      bRest.push(u);
+    }
+  }
+
+  // A-side ids that found no counterpart are leftovers too; the Map keeps
+  // insertion order, so appending them preserves reading order.
+  for (const u of aById.values()) aRest.push(u);
+
+  // Ordinal pairing for the leftovers (changed units get a new unit id).
+  let aFinal = aRest;
+  let bFinal = bRest;
+  if (useOrdinal) {
+    const bByKey = new Map<string, DiffableUnit>();
+    bFinal = [];
+    for (const u of bRest) {
+      const k = unitPairKey(u);
+      if (k !== null && !bByKey.has(k)) bByKey.set(k, u);
+      else bFinal.push(u);
+    }
+    aFinal = [];
+    for (const u of aRest) {
+      const k = unitPairKey(u);
+      const match = k !== null ? bByKey.get(k) : undefined;
+      if (match !== undefined && k !== null) {
+        bByKey.delete(k);
+        if (contentHash(match.content) !== contentHash(u.content)) {
+          acc.changed.push({ key: `${groupKey}${"\u0000"}${k}`, before: u, after: match });
+        } else {
+          acc.unchanged += 1;
+        }
+      } else {
+        aFinal.push(u);
+      }
+    }
+  }
+
+  // Last resort: reading-order position within the group.
+  const pairs = Math.min(aFinal.length, bFinal.length);
+  for (let i = 0; i < pairs; i++) {
+    const before = aFinal[i];
+    const after = bFinal[i];
+    if (contentHash(before.content) !== contentHash(after.content)) {
+      acc.changed.push({ key: `${groupKey}${"\u0000"}pos${"\u0000"}${i}`, before, after });
+    } else {
+      acc.unchanged += 1;
+    }
+  }
+  for (let i = pairs; i < aFinal.length; i++) acc.removed.push(aFinal[i]);
+  for (let i = pairs; i < bFinal.length; i++) acc.added.push(bFinal[i]);
+}
+
+function groupUnits(units: readonly DiffableUnit[]): {
+  sections: Map<string, DiffableUnit[]>;
+  sectionless: DiffableUnit[];
+} {
+  const sections = new Map<string, DiffableUnit[]>();
+  const sectionless: DiffableUnit[] = [];
+  for (const u of units) {
+    if (u.section_id === null) {
+      sectionless.push(u);
+      continue;
+    }
+    const list = sections.get(u.section_id);
+    if (list) list.push(u);
+    else sections.set(u.section_id, [u]);
+  }
+  return { sections, sectionless };
+}
+
+/**
+ * Diff a document's units between two points in time. Alignment: `section_id`
+ * groups first (section ids derive from the section path, which is stable
+ * across revisions), then `unit_id`, then the ordinal-based pair key, then
+ * reading order. Units without a section id (document/page units) align by
+ * `unit_id`, else reading order — their ordinals are always 0, so the ordinal
+ * step would be meaningless there.
+ */
+export function diffDocumentUnits(
+  fromUnits: readonly DiffableUnit[],
+  toUnits: readonly DiffableUnit[],
+): DocumentUnitDiff {
+  const acc = {
+    added: [] as DiffableUnit[],
+    removed: [] as DiffableUnit[],
+    changed: [] as DocumentUnitDiff["changed"],
+    unchanged: 0,
+  };
+  const a = groupUnits(fromUnits);
+  const b = groupUnits(toUnits);
+
+  for (const [sectionId, aGroup] of a.sections) {
+    const bGroup = b.sections.get(sectionId);
+    if (bGroup === undefined) {
+      acc.removed.push(...aGroup);
+      continue;
+    }
+    pairUnitLists(sectionId, aGroup, bGroup, true, acc);
+  }
+  for (const [sectionId, bGroup] of b.sections) {
+    if (!a.sections.has(sectionId)) acc.added.push(...bGroup);
+  }
+  pairUnitLists("", a.sectionless, b.sectionless, false, acc);
+
+  return {
+    added: acc.added,
+    removed: acc.removed,
+    changed: acc.changed,
+    unchanged_count: acc.unchanged,
+  };
+}

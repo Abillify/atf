@@ -69,6 +69,7 @@ import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
 import { createRevisionHandlers } from "./handlers/revisions.js";
 import { createDocumentSourceHandlers } from "./handlers/document-sources.js";
+import { createDocumentDiffHandler } from "./handlers/document-diff-v2.js";
 import { createRevisionStore } from "./revision-store.js";
 import { createRevisionTtlCleaner } from "./revision-ttl-cleaner.js";
 import { createBatchWorker } from "./batch-worker.js";
@@ -760,6 +761,7 @@ export function createApp(
     },
     logger,
   });
+  const documentDiffHandler = createDocumentDiffHandler(postgresClient, logger);
   const revisionHandlers = createRevisionHandlers(revisionStore, {
     revisionTtlMs: config.revisionTtlMs,
     logger,
@@ -1276,6 +1278,14 @@ export function createApp(
     authorizeRead,
     collectionAccessHeader,
     documentSourceHandlers.list,
+  );
+  app.get(
+    "/v2/documents/:ref/diff",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    documentDiffHandler,
   );
 
   // ── v2 asset routes (design §6.5, task 1.11) ──────────────────────────────
