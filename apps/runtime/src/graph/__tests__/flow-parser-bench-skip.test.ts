@@ -9,20 +9,28 @@
  * `subflows/` fragments are skipped.
  */
 
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createFlowParserService } from "../flow-parser.js";
-import { getFlowLoadFailures } from "../flow-parser/validate.js";
+import { getFlowLoadFailures, resetFlowLoadFailures } from "../flow-parser/validate.js";
 
 let tmpDir: string | undefined;
+
+// The load-failure ledger is module-global; other test files in the same
+// process leave entries behind. Start from an empty ledger so the assertions
+// below only see what this test's own service records.
+beforeEach(() => {
+  resetFlowLoadFailures();
+});
 
 afterEach(() => {
   if (tmpDir !== undefined) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = undefined;
   }
+  resetFlowLoadFailures();
 });
 
 // chokidar scans the directory asynchronously after start(); a change made
