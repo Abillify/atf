@@ -123,6 +123,7 @@ your context and language, remains your process.
 | Was the log altered | Chain verification and the anchor file; `EVIDENCE_SIGNING_KEY` (Ed25519) makes anchors and bundles verifiable offline via `/.well-known/atf-evidence-jwks.json` |
 | Was personal data erased | Signed erasure receipts (`GET /v1/me/data/erasures/{id}`); receipts carry pseudonymous hashes (SHA-256 of tenant id and identifier — pseudonymous personal data, not anonymous), never the identifier |
 | How good is the flow | Eval run history per dataset, shown in the dossier |
+| Was a flow version tested before release | Ed25519-signed release receipts from `atf flows release` (bench gate over recorded conversations, SemVer check, baseline comparison) prove that a specific flow version and digest passed its bench; third parties verify them offline with `atf-verify --release-receipt <file> --jwks <url|file>` |
 | Which controls are active | Governance posture report — `GET /monitoring/posture` or `cli.ts posture` scores evidence key, anchors, egress, taint, disclosure, policy, receipts and shared state as ok/warn/fail |
 | Everything in one place | `GET /admin/compliance/dossier?format=json\|markdown` |
 

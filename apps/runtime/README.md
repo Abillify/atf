@@ -197,6 +197,35 @@ until that is decided; the debug trace records `cascade` and the metric
 Complete reference (generated): [`docs/FLOWS.md`](../../docs/FLOWS.md). Examples:
 [`deploy/examples/flows/`](../../deploy/examples/flows/).
 
+### Releasing a flow
+
+Releases are gated by a versioned bench file next to the flow:
+`flows/bench/<flowId>.bench.yaml` records conversations (`cases` with `messages` and
+`assert` assertions) plus release `thresholds` (`passRate`, optional `maxLatencyMsP50`
+and `maxTokensP50`).
+
+```bash
+# from apps/runtime — runs the bench cases against a live server and checks thresholds
+bun run scripts/cli.ts flows release <flowId> --flows-dir ./flows \
+  --server http://localhost:3001 [--token <t>] \
+  [--base <git-ref>] [--baseline <previous-receipt.json>] \
+  [--signing-key-file ./release.key] [--out ./<flowId>.release-receipt.json]
+```
+
+- With `--base <git-ref>` the command compares the flow against that revision: if the
+  flow digest changed but `metadata.version` was not raised (SemVer), the release fails.
+- With `--baseline <receipt.json>` the pass rate must not regress against the baseline.
+- With `--signing-key-file <file>` (key format as `EVIDENCE_SIGNING_KEY`: PEM PKCS#8
+  Ed25519 or base64 raw seed) a passing gate writes an Ed25519-signed release receipt
+  (`atf.flow-release-receipt`) covering the flow digest, bench digest and results.
+
+Anyone with the public key can verify the receipt later — it is the proof that a given
+flow version passed its bench gate:
+
+```bash
+bun run scripts/atf-verify.ts --release-receipt <flowId>.release-receipt.json --jwks <url|file>
+```
+
 ## Layout
 
 ```text

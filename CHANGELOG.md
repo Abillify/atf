@@ -22,6 +22,7 @@ releases:
 
 - Control shows a flow-health page: load failures, database flows shadowing files, versions/digests and the latest eval result per flow.
 - `atf-verify` verifies Evidence Bundles, Ed25519 erasure receipts and audit-log exports (with anchors) offline, in addition to decision receipts; releases ship a Linux x64 binary.
+- Evidence-bound flow releases: bench files (`flows/bench/<flow>.bench.yaml`), `cli.ts flows release` (bench gate, semver check against a base revision, baseline comparison) and Ed25519-signed release receipts verifiable with `atf-verify --release-receipt`.
 
 ### Security
 

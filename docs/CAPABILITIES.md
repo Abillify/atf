@@ -466,6 +466,13 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   name), `maxTokens`, `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g.
   `loop_blocked`, which checks the execution trace); a cell passes when its reference score
   and every assertion do.
+- **Evidence-bound flow releases.** `atf flows release` gates a flow release on a versioned
+  bench file (`flows/bench/<flowId>.bench.yaml`): recorded conversations with assertions,
+  a required pass rate plus optional p50 latency/token thresholds, a SemVer check against a
+  base revision, and a baseline comparison that rejects pass-rate regressions. A passing gate
+  can emit an Ed25519-signed release receipt (`atf.flow-release-receipt`) over the flow digest,
+  bench digest and results, verifiable independently with
+  `atf-verify --release-receipt <file> --jwks <url|file>`.
 - **Extract quality eval.** `bun run eval:extract-quality` scores Extract output against a
   golden set — character error rate, Heading-F1 (text and strict with level) and table TEDS
   (and TEDS-S) — with a gating mode (`--max-cer`, `--min-heading-f1`, `--min-teds`) and a
