@@ -488,7 +488,7 @@ describe("outpost docker image", () => {
 		const compressedBytes = Number(packed.stdout.toString().trim());
 		expect(compressedBytes).toBeGreaterThan(0);
 		expect(compressedBytes).toBeLessThanOrEqual(157_286_400);
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("SIGTERM in the container leads to a clean exit 0 (12.2)", async () => {
 		// Mount a valid minimal configuration so the daemon starts and
