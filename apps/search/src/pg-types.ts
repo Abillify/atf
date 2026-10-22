@@ -118,6 +118,14 @@ export interface PostgresClientConfig {
    * written chunks are affected. Default false.
    */
   ftsContextualHeader?: boolean;
+  /**
+   * FTS_COMPOUND_SPLIT: when true, long query tokens are split against the
+   * collection's own lexicon and the matched lexemes are added to the
+   * lexical OR list (see compound-split.ts). The lexicon is built
+   * asynchronously on first need, so the first query per collection runs
+   * without splitting. Default false.
+   */
+  ftsCompoundSplit?: boolean;
   /** Interval in ms for flushing buffered stats to the database. Default: 30 000. */
   statsFlushIntervalMs?: number;
   /**

@@ -1719,6 +1719,7 @@ async function main(): Promise<void> {
     rrfMissingZero: config.rrfMissingZero,
     ftsRanker: config.ftsRanker,
     ftsContextualHeader: config.ftsContextualHeader === "on",
+    ftsCompoundSplit: config.ftsCompoundSplit === "query",
     statsFlushIntervalMs: config.statsFlushIntervalMs,
     quantization: config.quantization,
     embeddingModel: config.embedModel,

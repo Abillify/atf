@@ -11,6 +11,7 @@
 
 import type { AccessScope } from "./access-scope.js";
 import { AppError, collectionTableName } from "./collection-ddl.js";
+import { compoundPartsForQuery } from "./compound-split.js";
 import { buildIdentifierTsQuery, queryIdentifierValueNorms } from "./identifier.js";
 import type { Metadata } from "./metadata.js";
 import { BINARY_CANDIDATE_HARD_CAP, HYBRID_CANDIDATE_HARD_CAP, buildBinaryDenseQuery, buildDenseQuery, buildFtsQuery, buildHybridQuery, candidatePoolSize, type LexicalRanker } from "./query-builder.js";
@@ -38,6 +39,8 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
     rrfWeightSparse,
     rrfMissingZero,
     ftsRanker,
+    ftsCompoundSplit,
+    ftsLexiconCache,
     expectedEmbeddingModel,
     expectedEmbeddingModelRevision,
     vecType,
@@ -222,6 +225,18 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
                 }
               : undefined;
 
+          // FTS_COMPOUND_SPLIT=query: extra OR-only terms from splitting long
+          // query compounds against the collection lexicon. The cache read is
+          // synchronous: a miss starts the build in the background and yields
+          // no terms, so the triggering query runs without splitting.
+          const lexicon = ftsCompoundSplit
+            ? ftsLexiconCache.get(table)
+            : undefined;
+          const compoundTerms =
+            lexicon !== undefined
+              ? compoundPartsForQuery(query, lexicon)
+              : undefined;
+
           const { sql, params } = ftsOnly
             ? buildFtsQuery(
                 table,
@@ -239,6 +254,7 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
                 validAt,
                 collection,
                 lexical,
+                compoundTerms,
               )
             : hybridSearch
               ? buildHybridQuery(
@@ -274,6 +290,7 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
                     identifierTsQuery,
                   },
                   lexical,
+                  compoundTerms,
                 )
               : binaryStr && meta.vectorSize
                 ? buildBinaryDenseQuery(

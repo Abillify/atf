@@ -14,6 +14,7 @@ import type { AccessScope } from "./access-scope.js";
 import { setDocumentAclDefault } from "./acl-default.js";
 import { AppError, collectionTableName, ensureCollectionConfigTable, loadCollectionMeta, validateFtsLanguage, type CollectionMeta } from "./collection-ddl.js";
 import { SqlParams, buildAccessSql, buildTemporalFilterSql } from "./query-builder.js";
+import { createFtsLexiconCache } from "./fts-lexicon-cache.js";
 import { createStatsBuffer } from "./stats-buffer.js";
 import { Pool, type PoolClient } from "pg";
 import type { PostgresClient, PostgresClientConfig, PostgresResponse } from "./pg-types.js";
@@ -92,6 +93,7 @@ export function createPostgresClient(
     rrfMissingZero = true,
     ftsRanker = "ts_rank_cd",
     ftsContextualHeader = false,
+    ftsCompoundSplit = false,
     statsFlushIntervalMs = 30_000,
     quantization: quantizationConfig = "none",
     embeddingModel: expectedEmbeddingModel,
@@ -115,6 +117,10 @@ export function createPostgresClient(
   pool.on("error", (err) => {
     logger.error({ err }, "Unexpected idle PostgreSQL client error");
   });
+
+  // Lexicon cache for query-side compound splitting (FTS_COMPOUND_SPLIT);
+  // only consulted when ftsCompoundSplit is on.
+  const ftsLexiconCache = createFtsLexiconCache(pool, logger);
 
   /** Escape special regex characters in a string for use in `new RegExp(...)`. */
   function escapeRegex(s: string): string {
@@ -280,6 +286,8 @@ export function createPostgresClient(
     rrfMissingZero,
     ftsRanker,
     ftsContextualHeader,
+    ftsCompoundSplit,
+    ftsLexiconCache,
     quantizationConfig,
     expectedEmbeddingModel,
     expectedEmbeddingModelRevision,

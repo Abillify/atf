@@ -13,6 +13,7 @@ import type pino from "pino";
 import type { Pool, PoolClient } from "pg";
 import type { AccessScope } from "./access-scope.js";
 import type { CollectionDDLConfig, CollectionMeta } from "./collection-ddl.js";
+import type { FtsLexiconCache } from "./fts-lexicon-cache.js";
 import type { EngineDetection } from "./pg-engine-detect.js";
 import type {
   CircuitBreakerStatus,
@@ -63,6 +64,10 @@ export interface PgFactoryCtx {
   ftsRanker: "ts_rank_cd" | "bm25";
   /** FTS_CONTEXTUAL_HEADER=on: weight-D header (title + section path) in ts_search. */
   ftsContextualHeader: boolean;
+  /** FTS_COMPOUND_SPLIT=query: query-side compound splitting per collection. */
+  ftsCompoundSplit: boolean;
+  /** Lexicon cache backing compound splitting (only consulted when enabled). */
+  ftsLexiconCache: FtsLexiconCache;
   quantizationConfig: "none" | "binary";
   expectedEmbeddingModel: string | undefined;
   expectedEmbeddingModelRevision: string | undefined;

@@ -684,8 +684,11 @@ const TS_RANK_CD_NORMALIZATION = 32;
  * operand rank first (see buildLexicalAndTsQuery), so a precise question keeps
  * its exact match on top while the OR list still recovers recall.
  */
-export function buildLexicalOrTsQuery(queryText: string): string {
-  const operands = lexicalOperands(queryText);
+export function buildLexicalOrTsQuery(
+  queryText: string,
+  extraOrTerms?: string[],
+): string {
+  const operands = lexicalOperands(queryText, extraOrTerms);
   if (operands.length === 0) return "";
   return operands.join(" | ");
 }
@@ -707,12 +710,27 @@ export function buildLexicalAndTsQuery(queryText: string): string {
  *
  * At most LEXICAL_MAX_TERMS operands (longest first, a cheap proxy for
  * rarity; ties by first occurrence) bound the cost of the OR list.
+ *
+ * `extraOrTerms` (compound-splitting parts, FTS_COMPOUND_SPLIT) are appended
+ * after the query tokens — de-duplicated case-insensitively against them —
+ * and go through the same LEXICAL_MAX_TERMS cap, so splitting can never grow
+ * the OR list past the budget.
  */
-function lexicalOperands(queryText: string): string[] {
-  const tokens = selectLexicalOperands([
+function lexicalOperands(queryText: string, extraOrTerms?: string[]): string[] {
+  const tokens = [
     ...new Set(queryText.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? []),
-  ]);
-  return tokens.map((t) => `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`);
+  ];
+  if (extraOrTerms && extraOrTerms.length > 0) {
+    const known = new Set(tokens.map((t) => t.toLowerCase()));
+    for (const t of extraOrTerms) {
+      if (known.has(t.toLowerCase())) continue;
+      known.add(t.toLowerCase());
+      tokens.push(t);
+    }
+  }
+  return selectLexicalOperands(tokens).map((t) =>
+    `'${t.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`,
+  );
 }
 
 /**
@@ -733,6 +751,7 @@ export function buildLexicalQuerySql(
   language: string,
   p: SqlParams,
   queryText: string,
+  extraOrTerms?: string[],
 ): { match: string; score: string; allTerms: string } {
   const name = lexical?.ranker ?? "ts_rank_cd";
   if (name === "bm25" && lexical?.bm25Engine) {
@@ -743,7 +762,7 @@ export function buildLexicalQuerySql(
       allTerms: "FALSE",
     };
   }
-  const queryPh = p.add(buildLexicalOrTsQuery(queryText));
+  const queryPh = p.add(buildLexicalOrTsQuery(queryText, extraOrTerms));
   const tsq = `to_tsquery('${language}', ${queryPh})`;
   const andPh = p.add(buildLexicalAndTsQuery(queryText));
   const allTerms = `ts_search @@ to_tsquery('${language}', ${andPh})`;
@@ -783,6 +802,7 @@ export function buildFtsQuery(
   validAt?: string,
   collection?: string,
   lexical?: LexicalRanker,
+  compoundTerms?: string[],
 ): { sql: string; params: unknown[] } {
   // ── baseRef-only branch: skip FTS entirely, filter by base_ref column directly ──
   // Uses a fresh SqlParams so $1 is never an untyped query-text parameter.
@@ -854,6 +874,7 @@ export function buildFtsQuery(
     language,
     p,
     queryText,
+    compoundTerms,
   );
   const temporalFilter = buildTemporalFilterSql(
     p,
@@ -1010,6 +1031,7 @@ export function buildHybridQuery(
   collection?: string,
   rrfOptions?: HybridRrfOptions,
   lexical?: LexicalRanker,
+  compoundTerms?: string[],
 ): { sql: string; params: unknown[] } {
   // RRF ranks are POOL-RELATIVE: a document's rrf_score depends on which other
   // documents are in the candidate set. Filtering the pool by a cursor changes
@@ -1033,7 +1055,13 @@ export function buildHybridQuery(
   // extension was detected (the caller passes the engine in, or null to
   // keep the default). The lexical query parameter is added here, right after
   // the dense vector, so it stays the second parameter of the query.
-  const lexicalSql = buildLexicalQuerySql(lexical, language, p, queryText);
+  const lexicalSql = buildLexicalQuerySql(
+    lexical,
+    language,
+    p,
+    queryText,
+    compoundTerms,
+  );
   // Pool must cover limit + offset, or a deep page silently comes back empty.
   const candidateLimit = candidatePoolSize(
     limit,

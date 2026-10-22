@@ -454,6 +454,18 @@ export interface Config {
   ftsContextualHeader: "off" | "on"; // FTS_CONTEXTUAL_HEADER (default: "off")
 
   /**
+   * Query-side splitting of long German compounds. With `query`, query tokens
+   * of at least 10 characters are split against the collection's own lexicon (ts_stat over its
+   * ts_search column, cached in-process for one hour) and the matched
+   * lexemes are added to the lexical OR list only — the all-terms AND list
+   * keeps its exact-match semantics. A query for
+   * `Kommissionierarbeitsplatz` then also finds chunks containing
+   * `Arbeitsplatz`. The lexicon is built asynchronously, so the first query
+   * per collection runs without splitting. `off` keeps the status quo.
+   */
+  ftsCompoundSplit: "off" | "query"; // FTS_COMPOUND_SPLIT (default: "off")
+
+  /**
    * Fraction of the chunk token budget the contextual embedding header may
    * occupy (Requirement 11.4). The header (title, section path, pages, type,
    * page summary) is measured with the token counter and truncated
@@ -1265,6 +1277,11 @@ export function loadConfig(): Config {
     ["off", "on"] as const,
     "off",
   );
+  const ftsCompoundSplit = parseEnumEnv(
+    "FTS_COMPOUND_SPLIT",
+    ["off", "query"] as const,
+    "off",
+  );
   const contextHeaderMaxFraction =
     parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ??
     0.15;
@@ -1769,6 +1786,7 @@ export function loadConfig(): Config {
     batchWorkerEmbedConcurrency,
     contextualChunkLlm,
     ftsContextualHeader,
+    ftsCompoundSplit,
     contextHeaderMaxFraction,
     converter,
     semanticChunking,
