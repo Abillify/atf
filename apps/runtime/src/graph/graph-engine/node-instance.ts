@@ -14,6 +14,7 @@
  * keys.
  */
 
+import type { ExecRuntime } from "../exec-runtime.js";
 /** Configurable key carrying the delegation instance (agent-harness task key). */
 export const NODE_INSTANCE_KEY = "atfNodeInstance";
 
@@ -43,4 +44,77 @@ export function nodeStateKey(
   return instance !== undefined && instance.length > 0
     ? `${nodeId}#${instance}`
     : nodeId;
+}
+/**
+ * The node id a state key belongs to: the part before the instance separator,
+ * or the key itself when it carries no instance (see {@link nodeStateKey}).
+ */
+export function nodeIdOfStateKey(stateKey: string): string {
+  const separator = stateKey.indexOf("#");
+  return separator > 0 ? stateKey.slice(0, separator) : stateKey;
+}
+/**
+ * A view of `runtime` for one delegation instance of `nodeId`: the per-node
+ * callbacks the target's handler makes about itself (lifecycle, I/O, tokens
+ * and model, routing, diagnostics, tool calls, groundedness, progress) are
+ * addressed to `nodeId#instance`, so concurrent delegations to the same node
+ * keep separate state and each gets its own trace entry with `instance_id`.
+ * Callbacks about other node ids pass through unchanged. Everything else is
+ * read from `runtime` itself (prototype delegation, no copy).
+ */
+export function bindRuntimeToInstance(
+  runtime: ExecRuntime,
+  nodeId: string,
+  instance: string,
+): ExecRuntime {
+  const stateKey = nodeStateKey(nodeId, instance);
+  const keyOf = (id: string): string => (id === nodeId ? stateKey : id);
+  const bound = Object.create(runtime) as ExecRuntime;
+  bound.onNodeStart = (id, context) =>
+    id === nodeId
+      ? runtime.onNodeStart(id, context, instance)
+      : runtime.onNodeStart(id, context);
+  if (runtime.onNodeEnd !== undefined) {
+    const end = runtime.onNodeEnd;
+    bound.onNodeEnd = (id, errorMessage) =>
+      id === nodeId ? end(id, errorMessage, instance) : end(id, errorMessage);
+  }
+  bound.onToolCall = (toolCallId, toolName, argsJson, ownerNodeId) =>
+    (ownerNodeId ?? nodeId) === nodeId
+      ? runtime.onToolCall(toolCallId, toolName, argsJson, nodeId, instance)
+      : runtime.onToolCall(toolCallId, toolName, argsJson, ownerNodeId);
+  if (runtime.onNodeIo !== undefined) {
+    const io = runtime.onNodeIo;
+    bound.onNodeIo = (id, value) => io(keyOf(id), value);
+  }
+  if (runtime.onNodeRouting !== undefined) {
+    const routing = runtime.onNodeRouting;
+    bound.onNodeRouting = (id, decision) => routing(keyOf(id), decision);
+  }
+  if (runtime.onDebugToolSelection !== undefined) {
+    const selection = runtime.onDebugToolSelection;
+    bound.onDebugToolSelection = (id, value) => selection(keyOf(id), value);
+  }
+  if (runtime.onDebugClassification !== undefined) {
+    const classification = runtime.onDebugClassification;
+    bound.onDebugClassification = (id, value) => classification(keyOf(id), value);
+  }
+  if (runtime.onNodeDiagnostic !== undefined) {
+    const diagnostic = runtime.onNodeDiagnostic;
+    bound.onNodeDiagnostic = (id, value) => diagnostic(keyOf(id), value);
+  }
+  if (runtime.setGenAiAttributes !== undefined) {
+    const genAi = runtime.setGenAiAttributes;
+    bound.setGenAiAttributes = (id, req, res) => genAi(keyOf(id), req, res);
+  }
+  if (runtime.onProgress !== undefined) {
+    const progress = runtime.onProgress;
+    bound.onProgress = (id, value) => progress(keyOf(id), value);
+  }
+  if (runtime.onGroundedness !== undefined) {
+    const groundedness = runtime.onGroundedness;
+    bound.onGroundedness = (id, report) =>
+      id === nodeId ? groundedness(id, report, instance) : groundedness(id, report);
+  }
+  return bound;
 }

@@ -44,6 +44,19 @@ export class ExecutionBudgetExceededError extends Error {
  * has copied the error into a plain object and lost its prototype (same
  * duck-typing pattern as `isBudgetExceededError` for transaction budgets).
  */
+/**
+ * The budget error behind `error`: the error itself, or its `cause` (the AI
+ * SDK and the stream consumer wrap errors thrown inside a model call).
+ */
+export function executionBudgetErrorOf(
+  error: unknown,
+): ExecutionBudgetExceededError | undefined {
+  if (isExecutionBudgetExceededError(error)) return error;
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (isExecutionBudgetExceededError(cause)) return cause;
+  const nested = cause instanceof Error ? cause.cause : undefined;
+  return isExecutionBudgetExceededError(nested) ? nested : undefined;
+}
 export function isExecutionBudgetExceededError(
   error: unknown,
 ): error is ExecutionBudgetExceededError {
@@ -126,10 +139,13 @@ export class ExecutionBudget {
    * limit is reached or exceeded; a no-op when the dimension has no limit.
    * Call this BEFORE starting the next LLM or tool call.
    */
-  check(kind: ExecutionBudgetKind): void {
+  check(kind: ExecutionBudgetKind, pendingTokens = 0): void {
     if (kind === "tokens" && this.maxTokens !== undefined) {
-      if (this.tokens >= this.maxTokens) {
-        throw new ExecutionBudgetExceededError("tokens", this.maxTokens, this.tokens);
+      // `pendingTokens`: usage of a model call that is still running (the
+      // finished steps of a multi-step tool loop), not yet added.
+      const used = this.tokens + Math.max(0, pendingTokens);
+      if (used >= this.maxTokens) {
+        throw new ExecutionBudgetExceededError("tokens", this.maxTokens, used);
       }
       return;
     }

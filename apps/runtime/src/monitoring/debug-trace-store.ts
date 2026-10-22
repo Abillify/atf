@@ -166,7 +166,11 @@ export class InMemoryDebugTraceStore implements DebugTraceStore {
     const trace = this.traces.get(executionId);
     if (trace === undefined) return;
     const bounded = clampDebugNode(node, this.limits);
-    const idx = trace.nodes.findIndex((n) => n.node_id === bounded.node_id);
+    // One entry per flow node and delegation instance: concurrent delegations
+    // to the same node (instance_id set) must not replace each other.
+    const idx = trace.nodes.findIndex(
+      (n) => n.node_id === bounded.node_id && n.instance_id === bounded.instance_id,
+    );
     if (bounded.attempt === undefined) {
       if (idx === -1) trace.nodes.push(bounded);
       else trace.nodes[idx] = bounded;

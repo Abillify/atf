@@ -258,6 +258,8 @@ export interface ExecRuntime {
     argsJson: string,
     /** Explicit owner for concurrent child runtimes; falls back to active node. */
     ownerNodeId?: string,
+    /** Delegation instance of the owner (see graph-engine/node-instance.ts). */
+    instance?: string,
   ) => Promise<void>;
   /**
    * Reports the final server-bound arguments after forced flow args, egress
@@ -322,6 +324,8 @@ export interface ExecRuntime {
   onNodeStart: (
     nodeId: string,
     context?: import("../types/debug-trace.js").DebugNodeAttemptContext,
+    /** Delegation instance (see graph-engine/node-instance.ts). */
+    instance?: string,
   ) => void;
   /**
    * Emits a node's completion (or error) event. Normally the executeFlow stream
@@ -331,7 +335,12 @@ export interface ExecRuntime {
    * — otherwise children emit a "running" event via onNodeStart but never a
    * terminal event, leaving them stuck "running" in the dashboard.
    */
-  onNodeEnd?: (nodeId: string, errorMessage?: string) => void | Promise<void>;
+  onNodeEnd?: (
+    nodeId: string,
+    errorMessage?: string,
+    /** Delegation instance (see graph-engine/node-instance.ts). */
+    instance?: string,
+  ) => void | Promise<void>;
   /**
    * Captures the resolved prompt, produced response text, and/or the model's
    * full reasoning (chain-of-thought) for a node so the monitoring dashboard
@@ -422,14 +431,14 @@ export interface ExecRuntime {
   ) => void;
   usage: UsageAccumulator;
   /**
-   * Per-execution token / tool-call / wall-clock budget (T-036), present only
+   * Per-execution token / tool-call / wall-clock budget, present only
    * when the flow declares `budgets`. Checked before each LLM and tool call;
    * exceeding a dimension throws `ExecutionBudgetExceededError`, which ends
    * the execution gracefully with `finishReason: "budget_exceeded"`.
    */
   executionBudget?: import("./execution-budget.js").ExecutionBudget;
   /**
-   * Identity keys for model-pool stickiness (T-037). `execution` is a unique
+   * Identity keys for model-pool stickiness. `execution` is a unique
    * id minted per flow execution; `conversation` is the conversation/session
    * id from the request context when one is present. Model pools with
    * `sticky: "execution" | "conversation"` use these to keep their calls on
@@ -503,6 +512,8 @@ export interface ExecRuntime {
   onGroundedness?: (
     nodeId: string,
     report: GroundednessReport,
+    /** Delegation instance (see graph-engine/node-instance.ts). */
+    instance?: string,
   ) => Promise<void>;
   /**
    * Streams the retrieved sources (RAG / vectorsearch) on a no-op chunk so an

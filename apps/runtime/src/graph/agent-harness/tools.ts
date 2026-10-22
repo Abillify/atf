@@ -21,7 +21,11 @@ import type {
   ProgressNarratorConfig,
 } from "./types.js";
 import { getModelCapabilities } from "../model-capabilities.js";
-import { ensureTrailingUserTurn } from "../exec-runtime.js";
+import { ensureTrailingUserTurn, getRuntime } from "../exec-runtime.js";
+import {
+  bindRuntimeToInstance,
+  nodeInstanceOf,
+} from "../graph-engine/node-instance.js";
 import {
   estimateCost,
   estimateTokensFromText,
@@ -1153,18 +1157,31 @@ export async function delegate(
   }
 
   // 3. Emit onNodeStart before running
-  runtime.onNodeStart(target, attemptContext);
+  // A delegation instance (agent-harness task key) gets its own view of the
+  // runtime, so the target's per-node state and trace entry stay separate
+  // from concurrent delegations to the same node.
+  // The runtime the caller put into the config (e.g. the coverage loop's
+  // tool-capturing child runtime) is the one the handler would have used.
+  const instance = nodeInstanceOf(config);
+  const handlerRuntime = getRuntime(config) ?? runtime;
+  const targetRuntime =
+    instance !== undefined ? bindRuntimeToInstance(handlerRuntime, target, instance) : runtime;
+  const targetConfig: LangGraphRunnableConfig =
+    instance !== undefined
+      ? { ...config, configurable: { ...(config.configurable ?? {}), runtime: targetRuntime } }
+      : config;
+  targetRuntime.onNodeStart(target, attemptContext);
 
   // 4. Build and execute the handler
   const handler = registration.factory(targetNode, { nodeMap });
   try {
-    const update = await handler(state, config);
+    const update = await handler(state, targetConfig);
     // Determine if the handler signaled errors in its update
     const hadError = Array.isArray(update.errors) && update.errors.length > 0;
     const errorMsg = hadError ? "Delegated task failed." : undefined;
 
     // 5. Emit onNodeEnd after running
-    await runtime.onNodeEnd?.(target, errorMsg);
+    await targetRuntime.onNodeEnd?.(target, errorMsg);
 
     return { update, ok: !hadError };
   } catch {
@@ -1172,7 +1189,7 @@ export async function delegate(
     // excerpts. Child lifecycle telemetry and the parent update receive only a
     // stable category; the harness still treats the task as failed.
     const errorMessage = "Delegated task failed.";
-    await runtime.onNodeEnd?.(target, errorMessage);
+    await targetRuntime.onNodeEnd?.(target, errorMessage);
 
     return {
       update: {

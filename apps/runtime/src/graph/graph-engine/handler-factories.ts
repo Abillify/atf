@@ -56,7 +56,7 @@ import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
 import { createExecutionTaint } from "../execution-taint.js";
 import {
   ExecutionBudget,
-  isExecutionBudgetExceededError,
+  executionBudgetErrorOf,
 } from "../execution-budget.js";
 import {
   sideEffectFreeApprovalGate,
@@ -126,6 +126,7 @@ import {
 import { SseEmitter } from "./sse-emitter.js";
 import { CitationRegistry } from "./citation-registry.js";
 import { createRunState, startDebugTrace } from "./run-state.js";
+import { nodeIdOfStateKey } from "./node-instance.js";
 import { computeFlowDigest, subflowVersionsOf } from "../flow-revision.js";
 import { createToolCallbacks } from "./run-tool-callbacks.js";
 import { createNodeLifecycle } from "./run-node-lifecycle.js";
@@ -908,6 +909,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onNodeRouting: (nodeId, decision) => {
         nodeRoutingDecisions.set(nodeId, decision);
       },
+      // Last structured harness progress per node: the debug trace records
+      // it as `progress` when the node finishes. SSE and async jobs get the
+      // events through the execution's progress sink (progress-event.ts).
+      onProgress: (nodeId, progress) => {
+        st.nodeProgress.set(nodeId, progress);
+      },
       // Edge data-flow capture: fires at every graph-node entry (compile.ts
       // wrapper). Only wired with a debug store — the Studio canvas reads the
       // resulting `edge_flows` after the run.
@@ -951,7 +958,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
               (nodeOutputTokens.get(nodeId) ?? 0) + res.outputTokens,
             );
         }
-        const span = spanManager.getNodeSpan(nodeId);
+        // A delegation instance writes under `nodeId#instance`; the span is
+        // per flow node.
+        const span = spanManager.getNodeSpan(nodeIdOfStateKey(nodeId));
         if (span === undefined) return;
         if (req !== undefined) setGenAiRequestAttributes(span, req);
         if (res !== undefined) setGenAiResponseAttributes(span, res);
@@ -1447,15 +1456,16 @@ class GraphEngineServiceImpl implements GraphEngineService {
         }
       }
     } catch (err) {
-      if (isExecutionBudgetExceededError(err)) {
+      const budgetError = executionBudgetErrorOf(err);
+      if (budgetError !== undefined) {
         // Execution budget reached: finish gracefully with the text produced
         // so far (no error chunk, no rethrow). The check happens before each
         // LLM/tool call, so no in-flight call is interrupted.
         st.recordNodeDiagnostic(finalNodeId ?? "flow", {
           level: "warn",
           code: "budget_exceeded",
-          message: err.message,
-          details: { kind: err.kind, limit: err.limit, used: err.used },
+          message: budgetError.message,
+          details: { kind: budgetError.kind, limit: budgetError.limit, used: budgetError.used },
         });
         try {
           await onChunk({
@@ -1602,7 +1612,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
 }
 
 /**
- * Conversation sticky key for model pools (T-037): the conversation id from
+ * Conversation sticky key for model pools: the conversation id from
  * the request context when present, else the session id. Returns an empty
  * object when neither is available, so the pool falls back to the execution
  * key.

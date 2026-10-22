@@ -14,6 +14,7 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import type { FlowDefinition, FlowNode } from "../../types/flow.js";
 import { parallelChildId } from "../../types/flow.js";
+import { executionBudgetErrorOf } from "../execution-budget.js";
 import { evaluateConditionExpression } from "../condition-evaluator.js";
 import { defaultNodeHandlerRegistry } from "../node-handler-registry.js";
 import { registerBuiltins } from "../handlers/index.js";
@@ -121,6 +122,9 @@ export function withNodeErrorStrategy(
     try {
       return await handler(state, config);
     } catch (err) {
+      // The execution budget ends the whole execution; no error strategy
+      // (retry, fallback, continue) may turn it into a node failure.
+      if (executionBudgetErrorOf(err) !== undefined) throw err;
       const runtime = (
         config?.configurable as { runtime?: ExecRuntime } | undefined
       )?.runtime;

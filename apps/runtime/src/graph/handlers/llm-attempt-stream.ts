@@ -14,6 +14,7 @@ import {
   toolErrorExcerpt,
 } from "../message-mapping.js";
 import { isBudgetExceededError } from "../../transaction/budget.js";
+import { executionBudgetErrorOf } from "../execution-budget.js";
 import {
   detectRepeatedTail,
   REPETITION_CHECK_INTERVAL,
@@ -477,6 +478,11 @@ export async function runAttemptStream(ctx: AttemptStreamCtx): Promise<void> {
       // turn or in a later harness delegation. Do not replay it as an
       // ordinary tool result: that made the model format the runtime
       // failure as a domain finding and caused repeated paid passes.
+      // The flow's execution budget (`budgets:`) ends the run: the error
+      // must leave the tool loop instead of becoming a tool result the model
+      // reads and works around.
+      const executionBudgetError = executionBudgetErrorOf(error);
+      if (executionBudgetError !== undefined) throw executionBudgetError;
       if (isBudgetExceededError(error)) {
         runtime.onNodeDiagnostic?.(node.id, {
           level: "error",

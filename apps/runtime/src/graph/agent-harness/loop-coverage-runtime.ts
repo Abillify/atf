@@ -121,7 +121,9 @@ export function withDelegateRuntime(
           toolCallId: string,
           toolName: string,
           argsJson: string,
-        ) => runtime.onToolCall(toolCallId, toolName, argsJson, ownerNodeId),
+          _owner?: string,
+          instance?: string,
+        ) => runtime.onToolCall(toolCallId, toolName, argsJson, ownerNodeId, instance),
         ...(streamDelegates
           ? {}
           : {
@@ -240,9 +242,9 @@ export function withCoverageEvidenceRuntime(
   };
   return {
     ...runtime,
-    onToolCall: async (toolCallId, toolName, argsJson, ownerNodeId) => {
+    onToolCall: async (toolCallId, toolName, argsJson, ownerNodeId, instance) => {
       remember(fromModel, toolCallId, toolName, argsJson);
-      await runtime.onToolCall(toolCallId, toolName, argsJson, ownerNodeId);
+      await runtime.onToolCall(toolCallId, toolName, argsJson, ownerNodeId, instance);
     },
     onToolEffectiveArgs: async (toolCallId, toolName, argsJson) => {
       remember(fromExecution, toolCallId, toolName, argsJson);

@@ -7,6 +7,7 @@
  * unchanged.
  */
 import { stepCountIs, streamText } from "ai";
+import { executionBudgetErrorOf } from "../execution-budget.js";
 import type { ModelMessage, ToolSet } from "ai";
 import type { FlowNode, LlmConfig } from "../../types/flow.js";
 import type { AgentState } from "../graph-engine.js";
@@ -380,6 +381,18 @@ export async function runCandidateLoop(
       // history clean while preserving tool-call structure. Always installed
       // when tools are bound (merged with the semantic-tool activeTools set).
       streamParams.prepareStep = ({ messages, stepNumber, steps }) => {
+        // Per-execution budget before EVERY model step of the tool loop, not
+        // only before the attempt: the finished steps of this call are not
+        // yet counted, so their usage is passed as pending.
+        if (runtime.executionBudget !== undefined) {
+          const pending = (Array.isArray(steps) ? steps : []).reduce(
+            (sum: number, step: { usage?: { inputTokens?: number; outputTokens?: number } }) =>
+              sum + (step.usage?.inputTokens ?? 0) + (step.usage?.outputTokens ?? 0),
+            0,
+          );
+          runtime.executionBudget.check("tokens", pending);
+          runtime.executionBudget.check("wallMs");
+        }
         // First step: stepNumber 0 (or, defensively, an empty prior-steps
         // array on SDK versions that omit stepNumber).
         const firstStep =
@@ -1259,7 +1272,7 @@ export async function runCandidateLoop(
             });
           },
         };
-        // Per-execution budget (T-036): checked before each attempt's model
+        // Per-execution budget: checked before each attempt's model
         // call; a call already in flight is never aborted.
         runtime.executionBudget?.check("tokens");
         runtime.executionBudget?.check("wallMs");
@@ -1377,6 +1390,11 @@ export async function runCandidateLoop(
         if (post.action === "return") return { done: true, value: post.value };
         if (post.action === "continue") continue;
       } catch (err) {
+        // The execution budget is not a provider failure: no retry, no
+        // fallback candidate — it ends the execution (engine: finishReason
+        // `budget_exceeded`).
+        const budgetError = executionBudgetErrorOf(err);
+        if (budgetError !== undefined) throw budgetError;
         // A provider rejection for exceeding the context length is
         // deterministic — resending the same prompt fails identically. Give
         // it exactly one retry with a 25 % smaller context budget, which

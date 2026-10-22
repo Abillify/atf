@@ -92,6 +92,14 @@ export function createRunState(init: RunStateInit) {
       string,
       import("../../types/debug-trace.js").DebugGroundedness
     >();
+    /**
+     * Last structured agent-harness progress per node (state key), written to
+     * the debug trace as `progress` when the node finishes.
+     */
+    const nodeProgress = new Map<
+      string,
+      import("../agent-harness/progress-event.js").HarnessProgress
+    >();
     // Debug trace accumulators
     // -----------------------------------------------------------------------
     const nodeFullPrompts = new Map<string, string>();
@@ -155,6 +163,7 @@ export function createRunState(init: RunStateInit) {
       nodeDiagnostics.delete(nodeId);
       nodeErrorInfo.delete(nodeId);
       nodeGroundedness.delete(nodeId);
+      nodeProgress.delete(nodeId);
       nodeAttemptContexts.delete(nodeId);
     };
 
@@ -178,6 +187,7 @@ export function createRunState(init: RunStateInit) {
     nodeLabels,
     nodeModels,
     nodeOutputTokens,
+    nodeProgress,
     nodePrompts,
     nodeResponses,
     nodeRoutingDecisions,

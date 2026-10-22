@@ -17,6 +17,7 @@ import type { MonitoringServiceInterface } from "../../monitoring/monitoring-ser
 import type { ExecutionEventMeta } from "../../monitoring/execution-store.js";
 import type { DebugTraceStore } from "../../monitoring/debug-trace-store.js";
 import { isToolErrorOutput, sanitizeToolResultOutput } from "../message-mapping.js";
+import { nodeStateKey } from "./node-instance.js";
 import { parseVectorSearchResults } from "../reranker.js";
 import type { HashRefHandleRegistry } from "../ref-handles.js";
 import { signApprovalLinkToken } from "../approval-link.js";
@@ -289,6 +290,7 @@ export function createToolCallbacks(deps: {
       toolName: string,
       argsJson: string,
       ownerNodeId?: string,
+      instance?: string,
     ): Promise<void> => {
       let safeArgsJson = '{"argument_keys":[]}';
       try {
@@ -316,7 +318,12 @@ export function createToolCallbacks(deps: {
         });
       }
       emitToolNodeStart(toolCallId, toolName);
-      const activeNodeId = ownerNodeId ?? st.lastActiveNodeId;
+      // A delegation instance keeps its tool calls under its own state key.
+      const owner = ownerNodeId ?? st.lastActiveNodeId;
+      const activeNodeId =
+        owner !== undefined && instance !== undefined
+          ? nodeStateKey(owner, instance)
+          : owner;
       if (activeNodeId !== undefined) {
         toolCallOwnerNodeIds.set(toolCallId, activeNodeId);
         const existing = nodeToolCalls.get(activeNodeId) ?? [];

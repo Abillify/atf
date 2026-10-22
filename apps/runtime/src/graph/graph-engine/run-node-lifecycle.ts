@@ -110,6 +110,7 @@ export function createNodeLifecycle(deps: {
     nodeDiagnostics,
     nodeErrorInfo,
     nodeGroundedness,
+    nodeProgress,
   } = st;
   /**
    * Execution-state keys currently started per node id. A delegation
@@ -555,6 +556,9 @@ export function createNodeLifecycle(deps: {
             : {}),
           ...(nodeGroundedness.has(stateKey)
             ? { groundedness: nodeGroundedness.get(stateKey) }
+            : {}),
+          ...(nodeProgress.has(stateKey)
+            ? { progress: nodeProgress.get(stateKey) }
             : {}),
           tool_calls: nodeDebugToolCalls.get(stateKey) ?? [],
           ...(nodeToolSelections.has(stateKey)
