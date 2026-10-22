@@ -22,7 +22,8 @@ releases:
 
 - **All workspaces**: consolidated dependency refresh applied directly from the
   open Dependabot PRs (not merged): `ai` 7.0.143 and the `@ai-sdk/*` provider
-  packages, `@langchain/*`, `@modelcontextprotocol/sdk` 1.32.0, `hono` 4.13.11,
+  packages, `@langchain/*`, `@modelcontextprotocol/sdk` 1.32.0 in every
+  workspace that pins it (CVE-2026-111767/CVE-2026-111768), `hono` 4.13.11,
   the AWS SDK v3 train 3.1152.0, `next` 16.4.2 with React 19.3.1, `vitest`/
   `@vitest/coverage-v8` 5.0.5, `@playwright/test` 1.64.1, `yaml` 2.9.1,
   `uuid` 14.0.3, `fast-xml-parser` 5.11.2, `supertest` 7.3.1, and the

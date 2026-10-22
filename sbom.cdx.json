@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "29d6165e347220699ce57d610c7862e9d01d2384aebfabeaff9a2163f981595c"
+        "value": "74135b4e6ba0e2c6e1f566e600b59aa1d9bab8580513c4d07194236db2da7fe5"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -1739,25 +1739,6 @@
         }
       ],
       "purl": "pkg:npm/%40langchain%2Fprotocol@0.0.20",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
-      "group": "@modelcontextprotocol",
-      "name": "sdk",
-      "version": "1.31.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
