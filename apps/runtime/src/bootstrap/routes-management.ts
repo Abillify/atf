@@ -853,8 +853,8 @@ export async function registerManagementRoutes(
     }),
   );
   {
-    // Flow-health detail view behind the readiness probe's flow_load marker
-    // (T-341). Mounted next to the monitoring router and authorized exactly
+    // Flow-health detail view behind the readiness probe's flow_load marker.
+    // Mounted next to the monitoring router and authorized exactly
     // like it (ticket in ?token= or operator token, monitoring:read).
     const { createFlowHealthRouter } = await import("../routes/flow-health.js");
     app.route(

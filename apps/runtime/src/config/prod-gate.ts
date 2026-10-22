@@ -96,7 +96,7 @@ export function checkProductionReadiness(
 
   const isProd = config.appEnv === "production";
   // The regulated presets promise a hardened posture: in the production
-  // Betriebsprofil their three core controls (durable audit anchor, pinned
+  // operational profile their three core controls (durable audit anchor, pinned
   // egress, asymmetric evidence key) are fatal instead of warnings.
   const regulatedPreset =
     config.profile === "regulated" ||

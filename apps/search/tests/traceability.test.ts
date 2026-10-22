@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * tests/traceability.test.ts — Epic E7 (K1): pure diff + excerpt logic of the
+ * tests/traceability.test.ts — traceability: pure diff + excerpt logic of the
  * `trace` tool (no database).
  */
 

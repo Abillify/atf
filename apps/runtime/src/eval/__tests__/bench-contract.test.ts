@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Bench file contract (T-351): `<FLOWS_DIR>/bench/<flowId>.bench.yaml` pins a
+ * Bench file contract: `<FLOWS_DIR>/bench/<flowId>.bench.yaml` pins a
  * flow to recorded conversations plus release thresholds. The loader throws on
  * anything malformed — a release gate that silently does nothing is worse than
  * no gate — and `llmJudge` assertions are rejected because the gate must stay

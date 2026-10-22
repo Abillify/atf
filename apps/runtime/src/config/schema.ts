@@ -213,7 +213,7 @@ export interface AppConfig {
   pluginsSandboxTimeoutMs?: number;
   defaultLlm?: LlmConfig;
   /**
-   * Effective operational profile (Betriebsprofil): `ATF_PROFILE` (explicit,
+   * Effective operational profile: `ATF_PROFILE` (explicit,
    * platform-wide) wins over `APP_ENV`; unset means `development`. Only
    * `production` enforces the production-readiness fatals — `staging` and
    * `test` report them as warnings. See `@atf/security-kit` profile.ts.

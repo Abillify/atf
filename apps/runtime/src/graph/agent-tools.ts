@@ -2061,7 +2061,7 @@ export interface AgentImageInspectionHooks {
   nodeId?: string;
   /** The execution accumulator includes on-demand vision usage and cost. */
   usage?: UsageAccumulator;
-  /** Per-execution budget (T-036); vision usage counts against its token cap. */
+  /** Per-execution budget; vision usage counts against its token cap. */
   executionBudget?: ExecutionBudget;
   onNodeDiagnostic?: (
     nodeId: string,

@@ -345,7 +345,7 @@ export async function runStructuredLlmOutput(
     let candidateFailed = false;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Per-execution budget (T-036): checked before each attempt's model
+    // Per-execution budget: checked before each attempt's model
     // call; a call already in flight is never aborted.
     runtime.executionBudget?.check("tokens");
     runtime.executionBudget?.check("wallMs");

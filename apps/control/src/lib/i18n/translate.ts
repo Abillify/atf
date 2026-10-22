@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * translate: server-safe translation helpers (Req 9.7, Task 13.6).
+ * translate: server-safe translation helpers.
  *
  * Lives OUTSIDE the `"use client"` LocaleProvider module on purpose: server
  * components (loading boundaries, not-found, BFF route handlers via

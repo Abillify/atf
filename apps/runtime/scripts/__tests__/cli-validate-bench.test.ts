@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * `validate` and bench files (T-351): `<FLOWS_DIR>/bench/<flowId>.bench.yaml`
+ * `validate` and bench files: `<FLOWS_DIR>/bench/<flowId>.bench.yaml`
  * files are release-gate definitions, not flows. Validating the flows
  * directory — or the bench directory itself — must skip them instead of
  * failing them as invalid flow definitions.

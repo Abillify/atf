@@ -434,7 +434,7 @@ export function createClassifierNodeHandler(
       // The last candidate keeps the SDK default retries.
       const sdkRetryOverride =
         attemptIndex < poolChain.length - 1 ? 0 : undefined;
-      // Per-execution budget (T-036): checked before each attempt's model
+      // Per-execution budget: checked before each attempt's model
       // call; a call already in flight is never aborted.
       runtime.executionBudget?.check("tokens");
       runtime.executionBudget?.check("wallMs");

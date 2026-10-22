@@ -7,7 +7,7 @@
  * The defect it pins: a plain OR lexical list recovers recall but lets a chunk
  * that matches a single common term outrank the page that answers the
  * question, which dragged lexical MRR@10 down to 0.70 on this corpus. The
- * ranking from T-010 puts chunks containing EVERY query term first; this test
+ * ranking (buildLexicalAndTsQuery) puts chunks containing EVERY query term first; this test
  * measures both rankings on the same data and requires:
  *   - all-terms-first MRR@10 >= 0.9;
  *   - all-terms-first never below the plain-OR baseline;
@@ -155,7 +155,7 @@ describeIfPg("lexical MRR@10 on the synthetic golden set · real postgres", () =
   /**
    * The production ranking shape (all-terms-first) with an explicit
    * `ts_rank_cd` normalisation flag, so flags 32 and 33 can be measured on the
-   * same data (see the T-015 decision rule).
+   * same data (see the normalisation comparison below).
    */
   async function andFirstReferencesWithFlag(
     query: string,

@@ -269,9 +269,9 @@ describe("loadConfig() — valid configurations", () => {
     ).toBe(false);
   });
 
-  // Betriebsprofil (ATF_PROFILE): plattformweiter Schalter, der APP_ENV
-  // überstimmt; unbekannte Werte brechen den Start ab statt die Prod-Gates
-  // stillschweigend abzuschalten.
+  // Operational profile (ATF_PROFILE): platform-wide switch that overrides
+  // APP_ENV; unknown values abort the start instead of silently turning the
+  // production gates off.
   test("ATF_PROFILE overrides APP_ENV", () => {
     expect(
       expectConfigSuccess({

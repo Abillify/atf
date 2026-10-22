@@ -3,7 +3,7 @@
 
 /**
  * The `trace` tool's lookup + diff against a REAL PostgreSQL + pgvector
- * instance (Epic E7, K1): two committed revisions of one document, the
+ * instance (traceability): two committed revisions of one document, the
  * identifier looked up at an instant inside each revision's visibility window
  * (FTS-only search with the temporal `valid_at` rule), and the occurrence diff
  * (added / removed / changed / unchanged).

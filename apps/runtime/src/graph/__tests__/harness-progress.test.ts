@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Tests for the structured harness progress events (T-033).
+ * Tests for the structured harness progress events.
  *
  * The contracts that matter:
  *   - `buildHarnessProgress` counts `tasksDone` over terminal tasks only

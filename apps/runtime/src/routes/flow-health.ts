@@ -5,7 +5,7 @@
  * Flow health route (`src/routes/flow-health.ts`)
  *
  * The authenticated detail view behind the public readiness probe's
- * `flow_load: degraded` marker (T-214): which flows are loaded, where each
+ * `flow_load: degraded` marker: which flows are loaded, where each
  * one comes from (file vs. DB, including DB flows that shadow a same-id file
  * flow — ADR 0034), its declared version and definition digest, the last
  * recorded eval run when the eval-run history knows the name, and every flow

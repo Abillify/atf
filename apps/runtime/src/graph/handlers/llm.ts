@@ -110,7 +110,7 @@ export function createLlmNodeHandler(
 
     runtime.onNodeStart(node.id);
 
-    // Per-execution budget (T-036): checked before the node's first model
+    // Per-execution budget: checked before the node's first model
     // call; a call already in flight is never aborted.
     runtime.executionBudget?.check("tokens");
     runtime.executionBudget?.check("wallMs");

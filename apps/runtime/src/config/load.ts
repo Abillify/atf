@@ -82,7 +82,7 @@ export function loadConfig(): AppConfig {
     );
   }
 
-  // Resolve the effective operational profile (Betriebsprofil): the explicit,
+  // Resolve the effective operational profile: the explicit,
   // platform-wide ATF_PROFILE wins over the service variable APP_ENV. Unknown
   // values fail startup — a typo like `prod` must never silently disable the
   // production-readiness gates. This runs BEFORE the Zod parse so the error

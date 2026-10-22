@@ -58,7 +58,7 @@ export function buildLoopGuardedExecuteToolCall(
     (typeof loopGuardSetting === "object" && loopGuardSetting !== null);
   const innerExecuteToolCall = runtime.executeToolCall;
   const toolResultMemo = new Map<string, Promise<unknown>>();
-  // Per-execution budget (T-036): the limit is checked BEFORE the call is
+  // Per-execution budget: the limit is checked BEFORE the call is
   // dispatched (a running call is never aborted) and the call counts against
   // it even when the loop guard later blocks it or the result memo serves it
   // from cache — an attempted call is a call.

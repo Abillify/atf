@@ -11,7 +11,7 @@
  * characters is checked against the collection lexicon (see
  * fts-lexicon-cache.ts): the smallest cut where BOTH sides are known lexicon
  * words wins, and the matched lexemes are added to the lexical OR list only —
- * the AND list (T-010 all-terms ranking) keeps its exact-match semantics.
+ * the AND list (all-terms-first ranking) keeps its exact-match semantics.
  */
 
 /** Query tokens shorter than this are never split. */

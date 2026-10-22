@@ -447,7 +447,7 @@ export function createToolNodeHandler(
                 },
               )
             : undefined;
-          // Per-execution budget (T-036): checked before dispatch, so a call
+          // Per-execution budget: checked before dispatch, so a call
           // already in flight is never aborted — the limit takes effect on the
           // next tool call the node would make.
           runtime.executionBudget?.check("toolCalls");

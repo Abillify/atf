@@ -4,8 +4,8 @@
  * Contract for versioned bench files: `<FLOWS_DIR>/bench/<flowId>.bench.yaml`.
  *
  * A bench file pins a flow to a set of recorded conversations plus the
- * thresholds a release must meet. It is the input of `atf flows release`
- * (T-352) and is deliberately strict: a bench file that silently does nothing
+ * thresholds a release must meet. It is the input of `cli.ts flows
+ * release` and is deliberately strict: a bench file that silently does nothing
  * is worse than none, so `loadBenchFile` throws on anything malformed.
  *
  * Assertions reuse {@link AssertionSchema} from `assertion-schema.ts` verbatim
