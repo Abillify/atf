@@ -956,6 +956,13 @@ async function loadComponents(
 	const locked = parseLockedPackages(
 		await readFile(join(repoRoot, "bun.lock"), "utf8"),
 	);
+	// Fail closed: a lockfile format the parser does not understand would
+	// otherwise drop every npm component and ship an empty inventory.
+	if (locked.identities.size === 0 && locked.nonRegistryNames.size === 0) {
+		throw new Error(
+			"bun.lock: no locked packages found; refusing to generate an inventory without npm components",
+		);
+	}
 	const notLocked = new Set<string>();
 	const discovery = await packageRoots(
 		join(options.inventoryRoot, "node_modules", ".bun"),
