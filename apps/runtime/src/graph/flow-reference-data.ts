@@ -361,6 +361,11 @@ export const FLOWS_DIR_ENTRIES: ReferenceField[] = [
     description: "Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them. `metadata.$include.patches` changes included nodes from the parent without redefining them.",
   },
   {
+    key: "bench/",
+    description:
+      "Bench files `<flowId>.bench.yaml` — recorded conversations (`cases` with `messages`, optional `metadata` and `assert` assertions) plus release `thresholds` (`passRate` 0–1 required, optional `maxLatencyMsP50` and `maxTokensP50`), with `version: 1` and `flow: <flowId>`. Read by `atf flows release` as the release gate; never loaded as flows.",
+  },
+  {
     key: "*.example.yaml",
     description: "Documentation templates; never loaded.",
   },

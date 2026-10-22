@@ -39,6 +39,7 @@ Everything lives in `FLOWS_DIR`:
 | `constants.yaml` | `constants: { name: value }` shared by all flows, read as `{{const.<name>}}` in variable values. No secrets. A change reloads all flows. |
 | `prompts/` | Prompt files included with `#[[file:prompts/<name>.md]]` in a `systemPrompt` (node or override); includes may nest up to 5 levels. |
 | `subflows/` | Sub-flow files merged into a flow via `metadata.$include.subflows`; the Studio writes their nodes back into them. `metadata.$include.patches` changes included nodes from the parent without redefining them. |
+| `bench/` | Bench files `<flowId>.bench.yaml` — recorded conversations (`cases` with `messages`, optional `metadata` and `assert` assertions) plus release `thresholds` (`passRate` 0–1 required, optional `maxLatencyMsP50` and `maxTokensP50`), with `version: 1` and `flow: <flowId>`. Read by `atf flows release` as the release gate; never loaded as flows. |
 | `*.example.yaml` | Documentation templates; never loaded. |
 | `dispatch, access, canary, guardrails, experiments, mcp, tool-authz, compliance-policy, shadow (.yaml)` | Reserved configuration files of other subsystems, never loaded as flows. |
 

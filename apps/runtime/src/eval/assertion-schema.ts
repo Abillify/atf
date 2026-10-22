@@ -39,7 +39,12 @@ const pattern = z
     message: "pattern may backtrack catastrophically",
   });
 
-const AssertionSchema = z.discriminatedUnion("type", [
+/**
+ * One structured assertion (no `llmJudge`, see the file header). Exported so
+ * the bench contract ({@link ./bench-contract.js}) validates the very same
+ * shapes instead of duplicating them.
+ */
+export const AssertionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("contains"), value: text, caseSensitive: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("notContains"), value: text, caseSensitive: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("equals"), value: z.string().max(20_000) }).strict(),

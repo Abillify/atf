@@ -46,6 +46,7 @@ import {
   ProviderInstancesSchema,
   setProviderRegistry,
 } from "../src/config/providers.js";
+import { BENCH_DIR_NAME } from "../src/eval/bench-contract.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -293,12 +294,22 @@ function isSubflowFile(filePath: string): boolean {
   return relativePath === "subflows" || relativePath.startsWith(`subflows${path.sep}`);
 }
 
+/** Bench files (`<FLOWS_DIR>/bench/<flowId>.bench.yaml`) are not flows. */
+function isBenchFile(filePath: string): boolean {
+  const flowsDir = findFlowsDir(filePath);
+  const relativePath = path.relative(flowsDir, filePath);
+  return relativePath === BENCH_DIR_NAME || relativePath.startsWith(`${BENCH_DIR_NAME}${path.sep}`);
+}
+
 function flowSkipReason(filePath: string): string | undefined {
   if (!isFlowCandidate(filePath)) {
     return "reserved configuration or example file, not a flow definition";
   }
   if (isSubflowFile(filePath)) {
     return "sub-flow fragment; it is validated through its including parent flow";
+  }
+  if (isBenchFile(filePath)) {
+    return "bench file; it is validated by `flows release`, not as a flow";
   }
   return undefined;
 }
@@ -311,6 +322,7 @@ function collectFlowFiles(target: string): string[] {
       .map((file) => path.join(target, file))
       .filter(isFlowCandidate)
       .filter((file) => !isSubflowFile(file))
+      .filter((file) => !isBenchFile(file))
       .sort();
   }
   return [];
@@ -374,6 +386,10 @@ async function cmdValidate(args: ParsedArgs): Promise<number> {
   const files = collectFlowFiles(target);
   if (files.length === 0 && targetStat.isDirectory() && path.basename(target) === "subflows") {
     console.log(`${info} ${dim(`${target} contains sub-flow fragments; they are validated through their including parent flows`)}`);
+    return 0;
+  }
+  if (files.length === 0 && targetStat.isDirectory() && path.basename(target) === BENCH_DIR_NAME) {
+    console.log(`${info} ${dim(`${target} contains bench files; they are validated by \`flows release\`, not as flows`)}`);
     return 0;
   }
   if (files.length === 0) {

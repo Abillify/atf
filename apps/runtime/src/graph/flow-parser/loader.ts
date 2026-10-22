@@ -64,6 +64,7 @@ import {
   publicEnv,
   setFlowConstantsDir,
 } from "./flow-constants.js";
+import { BENCH_DIR_NAME } from "../../eval/bench-contract.js";
 
 /**
  * Builds the pre-validation resolver callback passed to `validateFlowSource`:
@@ -302,6 +303,17 @@ const RESERVED_BASES = new Set([
  */
 function isExampleFile(base: string): boolean {
   return base.endsWith(".example");
+}
+
+/**
+ * True for paths below the `bench/` directory of a flows dir. Bench files
+ * (`<flowId>.bench.yaml`) are release-gate definitions, not flows and not
+ * includes — the watcher must skip them entirely (they are read on demand by
+ * `atf flows release`). The initial scan is non-recursive, so it skips the
+ * directory implicitly.
+ */
+function isBenchPath(relToFlowsDir: string): boolean {
+  return relToFlowsDir === BENCH_DIR_NAME || relToFlowsDir.startsWith(`${BENCH_DIR_NAME}${path.sep}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +603,9 @@ class FlowParserServiceImpl implements FlowParserService {
         return;
       }
 
+      // Bench files are release-gate definitions, not flows — never loaded.
+      if (isBenchPath(relToFlowsDir)) return;
+
       const ext = path.extname(file).toLowerCase();
       if (!isFlowFileExtension(ext)) return;
       const base = path.basename(file, ext);
@@ -675,6 +690,8 @@ class FlowParserServiceImpl implements FlowParserService {
         this.options.onFlowChange?.();
         return;
       }
+      // A removed bench file never belonged to a flow.
+      if (isBenchPath(relToFlowsDir)) return;
       if (!this.fileIndex.has(file)) return;
       this.dropFlowFile(file);
       this.options.onFlowChange?.();
