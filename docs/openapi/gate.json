@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aiperator Trust Fabric Gate",
-    "version": "0.18.1",
+    "version": "0.19.0",
     "description": "The ATF Gate is the MCP security gateway: it exposes governed tools over the SSE, streamable-HTTP and stateless (2026-07-28) MCP transports with OIDC authentication, policy authorization, rate limiting and a tamper-evident audit trail. Health probes, RFC 9728 protected-resource metadata and the service-auth erasure endpoint are mounted before rate limiting. Inbound webhook receivers are declared per tool configuration, so their paths are dynamic and not enumerated here; each verifies its request signature. Conditional routers carry an `x-enabled-when` extension."
   },
   "servers": [

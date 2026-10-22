@@ -3,4 +3,4 @@ name: atf-common
 description: Shared template helpers for the ATF service subcharts (requirement 12.3). Library chart, renders no manifests of its own.
 type: library
 version: 0.1.0
-appVersion: "0.18.1"
+appVersion: "0.19.0"
