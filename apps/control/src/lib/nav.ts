@@ -156,6 +156,12 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: GitBranch,
       },
       {
+        href: "/flows/health",
+        labelKey: "nav.flows.health",
+        hintKey: "nav.flows.health.hint",
+        icon: Activity,
+      },
+      {
         href: "/triggers",
         labelKey: "nav.triggers",
         hintKey: "nav.triggers.hint",

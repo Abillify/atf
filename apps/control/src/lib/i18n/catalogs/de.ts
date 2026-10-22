@@ -48,6 +48,8 @@ export const de: Catalog = {
 
   "nav.flows": "Flows",
   "nav.flows.hint": "Flow-Registry & Versions-Diff",
+  "nav.flows.health": "Flow-Gesundheit",
+  "nav.flows.health.hint": "Ladefehler, Überblendung, Versionen & Evals",
   "nav.triggers": "Trigger",
   "nav.triggers.hint": "Per Webhook ausgelöste Flows",
   "nav.assistants": "Assistenten",

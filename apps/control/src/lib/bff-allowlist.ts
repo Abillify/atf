@@ -29,6 +29,8 @@ export const BFF_ALLOWED_PREFIXES: readonly string[] = [
   "/eval/",
   "/flows",
   "/mcp/servers",
+  // Covers GET /monitoring/flow-health (flow health page); only the OIDC
+  // auth dance below is denied.
   "/monitoring/",
   "/optimizer/",
   "/security/",

@@ -48,6 +48,8 @@ export const en = {
 
   "nav.flows": "Flows",
   "nav.flows.hint": "Flow registry & version diff",
+  "nav.flows.health": "Flow health",
+  "nav.flows.health.hint": "Load failures, shadowing, versions & evals",
   "nav.triggers": "Triggers",
   "nav.triggers.hint": "Webhook-triggered flows",
   "nav.assistants": "Assistants",
