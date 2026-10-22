@@ -236,6 +236,11 @@ jobs:
           test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           test "$GITHUB_REF_NAME" = "v$(bun -e 'console.log((await Bun.file("package.json").json()).version)' )"
+      # The atf-verify binary below bundles workspace packages and npm
+      # dependencies (zod, @atf/canonical-json, @atf/security-kit); without an
+      # install `bun build --compile` cannot resolve them.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: release-*-${{ github.sha }}
@@ -266,7 +271,11 @@ jobs:
       - name: Attest supply-chain bundle provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: atf-supply-chain-${{ github.ref_name }}-${{ github.sha }}.tar.gz
+          # The verifier binary is also a standalone release asset, so it is
+          # attested on its own (`gh attestation verify atf-verify-linux-x64`).
+          subject-path: |
+            atf-supply-chain-${{ github.ref_name }}-${{ github.sha }}.tar.gz
+            staging/bundle/atf-verify-linux-x64
       # The release notes are the version's own CHANGELOG section, not an
       # auto-generated list of pull requests. A missing or empty section fails
       # the job before anything is published.
