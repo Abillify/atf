@@ -18,15 +18,6 @@ releases:
 
 ## [Unreleased]
 
-### Added
-
-- Control shows a flow-health page: load failures, database flows shadowing files, versions/digests and the latest eval result per flow.
-- `atf-verify` verifies Evidence Bundles, Ed25519 erasure receipts and audit-log exports (with anchors) offline, in addition to decision receipts; releases ship a Linux x64 binary.
-- Evidence-bound flow releases: bench files (`flows/bench/<flow>.bench.yaml`), `cli.ts flows release` (bench gate, semver check against a base revision, baseline comparison) and Ed25519-signed release receipts verifiable with `atf-verify --release-receipt`.
-- Search traceability: `trace` follows an identifier across two points in time (added/removed/changed occurrences) and `document_diff` (MCP and `GET /v2/documents/{base_ref}/diff`) compares a document's units between two points in time.
-- Search `FTS_CONTEXTUAL_HEADER=on` adds the document title and section path (weight D) to the lexical index of newly ingested chunks.
-- Search `FTS_COMPOUND_SPLIT=query` splits long German compounds in the query against the collection's lexicon and adds the parts to the lexical OR list.
-
 ### Security
 
 - **Search / Runtime / Gate** (`@atf/search`, `@atf/runtime`, `@atf/gate`):
@@ -258,7 +249,16 @@ releases:
 - Eval regex assertions reject nested-quantifier patterns and match at most 100 000 characters.
 - `/health/ready` reports only the number of failed flow files (`flow_load_failures`); file names and reasons stay in the flow load log instead of the unauthenticated probe.
 - Extract's HTML sanitizer also drops javascript:, vbscript: and data: link targets (including entity-encoded forms); sanitizer revision 3 invalidates derived PDFs rendered by revision 2.
+
 ### Added
+
+- Control shows a flow-health page: load failures, database flows shadowing files, versions/digests and the latest eval result per flow.
+- `atf-verify` verifies Evidence Bundles, Ed25519 erasure receipts and audit-log exports (with anchors) offline, in addition to decision receipts; releases ship a Linux x64 binary.
+- Evidence-bound flow releases: bench files (`flows/bench/<flow>.bench.yaml`), `cli.ts flows release` (bench gate, semver check against a base revision, baseline comparison) and Ed25519-signed release receipts verifiable with `atf-verify --release-receipt`.
+- Search traceability: `trace` follows an identifier across two points in time (added/removed/changed occurrences) and `document_diff` (MCP and `GET /v2/documents/{base_ref}/diff`) compares a document's units between two points in time.
+- Search `FTS_CONTEXTUAL_HEADER=on` adds the document title and section path (weight D) to the lexical index of newly ingested chunks.
+- Search `FTS_COMPOUND_SPLIT=query` splits long German compounds in the query against the collection's lexicon and adds the parts to the lexical OR list.
+
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
   implementation packages replace copy-pasted platform primitives.
@@ -420,6 +420,7 @@ releases:
 - Search `retrieve_for_answer` (MCP) and `POST /v2/retrieve`: rule-based question decomposition, multi-query reciprocal-rank fusion, optional rerank against the original question, de-duplication and packing into a token budget.
 - LLM nodes accept `cascade`: an answer with too few citations, a failed sources check, a weak top grounding score or a length cut-off is regenerated once with `escalateTo` (diagnostic `cascade_escalated`, metric `aiperator_cascade_escalations_total`).
 - Governance posture report: `GET /monitoring/posture` and `cli.ts posture` list which controls are active (evidence key, anchors, egress, taint, disclosure, policy, receipts, shared state) as ok/warn/fail.
+
 ### Changed
 
 - **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
@@ -598,6 +599,7 @@ releases:
 - The audit-anchor production warning recommends EVIDENCE_SIGNING_KEY.
 - Dependabot uses the bun ecosystem; CI uploads HIGH image findings as SARIF without failing.
 - GitHub releases use the version's CHANGELOG section as release notes.
+
 ### Fixed
 
 - **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
@@ -719,6 +721,7 @@ releases:
 - Control renders server-side texts in the locale of each request.
 - Long erasure runs renew their lease after every store group and stop when another worker took over.
 - The supply-chain generator ignores installed packages that are not in bun.lock.
+
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
@@ -827,6 +830,7 @@ what it returns, without any code change on your side:
 - Search MCP `search` results are compact JSON now; set `SEARCH_MCP_PRETTY_JSON=true` if a client relied on the 2-space indentation.
 - `AI_DISCLOSURE=field` writes `metadata.ai_generated: "true"` as a string now; clients that compared with the boolean `true` must compare with the string.
 - `/health/ready` no longer lists the file names and reasons of flows that fail to load; alerting on `flow_load: degraded` keeps working, and the details are in the flow load log.
+
 ## [0.18.1] — 2026-10-18
 
 ### Security
