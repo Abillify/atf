@@ -77,6 +77,14 @@ describe("summarizeDebugTrace", () => {
     });
     expect(summary.toolCalls).toEqual(["ok"]);
   });
+  it("reports the executed flow revision when the trace names it", () => {
+    const summary = summarizeDebugTrace({ flow_version: "1.2.3", flow_digest: "sha256:abc" });
+    expect(summary.flowVersion).toBe("1.2.3");
+    expect(summary.flowDigest).toBe("sha256:abc");
+    const bare = summarizeDebugTrace({ flow_version: 3, flow_digest: null });
+    expect(bare.flowVersion).toBeUndefined();
+    expect(bare.flowDigest).toBeUndefined();
+  });
 });
 
 describe("createHttpExecutor trace fetch", () => {

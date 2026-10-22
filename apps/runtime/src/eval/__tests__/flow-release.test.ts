@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure release-gate logic (T-352): SemVer comparison, the version gate
+ * Pure release-gate logic: SemVer comparison, the version gate
  * message, p50 statistics over even/odd sample counts, threshold checks,
  * baseline regression and the bench runner wiring (token capture through a
  * fake executor).
@@ -18,6 +18,7 @@ import {
   FlowReleaseReceiptSchema,
   percentile50,
   releaseReceiptSigningBytes,
+  revisionBindingProblems,
   runBenchCases,
   signReleaseReceipt,
   totalTokensOf,
@@ -261,8 +262,83 @@ describe("runBenchCases + aggregateStats", () => {
   });
 });
 
-describe("release receipts (T-353)", () => {
-  // Fixed synthetic seed (R13): deterministic key, kid and signature.
+describe("revision binding", () => {
+  const head = { flowDigest: "sha256:head", flowVersion: "1.2.3" };
+
+  test("no problems when every case ran the head revision", () => {
+    expect(
+      revisionBindingProblems(
+        [
+          { caseId: "a", flowDigest: "sha256:head", flowVersion: "1.2.3" },
+          { caseId: "b", flowDigest: "sha256:head", flowVersion: "1.2.3" },
+        ],
+        head,
+      ),
+    ).toEqual([]);
+  });
+
+  test("reports a case that ran another digest or version", () => {
+    expect(
+      revisionBindingProblems(
+        [
+          { caseId: "a", flowDigest: "sha256:other", flowVersion: "1.2.3" },
+          { caseId: "b", flowDigest: "sha256:head", flowVersion: "1.2.2" },
+        ],
+        head,
+      ),
+    ).toEqual([
+      "a: the server ran flow digest sha256:other, not the local sha256:head",
+      "b: the server ran flow version 1.2.2, not the local 1.2.3",
+    ]);
+  });
+
+  test("reports a case without a readable trace", () => {
+    expect(revisionBindingProblems([{ caseId: "a" }], head)).toEqual([
+      "a: no flow_digest in the debug trace (is the trace readable with this token?)",
+    ]);
+  });
+
+  test("an empty run cannot be bound", () => {
+    expect(revisionBindingProblems([], head)).toEqual([
+      "no bench case reported the flow revision it ran",
+    ]);
+  });
+
+  test("the version is not compared when the head has none", () => {
+    expect(
+      revisionBindingProblems([{ caseId: "a", flowDigest: "sha256:head" }], {
+        flowDigest: "sha256:head",
+      }),
+    ).toEqual([]);
+  });
+
+  test("runBenchCases reports the revision each case ran", async () => {
+    const bench: BenchFile = {
+      version: 1,
+      flow: "demo",
+      cases: [
+        { id: "one", messages: [{ role: "user", content: "x" }], assert: [{ type: "contains", value: "x" }] },
+        { id: "two", messages: [{ role: "user", content: "y" }], assert: [{ type: "contains", value: "y" }] },
+      ],
+      thresholds: { passRate: 1 },
+    };
+    const executor: FlowExecutor = async (_flowId, messages): Promise<FlowExecutionResult> => {
+      const content = messages[messages.length - 1]?.content;
+      const text = typeof content === "string" ? content : "";
+      return text === "x"
+        ? { response: text, flowDigest: "sha256:head", flowVersion: "1.2.3" }
+        : { response: text };
+    };
+    const { revisions } = await runBenchCases(bench, executor, 1);
+    expect(revisions).toEqual([
+      { caseId: "one", flowDigest: "sha256:head", flowVersion: "1.2.3" },
+      { caseId: "two" },
+    ]);
+  });
+});
+
+describe("release receipts", () => {
+  // Fixed synthetic seed: deterministic key, kid and signature.
   const key = parseEvidenceSigningKey(Buffer.alloc(32, 7).toString("base64"));
   if (key === undefined) throw new Error("fixture signing key missing");
 

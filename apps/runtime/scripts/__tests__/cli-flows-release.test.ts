@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * `cli.ts flows release` (T-352): the release gate runs a flow's bench file
+ * `cli.ts flows release`: the release gate runs a flow's bench file
  * against a server. A fake OpenAI-compatible server (Bun.serve on port 0)
- * answers the completions; a temporary git repository provides the `--base`
- * revision for the SemVer version gate.
+ * answers the completions and serves the debug trace of each execution; a
+ * temporary git repository provides the `--base` revision for the SemVer
+ * version gate.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -23,21 +24,40 @@ import {
   type FlowReleaseReceipt,
 } from "../../src/eval/flow-release.js";
 import { parseEvidenceSigningKey } from "../../src/observability/evidence-key.js";
+import { resolveFlowFile } from "../../src/graph/flow-parser/loader.js";
+import { computeFlowDigest } from "../../src/graph/flow-revision.js";
 
 const cli = join(import.meta.dir, "..", "cli.ts");
 
-/** Answers POST /v1/chat/completions with the last user message echoed back. */
+/**
+ * What the fake server reports as the executed revision in the debug trace:
+ * `"head"` = the digest and version of the local flow file (set per test),
+ * `"missing"` = no readable trace (404).
+ */
+let traceMode: "head" | "missing" = "head";
+let traceRevision: { flow_digest?: string; flow_version?: string } = {};
+let executionCounter = 0;
+
+/**
+ * Answers POST /v1/chat/completions with the last user message echoed back
+ * and GET /monitoring/debug/<id> with the revision in {@link traceRevision}.
+ */
 const server = Bun.serve({
   port: 0,
   fetch(req) {
     const url = new URL(req.url);
+    if (req.method === "GET" && url.pathname.startsWith("/monitoring/debug/")) {
+      if (traceMode === "missing") return Response.json({ error: "not found" }, { status: 404 });
+      return Response.json({ nodes: [], ...traceRevision });
+    }
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
       return req
         .json()
         .then((body: { messages?: { content?: string }[] }) => {
           const last = body.messages?.[body.messages.length - 1]?.content ?? "";
+          executionCounter += 1;
           return Response.json({
-            id: "rel-test",
+            id: `chatcmpl-rel-test-${executionCounter}`,
             choices: [{ message: { content: last } }],
             usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
           });
@@ -98,12 +118,22 @@ const BENCH = [
 
 let dir: string;
 
+/** Lets the fake server report the revision of the local flow file. */
+function serveHeadRevision(): void {
+  traceMode = "head";
+  traceRevision = {
+    flow_digest: computeFlowDigest(resolveFlowFile(join(dir, "demo.yaml"))),
+    flow_version: "1.2.3",
+  };
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "cli-flows-release-"));
   writeFileSync(join(dir, "model-shortcuts.yaml"), "shortcuts: {}\n");
   mkdirSync(join(dir, "bench"));
   writeFileSync(join(dir, "demo.yaml"), FLOW_V1);
   writeFileSync(join(dir, "bench", "demo.bench.yaml"), BENCH);
+  serveHeadRevision();
 });
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -233,7 +263,7 @@ describe("flows release", () => {
 
   test("--signing-key-file writes a verifiable release receipt", async () => {
     const keyPath = join(dir, "signing.key");
-    // Fixed synthetic seed (R13).
+    // Fixed synthetic seed.
     writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
     const receiptPath = join(dir, "demo.release-receipt.json");
     const result = await release(
@@ -302,5 +332,101 @@ describe("flows release", () => {
     );
     expect(result.exitCode).toBe(1);
     expect(existsSync(receiptPath)).toBe(false);
+  });
+
+  test("signing: a server that ran another flow digest exits 1 without a receipt", async () => {
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    traceRevision = { ...traceRevision, flow_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" };
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("Revision: greeting: the server ran flow digest sha256:0000");
+    expect(existsSync(receiptPath)).toBe(false);
+  });
+
+  test("signing: a server that ran another flow version exits 1 without a receipt", async () => {
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    traceRevision = { ...traceRevision, flow_version: "1.2.2" };
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("the server ran flow version 1.2.2, not the local 1.2.3");
+    expect(existsSync(receiptPath)).toBe(false);
+  });
+
+  test("signing: a missing debug trace exits 1 without a receipt", async () => {
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    traceMode = "missing";
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("no flow_digest in the debug trace");
+    expect(existsSync(receiptPath)).toBe(false);
+  });
+
+  test("without signing, a missing debug trace does not fail the gate", async () => {
+    traceMode = "missing";
+    const result = await release("demo", "--flows-dir", dir, "--server", serverUrl);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("version gate: a changed sub-flow with an unchanged version exits 1", async () => {
+    mkdirSync(join(dir, "subflows"));
+    writeFileSync(
+      join(dir, "subflows", "extra.yaml"),
+      ["nodes:", "  - id: b", "    type: llm", "    llm: { provider: openai, model: gpt-4o }", "edges: []", ""].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "demo.yaml"),
+      FLOW_V1.replace("  version: 1.2.3", "  version: 1.2.3\n  $include:\n    subflows: [subflows/extra.yaml]"),
+    );
+    git(["init", "-b", "main"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "user.name", "Test"]);
+    git(["add", "."]);
+    git(["commit", "-m", "base"]);
+    // Only the included sub-flow changes; demo.yaml itself is untouched.
+    writeFileSync(
+      join(dir, "subflows", "extra.yaml"),
+      ["nodes:", "  - id: b", "    type: llm", "    llm: { provider: openai, model: gpt-4o-mini }", "edges: []", ""].join("\n"),
+    );
+    const result = await release("demo", "--flows-dir", dir, "--server", serverUrl, "--base", "HEAD");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain(
+      "flow changed but metadata.version was not raised (1.2.3 → 1.2.3)",
+    );
   });
 });

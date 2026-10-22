@@ -97,6 +97,10 @@ export interface DebugTraceSummary {
   finishReason?: string;
   /** All in-node diagnostic codes, in trace order. */
   diagnostics: string[];
+  /** `flow_version` the server recorded for the execution, when present. */
+  flowVersion?: string;
+  /** `flow_digest` the server recorded for the execution, when present. */
+  flowDigest?: string;
 }
 
 /**
@@ -108,6 +112,8 @@ export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
   const root = (trace ?? {}) as {
     nodes?: unknown;
     finish_reason?: unknown;
+    flow_version?: unknown;
+    flow_digest?: unknown;
   };
   const toolCalls: string[] = [];
   const diagnostics: string[] = [];
@@ -140,6 +146,8 @@ export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
     toolCalls,
     ...(finishReason !== undefined ? { finishReason } : {}),
     diagnostics,
+    ...(typeof root.flow_version === "string" ? { flowVersion: root.flow_version } : {}),
+    ...(typeof root.flow_digest === "string" ? { flowDigest: root.flow_digest } : {}),
   };
 }
 
@@ -206,6 +214,8 @@ export function createHttpExecutor(
           if (summary.finishReason !== undefined)
             result.finishReason = summary.finishReason;
           result.diagnostics = summary.diagnostics;
+          if (summary.flowVersion !== undefined) result.flowVersion = summary.flowVersion;
+          if (summary.flowDigest !== undefined) result.flowDigest = summary.flowDigest;
         } else {
           process.stderr.write(
             `eval: debug trace for ${executionId} unavailable (HTTP ${traceRes.status}); toolCalled/trace assertions cannot pass\n`,

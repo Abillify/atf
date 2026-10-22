@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure release-gate logic for `atf flows release` (T-352, E6) plus the
- * signed release receipt (T-353, E6 step 6).
+ * Pure release-gate logic for `cli.ts flows release` plus the
+ * signed release receipt.
  *
  * Everything here is side-effect free: SemVer comparison, percentile
  * statistics, threshold evaluation, baseline comparison and receipt
@@ -215,7 +215,7 @@ function formatRate(rate: number): string {
 }
 
 /**
- * Version gate for a changed flow (E6 step 3). When the flow digest
+ * Version gate for a changed flow. When the flow digest
  * changed between base and head, `metadata.version` must be a valid SemVer
  * strictly greater than the base version. Returns an error message on
  * violation, `undefined` when the gate passes.
@@ -273,8 +273,8 @@ export function totalTokensOf(usage: UsageLike | undefined): number | undefined 
 }
 
 /**
- * Runs every bench case through the executor (concurrency 2 by default,
- * per the E6 design) and collects per-case latency and token statistics.
+ * Runs every bench case through the executor (concurrency 2 by default)
+ * and collects per-case latency and token statistics.
  *
  * Token usage is captured by wrapping the executor: `CaseResult` carries
  * latency and cost but no token counts. `runEval` passes each case's
@@ -285,7 +285,7 @@ export async function runBenchCases(
   bench: BenchFile,
   executor: FlowExecutor,
   concurrency = 2,
-): Promise<{ report: EvalReport; stats: ReleaseCaseStat[] }> {
+): Promise<{ report: EvalReport; stats: ReleaseCaseStat[]; revisions: ObservedRevision[] }> {
   const evalCases: EvalCase[] = bench.cases.map((c) => ({
     id: c.id,
     flow: bench.flow,
@@ -295,9 +295,14 @@ export async function runBenchCases(
   }));
 
   const tokensByMessages = new Map<unknown, number | undefined>();
+  const revisionByMessages = new Map<unknown, ObservedRevision>();
   const wrapped: FlowExecutor = async (flowId, messages, metadata) => {
     const result = await executor(flowId, messages, metadata);
     tokensByMessages.set(messages, totalTokensOf(result.usage));
+    revisionByMessages.set(messages, {
+      ...(result.flowVersion !== undefined ? { flowVersion: result.flowVersion } : {}),
+      ...(result.flowDigest !== undefined ? { flowDigest: result.flowDigest } : {}),
+    });
     return result;
   };
 
@@ -314,7 +319,14 @@ export async function runBenchCases(
       tokens: evalCase !== undefined ? tokensByMessages.get(evalCase.messages) : undefined,
     };
   });
-  return { report, stats };
+  const revisions: ObservedRevision[] = report.cases.map((caseResult) => {
+    const evalCase = evalCases.find((c) => c.id === caseResult.id);
+    return {
+      caseId: caseResult.id,
+      ...(evalCase !== undefined ? revisionByMessages.get(evalCase.messages) : {}),
+    };
+  });
+  return { report, stats, revisions };
 }
 
 /**
@@ -338,8 +350,45 @@ export function aggregateStats(
   };
 }
 
+/** The flow revision one bench case actually ran, from its debug trace. */
+export interface ObservedRevision {
+  caseId?: string;
+  flowVersion?: string;
+  flowDigest?: string;
+}
+
+/**
+ * Problems binding a release receipt to the flow that was tested: every case
+ * must report a debug trace whose `flow_digest` (and `flow_version`) equal the
+ * local head. A missing trace or digest is a problem too — without it the
+ * receipt would certify a revision nobody checked ran on the server.
+ */
+export function revisionBindingProblems(
+  observed: readonly ObservedRevision[],
+  head: { flowDigest: string; flowVersion?: string },
+): string[] {
+  const problems: string[] = [];
+  observed.forEach((entry, index) => {
+    const label = entry.caseId ?? `case ${index + 1}`;
+    if (entry.flowDigest === undefined) {
+      problems.push(`${label}: no flow_digest in the debug trace (is the trace readable with this token?)`);
+      return;
+    }
+    if (entry.flowDigest !== head.flowDigest) {
+      problems.push(`${label}: the server ran flow digest ${entry.flowDigest}, not the local ${head.flowDigest}`);
+    }
+    if (head.flowVersion !== undefined && entry.flowVersion !== head.flowVersion) {
+      problems.push(
+        `${label}: the server ran flow version ${entry.flowVersion ?? "(none)"}, not the local ${head.flowVersion}`,
+      );
+    }
+  });
+  if (observed.length === 0) problems.push("no bench case reported the flow revision it ran");
+  return problems;
+}
+
 // ---------------------------------------------------------------------------
-// Signed release receipt (T-353, E6 step 6)
+// Signed release receipt
 // ---------------------------------------------------------------------------
 
 /** Format discriminator of a flow release receipt. */
@@ -352,7 +401,7 @@ export const RELEASE_RECEIPT_VERSION = 1 as const;
 export const RELEASE_RECEIPT_ALG = "EdDSA";
 
 /**
- * A signed flow release receipt (E6 design): the outcome of a passing
+ * A signed flow release receipt: the outcome of a passing
  * release gate, bound to the flow digest and the bench file digest and
  * signed with an Ed25519 evidence key. Holders verify it offline with
  * `atf-verify --release-receipt` against the issuer's JWKS. There is
@@ -445,7 +494,7 @@ export interface ReleaseReceiptInput {
 }
 
 /**
- * Builds the unsigned receipt document (E6 shape). Optional fields absent
+ * Builds the unsigned receipt document. Optional fields absent
  * at build time are omitted entirely rather than set to `undefined`, so the
  * canonical signing bytes stay stable.
  */

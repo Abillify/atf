@@ -70,6 +70,10 @@ export interface FlowExecutionResult {
   finishReason?: string;
   /** Diagnostic codes recorded during the execution, in trace order. */
   diagnostics?: string[];
+  /** `flow_version` of the executed flow (debug trace), when reported. */
+  flowVersion?: string;
+  /** `flow_digest` of the executed flow (debug trace), when reported. */
+  flowDigest?: string;
 }
 
 export type FlowExecutor = (

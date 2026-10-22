@@ -31,8 +31,8 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { parse as parseYaml } from "yaml";
 import { parseFlowFile, resolveConfigFile } from "../src/util/parse-flow-file.js";
 import { validateFlow } from "../src/graph/flow-validator.js";
 import { validateFlowSource } from "../src/graph/flow-parser/validate.js";
@@ -55,6 +55,7 @@ import {
   type BenchFile,
 } from "../src/eval/bench-contract.js";
 import { computeFlowDigest } from "../src/graph/flow-revision.js";
+import { resolveFlowFile } from "../src/graph/flow-parser/loader.js";
 import { createHttpExecutor } from "../src/eval/run.js";
 import {
   aggregateStats,
@@ -62,6 +63,7 @@ import {
   compareBaseline,
   computeBenchDigest,
   evaluateThresholds,
+  revisionBindingProblems,
   runBenchCases,
   signReleaseReceipt,
   versionGateProblem,
@@ -1179,11 +1181,57 @@ function flowMetadataVersion(raw: unknown): string | undefined {
 
 /**
  * `flows release <flowId>`: run the flow's bench file against a running
- * server as a release gate (E6). Loads and validates the bench file, checks
+ * server as a release gate. Loads and validates the bench file, checks
  * the SemVer version gate against `--base`, executes the cases with
  * concurrency 2, evaluates the thresholds and optionally compares against a
  * previous release receipt (`--baseline`).
  */
+/**
+ * The flow file as committed at `ref`, raw and resolved: the flows directory
+ * of that revision is extracted to a temporary directory (`git archive`) so
+ * includes resolve against their committed versions too.
+ */
+function resolveFlowAtRef(
+  ref: string,
+  flowsDir: string,
+  flowPath: string,
+): { baseRaw: unknown; baseDigest: string } {
+  const dir = path.resolve(flowsDir);
+  const prefix = Bun.spawnSync({ cmd: ["git", "rev-parse", "--show-prefix"], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  if (prefix.exitCode !== 0) throw new Error(`${dir} is not inside a git work tree`);
+  const treeish = `${ref}:${prefix.stdout.toString().trim().replace(/\/$/, "")}`;
+  const archive = Bun.spawnSync({ cmd: ["git", "archive", "--format=tar", treeish], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  if (archive.exitCode !== 0) {
+    throw new Error(`git archive ${treeish} failed — is the flows directory committed at that ref?`);
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "atf-flow-base-"));
+  try {
+    const extract = Bun.spawnSync({ cmd: ["tar", "-x", "-C", tmp], stdin: archive.stdout, stdout: "pipe", stderr: "pipe" });
+    if (extract.exitCode !== 0) throw new Error(`Extracting ${treeish} failed`);
+    const basePath = path.join(tmp, path.relative(dir, path.resolve(flowPath)));
+    if (!fs.existsSync(basePath)) {
+      throw new Error(`${path.relative(dir, path.resolve(flowPath))} does not exist at ${ref}`);
+    }
+    let baseRaw: unknown;
+    try {
+      baseRaw = parseFlowFile(basePath);
+    } catch (err) {
+      throw new Error(`Failed to parse base flow: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    let baseDigest: string;
+    try {
+      baseDigest = computeFlowDigest(resolveFlowFile(basePath));
+    } catch {
+      // A base revision that no longer resolves (e.g. against changed
+      // validation rules) still has a raw digest to compare against.
+      baseDigest = computeFlowDigest(baseRaw as FlowDefinition);
+    }
+    return { baseRaw, baseDigest };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
   const flowId = args.positional[0];
   if (!flowId) {
@@ -1207,7 +1255,7 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  // 1. Bench laden/validieren.
+  // 1. Load and validate the bench file.
   let bench: BenchFile;
   try {
     bench = loadBenchFile(benchPath);
@@ -1220,36 +1268,35 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  // 2. Kopf-Version und -Digest des Flows.
+  // 2. Head version and digest of the flow. The digest is taken over the
+  //    resolved definition (sub-flows, prompt files, model shortcuts merged),
+  //    exactly what a server loading this file executes and reports as
+  //    `flow_digest`; a change in an included file therefore changes it.
   const headRaw = loadFlowFile(flowPath);
   const headVersion = flowMetadataVersion(headRaw);
-  const headDigest = computeFlowDigest(headRaw as FlowDefinition);
+  let headDigest: string;
+  try {
+    headDigest = computeFlowDigest(resolveFlowFile(flowPath));
+  } catch (err) {
+    console.error(`${fail} Flow ${flowId} does not resolve: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
 
-  // 3. Version-Gate gegen --base (git show <base>:<pfad>).
+  // 3. Version gate against --base (the flows directory at <base>).
   let baseVersion: string | undefined;
   if (args.base !== undefined && args.base !== "") {
-    const gitCwd = path.dirname(path.resolve(flowPath));
-    const rel = path.relative(gitCwd, path.resolve(flowPath)) || path.basename(flowPath);
-    const shown = Bun.spawnSync({
-      cmd: ["git", "show", `${args.base}:${rel}`],
-      cwd: gitCwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (shown.exitCode !== 0) {
-      console.error(`${fail} git show ${args.base}:${rel} failed — is the flow file committed at that ref?`);
-      return 1;
-    }
+    // The base revision is resolved from the flows directory as committed at
+    // `--base`, includes and all, so the gate also sees a changed sub-flow,
+    // prompt file or model shortcut.
     let baseRaw: unknown;
+    let baseDigest: string;
     try {
-      const text = shown.stdout.toString();
-      baseRaw = /\.json$/i.test(flowPath) ? JSON.parse(text) : parseYaml(text);
+      ({ baseRaw, baseDigest } = resolveFlowAtRef(args.base, flowsDir, flowPath));
     } catch (err) {
-      console.error(`${fail} Failed to parse base flow: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`${fail} ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     baseVersion = flowMetadataVersion(baseRaw);
-    const baseDigest = computeFlowDigest(baseRaw as FlowDefinition);
     const problem = versionGateProblem({
       digestChanged: baseDigest !== headDigest,
       baseVersion,
@@ -1262,10 +1309,32 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     if (!args.json) console.log(`${ok} Version gate passed (${baseVersion ?? "?"} → ${headVersion ?? "?"}).`);
   }
 
-  // 4. Fälle gegen den Server ausführen (Concurrency 2).
+  // 4. Run the cases against the server (concurrency 2).
   // Plain fetch: the release gate targets an operator-chosen server, the
   // same way `posture` does (the egress guard would block local testing).
-  const executor = createHttpExecutor(args.server, args.token !== "" ? args.token : undefined, fetch, false);
+  // A signed receipt must be bound to the revision the server actually ran,
+  // so the debug traces are read when signing.
+  const signing = args.signingKeyFile !== undefined && args.signingKeyFile !== "";
+  // The signing key is checked before any case runs, so a bad key file fails
+  // fast instead of after a full bench run.
+  let signingKey: Ed25519EvidenceKey | undefined;
+  if (signing) {
+    if (headVersion === undefined || headVersion === "") {
+      console.error(`${fail} Cannot sign a release receipt: the flow file has no metadata.version`);
+      return 1;
+    }
+    try {
+      signingKey = parseEvidenceSigningKey(fs.readFileSync(args.signingKeyFile ?? "", "utf8").trim());
+    } catch (err) {
+      console.error(`${fail} Failed to read signing key ${args.signingKeyFile}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    if (signingKey === undefined) {
+      console.error(`${fail} Signing key file ${args.signingKeyFile} is empty`);
+      return 1;
+    }
+  }
+  const executor = createHttpExecutor(args.server, args.token !== "" ? args.token : undefined, fetch, signing);
   if (!args.json) {
     console.log(`${info} Running ${bench.cases.length} bench case(s) against ${args.server} (concurrency 2)…`);
   }
@@ -1290,14 +1359,14 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     );
   }
 
-  // 5. Schwellen prüfen.
+  // 5. Check the thresholds.
   const failures: string[] = [];
   for (const message of evaluateThresholds(stats, bench.thresholds)) {
     failures.push(`Threshold: ${message}`);
     console.error(`${fail} Threshold: ${message}`);
   }
 
-  // Baseline-Vergleich (passRate darf nicht sinken).
+  // Baseline comparison (the pass rate must not drop).
   if (args.baseline !== undefined && args.baseline !== "") {
     let baseline: ReleaseBaseline;
     try {
@@ -1314,6 +1383,17 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     }
   }
 
+  // Receipt binding: every case must have run exactly the local revision.
+  if (signing) {
+    for (const message of revisionBindingProblems(run.revisions, {
+      flowDigest: headDigest,
+      ...(headVersion !== undefined && headVersion !== "" ? { flowVersion: headVersion } : {}),
+    })) {
+      failures.push(`Revision: ${message}`);
+      console.error(`${fail} Revision: ${message}`);
+    }
+  }
+
   if (failures.length > 0) {
     if (args.json) {
       console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: false, failures }, null, 2));
@@ -1321,25 +1401,10 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  // 6. Mit --signing-key-file: signiertes Release-Receipt schreiben (T-353),
-  //    sonst nur Bericht. Nur ein passierter Gate erzeugt ein Receipt.
+  // 6. With --signing-key-file: write a signed release receipt, otherwise
+  //    only report. Only a passing gate produces a receipt.
   let receiptOut: string | undefined;
-  if (args.signingKeyFile !== undefined && args.signingKeyFile !== "") {
-    if (headVersion === undefined || headVersion === "") {
-      console.error(`${fail} Cannot sign a release receipt: the flow file has no metadata.version`);
-      return 1;
-    }
-    let key: Ed25519EvidenceKey | undefined;
-    try {
-      key = parseEvidenceSigningKey(fs.readFileSync(args.signingKeyFile, "utf8").trim());
-    } catch (err) {
-      console.error(`${fail} Failed to read signing key ${args.signingKeyFile}: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
-    }
-    if (key === undefined) {
-      console.error(`${fail} Signing key file ${args.signingKeyFile} is empty`);
-      return 1;
-    }
+  if (signingKey !== undefined && headVersion !== undefined) {
     const receipt = signReleaseReceipt(
       buildReleaseReceipt({
         flowId,
@@ -1352,7 +1417,7 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
         thresholds: bench.thresholds,
         createdAt: new Date().toISOString(),
       }),
-      key,
+      signingKey,
     );
     receiptOut =
       args.out !== undefined && args.out !== ""

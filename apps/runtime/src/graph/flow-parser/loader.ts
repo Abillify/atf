@@ -372,6 +372,29 @@ async function loadFlowFileAsync(
 }
 
 /**
+ * The definition the runtime registers for one flow file: sub-flow includes
+ * merged, prompt files, variables and model shortcuts expanded, validated —
+ * the same steps as the loader below, without registering anything. Its
+ * `computeFlowDigest` equals the `flow_digest` a server that loaded this file
+ * reports in the debug trace. Throws with the validation reason.
+ */
+export function resolveFlowFile(filePath: string): FlowDefinition {
+  const raw = parseFlowFile(filePath);
+  const fileName = path.basename(filePath);
+  if (typeof raw === "object" && raw !== null) {
+    resolveFlowIncludes(raw as Record<string, unknown>, path.dirname(filePath), fileName);
+  }
+  const result = validateFlowSource(
+    raw,
+    makeFlowValueResolver(path.dirname(filePath)),
+    makeShortcutExpander(path.dirname(filePath)),
+  );
+  if (!result.success) {
+    throw new Error(`${fileName}: ${result.error.reason}`);
+  }
+  return result.data;
+}
+/**
  * Synchronous file loading for startup — blocks until all flows are loaded.
  */
 function loadFlowFile(
