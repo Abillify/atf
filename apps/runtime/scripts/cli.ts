@@ -13,6 +13,7 @@
  *   deploy <file>         — Push a flow to a running server (validate + PUT /flows/:id/draft + publish)
  *   test <flowId>         — Run a quick smoke-test against a running server
  *   verify-bundle <file>  — Verify a signed Evidence Bundle offline (no network)
+ *   flows release <id>    — Run the flow's bench file against a server as a release gate
  *
  * Usage:
  *   bun run scripts/cli.ts validate flows/my-flow.yaml
@@ -31,7 +32,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseFlowFile } from "../src/util/parse-flow-file.js";
+import { parse as parseYaml } from "yaml";
+import { parseFlowFile, resolveConfigFile } from "../src/util/parse-flow-file.js";
 import { validateFlow } from "../src/graph/flow-validator.js";
 import { validateFlowSource } from "../src/graph/flow-parser/validate.js";
 import {
@@ -46,7 +48,23 @@ import {
   ProviderInstancesSchema,
   setProviderRegistry,
 } from "../src/config/providers.js";
-import { BENCH_DIR_NAME } from "../src/eval/bench-contract.js";
+import {
+  BENCH_DIR_NAME,
+  BENCH_FILE_SUFFIX,
+  loadBenchFile,
+  type BenchFile,
+} from "../src/eval/bench-contract.js";
+import { computeFlowDigest } from "../src/graph/flow-revision.js";
+import { createHttpExecutor } from "../src/eval/run.js";
+import {
+  aggregateStats,
+  compareBaseline,
+  evaluateThresholds,
+  runBenchCases,
+  versionGateProblem,
+  type ReleaseBaseline,
+} from "../src/eval/flow-release.js";
+import type { FlowDefinition } from "../src/types/flow.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -86,6 +104,16 @@ interface ParsedArgs {
   jwks?: string;
   /** verify-bundle: key id to select from the JWKS (default: the bundle's kid). */
   kid?: string;
+  /** flows release: directory holding the flow and its `bench/` file. */
+  flowsDir?: string;
+  /** flows release: git ref the flow version is compared against. */
+  base?: string;
+  /** flows release: previous release receipt used as a baseline. */
+  baseline?: string;
+  /** flows release: Ed25519 key file used to sign the release receipt. */
+  signingKeyFile?: string;
+  /** flows release: path the release receipt is written to. */
+  out?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -118,6 +146,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       i++;
       continue;
     }
+    if (a === "--flows-dir" && i + 1 < args.length) { result.flowsDir = args[++i] ?? ""; i++; continue; }
+    if (a === "--base" && i + 1 < args.length) { result.base = args[++i] ?? ""; i++; continue; }
+    if (a === "--baseline" && i + 1 < args.length) { result.baseline = args[++i] ?? ""; i++; continue; }
+    if (a === "--signing-key-file" && i + 1 < args.length) { result.signingKeyFile = args[++i] ?? ""; i++; continue; }
+    if (a === "--out" && i + 1 < args.length) { result.out = args[++i] ?? ""; i++; continue; }
     if (!result.command && !a.startsWith("-")) { result.command = a; i++; continue; }
     if (!a.startsWith("-")) { result.positional.push(a); i++; continue; }
     i++;
@@ -1125,6 +1158,174 @@ async function cmdVerifyBundle(args: ParsedArgs): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// flows release
+// ---------------------------------------------------------------------------
+
+/** Reads `metadata.version` from a raw flow object, if present. */
+function flowMetadataVersion(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const metadata = (raw as Record<string, unknown>).metadata;
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  const version = (metadata as Record<string, unknown>).version;
+  return typeof version === "string" ? version : undefined;
+}
+
+/**
+ * `flows release <flowId>`: run the flow's bench file against a running
+ * server as a release gate (E6). Loads and validates the bench file, checks
+ * the SemVer version gate against `--base`, executes the cases with
+ * concurrency 2, evaluates the thresholds and optionally compares against a
+ * previous release receipt (`--baseline`).
+ */
+async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
+  const flowId = args.positional[0];
+  if (!flowId) {
+    console.error(`${fail} flows release requires a flow id: flows release <flowId> --flows-dir <dir>`);
+    return 1;
+  }
+  const flowsDir = args.flowsDir;
+  if (!flowsDir) {
+    console.error(`${fail} flows release requires --flows-dir <dir>`);
+    return 1;
+  }
+
+  const flowPath = resolveConfigFile(flowsDir, flowId);
+  if (flowPath === null) {
+    console.error(`${fail} Flow file not found for ${flowId} in ${flowsDir}`);
+    return 1;
+  }
+  const benchPath = resolveConfigFile(path.join(flowsDir, BENCH_DIR_NAME), `${flowId}${BENCH_FILE_SUFFIX}`);
+  if (benchPath === null) {
+    console.error(`${fail} Bench file not found: ${path.join(flowsDir, BENCH_DIR_NAME, `${flowId}${BENCH_FILE_SUFFIX}.yaml`)}`);
+    return 1;
+  }
+
+  // 1. Bench laden/validieren.
+  let bench: BenchFile;
+  try {
+    bench = loadBenchFile(benchPath);
+  } catch (err) {
+    console.error(`${fail} ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (bench.flow !== flowId) {
+    console.error(`${fail} Bench file ${benchPath} is for flow ${JSON.stringify(bench.flow)}, not ${JSON.stringify(flowId)}`);
+    return 1;
+  }
+
+  // 2. Kopf-Version und -Digest des Flows.
+  const headRaw = loadFlowFile(flowPath);
+  const headVersion = flowMetadataVersion(headRaw);
+  const headDigest = computeFlowDigest(headRaw as FlowDefinition);
+
+  // 3. Version-Gate gegen --base (git show <base>:<pfad>).
+  if (args.base !== undefined && args.base !== "") {
+    const gitCwd = path.dirname(path.resolve(flowPath));
+    const rel = path.relative(gitCwd, path.resolve(flowPath)) || path.basename(flowPath);
+    const shown = Bun.spawnSync({
+      cmd: ["git", "show", `${args.base}:${rel}`],
+      cwd: gitCwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (shown.exitCode !== 0) {
+      console.error(`${fail} git show ${args.base}:${rel} failed — is the flow file committed at that ref?`);
+      return 1;
+    }
+    let baseRaw: unknown;
+    try {
+      const text = shown.stdout.toString();
+      baseRaw = /\.json$/i.test(flowPath) ? JSON.parse(text) : parseYaml(text);
+    } catch (err) {
+      console.error(`${fail} Failed to parse base flow: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    const baseVersion = flowMetadataVersion(baseRaw);
+    const baseDigest = computeFlowDigest(baseRaw as FlowDefinition);
+    const problem = versionGateProblem({
+      digestChanged: baseDigest !== headDigest,
+      baseVersion,
+      headVersion,
+    });
+    if (problem !== undefined) {
+      console.error(`${fail} Version gate: ${problem}`);
+      return 1;
+    }
+    if (!args.json) console.log(`${ok} Version gate passed (${baseVersion ?? "?"} → ${headVersion ?? "?"}).`);
+  }
+
+  // 4. Fälle gegen den Server ausführen (Concurrency 2).
+  // Plain fetch: the release gate targets an operator-chosen server, the
+  // same way `posture` does (the egress guard would block local testing).
+  const executor = createHttpExecutor(args.server, args.token !== "" ? args.token : undefined, fetch, false);
+  if (!args.json) {
+    console.log(`${info} Running ${bench.cases.length} bench case(s) against ${args.server} (concurrency 2)…`);
+  }
+  let run: Awaited<ReturnType<typeof runBenchCases>>;
+  try {
+    run = await runBenchCases(bench, executor, 2);
+  } catch (err) {
+    console.error(`${fail} Bench run failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  const stats = aggregateStats(run.report, run.stats);
+
+  if (!args.json) {
+    console.log(`\n${bold("Flow release bench")}  ${dim(flowId)}\n`);
+    for (const cs of run.stats) {
+      console.log(`  ${cs.passed ? ok : fail} ${cs.id} ${dim(`${Math.round(cs.latencyMs)}ms${cs.tokens !== undefined ? ` · ${cs.tokens} tokens` : ""}`)}`);
+    }
+    console.log(
+      `\n  pass rate: ${(stats.passRate * 100).toFixed(1)}% (${stats.passed}/${stats.cases})` +
+      `  p50 latency: ${Math.round(stats.latencyMsP50)}ms` +
+      `  p50 tokens: ${Math.round(stats.tokensP50)}`,
+    );
+  }
+
+  // 5. Schwellen prüfen.
+  const failures: string[] = [];
+  for (const message of evaluateThresholds(stats, bench.thresholds)) {
+    failures.push(`Threshold: ${message}`);
+    console.error(`${fail} Threshold: ${message}`);
+  }
+
+  // Baseline-Vergleich (passRate darf nicht sinken).
+  if (args.baseline !== undefined && args.baseline !== "") {
+    let baseline: ReleaseBaseline;
+    try {
+      baseline = JSON.parse(fs.readFileSync(args.baseline, "utf8")) as ReleaseBaseline;
+    } catch (err) {
+      console.error(`${fail} Failed to read baseline receipt ${args.baseline}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    const comparison = compareBaseline(baseline, stats);
+    if (!args.json) for (const delta of comparison.deltas) console.log(`  ${dim(delta)}`);
+    for (const message of comparison.failures) {
+      failures.push(`Baseline: ${message}`);
+      console.error(`${fail} Baseline: ${message}`);
+    }
+  }
+
+  // 6. Mit --signing-key-file: Release-Receipt schreiben (T-353), sonst nur Bericht.
+  if (args.signingKeyFile !== undefined && args.signingKeyFile !== "") {
+    console.warn(`${warn} Release receipt signing arrives with T-353; report only for now.`);
+  }
+
+  if (failures.length > 0) {
+    if (args.json) {
+      console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: false, failures }, null, 2));
+    }
+    return 1;
+  }
+  if (args.json) {
+    console.log(JSON.stringify({ flowId, flowVersion: headVersion, flowDigest: headDigest, ...stats, ok: true, failures: [] }, null, 2));
+  } else {
+    console.log(`${ok} Release gate passed.`);
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 
@@ -1145,6 +1346,7 @@ ${bold("Commands:")}
   ${bold("rls-status")}                      Report Row-Level Security enforcement per tenant table
   ${bold("rls-setup")} [--confirm]            Onboard Row-Level Security (dry-run unless --confirm)
   ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
+  ${bold("flows release")} <flowId>          Run a flow's bench file against a server as a release gate (--flows-dir, --base, --baseline)
 
 ${bold("Options:")}
   --server <url>                    Backend base URL (default: AIPERATOR_SERVER env or http://localhost:3000)
@@ -1155,6 +1357,11 @@ ${bold("Options:")}
   --jwks <url|file>                 JWKS with the Ed25519 evidence key (verify-bundle; e.g. https://host/.well-known/atf-evidence-jwks.json)
   --kid <kid>                       Key id to select from the JWKS (verify-bundle; default: the bundle's kid)
   --secret <value>                  Legacy HMAC signing secret (verify-bundle; default: EVIDENCE_BUNDLE_SECRET/AUDIT_ANCHOR_SECRET env)
+  --flows-dir <dir>                 Directory with the flow and its bench/ file (flows release)
+  --base <git-ref>                  Fail when the flow changed but metadata.version was not raised vs this ref (flows release)
+  --baseline <receipt.json>         Previous release receipt; its pass rate must not be undercut (flows release)
+  --signing-key-file <file>         Ed25519 key file used to sign the release receipt (flows release)
+  --out <file>                      Path to write the release receipt to (flows release)
   --json                            Output raw JSON
   --help, -h                        Show this help
 
@@ -1174,6 +1381,8 @@ ${bold("Examples:")}
   bun run scripts/cli.ts verify-bundle bundle.json --jwks https://aiperator.example.com/.well-known/atf-evidence-jwks.json
   bun run scripts/cli.ts verify-bundle bundle.json --jwks jwks.json --kid abc123
   bun run scripts/cli.ts verify-bundle bundle.json --secret my-signing-secret
+  bun run scripts/cli.ts flows release my-flow --flows-dir flows --server http://localhost:3000
+  bun run scripts/cli.ts flows release my-flow --flows-dir flows --base origin/main --baseline release-receipt.json
 `);
 }
 
@@ -1218,6 +1427,17 @@ async function main(): Promise<void> {
     case "verify-bundle":
       exitCode = await cmdVerifyBundle(args);
       break;
+    case "flows": {
+      const sub = args.positional.shift();
+      if (sub === "release") {
+        exitCode = await cmdFlowsRelease(args);
+      } else {
+        console.error(`${fail} Unknown flows subcommand: ${sub ?? "(none)"} — expected "release"`);
+        showHelp();
+        exitCode = 1;
+      }
+      break;
+    }
     default:
       console.error(`${fail} Unknown command: ${args.command}`);
       showHelp();
