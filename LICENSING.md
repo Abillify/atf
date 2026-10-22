@@ -125,6 +125,13 @@ source availability; and caniuse-lite carries its CC-BY attribution link and mod
 These classifications apply to the inventoried workspace or Quickstart image only and are not a
 blanket compliance statement for independently built production images.
 
+Container images additionally ship OS packages from their base distributions — notably poppler
+(GPL-2.0-or-later/MPL-2.0) and LibreOffice (MPL-2.0/LGPL-3.0-or-later) in the extract image.
+Those tools run as separate processes invoked via `execFile`, which keeps them outside ATF's
+derivative-work boundary; their license and source-availability duties, and the per-image Trivy
+license SBOMs attached to each release, are documented in
+[docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
+
 ## Changing this license
 
 Any future license change requires:

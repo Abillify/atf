@@ -295,7 +295,9 @@ The Extract Quickstart image additionally installs Debian packages — `poppler-
 — because PDF and office conversion needs external binaries. Those packages come from the base
 image's distribution archive with their own licenses and are **not** covered by the generated
 inventories, which describe the JavaScript dependency tree only. A production Extract image must
-account for them in its own review.
+account for them in its own review. The license position (process-boundary invocation via
+`execFile`, Debian license texts and source availability) and the per-image Trivy license SBOMs
+are documented in [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 
 **Minimum poppler version.** The deterministic page analysis (S2) reads per-word geometry with
 `pdftotext -bbox-layout`, a flag that requires **poppler ≥ 0.42** (2016). Every currently
@@ -312,7 +314,9 @@ five Quickstart image inventories. They also publish the five service images (`r
 `search`, `gate`, `extract`, `control`) to `ghcr.io/abillify/atf-<service>`, tagged with the
 release version and the exact commit SHA. The `Container images` job in
 `.github/workflows/release.yml` signs each image digest with cosign (keyless) and attaches a
-SLSA build-provenance attestation and a CycloneDX SBOM attestation. The images exist only after
+SLSA build-provenance attestation and a CycloneDX SBOM attestation, and scans each image's
+OS-package licenses with Trivy into a per-image `atf-<service>-licenses.cdx.json` added to the
+bundle ([docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md)). The images exist only after
 the tag run has finished. Production images remain deployment-owned and require their own
 inventory, source-availability, replaceability, attribution, scanning, and immutable-digest
 review. The 0.16 operating changes (`JWT_ISSUER_TENANTS`, `CONTROL_PUBLIC_ORIGIN`, the German

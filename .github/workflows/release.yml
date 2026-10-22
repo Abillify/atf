@@ -209,6 +209,35 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: atf-${{ matrix.service }}.cdx.json
           push-to-registry: true
+      # The component SBOM above covers software identity; it does not assert
+      # license findings, and it says nothing about the OS packages the image
+      # installs (the extract image ships poppler and LibreOffice). This scan
+      # inventories the effective license of every OS package in the final
+      # image so the release bundle carries a per-image license record; see
+      # docs/IMAGE-LICENSES.md for the compliance reasoning.
+      - name: Install Trivy (pinned by checksum)
+        run: |
+          set -euo pipefail
+          version=0.75.0
+          expected=c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+          archive=trivy_${version}_Linux-64bit.tar.gz
+          curl -fsSL -o "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${version}/${archive}"
+          echo "${expected}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" trivy
+          sudo install trivy /usr/local/bin/trivy
+          trivy --version
+      - name: Generate image license SBOM (CycloneDX)
+        run: >-
+          trivy image --scanners license --format cyclonedx
+          --output atf-${{ matrix.service }}-licenses.cdx.json
+          --slow --timeout 20m
+          "${{ env.IMAGE }}@${{ steps.push.outputs.digest }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-image-licenses-${{ matrix.service }}-${{ github.sha }}
+          path: atf-${{ matrix.service }}-licenses.cdx.json
+          retention-days: 14
 
   publish:
     name: Publish supply-chain bundle

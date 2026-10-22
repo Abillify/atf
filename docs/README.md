@@ -56,6 +56,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [MCP-2026-CONTEXT-LAYER.md](MCP-2026-CONTEXT-LAYER.md) | MCP context-layer design |
 | [../deploy/examples/flows/README.md](../deploy/examples/flows/README.md) | Example flows, ordered by what they add |
 | [../licenses/README.md](../licenses/README.md) | Why some third-party license texts are vendored here |
+| [IMAGE-LICENSES.md](IMAGE-LICENSES.md) | Base images and OS-package licenses (poppler, LibreOffice) in the shipped container images, and the per-image license SBOMs |
 | [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | STRIDE threat model per service, including Outpost Desktop and the updater |
 | [EU-AI-ACT.md](EU-AI-ACT.md) | EU AI Act: roles, high-risk check, Art. 9–15/26/50 mapped to ATF controls, gaps |

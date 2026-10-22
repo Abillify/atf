@@ -932,6 +932,19 @@ jobs:
           sarif_file: trivy-${{ matrix.service }}.sarif
           category: trivy-image-${{ matrix.service }}
 
+      # Pre-release smoke for the release workflow's per-image license SBOMs
+      # (docs/IMAGE-LICENSES.md): the extract image is the only production
+      # image with a full Debian base — poppler and LibreOffice — so scanning
+      # its licenses here proves that inventory keeps working before a release
+      # depends on it. Non-blocking by design: license findings are a
+      # documentation artifact, not a merge gate.
+      - name: License scan smoke (extract image)
+        if: matrix.service == 'extract'
+        run: >-
+          trivy image --scanners license --format cyclonedx
+          --output image-licenses-smoke.cdx.json --slow --timeout 20m
+          atf-scan-${{ matrix.service }}:latest
+
   # Requirement 13.3: SAST over the TypeScript workspaces and the Rust
   # Tauri core. Both run build-mode none (the only mode CodeQL supports for
   # Rust); the Rust extractor still runs the crates' build scripts through

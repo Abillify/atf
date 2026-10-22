@@ -18,6 +18,20 @@ releases:
 
 ## [Unreleased]
 
+### Documentation
+
+- **Images / Supply chain**: shipped container images now carry a machine-readable
+  license inventory. The release workflow scans every published service image with
+  Trivy (`--scanners license`, checksum-pinned) and adds the per-image
+  `atf-<service>-licenses.cdx.json` to the checksummed supply-chain bundle; the CI
+  image-scan job smoke-tests the same scan on the extract image. The new
+  [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md) documents the image bases, the
+  poppler (GPL-2.0-or-later/MPL-2.0) and LibreOffice (MPL-2.0/LGPL-3.0-or-later)
+  packages in the extract image, why `execFile` process-boundary invocation keeps
+  them outside ATF's derivative-work boundary, and where Debian's license texts and
+  source availability live. Closes the gap between the npm/Cargo notices (which
+  cover the dependency tree only) and the OS packages an image actually distributes.
+
 ## [0.19.0] - 2026-10-22
 
 ### Security
