@@ -46,11 +46,19 @@ export function verifiedTenantClaim(
  * logs and downstream systems; tools that need it use the dedicated token
  * exchange or passthrough features.
  */
-export const FORBIDDEN_CONTEXT_PATHS: readonly string[] = ["rawToken", "headers.authorization"];
+export const FORBIDDEN_CONTEXT_PATHS: readonly string[] = [
+  "rawToken",
+  // The whole header object carries `authorization` and cookies.
+  "headers",
+  "headers.authorization",
+  "headers.proxy-authorization",
+  "headers.cookie",
+];
 
 /** The forbidden context path `path` names, or undefined (case-insensitive). */
 export function forbiddenContextPath(path: string): string | undefined {
-  const lowered = path.trim().toLowerCase();
+  // A trailing dot (`headers.`) still names the whole object.
+  const lowered = path.trim().toLowerCase().replace(/\.+$/, "");
   return FORBIDDEN_CONTEXT_PATHS.find((forbidden) => forbidden.toLowerCase() === lowered);
 }
 

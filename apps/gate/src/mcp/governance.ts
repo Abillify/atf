@@ -128,6 +128,20 @@ function matchesCompiled(
   return true;
 }
 
+/**
+ * Whether an approval token was resolved by its own requester. `aown` (the
+ * resolver's `approvalOwner` hash) decides when present. Tokens without it
+ * fall back to the identity: `ctx` is the token's owner here (`sub` is
+ * checked against `approvalOwner(ctx)` first), so an `approver` equal to the
+ * owner's subject or hash marks a self-resolve.
+ */
+function isSelfResolved(
+  d: { approver: string; aown?: string; sub: string },
+  ctx: AuthContext,
+): boolean {
+  if (typeof d.aown === "string" && d.aown !== "") return d.aown === d.sub;
+  return d.approver === d.sub || d.approver === ctx.subject;
+}
 export function approvalOwner(ctx: AuthContext): string {
   return createHash("sha256")
     .update(stable({
@@ -148,6 +162,12 @@ export interface ApprovalRequest {
 }
 export interface MintApprovalOptions extends ApprovalRequest {
   approver: string;
+  /**
+   * `approvalOwner` hash of the resolving principal. Signed into the token so
+   * `verifyApproval` can tell a self-resolved approval from a foreign one by
+   * the same identity hash it binds `sub` to (`approver` is the plain subject).
+   */
+  approverOwner?: string;
   secret: string;
   ttlMs: number;
   now?: number;
@@ -160,6 +180,7 @@ export function mintApprovalToken(options: MintApprovalOptions): string {
     JSON.stringify({
       jti: options.jti ?? randomUUID(),
       approver: options.approver,
+      ...(options.approverOwner !== undefined ? { aown: options.approverOwner } : {}),
       sub: options.subject,
       tool: options.tool,
       args: options.argsFingerprint,
@@ -294,6 +315,7 @@ export class GovernancePolicy {
       const d = JSON.parse(Buffer.from(payload, "base64url").toString()) as {
         jti: string;
         approver: string;
+        aown?: string;
         sub: string;
         tool: string;
         args: string;
@@ -319,10 +341,10 @@ export class GovernancePolicy {
         d.args !== expectedFingerprint ||
         d.evidence !== evidenceContractHash ||
         d.exp <= now ||
-        // Self-minted tokens (approver === owner) stay valid until expiry
-        // when the flag was enabled after they were issued; reject them.
+        // Self-resolved tokens stay valid until expiry when the flag was
+        // enabled after they were issued; reject them.
         (this.config.approval.requireDifferentApprover === true &&
-          d.approver === d.sub)
+          isSelfResolved(d, ctx))
       )
         return false;
       return !consume || (await this.consumed.consume(d.jti, d.exp));

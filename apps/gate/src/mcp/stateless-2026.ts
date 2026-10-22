@@ -464,6 +464,10 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           pending = await pendingStore.take(requestState, approvalOwner(ctx));
         }
         if (!pending) return error(res, 404, body.id, -32004, "Approval request not found or expired");
+        // Exactly one resolution per request, also across replicas: a second
+        // concurrent resolve finds the request already claimed.
+        if (!(await pendingStore.claim(pending.requestState, pending.expiresAt)))
+          return error(res, 404, body.id, -32004, "Approval request not found or expired");
         bus.publish({
           tenantId: ctx.tenantId,
           type: "approval_resolved",
@@ -494,6 +498,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
               ? { evidenceContractHash: pending.evidenceContractHash }
               : {}),
             approver: resolver,
+            approverOwner: approvalOwner(ctx),
             secret,
             ttlMs: deps.policies?.approval.ttlMs ?? 300_000,
           });

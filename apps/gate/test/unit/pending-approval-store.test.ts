@@ -20,6 +20,7 @@ import {
   type PendingApproval,
   type PendingApprovalStoreLike,
 } from "../../src/mcp/pending-approval-store.ts";
+import { TaskCapacityError } from "../../src/mcp/tasks.ts";
 
 type Factory = () => PendingApprovalStoreLike;
 
@@ -27,6 +28,7 @@ type Factory = () => PendingApprovalStoreLike;
 function fakeRedis(options: { failOn?: string } = {}) {
   const values = new Map<string, { value: string; expiresAt?: number }>();
   const indexes = new Map<string, Map<string, number>>();
+  const indexTtls = new Map<string, number>();
   const commands: string[][] = [];
   const now = () => Date.now();
   const alive = (key: string) => {
@@ -84,10 +86,29 @@ function fakeRedis(options: { failOn?: string } = {}) {
         return removed;
       }
       if (name === "MGET") return args.slice(1).map((key) => alive(key)?.value ?? null);
+      if (name === "ZREMRANGEBYSCORE") {
+        const index = indexes.get(args[1] ?? "");
+        if (!index) return 0;
+        const min = args[2] === "-inf" ? Number.NEGATIVE_INFINITY : Number(args[2]);
+        const max = args[3] === "+inf" ? Number.POSITIVE_INFINITY : Number(args[3]);
+        let removed = 0;
+        for (const [member, score] of index) {
+          if (score >= min && score <= max) {
+            index.delete(member);
+            removed += 1;
+          }
+        }
+        return removed;
+      }
+      if (name === "ZCARD") return indexes.get(args[1] ?? "")?.size ?? 0;
+      if (name === "PEXPIRE") {
+        indexTtls.set(args[1] ?? "", Number(args[2]));
+        return indexes.has(args[1] ?? "") ? 1 : 0;
+      }
       throw new Error(`fake redis does not implement ${name}`);
     },
   };
-  return { client, commands };
+  return { client, commands, indexTtls };
 }
 
 const runContract = (name: string, create: Factory) => {
@@ -212,6 +233,24 @@ const runContract = (name: string, create: Factory) => {
       expect((await store.list("tenant-a", () => true, "not-a-cursor", 2)).approvals).toEqual([]);
     });
 
+    it("lets exactly one of two concurrent resolutions claim a request", async () => {
+      const store = create();
+      const entry = await store.create("owner-a", "tenant-a", "orders.cancel", { id: 7 });
+      const [first, second] = await Promise.all([
+        store.claim(entry.requestState, entry.expiresAt),
+        store.claim(entry.requestState, entry.expiresAt),
+      ]);
+      expect([first, second].filter(Boolean)).toHaveLength(1);
+      expect(await store.claim(entry.requestState, entry.expiresAt)).toBe(false);
+    });
+
+    it("does not claim an unknown request state", async () => {
+      const store = create();
+      if (store.backing === "memory") {
+        expect(await store.claim("00000000-0000-4000-8000-000000000000", Date.now() + 1_000)).toBe(false);
+      }
+    });
+
     it("expires entries", async () => {
       const store = create();
       const entry = await store.create("owner-a", "tenant-a", "orders.cancel", { id: 7 });
@@ -244,6 +283,44 @@ describe("MemoryPendingApprovalStore capacity", () => {
     await store.create("owner-a", "tenant-a", "one", {});
     await Bun.sleep(1_001);
     expect(await store.create("owner-a", "tenant-a", "two", {})).toBeDefined();
+  });
+});
+
+describe("RedisPendingApprovalStore capacity and index lifetime", () => {
+  it("rejects new requests of a tenant once maxPending is reached", async () => {
+    const { client } = fakeRedis();
+    const store = new RedisPendingApprovalStore(client, 60_000, 2);
+    await store.create("owner-a", "tenant-a", "one", {});
+    await store.create("owner-a", "tenant-a", "two", {});
+    await expect(store.create("owner-a", "tenant-a", "three", {})).rejects.toBeInstanceOf(TaskCapacityError);
+    // The limit is per tenant index.
+    expect(await store.create("owner-a", "tenant-b", "other", {})).toBeDefined();
+  });
+
+  it("frees capacity when entries age out of the TTL", async () => {
+    const { client } = fakeRedis();
+    const store = new RedisPendingApprovalStore(client, 1_000, 1);
+    await store.create("owner-a", "tenant-a", "one", {});
+    await Bun.sleep(1_001);
+    expect(await store.create("owner-a", "tenant-a", "two", {})).toBeDefined();
+  });
+
+  it("gives the tenant index a TTL on every write", async () => {
+    const { client, commands, indexTtls } = fakeRedis();
+    const store = new RedisPendingApprovalStore(client, 60_000, 10);
+    await store.create("owner-a", "tenant-a", "one", {});
+    expect(commands.some((c) => c[0] === "PEXPIRE" && c[1] === "mcpgate:approval:tenant:tenant-a")).toBe(true);
+    expect(indexTtls.get("mcpgate:approval:tenant:tenant-a")).toBe(60_000);
+  });
+
+  it("claims through SET NX on a dedicated key", async () => {
+    const { client, commands } = fakeRedis();
+    const store = new RedisPendingApprovalStore(client, 60_000);
+    const entry = await store.create("owner-a", "tenant-a", "one", {});
+    expect(await store.claim(entry.requestState, entry.expiresAt)).toBe(true);
+    const claim = commands.find((c) => c[0] === "SET" && c[1] === `mcpgate:approval:claim:${entry.requestState}`);
+    expect(claim).toContain("NX");
+    expect(claim).toContain("PX");
   });
 });
 

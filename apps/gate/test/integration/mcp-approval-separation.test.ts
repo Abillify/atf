@@ -356,3 +356,147 @@ describe("verifyApproval · approver separation at verify time", () => {
     ).toBe(true);
   });
 });
+
+describe("verifyApproval · self-resolved token through the real resolve path", () => {
+  async function start(requireDifferentApprover: boolean) {
+    const handle = await buildApp(config(requireDifferentApprover), { db: new FakeDb({ main: [{ id: 7 }] }) });
+    const { server, port } = await listen(handle.app);
+    const rpc = (token: string, method: string, params: Record<string, unknown> = {}) =>
+      fetch(`http://127.0.0.1:${port}/mcp/v2026`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "MCP-Protocol-Version": "2026-07-28",
+          "Mcp-Method": method,
+          ...(method === "tools/call" && typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
+          ...(method === "io.modelcontextprotocol/approvals/resolve" && typeof params.requestState === "string"
+            ? { "Mcp-Request-State": params.requestState }
+            : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params,
+          _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+        }),
+      });
+    return {
+      rpc,
+      stop: async () => {
+        server.close();
+        await handle.shutdown();
+      },
+    };
+  }
+
+  it("rejects a token the requester resolved itself before the flag was enabled", async () => {
+    // Flag off: the requester asks for and resolves its own approval.
+    const before = await start(false);
+    let approvalToken: string;
+    try {
+      const requested = (await (
+        await before.rpc(REQUESTER, "tools/call", { name: "approved_orders", arguments: { id: 7 } })
+      ).json()) as { result: { inputRequests: Array<{ requestState: string }> } };
+      const requestState = String(requested.result.inputRequests[0]?.requestState);
+      const resolved = await before.rpc(REQUESTER, "io.modelcontextprotocol/approvals/resolve", {
+        requestState,
+        decision: "approved",
+      });
+      expect(resolved.status).toBe(200);
+      ({ approvalToken } = ((await resolved.json()) as { result: { approvalToken: string } }).result);
+    } finally {
+      await before.stop();
+    }
+
+    // Flag on (same secret, same identities): the self-resolved token is refused.
+    const after = await start(true);
+    try {
+      const call = (await (
+        await after.rpc(REQUESTER, "tools/call", {
+          name: "approved_orders",
+          arguments: { id: 7 },
+          _meta: { "io.modelcontextprotocol/approvalToken": approvalToken },
+        })
+      ).json()) as { result: { resultType: string; isError?: boolean } };
+      expect(call.result.resultType).toBe("input_required");
+    } finally {
+      await after.stop();
+    }
+  });
+
+  it("still accepts a token a different principal resolved", async () => {
+    const app = await start(true);
+    try {
+      const requested = (await (
+        await app.rpc(REQUESTER, "tools/call", { name: "approved_orders", arguments: { id: 7 } })
+      ).json()) as { result: { inputRequests: Array<{ requestState: string }> } };
+      const requestState = String(requested.result.inputRequests[0]?.requestState);
+      const resolved = (await (
+        await app.rpc(APPROVER, "io.modelcontextprotocol/approvals/resolve", { requestState, decision: "approved" })
+      ).json()) as { result: { approvalToken: string } };
+      const call = (await (
+        await app.rpc(REQUESTER, "tools/call", {
+          name: "approved_orders",
+          arguments: { id: 7 },
+          _meta: { "io.modelcontextprotocol/approvalToken": resolved.result.approvalToken },
+        })
+      ).json()) as { result: { resultType: string } };
+      expect(call.result.resultType).toBe("complete");
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it("resolves a request exactly once when two resolutions race", async () => {
+    const app = await start(true);
+    try {
+      const requested = (await (
+        await app.rpc(REQUESTER, "tools/call", { name: "approved_orders", arguments: { id: 7 } })
+      ).json()) as { result: { inputRequests: Array<{ requestState: string }> } };
+      const requestState = String(requested.result.inputRequests[0]?.requestState);
+      const [a, b] = await Promise.all([
+        app.rpc(APPROVER, "io.modelcontextprotocol/approvals/resolve", { requestState, decision: "approved" }),
+        app.rpc(APPROVER, "io.modelcontextprotocol/approvals/resolve", { requestState, decision: "denied" }),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      expect(statuses).toEqual([200, 404]);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it("rejects a legacy token (no resolver hash) whose approver is the owner's subject", async () => {
+    const viewer: AuthContext = {
+      method: "static",
+      subject: "requester",
+      username: "requester",
+      scopes: ["tools:read", "tools:write"],
+      claims: { tenant: "acme" },
+      headers: {},
+      rawToken: "x",
+    };
+    const token = mintApprovalToken({
+      subject: approvalOwner(viewer),
+      tool: "approved_orders",
+      argsFingerprint: approvalArgsFingerprint({ id: 7 }),
+      requestState: "state-legacy-self",
+      approver: "requester",
+      secret: "separation-approval-secret",
+      ttlMs: 300_000,
+    });
+    const policy = new GovernancePolicy({
+      defaultEffect: "approval",
+      rules: [],
+      approval: {
+        ttlMs: 300_000,
+        maxPending: 10,
+        secret: "separation-approval-secret",
+        requireDifferentApprover: true,
+        approverScope: "approvals:resolve",
+      },
+    });
+    expect(await policy.verifyApproval(token, viewer, "approved_orders", { id: 7 }, undefined, false)).toBe(false);
+  });
+});

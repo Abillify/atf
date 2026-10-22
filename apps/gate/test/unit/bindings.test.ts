@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { compileQuery } from "../../src/db/bindings.ts";
+import { interpolateBody, interpolateRaw, interpolateUrl } from "../../src/db/http-bindings.ts";
 import type { AuthContext } from "../../src/auth/context.ts";
 
 const ctx: AuthContext = {
@@ -91,6 +92,27 @@ describe("bearer token bindings", () => {
     );
   });
 
+  it("refuses the whole header object and credential headers in SQL, URLs, raw text and bodies", () => {
+    const withHeaders = {
+      ...ctx,
+      headers: { authorization: "Bearer secret-x", cookie: "sid=1", "proxy-authorization": "Basic y" },
+    };
+    expect(() => compileQuery("SELECT :ctx.headers", {}, withHeaders)).toThrow("Binding :ctx.headers is not allowed");
+    expect(() => compileQuery("SELECT :ctx.headers.cookie", {}, withHeaders)).toThrow(
+      "Binding :ctx.headers.cookie is not allowed",
+    );
+    expect(() => compileQuery("SELECT :ctx.headers.proxy-authorization", {}, withHeaders)).toThrow(
+      "Binding :ctx.headers.proxy-authorization is not allowed",
+    );
+    expect(() => interpolateBody({ h: ":ctx.headers" }, {}, withHeaders)).toThrow(
+      "Binding :ctx.headers is not allowed",
+    );
+    expect(() => interpolateUrl("https://api.example.test/x?h=:ctx.headers", {}, withHeaders)).toThrow(
+      "is not allowed",
+    );
+    expect(() => interpolateRaw("h=:ctx.headers", {}, withHeaders)).toThrow("is not allowed");
+  });
+
   it("still resolves other headers and claims", () => {
     const { bindings } = compileQuery("SELECT :ctx.headers.x-request-id", {}, {
       ...ctx,
@@ -115,6 +137,22 @@ describe("bearer token bindings in the configuration", () => {
     const result = await parse("SELECT :ctx.rawToken");
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("Binding :ctx.rawToken is not allowed");
+  });
+
+  it("rejects the whole header object and credential headers when the configuration loads", async () => {
+    for (const [query, path] of [
+      ["SELECT :ctx.headers", "headers"],
+      ["SELECT :ctx.headers.cookie", "headers.cookie"],
+      ["SELECT :ctx.headers.Proxy-Authorization", "headers.Proxy-Authorization"],
+    ] as const) {
+      const result = await parse(query);
+      expect(result.success, query).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain(`Binding :ctx.${path} is not allowed`);
+    }
+  });
+
+  it("accepts single non-credential header bindings", async () => {
+    expect((await parse("SELECT :ctx.headers.x-request-id")).success).toBe(true);
   });
 
   it("accepts a tool with ordinary bindings", async () => {

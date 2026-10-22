@@ -1865,7 +1865,10 @@ export const AppConfigSchema = z.object({
 }).superRefine((cfg, ctx) => {
   // A binding on the caller's bearer token would copy the credential into SQL
   // parameters, URLs and bodies; refuse it when the configuration loads.
-  const forbiddenBinding = /:ctx\.(rawToken|headers\.authorization)\b/i;
+  // `:ctx.headers` alone hands out the whole header object (authorization and
+  // cookies included); single non-credential headers stay bindable.
+  const forbiddenBinding =
+    /:ctx\.(rawToken|headers\.(?:proxy-)?authorization|headers\.cookie|headers)(?![\w.-]*[A-Za-z0-9])/i;
   cfg.tools.forEach((tool, index) => {
     const hit = forbiddenBinding.exec(JSON.stringify(tool));
     if (hit?.[1] !== undefined) {

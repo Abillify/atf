@@ -73,6 +73,14 @@ export interface PendingApprovalStoreLike {
   lookup(requestState: string): Promise<PendingApproval | undefined>;
   /** Consume a pending request on behalf of a resolver other than its owner. */
   takeForeign(requestState: string): Promise<PendingApproval | undefined>;
+  /**
+   * Atomically claim a pending request for resolution. Exactly one caller
+   * (across replicas for the Redis store) gets `true`; every later caller
+   * gets `false` until the entry expires. The router claims after `take` /
+   * `takeForeign` and before minting, so two concurrent resolutions can not
+   * both mint a token or overwrite each other's decision.
+   */
+  claim(requestState: string, expiresAt: number): Promise<boolean>;
   /** Record the outcome of a resolution; the entry is kept until `expiresAt`. */
   markResolved(requestState: string, status: "approved" | "denied", token?: string): Promise<void>;
   /**
@@ -99,9 +107,21 @@ export interface PendingApprovalStoreLike {
 export class MemoryPendingApprovalStore implements PendingApprovalStoreLike {
   readonly backing = "memory" as const;
   private readonly entries = new Map<string, PendingApproval>();
+  private readonly claims = new Set<string>();
   constructor(private readonly ttlMs: number, private readonly maxEntries: number) {}
   private sweep(now = Date.now()) {
-    for (const [id, entry] of this.entries) if (entry.expiresAt <= now) this.entries.delete(id);
+    for (const [id, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(id);
+        this.claims.delete(id);
+      }
+    }
+  }
+  async claim(requestState: string, _expiresAt: number): Promise<boolean> {
+    this.sweep();
+    if (!this.entries.has(requestState) || this.claims.has(requestState)) return false;
+    this.claims.add(requestState);
+    return true;
   }
   async create(
     owner: string,
@@ -173,7 +193,10 @@ export class MemoryPendingApprovalStore implements PendingApprovalStoreLike {
       ...(open.length > limit && last ? { nextCursor: encodeApprovalCursor(last) } : {}),
     };
   }
-  clear() { this.entries.clear(); }
+  clear() {
+    this.entries.clear();
+    this.claims.clear();
+  }
 }
 
 /** Minimal shape of the parts of the redis client we use (mirrors identity-rate-limit.ts). */
@@ -186,6 +209,7 @@ interface RedisLike {
 
 const PENDING_KEY_PREFIX = "mcpgate:approval:pending:";
 const TENANT_INDEX_PREFIX = "mcpgate:approval:tenant:";
+const CLAIM_KEY_PREFIX = "mcpgate:approval:claim:";
 
 /**
  * Shared cross-replica implementation: the entry lives as JSON under
@@ -193,10 +217,20 @@ const TENANT_INDEX_PREFIX = "mcpgate:approval:tenant:";
  * lifetime (Redis expires it), indexed per tenant in the ZSET
  * `mcpgate:approval:tenant:<tenantId>` scored by `createdAt`. A resolution
  * rewrites the entry with `XX KEEPTTL` so the requester can still poll it.
+ * A resolution first claims `mcpgate:approval:claim:<requestState>` with
+ * `SET NX`, so only one replica resolves a request.
+ *
+ * `maxPending` bounds the entries per tenant index (entries younger than the
+ * TTL, resolved ones included, like the memory store counts them); the index
+ * itself expires one TTL after its last write.
  */
 export class RedisPendingApprovalStore implements PendingApprovalStoreLike {
   readonly backing = "redis" as const;
-  constructor(private readonly client: RedisLike, private readonly ttlMs: number) {}
+  constructor(
+    private readonly client: RedisLike,
+    private readonly ttlMs: number,
+    private readonly maxPending?: number,
+  ) {}
 
   private key(requestState: string): string {
     return `${PENDING_KEY_PREFIX}${requestState}`;
@@ -233,17 +267,32 @@ export class RedisPendingApprovalStore implements PendingApprovalStoreLike {
       expiresAt: now + this.ttlMs,
       status: "pending" as const,
     };
+    const index = this.indexKey(tenantId);
+    let full = false;
     try {
-      const written = await this.client.sendCommand([
-        "SET", this.key(entry.requestState), JSON.stringify(entry),
-        "PX", String(entry.expiresAt - now), "NX",
-      ]);
-      if (written !== "OK") throw new Error(`request state ${entry.requestState} already exists`);
-      await this.client.sendCommand(["ZADD", this.indexKey(tenantId), String(entry.createdAt), entry.requestState]);
-      return entry;
+      if (this.maxPending !== undefined) {
+        // Drop index members older than one TTL (their entries have expired),
+        // then count what is left against the limit.
+        await this.client.sendCommand(["ZREMRANGEBYSCORE", index, "-inf", String(now - this.ttlMs)]);
+        const count = Number(await this.client.sendCommand(["ZCARD", index]));
+        full = Number.isFinite(count) && count >= this.maxPending;
+      }
+      if (!full) {
+        const written = await this.client.sendCommand([
+          "SET", this.key(entry.requestState), JSON.stringify(entry),
+          "PX", String(entry.expiresAt - now), "NX",
+        ]);
+        if (written !== "OK") throw new Error(`request state ${entry.requestState} already exists`);
+        await this.client.sendCommand(["ZADD", index, String(entry.createdAt), entry.requestState]);
+        // The index lives as long as its youngest entry; without a TTL it
+        // would grow for every tenant that never lists its approvals.
+        await this.client.sendCommand(["PEXPIRE", index, String(this.ttlMs)]);
+      }
     } catch (err) {
       return this.fail("create", err);
     }
+    if (full) throw new TaskCapacityError();
+    return entry;
   }
   async take(requestState: string, owner: string): Promise<PendingApproval | undefined> {
     try {
@@ -275,6 +324,17 @@ export class RedisPendingApprovalStore implements PendingApprovalStoreLike {
       return entry;
     } catch (err) {
       return this.fail("takeForeign", err);
+    }
+  }
+  async claim(requestState: string, expiresAt: number): Promise<boolean> {
+    const rest = Math.max(1, expiresAt - Date.now());
+    try {
+      const written = await this.client.sendCommand([
+        "SET", `${CLAIM_KEY_PREFIX}${requestState}`, "1", "PX", String(rest), "NX",
+      ]);
+      return written === "OK";
+    } catch (err) {
+      return this.fail("claim", err);
     }
   }
   async markResolved(requestState: string, status: "approved" | "denied", token?: string): Promise<void> {
@@ -372,5 +432,5 @@ export async function createPendingApprovalStore(
   const client = redisMod.createClient({ url: redisUrl });
   client.on?.("error", (err: Error) => logger.error(`pending approval redis error: ${err.message}`));
   await client.connect();
-  return new RedisPendingApprovalStore(client, ttlMs);
+  return new RedisPendingApprovalStore(client, ttlMs, maxPending);
 }
