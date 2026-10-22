@@ -951,8 +951,9 @@ async function upsertUnit(
   const tsSearchSql = ftsHeader
     ? `setweight(to_tsvector('${lang}', $30), 'D') || to_tsvector('${lang}', $4)`
     : `to_tsvector('${lang}', $4)`;
-  await client.query(
-    `INSERT INTO "${table}"
+  // The header rides on $30 and is appended ONLY when the SQL references it:
+  // Postgres rejects a bind whose parameter count exceeds the statement's.
+  const sql = `INSERT INTO "${table}"
        (tenant_id, reference, base_ref, is_latest, content, vector, ts_search, ts_ident,
         metadata, unit_id, unit_type, revision_id, section_id, section_path,
         page_start, page_end, figure_kind, document_id,
@@ -990,8 +991,8 @@ async function upsertUnit(
        tags           = EXCLUDED.tags,
        link           = EXCLUDED.link,
        source         = EXCLUDED.source,
-       modified       = NOW()`,
-    [
+       modified       = NOW()`;
+  const params: unknown[] = [
       batch.tenant_id,
       reference,
       batch.reference,
@@ -1021,10 +1022,10 @@ async function upsertUnit(
       info.tags ?? [],
       info.link ?? null,
       info.sourceLabel ?? null,
-      // $30: contextual header for ts_search (unused unless the SQL references it)
-      ftsHeader,
-    ],
-  );
+  ];
+  // $30: contextual header for ts_search, appended only when the SQL references it
+  if (ftsHeader) params.push(ftsHeader);
+  await client.query(sql, params);
 }
 
 /**
