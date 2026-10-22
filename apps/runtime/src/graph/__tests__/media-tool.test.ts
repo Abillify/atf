@@ -62,16 +62,14 @@ function nodeWithMediaTool(): FlowNode {
 /**
  * A provider factory returning a model whose generate yields one image file.
  *
- * The generated-file part's `data` field is now a tagged union at runtime
- * (`{ type: "data", data: <base64|bytes> }` or `{ type: "url", url }`) —
- * matching what real provider packages such as `@ai-sdk/google@4.x` emit and
- * what `ai@7`'s internal `asContent()` normaliser expects. The installed
- * `@ai-sdk/provider@4.0.3` `.d.ts` for `LanguageModelV3File.data` is still the
- * OLDER flat `string | Uint8Array` shape (a type/runtime lag between the
- * "V3" provider spec's declared and actual contract in this SDK generation —
- * verified against the real `@ai-sdk/google` source and the passing test
- * runtime behaviour). The inner cast documents and isolates that mismatch to
- * this one fixture rather than fighting the stale declaration file.
+ * Per the V3 provider spec (`LanguageModelV3File.data`), a generated-file
+ * part's `data` is the FLAT base64 string (or bytes). ai@7.0.143's v3→v4
+ * model adapter wraps it into the tagged union
+ * (`{ type: "data", data: <base64|bytes> }`) that its internal content
+ * normaliser consumes; passing the tagged union in a V3 mock would be
+ * double-wrapped and surface as an object on `result.files[].base64`.
+ * Real provider packages (all `@ai-sdk/*@4.x`, spec v4) emit the tagged
+ * union themselves and never take this adapter path.
  */
 function imageModelFactory(base64: string, mediaType = "image/png") {
   return () =>
@@ -80,14 +78,10 @@ function imageModelFactory(base64: string, mediaType = "image/png") {
         content: [
           {
             type: "file",
-            data: { type: "data", data: base64 },
+            data: base64,
             mediaType,
           },
-        ] as unknown as Array<{
-          type: "file";
-          data: string | Uint8Array;
-          mediaType: string;
-        }>,
+        ],
         finishReason: { unified: "stop" as const, raw: "stop" },
         usage: mkUsage(3, 4),
         warnings: [],

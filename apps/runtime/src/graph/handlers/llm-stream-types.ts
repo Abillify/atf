@@ -61,8 +61,17 @@ export interface LlmAttemptUsage {
   cachedPromptTokens: number | undefined;
 }
 
-/** The `streamText(...)` result consumed by the attempt stream/postprocess. */
-export type LlmStreamResult = ReturnType<typeof streamText>;
+/**
+ * The `streamText(...)` result consumed by the attempt stream/postprocess.
+ * ai@7.0.143 widens the return type to a union with a low-memory
+ * single-consumer variant, returned only when `experimental_lowMemory: true`
+ * is passed. ATF never passes that flag, so the full result — the one
+ * carrying `response`/`responseMessages` — is the only shape that occurs.
+ */
+export type LlmStreamResult = Extract<
+  ReturnType<typeof streamText>,
+  { response: unknown; responseMessages: unknown }
+>;
 
 /** Mutable state shared between the candidate head, the attempt stream, the
  * post-processing and the error handler of one LLM node execution. Each

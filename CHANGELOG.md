@@ -18,6 +18,24 @@ releases:
 
 ## [Unreleased]
 
+### Dependencies
+
+- **All workspaces**: consolidated dependency refresh applied directly from the
+  open Dependabot PRs (not merged): `ai` 7.0.143 and the `@ai-sdk/*` provider
+  packages, `@langchain/*`, `@modelcontextprotocol/sdk` 1.32.0, `hono` 4.13.11,
+  the AWS SDK v3 train 3.1152.0, `next` 16.4.2 with React 19.3.1, `vitest`/
+  `@vitest/coverage-v8` 5.0.5, `@playwright/test` 1.64.1, `yaml` 2.9.1,
+  `uuid` 14.0.3, `fast-xml-parser` 5.11.2, `supertest` 7.3.1, and the
+  `@types/*` bumps. The `outpost-desktop` Rust side moved to `keyring` 4.2.0
+  and `getrandom` 0.4.3 (with `proptest` 1.12.0, `serde_json` 1.0.154,
+  `tauri-plugin-autostart` 2.7.0). Docker bases moved to `oven/bun` 1.4.3
+  (digest-pinned); the CodeQL, build-push, cosign, and QEMU workflow pins were
+  bumped to their Dependabot targets. Two source adaptations were required:
+  `streamText`'s widened return union in `ai` 7.0.143 is narrowed to the full
+  result via `LlmStreamResult` (ATF never passes `experimental_lowMemory`),
+  and the `media-tool` test mock now emits the flat V3 file-part `data` the
+  v3→v4 adapter expects instead of a pre-tagged union.
+
 ### Documentation
 
 - **Images / Supply chain**: shipped container images now carry a machine-readable

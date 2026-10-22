@@ -46,11 +46,11 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "3eb697bbe950b9d66a1b958a4792611c8a60b3b4fcfaa561ac00f5d6b05c09d5"
+        "value": "29d6165e347220699ce57d610c7862e9d01d2384aebfabeaff9a2163f981595c"
       },
       {
         "name": "atf:cargo-lock:sha256",
-        "value": "f1c4e76413062ecad4d5b6be604df7337bbd10d56db93065364d9badd3b7020e"
+        "value": "c7c3634be4e2e5585aa13d8818e1d1e0980e358a7ffe9937ac5b7bd72f3014de"
       }
     ]
   },
@@ -76,16 +76,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.88",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.118",
       "group": "@ai-sdk",
       "name": "amazon-bedrock",
-      "version": "5.0.88",
+      "version": "5.0.118",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.88",
+      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.118",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -95,16 +95,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.58",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.82",
       "group": "@ai-sdk",
       "name": "anthropic",
-      "version": "4.0.58",
+      "version": "4.0.82",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.58",
+      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.82",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -114,16 +114,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.75",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.104",
       "group": "@ai-sdk",
       "name": "azure",
-      "version": "4.0.75",
+      "version": "4.0.104",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.75",
+      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.104",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -133,16 +133,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.49",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.67",
       "group": "@ai-sdk",
       "name": "deepseek",
-      "version": "3.0.49",
+      "version": "3.0.67",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.49",
+      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.67",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -152,16 +152,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.87",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.116",
       "group": "@ai-sdk",
       "name": "gateway",
-      "version": "4.0.87",
+      "version": "4.0.116",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.87",
+      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.116",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -171,16 +171,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.76",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.99",
       "group": "@ai-sdk",
       "name": "google",
-      "version": "4.0.76",
+      "version": "4.0.99",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.76",
+      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.99",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -190,16 +190,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.71",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.96",
       "group": "@ai-sdk",
       "name": "openai",
-      "version": "4.0.71",
+      "version": "4.0.96",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.71",
+      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.96",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -209,16 +209,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.17",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.29",
       "group": "@ai-sdk",
       "name": "provider",
-      "version": "4.0.17",
+      "version": "4.0.29",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.17",
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.29",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -228,16 +228,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.45",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.62",
       "group": "@ai-sdk",
       "name": "provider-utils",
-      "version": "5.0.45",
+      "version": "5.0.62",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.45",
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.62",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -285,16 +285,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1136.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1152.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-agent-runtime",
-      "version": "3.1136.0",
+      "version": "3.1152.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1136.0",
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1152.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -304,16 +304,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1136.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1152.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-runtime",
-      "version": "3.1136.0",
+      "version": "3.1152.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1136.0",
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1152.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -323,16 +323,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcore@3.978.1",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcore@3.978.5",
       "group": "@aws-sdk",
       "name": "core",
-      "version": "3.978.1",
+      "version": "3.978.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcore@3.978.1",
+      "purl": "pkg:npm/%40aws-sdk%2Fcore@3.978.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -342,16 +342,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.72",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.76",
       "group": "@aws-sdk",
       "name": "credential-provider-env",
-      "version": "3.972.72",
+      "version": "3.972.76",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.72",
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.76",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -361,130 +361,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.74",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.78",
       "group": "@aws-sdk",
       "name": "credential-provider-http",
-      "version": "3.972.74",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.74",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.17",
-      "group": "@aws-sdk",
-      "name": "credential-provider-ini",
-      "version": "3.973.17",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.17",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.79",
-      "group": "@aws-sdk",
-      "name": "credential-provider-login",
-      "version": "3.972.79",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.79",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.84",
-      "group": "@aws-sdk",
-      "name": "credential-provider-node",
-      "version": "3.972.84",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.84",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.72",
-      "group": "@aws-sdk",
-      "name": "credential-provider-process",
-      "version": "3.972.72",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.72",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.16",
-      "group": "@aws-sdk",
-      "name": "credential-provider-sso",
-      "version": "3.973.16",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.16",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.78",
-      "group": "@aws-sdk",
-      "name": "credential-provider-web-identity",
       "version": "3.972.78",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.78",
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.78",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -494,16 +380,130 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.34",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.21",
+      "group": "@aws-sdk",
+      "name": "credential-provider-ini",
+      "version": "3.973.21",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.21",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.83",
+      "group": "@aws-sdk",
+      "name": "credential-provider-login",
+      "version": "3.972.83",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.83",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.88",
+      "group": "@aws-sdk",
+      "name": "credential-provider-node",
+      "version": "3.972.88",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.88",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.76",
+      "group": "@aws-sdk",
+      "name": "credential-provider-process",
+      "version": "3.972.76",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.76",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.20",
+      "group": "@aws-sdk",
+      "name": "credential-provider-sso",
+      "version": "3.973.20",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.20",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.82",
+      "group": "@aws-sdk",
+      "name": "credential-provider-web-identity",
+      "version": "3.972.82",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.82",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.38",
       "group": "@aws-sdk",
       "name": "eventstream-handler-node",
-      "version": "3.972.34",
+      "version": "3.972.38",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.34",
+      "purl": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.38",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -513,16 +513,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.29",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.33",
       "group": "@aws-sdk",
       "name": "middleware-eventstream",
-      "version": "3.972.29",
+      "version": "3.972.33",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.29",
+      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.33",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -532,16 +532,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.54",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.58",
       "group": "@aws-sdk",
       "name": "middleware-websocket",
-      "version": "3.972.54",
+      "version": "3.972.58",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.54",
+      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.58",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -551,16 +551,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.46",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.50",
       "group": "@aws-sdk",
       "name": "nested-clients",
-      "version": "3.997.46",
+      "version": "3.997.50",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.46",
+      "purl": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.50",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -570,16 +570,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.47",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.49",
       "group": "@aws-sdk",
       "name": "signature-v4-multi-region",
-      "version": "3.996.47",
+      "version": "3.996.49",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.47",
+      "purl": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.49",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -589,16 +589,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1136.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1152.0",
       "group": "@aws-sdk",
       "name": "token-providers",
-      "version": "3.1136.0",
+      "version": "3.1152.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1136.0",
+      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1152.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -608,35 +608,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1138.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1155.0",
       "group": "@aws-sdk",
       "name": "token-providers",
-      "version": "3.1138.0",
+      "version": "3.1155.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1138.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftypes@3.974.5",
-      "group": "@aws-sdk",
-      "name": "types",
-      "version": "3.974.5",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftypes@3.974.5",
+      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1155.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -656,6 +637,25 @@
         }
       ],
       "purl": "pkg:npm/%40aws-sdk%2Ftypes@3.974.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftypes@3.975.0",
+      "group": "@aws-sdk",
+      "name": "types",
+      "version": "3.975.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Ftypes@3.975.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -703,16 +703,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40axe-core%2Fplaywright@4.13.0",
+      "bom-ref": "pkg:npm/%40axe-core%2Fplaywright@4.14.0",
       "group": "@axe-core",
       "name": "playwright",
-      "version": "4.13.0",
+      "version": "4.14.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
         }
       ],
-      "purl": "pkg:npm/%40axe-core%2Fplaywright@4.13.0",
+      "purl": "pkg:npm/%40axe-core%2Fplaywright@4.14.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1596,6 +1596,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40jridgewell%2Fsourcemap-codec@1.6.0",
+      "group": "@jridgewell",
+      "name": "sourcemap-codec",
+      "version": "1.6.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40jridgewell%2Fsourcemap-codec@1.6.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40jridgewell%2Ftrace-mapping@0.3.31",
       "group": "@jridgewell",
       "name": "trace-mapping",
@@ -1615,16 +1634,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.13",
+      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.18",
       "group": "@langchain",
       "name": "core",
-      "version": "1.2.13",
+      "version": "1.2.18",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Fcore@1.2.13",
+      "purl": "pkg:npm/%40langchain%2Fcore@1.2.18",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1634,16 +1653,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.4.18",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.5.1",
       "group": "@langchain",
       "name": "langgraph",
-      "version": "1.4.18",
+      "version": "1.5.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph@1.4.18",
+      "purl": "pkg:npm/%40langchain%2Flanggraph@1.5.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1653,16 +1672,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.5",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.0",
       "group": "@langchain",
       "name": "langgraph-checkpoint",
-      "version": "1.1.5",
+      "version": "1.2.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.5",
+      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1672,16 +1691,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.0",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.7",
       "group": "@langchain",
       "name": "langgraph-sdk",
-      "version": "1.12.0",
+      "version": "1.12.7",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.0",
+      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1710,6 +1729,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40langchain%2Fprotocol@0.0.20",
+      "group": "@langchain",
+      "name": "protocol",
+      "version": "0.0.20",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40langchain%2Fprotocol@0.0.20",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
       "group": "@modelcontextprotocol",
       "name": "sdk",
@@ -1720,6 +1758,25 @@
         }
       ],
       "purl": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.32.0",
+      "group": "@modelcontextprotocol",
+      "name": "sdk",
+      "version": "1.32.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.32.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1748,16 +1805,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.8",
+      "bom-ref": "pkg:npm/%40next%2Fenv@16.4.2",
       "group": "@next",
       "name": "env",
-      "version": "16.3.8",
+      "version": "16.4.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fenv@16.3.8",
+      "purl": "pkg:npm/%40next%2Fenv@16.4.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1767,16 +1824,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.8",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.4.2",
       "group": "@next",
       "name": "swc-linux-x64-gnu",
-      "version": "16.3.8",
+      "version": "16.4.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.8",
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.4.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1786,16 +1843,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.8",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.4.2",
       "group": "@next",
       "name": "swc-linux-x64-musl",
-      "version": "16.3.8",
+      "version": "16.4.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.8",
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.4.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1824,16 +1881,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40nodable%2Fentities@3.0.0",
+      "bom-ref": "pkg:npm/%40nodable%2Fentities@3.1.0",
       "group": "@nodable",
       "name": "entities",
-      "version": "3.0.0",
+      "version": "3.1.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40nodable%2Fentities@3.0.0",
+      "purl": "pkg:npm/%40nodable%2Fentities@3.1.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1976,16 +2033,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40playwright%2Ftest@1.63.0",
+      "bom-ref": "pkg:npm/%40playwright%2Ftest@1.64.1",
       "group": "@playwright",
       "name": "test",
-      "version": "1.63.0",
+      "version": "1.64.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40playwright%2Ftest@1.63.0",
+      "purl": "pkg:npm/%40playwright%2Ftest@1.64.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2356,25 +2413,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Fcore@3.33.3",
-      "group": "@smithy",
-      "name": "core",
-      "version": "3.33.3",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Fcore@3.33.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40smithy%2Fcore@3.35.0",
       "group": "@smithy",
       "name": "core",
@@ -2385,6 +2423,25 @@
         }
       ],
       "purl": "pkg:npm/%40smithy%2Fcore@3.35.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40smithy%2Fcore@3.36.2",
+      "group": "@smithy",
+      "name": "core",
+      "version": "3.36.2",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40smithy%2Fcore@3.36.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2432,25 +2489,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Ffetch-http-handler@5.7.2",
-      "group": "@smithy",
-      "name": "fetch-http-handler",
-      "version": "5.7.2",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Ffetch-http-handler@5.7.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40smithy%2Ffetch-http-handler@5.8.0",
       "group": "@smithy",
       "name": "fetch-http-handler",
@@ -2461,25 +2499,6 @@
         }
       ],
       "purl": "pkg:npm/%40smithy%2Ffetch-http-handler@5.8.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Fnode-http-handler@4.12.0",
-      "group": "@smithy",
-      "name": "node-http-handler",
-      "version": "4.12.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Fnode-http-handler@4.12.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2508,16 +2527,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Fsignature-v4@5.7.3",
+      "bom-ref": "pkg:npm/%40smithy%2Fsignature-v4@5.7.4",
       "group": "@smithy",
       "name": "signature-v4",
-      "version": "5.7.3",
+      "version": "5.7.4",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40smithy%2Fsignature-v4@5.7.3",
+      "purl": "pkg:npm/%40smithy%2Fsignature-v4@5.7.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2907,16 +2926,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.7",
+      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.8",
       "group": "@testing-library",
       "name": "user-event",
-      "version": "14.6.7",
+      "version": "14.6.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.7",
+      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3534,16 +3553,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fmulter@2.1.0",
+      "bom-ref": "pkg:npm/%40types%2Fmulter@2.3.0",
       "group": "@types",
       "name": "multer",
-      "version": "2.1.0",
+      "version": "2.3.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Fmulter@2.1.0",
+      "purl": "pkg:npm/%40types%2Fmulter@2.3.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3591,16 +3610,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fnode@26.6.2",
+      "bom-ref": "pkg:npm/%40types%2Fnode@26.6.5",
       "group": "@types",
       "name": "node",
-      "version": "26.6.2",
+      "version": "26.6.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Fnode@26.6.2",
+      "purl": "pkg:npm/%40types%2Fnode@26.6.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3914,16 +3933,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fcoverage-v8@5.0.0",
+      "bom-ref": "pkg:npm/%40vitest%2Fcoverage-v8@5.0.5",
       "group": "@vitest",
       "name": "coverage-v8",
-      "version": "5.0.0",
+      "version": "5.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fcoverage-v8@5.0.0",
+      "purl": "pkg:npm/%40vitest%2Fcoverage-v8@5.0.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3971,16 +3990,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fmocker@5.0.0",
+      "bom-ref": "pkg:npm/%40vitest%2Fmocker@5.0.5",
       "group": "@vitest",
       "name": "mocker",
-      "version": "5.0.0",
+      "version": "5.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fmocker@5.0.0",
+      "purl": "pkg:npm/%40vitest%2Fmocker@5.0.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3990,16 +4009,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fspy@5.0.0",
+      "bom-ref": "pkg:npm/%40vitest%2Fspy@5.0.5",
       "group": "@vitest",
       "name": "spy",
-      "version": "5.0.0",
+      "version": "5.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fspy@5.0.0",
+      "purl": "pkg:npm/%40vitest%2Fspy@5.0.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4138,6 +4157,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/aes@0.9.3",
+      "name": "aes",
+      "version": "0.9.3",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/aes@0.9.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/agent-base@7.1.4",
       "name": "agent-base",
       "version": "7.1.4",
@@ -4174,15 +4211,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/ai@7.0.107",
+      "bom-ref": "pkg:npm/ai@7.0.143",
       "name": "ai",
-      "version": "7.0.107",
+      "version": "7.0.143",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/ai@7.0.107",
+      "purl": "pkg:npm/ai@7.0.143",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4363,6 +4400,24 @@
         }
       ],
       "purl": "pkg:npm/append-field@1.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/apple-native-keyring-store@1.0.2",
+      "name": "apple-native-keyring-store",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/apple-native-keyring-store@1.0.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4750,15 +4805,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/auto-launch@0.5.0",
+      "bom-ref": "pkg:cargo/auto-launch@0.6.0",
       "name": "auto-launch",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/auto-launch@0.5.0",
+      "purl": "pkg:cargo/auto-launch@0.6.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4822,15 +4877,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/axe-core@4.13.0",
+      "bom-ref": "pkg:npm/axe-core@4.14.0",
       "name": "axe-core",
-      "version": "4.13.0",
+      "version": "4.14.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
         }
       ],
-      "purl": "pkg:npm/axe-core@4.13.0",
+      "purl": "pkg:npm/axe-core@4.14.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4930,6 +4985,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/bit-set@0.11.1",
+      "name": "bit-set",
+      "version": "0.11.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/bit-set@0.11.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/bit-set@0.8.0",
       "name": "bit-set",
       "version": "0.8.0",
@@ -4939,6 +5012,24 @@
         }
       ],
       "purl": "pkg:cargo/bit-set@0.8.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/bit-vec@0.10.1",
+      "name": "bit-vec",
+      "version": "0.10.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/bit-vec@0.10.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5038,6 +5129,42 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/block-buffer@0.12.1",
+      "name": "block-buffer",
+      "version": "0.12.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/block-buffer@0.12.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/block-padding@0.4.2",
+      "name": "block-padding",
+      "version": "0.4.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/block-padding@0.4.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/block2@0.6.2",
       "name": "block2",
       "version": "0.6.2",
@@ -5119,6 +5246,42 @@
         }
       ],
       "purl": "pkg:npm/boolean@3.2.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/borsh@1.8.1",
+      "name": "borsh",
+      "version": "1.8.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/borsh@1.8.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/borsh-derive@1.8.1",
+      "name": "borsh-derive",
+      "version": "1.8.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/borsh-derive@1.8.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5560,6 +5723,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/cbc@0.2.1",
+      "name": "cbc",
+      "version": "0.2.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/cbc@0.2.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/cc@1.5.1",
       "name": "cc",
       "version": "1.5.1",
@@ -5650,15 +5831,51 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/chai@6.2.2",
-      "name": "chai",
-      "version": "6.2.2",
+      "bom-ref": "pkg:cargo/cfg_aliases@0.2.2",
+      "name": "cfg_aliases",
+      "version": "0.2.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/chai@6.2.2",
+      "purl": "pkg:cargo/cfg_aliases@0.2.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/chacha20@0.10.2",
+      "name": "chacha20",
+      "version": "0.10.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/chacha20@0.10.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/chai@6.3.0",
+      "name": "chai",
+      "version": "6.3.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/chai@6.3.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5713,6 +5930,24 @@
         }
       ],
       "purl": "pkg:cargo/chrono@0.4.45",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/cipher@0.5.2",
+      "name": "cipher",
+      "version": "0.5.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/cipher@0.5.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5785,6 +6020,24 @@
         }
       ],
       "purl": "pkg:npm/cluster-key-slot@1.1.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/cmov@0.5.4",
+      "name": "cmov",
+      "version": "0.5.4",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/cmov@0.5.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5947,6 +6200,24 @@
         }
       ],
       "purl": "pkg:cargo/concurrent-queue@2.5.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/const-oid@0.10.2",
+      "name": "const-oid",
+      "version": "0.10.2",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/const-oid@0.10.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6190,6 +6461,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/core_detect@1.0.0",
+      "name": "core_detect",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/core_detect@1.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/cors@2.8.6",
       "name": "cors",
       "version": "2.8.6",
@@ -6208,6 +6497,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/cpubits@0.1.1",
+      "name": "cpubits",
+      "version": "0.1.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/cpubits@0.1.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/cpufeatures@0.2.17",
       "name": "cpufeatures",
       "version": "0.2.17",
@@ -6217,6 +6524,24 @@
         }
       ],
       "purl": "pkg:cargo/cpufeatures@0.2.17",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/cpufeatures@0.3.1",
+      "name": "cpufeatures",
+      "version": "0.3.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6307,6 +6632,24 @@
         }
       ],
       "purl": "pkg:cargo/crypto-common@0.1.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/crypto-common@0.2.2",
+      "name": "crypto-common",
+      "version": "0.2.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/crypto-common@0.2.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6415,6 +6758,24 @@
         }
       ],
       "purl": "pkg:cargo/ctor@1.0.13",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/ctutils@0.4.3",
+      "name": "ctutils",
+      "version": "0.4.3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/ctutils@0.4.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7162,15 +7523,33 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/dirs@4.0.0",
-      "name": "dirs",
-      "version": "4.0.0",
+      "bom-ref": "pkg:cargo/digest@0.11.3",
+      "name": "digest",
+      "version": "0.11.3",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/dirs@4.0.0",
+      "purl": "pkg:cargo/digest@0.11.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/dirs@6.0.0",
+      "name": "dirs",
+      "version": "6.0.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/dirs@6.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7189,24 +7568,6 @@
         }
       ],
       "purl": "pkg:cargo/dirs@7.0.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:cargo/dirs-sys@0.3.7",
-      "name": "dirs-sys",
-      "version": "0.3.7",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "purl": "pkg:cargo/dirs-sys@0.3.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8260,15 +8621,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-xml-parser@5.11.1",
+      "bom-ref": "pkg:npm/fast-xml-parser@5.11.2",
       "name": "fast-xml-parser",
-      "version": "5.11.1",
+      "version": "5.11.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/fast-xml-parser@5.11.1",
+      "purl": "pkg:npm/fast-xml-parser@5.11.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9664,15 +10025,51 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/hono@4.13.7",
+      "bom-ref": "pkg:cargo/hkdf@0.13.0",
+      "name": "hkdf",
+      "version": "0.13.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/hkdf@0.13.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/hmac@0.13.0",
+      "name": "hmac",
+      "version": "0.13.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/hmac@0.13.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/hono@4.13.11",
       "name": "hono",
-      "version": "4.13.7",
+      "version": "4.13.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/hono@4.13.7",
+      "purl": "pkg:npm/hono@4.13.11",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9835,6 +10232,24 @@
         }
       ],
       "purl": "pkg:npm/https-proxy-agent@7.0.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/hybrid-array@0.4.15",
+      "name": "hybrid-array",
+      "version": "0.4.15",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/hybrid-array@0.4.15",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -10285,6 +10700,24 @@
         }
       ],
       "purl": "pkg:npm/inherits@2.0.4",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/inout@0.2.5",
+      "name": "inout",
+      "version": "0.2.5",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/inout@0.2.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11068,15 +11501,33 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/keyring@3.6.3",
+      "bom-ref": "pkg:cargo/keyring@4.2.0",
       "name": "keyring",
-      "version": "3.6.3",
+      "version": "4.2.0",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/keyring@3.6.3",
+      "purl": "pkg:cargo/keyring@4.2.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/keyring-core@1.0.1",
+      "name": "keyring-core",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/keyring-core@1.0.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11122,15 +11573,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/langsmith@0.8.11",
+      "bom-ref": "pkg:npm/langsmith@0.11.0",
       "name": "langsmith",
-      "version": "0.8.11",
+      "version": "0.11.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/langsmith@0.8.11",
+      "purl": "pkg:npm/langsmith@0.11.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11536,15 +11987,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/magic-string@1.2.3",
+      "bom-ref": "pkg:npm/magic-string@1.4.3",
       "name": "magic-string",
-      "version": "1.2.3",
+      "version": "1.4.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/magic-string@1.2.3",
+      "purl": "pkg:npm/magic-string@1.4.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -12220,15 +12671,33 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/next@16.3.8",
+      "bom-ref": "pkg:npm/next@16.4.2",
       "name": "next",
-      "version": "16.3.8",
+      "version": "16.4.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/next@16.3.8",
+      "purl": "pkg:npm/next@16.4.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/nix@0.31.3",
+      "name": "nix",
+      "version": "0.31.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:cargo/nix@0.31.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -12274,6 +12743,60 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/num@0.4.3",
+      "name": "num",
+      "version": "0.4.3",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num@0.4.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-bigint@0.4.8",
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-bigint@0.4.8",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-complex@0.4.6",
+      "name": "num-complex",
+      "version": "0.4.6",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-complex@0.4.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/num-conv@0.2.2",
       "name": "num-conv",
       "version": "0.2.2",
@@ -12283,6 +12806,60 @@
         }
       ],
       "purl": "pkg:cargo/num-conv@0.2.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-integer@0.1.47",
+      "name": "num-integer",
+      "version": "0.1.47",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-integer@0.1.47",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-iter@0.1.46",
+      "name": "num-iter",
+      "version": "0.1.46",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-iter@0.1.46",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-rational@0.4.2",
+      "name": "num-rational",
+      "version": "0.4.2",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/num-rational@0.4.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -12652,6 +13229,42 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/objc2-security@0.3.2",
+      "name": "objc2-security",
+      "version": "0.3.2",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/objc2-security@0.3.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/objc2-service-management@0.3.2",
+      "name": "objc2-service-management",
+      "version": "0.3.2",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:cargo/objc2-service-management@0.3.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/objc2-ui-kit@0.3.2",
       "name": "objc2-ui-kit",
       "version": "0.3.2",
@@ -12760,15 +13373,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/obug@2.1.4",
+      "bom-ref": "pkg:npm/obug@3.0.0",
       "name": "obug",
-      "version": "2.1.4",
+      "version": "3.0.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/obug@2.1.4",
+      "purl": "pkg:npm/obug@3.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -12967,6 +13580,24 @@
         }
       ],
       "purl": "pkg:cargo/ordered-stream@0.2.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/os_info@3.15.0",
+      "name": "os_info",
+      "version": "3.15.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:cargo/os_info@3.15.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -13840,15 +14471,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/playwright@1.63.0",
+      "bom-ref": "pkg:npm/playwright@1.64.1",
       "name": "playwright",
-      "version": "1.63.0",
+      "version": "1.64.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/playwright@1.63.0",
+      "purl": "pkg:npm/playwright@1.64.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -13858,15 +14489,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/playwright-core@1.63.0",
+      "bom-ref": "pkg:npm/playwright-core@1.64.1",
       "name": "playwright-core",
-      "version": "1.63.0",
+      "version": "1.64.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/playwright-core@1.63.0",
+      "purl": "pkg:npm/playwright-core@1.64.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14344,15 +14975,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/proptest@1.11.0",
+      "bom-ref": "pkg:cargo/proptest@1.12.0",
       "name": "proptest",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/proptest@1.11.0",
+      "purl": "pkg:cargo/proptest@1.12.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14560,6 +15191,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/rand@0.10.3",
+      "name": "rand",
+      "version": "0.10.3",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/rand@0.10.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/rand@0.9.5",
       "name": "rand",
       "version": "0.9.5",
@@ -14596,6 +15245,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/rand_core@0.10.1",
+      "name": "rand_core",
+      "version": "0.10.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/rand_core@0.10.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/rand_core@0.9.5",
       "name": "rand_core",
       "version": "0.9.5",
@@ -14614,15 +15281,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/rand_xorshift@0.4.0",
+      "bom-ref": "pkg:cargo/rand_xorshift@0.5.0",
       "name": "rand_xorshift",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/rand_xorshift@0.4.0",
+      "purl": "pkg:cargo/rand_xorshift@0.5.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14686,15 +15353,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/react@19.3.0",
+      "bom-ref": "pkg:npm/react@19.3.1",
       "name": "react",
-      "version": "19.3.0",
+      "version": "19.3.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/react@19.3.0",
+      "purl": "pkg:npm/react@19.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14704,15 +15371,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/react-dom@19.3.0",
+      "bom-ref": "pkg:npm/react-dom@19.3.1",
       "name": "react-dom",
-      "version": "19.3.0",
+      "version": "19.3.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/react-dom@19.3.0",
+      "purl": "pkg:npm/react-dom@19.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14983,24 +15650,6 @@
         }
       ],
       "purl": "pkg:cargo/redox_syscall@0.5.18",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:cargo/redox_users@0.4.6",
-      "name": "redox_users",
-      "version": "0.4.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:cargo/redox_users@0.4.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -15802,6 +16451,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/secret-service@5.2.0",
+      "name": "secret-service",
+      "version": "5.2.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/secret-service@5.2.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/security-framework@3.7.0",
       "name": "security-framework",
       "version": "3.7.0",
@@ -16036,15 +16703,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/serde_json@1.0.151",
+      "bom-ref": "pkg:cargo/serde_json@1.0.154",
       "name": "serde_json",
-      "version": "1.0.151",
+      "version": "1.0.154",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/serde_json@1.0.151",
+      "purl": "pkg:cargo/serde_json@1.0.154",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16270,6 +16937,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:cargo/sha2@0.11.1",
+      "name": "sha2",
+      "version": "0.11.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/sha2@0.11.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/sharp@0.35.5",
       "name": "sharp",
       "version": "0.35.5",
@@ -16414,24 +17099,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/siginfo@2.0.0",
-      "name": "siginfo",
-      "version": "2.0.0",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "purl": "pkg:npm/siginfo@2.0.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:cargo/signal-hook-registry@1.4.8",
       "name": "signal-hook-registry",
       "version": "1.4.8",
@@ -16549,6 +17216,24 @@
         }
       ],
       "purl": "pkg:cargo/smallvec@1.16.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smappservice-rs@0.1.3",
+      "name": "smappservice-rs",
+      "version": "0.1.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:cargo/smappservice-rs@0.1.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16792,24 +17477,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/stackback@0.0.2",
-      "name": "stackback",
-      "version": "0.0.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/stackback@0.0.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/statuses@2.0.2",
       "name": "statuses",
       "version": "2.0.2",
@@ -16828,15 +17495,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/std-env@4.2.0",
+      "bom-ref": "pkg:npm/std-env@4.3.0",
       "name": "std-env",
-      "version": "4.2.0",
+      "version": "4.3.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/std-env@4.2.0",
+      "purl": "pkg:npm/std-env@4.3.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17044,15 +17711,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/supertest@7.2.2",
+      "bom-ref": "pkg:npm/supertest@7.3.1",
       "name": "supertest",
-      "version": "7.2.2",
+      "version": "7.3.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/supertest@7.2.2",
+      "purl": "pkg:npm/supertest@7.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17080,15 +17747,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/swift-rs@1.0.8",
+      "bom-ref": "pkg:cargo/swift-rs@1.0.9",
       "name": "swift-rs",
-      "version": "1.0.8",
+      "version": "1.0.9",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/swift-rs@1.0.8",
+      "purl": "pkg:cargo/swift-rs@1.0.9",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17458,15 +18125,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-plugin@2.7.0",
+      "bom-ref": "pkg:cargo/tauri-plugin@2.7.2",
       "name": "tauri-plugin",
-      "version": "2.7.0",
+      "version": "2.7.2",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-plugin@2.7.0",
+      "purl": "pkg:cargo/tauri-plugin@2.7.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17476,15 +18143,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-plugin-autostart@2.6.0",
+      "bom-ref": "pkg:cargo/tauri-plugin-autostart@2.7.0",
       "name": "tauri-plugin-autostart",
-      "version": "2.6.0",
+      "version": "2.7.0",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-plugin-autostart@2.6.0",
+      "purl": "pkg:cargo/tauri-plugin-autostart@2.7.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17602,15 +18269,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-utils@2.10.0",
+      "bom-ref": "pkg:cargo/tauri-utils@2.10.2",
       "name": "tauri-utils",
-      "version": "2.10.0",
+      "version": "2.10.2",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-utils@2.10.0",
+      "purl": "pkg:cargo/tauri-utils@2.10.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17872,15 +18539,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/tinybench@6.1.4",
+      "bom-ref": "pkg:npm/tinybench@6.2.2",
       "name": "tinybench",
-      "version": "6.1.4",
+      "version": "6.2.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/tinybench@6.1.4",
+      "purl": "pkg:npm/tinybench@6.2.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17890,15 +18557,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/tinyexec@1.3.0",
+      "bom-ref": "pkg:npm/tinyexec@1.3.1",
       "name": "tinyexec",
-      "version": "1.3.0",
+      "version": "1.3.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/tinyexec@1.3.0",
+      "purl": "pkg:npm/tinyexec@1.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18916,15 +19583,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/uuid@14.0.1",
+      "bom-ref": "pkg:npm/uuid@14.0.3",
       "name": "uuid",
-      "version": "14.0.1",
+      "version": "14.0.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/uuid@14.0.1",
+      "purl": "pkg:npm/uuid@14.0.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -19024,15 +19691,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/vitest@5.0.0",
+      "bom-ref": "pkg:npm/vitest@5.0.5",
       "name": "vitest",
-      "version": "5.0.0",
+      "version": "5.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/vitest@5.0.0",
+      "purl": "pkg:npm/vitest@5.0.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -19564,15 +20231,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/why-is-node-running@2.3.0",
+      "bom-ref": "pkg:npm/why-is-node-running@3.2.1",
       "name": "why-is-node-running",
-      "version": "2.3.0",
+      "version": "3.2.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/why-is-node-running@2.3.0",
+      "purl": "pkg:npm/why-is-node-running@3.2.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -19789,6 +20456,24 @@
         }
       ],
       "purl": "pkg:cargo/windows-link@0.2.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/windows-native-keyring-store@1.1.0",
+      "name": "windows-native-keyring-store",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/windows-native-keyring-store@1.1.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -20500,24 +21185,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/winreg@0.10.1",
-      "name": "winreg",
-      "version": "0.10.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:cargo/winreg@0.10.1",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:cargo/winreg@0.55.0",
       "name": "winreg",
       "version": "0.55.0",
@@ -20842,24 +21509,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/yaml@2.9.0",
-      "name": "yaml",
-      "version": "2.9.0",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "purl": "pkg:npm/yaml@2.9.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/yaml@2.9.1",
       "name": "yaml",
       "version": "2.9.1",
@@ -20923,6 +21572,24 @@
         }
       ],
       "purl": "pkg:cargo/zbus@5.19.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/zbus-secret-service-keyring-store@1.0.1",
+      "name": "zbus-secret-service-keyring-store",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/zbus-secret-service-keyring-store@1.0.1",
       "properties": [
         {
           "name": "atf:compliance:classification",

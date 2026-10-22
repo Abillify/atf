@@ -74,6 +74,7 @@ import { handleAttemptError, postprocessAttempt } from "./llm-attempt-postproces
 import type {
   FinalAnswerStreamState,
   LlmAttemptState,
+  LlmStreamResult,
 } from "./llm-stream-types.js";
 
 /** Result of the whole candidate/fallback loop: either the node completed
@@ -1276,9 +1277,12 @@ export async function runCandidateLoop(
         // call; a call already in flight is never aborted.
         runtime.executionBudget?.check("tokens");
         runtime.executionBudget?.check("wallMs");
+        // Without `experimental_lowMemory` the full StreamTextResult is
+        // returned; the union member ai@7.0.143 adds for the low-memory
+        // variant cannot occur here (see LlmStreamResult).
         const result = runInLlmTransportScope(transportScope, () =>
           streamText(streamParams),
-        );
+        ) as LlmStreamResult;
         // Records this attempt's tool exchange as the continuation of the
         // next (answer-only) attempt. The trailing text-only assistant turn
         // is the rejected output and is dropped. Returns false when the

@@ -26,7 +26,7 @@
         "@atf/schema-compatibility": "workspace:1.0.0",
         "@atf/security-kit": "workspace:1.4.0",
         "@atf/transaction-contract": "workspace:1.1.0",
-        "@aws-sdk/client-bedrock-runtime": "3.1136.0",
+        "@aws-sdk/client-bedrock-runtime": "3.1152.0",
         "@modelcontextprotocol/sdk": "1.31.0",
         "cors": "2.8.6",
         "express": "5.2.1",
@@ -37,14 +37,14 @@
         "mysql2": "3.24.4",
         "pg": "8.23.0",
         "redis": "5.10.0",
-        "yaml": "2.9.0",
+        "yaml": "2.9.1",
         "zod": "4.4.3"
     },
     "devDependencies": {
         "@types/bun": "1.4.0",
         "@types/cors": "2.8.19",
         "@types/express": "5.0.6",
-        "@types/node": "26.6.2",
+        "@types/node": "26.6.5",
         "fast-check": "4.10.2",
         "typescript": "7.0.2"
     }
