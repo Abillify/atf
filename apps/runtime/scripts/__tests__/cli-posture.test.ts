@@ -44,6 +44,11 @@ async function run(env: Record<string, string>, ...argv: string[]) {
         "REDIS_URL",
         "DATABASE_URL",
         "DATABASE_OPERATOR_URL",
+        "AUDIT_PSEUDONYM_PEPPER",
+        "PII_VAULT_ENABLED",
+        "APPROVAL_GATE_ENABLED",
+        "REPLICAS",
+        "AUTHN_MODE",
       ]) {
         delete env2[k];
       }
@@ -83,6 +88,10 @@ describe("posture (local mode)", () => {
       DECISION_RECEIPTS_ENABLED: "true",
       RECEIPT_SIGNING_KEY: "a-receipt-key-at-least-16-chars",
       DATABASE_URL: "postgres://localhost/unused",
+      AUDIT_PSEUDONYM_PEPPER: "synthetic-posture-pepper-0123456789abcdef",
+      PII_VAULT_ENABLED: "true",
+      PII_VAULT_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+      APPROVAL_GATE_ENABLED: "true",
       FLOWS_DIR: flowsDir,
     });
     expect(res.stdout).toContain("overall: OK");
@@ -98,6 +107,10 @@ describe("posture (local mode)", () => {
       DECISION_RECEIPTS_ENABLED: "true",
       RECEIPT_SIGNING_KEY: "a-receipt-key-at-least-16-chars",
       DATABASE_URL: "postgres://localhost/unused",
+      AUDIT_PSEUDONYM_PEPPER: "synthetic-posture-pepper-0123456789abcdef",
+      PII_VAULT_ENABLED: "true",
+      PII_VAULT_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+      APPROVAL_GATE_ENABLED: "true",
       FLOWS_DIR: flowsDir,
     }, "--json");
     expect(res.exitCode).toBe(0);

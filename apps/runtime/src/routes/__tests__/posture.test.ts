@@ -17,6 +17,12 @@ import type { AppConfig } from "../../config/schema.js";
 
 function config(over: Partial<AppConfig> = {}): AppConfig {
   return {
+    // Fields the production gate reads unconditionally (as in a loaded config).
+    port: 3000,
+    flowsDir: "./flows",
+    monitoringTransport: "sse",
+    mcpServers: [],
+    corsOrigins: ["https://app.example.com"],
     appEnv: "production",
     evidenceSigningKey: "dGVzdC1lZDI1NTE5LXNlZWQtZm9yLXBvc3R1cmUtdGVzdHM=",
     auditAnchorFile: "/var/lib/atf/anchors.jsonl",
