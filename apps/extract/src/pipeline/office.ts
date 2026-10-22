@@ -166,7 +166,7 @@ export async function convertToPdf(
  * different bytes, so a PDF rendered from the previous (weaker) rewrite is not
  * served again.
  */
-export const HTML_SANITIZER_REVISION = 2;
+export const HTML_SANITIZER_REVISION = 3;
 
 /**
  * The LibreOffice build identity: the trimmed `--version` line, or `null` when
@@ -339,7 +339,10 @@ const CSS_ENTITIES: Record<string, string> = {
  * value BEFORE the CSS parser sees it — `url&#40;http://evil&#41;` is a fetch
  * to LibreOffice even though the raw text has no `url(`.
  */
-function decodeHtmlEntities(value: string): string {
+function decodeHtmlEntities(
+  value: string,
+  extraNamed: Record<string, string> = {},
+): string {
   return value.replace(
     /&(#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31});/g,
     (all, entity: string) => {
@@ -351,7 +354,7 @@ function decodeHtmlEntities(value: string): string {
         const code = Number.parseInt(entity.slice(1), 10);
         return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
       }
-      return CSS_ENTITIES[entity] ?? all;
+      return extraNamed[entity] ?? CSS_ENTITIES[entity] ?? all;
     },
   );
 }
@@ -470,6 +473,37 @@ function srcsetCandidates(value: string): string[] {
     while (i < value.length && value.charAt(i) !== ",") i += 1;
   }
   return urls;
+}
+
+/**
+ * Named character references that a link target can hide a scheme behind.
+ * `&colon;` writes the `:` and `&Tab;` / `&NewLine;` write whitespace inside
+ * `java&#32;script:`; none of them are CSS-relevant, so they are not in
+ * `CSS_ENTITIES` and have to be resolved for this check separately.
+ */
+const LINK_TARGET_ENTITIES: Record<string, string> = {
+  colon: ":",
+  Tab: "\t",
+  NewLine: "\n",
+};
+
+/** Schemes that execute or load a document instead of linking to one. */
+const SCRIPT_LINK_SCHEMES = ["javascript:", "vbscript:", "data:"];
+
+/**
+ * True when an `<a href>` is not a document link but an instruction: the
+ * value, after the character references a renderer would resolve and with the
+ * control and whitespace characters a URL parser ignores removed, begins with
+ * a scripting scheme or `data:`. `jav&#x61;script:` and `java&Tab;script:`
+ * reach the browser as `javascript:` even though the raw text looks inert.
+ */
+function isScriptLinkTarget(raw: string | null): boolean {
+  if (raw === null) return false;
+  const target = decodeHtmlEntities(raw, LINK_TARGET_ENTITIES)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL and whitespace inside a scheme are stripped by every URL parser, so they must be stripped here too
+    .replace(/[\s\x00-\x20]+/g, "")
+    .toLowerCase();
+  return SCRIPT_LINK_SCHEMES.some((scheme) => target.startsWith(scheme));
 }
 
 /** True when every candidate of a `src`/`srcset` value is an inline image. */
@@ -664,7 +698,9 @@ export function neutralizeHtmlReferences(source: Uint8Array): Uint8Array {
       }
       if (URL_ATTRIBUTES.has(key)) {
         if (lower === "a" && key === "href") {
-          s += serializeAttr(key, attr.raw);
+          // A link target is kept (it is the document's link, never fetched),
+          // unless it is a scripting scheme rather than a link.
+          if (!isScriptLinkTarget(attr.raw)) s += serializeAttr(key, attr.raw);
           continue;
         }
         if (

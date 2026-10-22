@@ -257,6 +257,7 @@ releases:
 - The audit chain accepts the legacy hash form only for rows written before the first canonical row.
 - Eval regex assertions reject nested-quantifier patterns and match at most 100 000 characters.
 - `/health/ready` reports only the number of failed flow files (`flow_load_failures`); file names and reasons stay in the flow load log instead of the unauthenticated probe.
+- Extract's HTML sanitizer also drops javascript:, vbscript: and data: link targets (including entity-encoded forms); sanitizer revision 3 invalidates derived PDFs rendered by revision 2.
 ### Added
 
 - **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
