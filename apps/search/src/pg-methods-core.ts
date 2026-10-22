@@ -14,12 +14,48 @@ import { AppError, buildUpsertSqlParts, collectionTableName, ensureCollectionCon
 import { deleteDocumentCascade } from "./revision-store.js";
 import { createHash, createHmac } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
-import { buildFtsText, normalizeReference, sanitizePointText } from "./pg-helpers.js";
+import {
+  buildFtsContextHeader,
+  buildFtsText,
+  normalizeReference,
+  sanitizePointText,
+} from "./pg-helpers.js";
 import type { CircuitBreakerStatus, DocumentPoint, PostgresResponse, SearchFilter } from "./pg-types.js";
 
 import type { PgFactoryCtx } from "./pg-factory-ctx.js";
 
 export function createCoreMethods(ctx: PgFactoryCtx) {
+  /**
+   * Push the FTS_CONTEXTUAL_HEADER parameter (document title + section path)
+   * after the FTS content parameter and return its 1-based index, or null
+   * when the option is off or the point carries no header. The caller must
+   * push the tenant id AFTER this so the indices stay consistent.
+   */
+  const pushFtsContextHeader = (
+    params: unknown[],
+    point: DocumentPoint,
+  ): number | null => {
+    if (!ftsContextualHeader) return null;
+    const header = buildFtsContextHeader(point);
+    if (!header) return null;
+    params.push(header);
+    return params.length;
+  };
+
+  /**
+   * tsvector SQL for the `ts_search` column. With a header parameter index
+   * the header is weighted 'D' and concatenated with the content tsvector;
+   * otherwise the expression is the plain content tsvector.
+   */
+  const tsSearchSql = (
+    lang: string,
+    ftsParam: number,
+    headerParam: number | null,
+  ): string =>
+    headerParam === null
+      ? `to_tsvector('${lang}', $${ftsParam})`
+      : `setweight(to_tsvector('${lang}', $${headerParam}), 'D') || to_tsvector('${lang}', $${ftsParam})`;
+
   const {
     pool,
     logger,
@@ -31,6 +67,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
     statsBuffer,
     checkPgvectorVersion,
     defaultFtsLanguage,
+    ftsContextualHeader,
     statsStoreRawQuery,
     statsQueryPepper,
     quantizationConfig,
@@ -279,6 +316,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
           // Append FTS-preprocessed content as the last parameter
           params.push(buildFtsText(point));
           const ftsParam = params.length; // e.g. $14, $15, $16 depending on extras
+          const headerParam = pushFtsContextHeader(params, point);
           params.push(point.tenantId);
           const tenantParam = params.length;
 
@@ -289,7 +327,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
             `INSERT INTO "${table}"
                (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
                 prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from, modified${sql.sparseCol}${sql.binaryCol}, tenant_id)
-             VALUES ($1, $2, TRUE, $3, $4::${vecType}, to_tsvector('${lang}', $${ftsParam}), $5, $6,
+             VALUES ($1, $2, TRUE, $3, $4::${vecType}, ${tsSearchSql(lang, ftsParam, headerParam)}, $5, $6,
                      $7, $8, $9, $10, $11, $12, $13, $14::timestamptz, NOW()${sparseValSql}${binaryValSql}, $${tenantParam})
              ON CONFLICT (tenant_id, reference) DO UPDATE SET
                content        = EXCLUDED.content,
@@ -376,6 +414,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
             // Append FTS-preprocessed content as the last parameter
             params.push(buildFtsText(point));
             const ftsParam = params.length;
+            const headerParam = pushFtsContextHeader(params, point);
             params.push(point.tenantId);
             const tenantParam = params.length;
 
@@ -383,7 +422,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
               `INSERT INTO "${table}"
                  (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
                   prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from${sql.sparseCol}${sql.binaryCol}, tenant_id)
-               VALUES ($1, $2, TRUE, $3, $4::${vecType}, to_tsvector('${lang}', $${ftsParam}), $5, $6,
+               VALUES ($1, $2, TRUE, $3, $4::${vecType}, ${tsSearchSql(lang, ftsParam, headerParam)}, $5, $6,
                        $7, $8, $9, $10, $11, $12, $13, $14::timestamptz${sparseValSql}${binaryValSql}, $${tenantParam})
                ON CONFLICT (tenant_id, reference) DO UPDATE SET
                  content        = EXCLUDED.content,
@@ -629,6 +668,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
                 // Append FTS-preprocessed content as the last param for this row
                 params.push(buildFtsText(point));
                 const ftsIdx = params.length; // 1-based absolute index
+                const headerIdx = pushFtsContextHeader(params, point);
                 params.push(point.tenantId);
                 const tenantIdx = params.length;
                 const n = base + 1;
@@ -636,7 +676,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
                 const binaryPh = sql.binaryVal(
                   extraBase + (meta.sparseEnabled ? 1 : 0),
                 );
-                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz, NOW()${sparsePh}${binaryPh}, $${tenantIdx})`;
+                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, ${tsSearchSql(lang, ftsIdx, headerIdx)}, $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz, NOW()${sparsePh}${binaryPh}, $${tenantIdx})`;
               });
 
               const result = await client.query<{
@@ -790,6 +830,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
                 // Append FTS-preprocessed content as the last param for this row
                 params.push(buildFtsText(point));
                 const ftsIdx = params.length; // 1-based absolute index
+                const headerIdx = pushFtsContextHeader(params, point);
                 params.push(point.tenantId);
                 const tenantIdx = params.length;
                 const n = base + 1;
@@ -797,7 +838,7 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
                 const binaryPh = sql.binaryVal(
                   extraBase + (meta.sparseEnabled ? 1 : 0),
                 );
-                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz${sparsePh}${binaryPh}, $${tenantIdx})`;
+                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, ${tsSearchSql(lang, ftsIdx, headerIdx)}, $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz${sparsePh}${binaryPh}, $${tenantIdx})`;
               });
 
               const result = await client.query<{ id: string }>(

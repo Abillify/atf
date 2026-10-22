@@ -64,6 +64,7 @@ import {
   validateFtsLanguage,
 } from "./collection-ddl.js";
 import { buildIdentifierText, normalizeIdentifier } from "./identifier.js";
+import { prepareFtsContent } from "./pg-helpers.js";
 import {
   buildUnitsFromRecords,
   heuristicTokenCounter,
@@ -179,6 +180,13 @@ export interface BatchWorkerOptions {
    * No-op unless {@link summaryClient} is also provided. Default: false.
    */
   contextualChunkLlm?: boolean;
+  /**
+   * FTS_CONTEXTUAL_HEADER: when true, `ts_search` is written as
+   * `setweight(to_tsvector(lang, header), 'D') || to_tsvector(lang, content)`
+   * with the header being the document title and the unit's section path.
+   * Only newly written units are affected. Default: false.
+   */
+  ftsContextualHeader?: boolean;
   /** pgvector column type for the vector cast: "vector" or "halfvec". Default: "vector". */
   vecType?: "vector" | "halfvec";
   /**
@@ -248,6 +256,7 @@ export function createBatchWorker(
     options.contextHeaderMaxFraction ?? DEFAULT_CONTEXT_HEADER_MAX_FRACTION;
   const summaryClient = options.summaryClient;
   const contextualChunkLlm = options.contextualChunkLlm ?? false;
+  const ftsContextualHeader = options.ftsContextualHeader ?? false;
   const logger = options.logger;
 
   /**
@@ -484,7 +493,19 @@ export function createBatchWorker(
 
     const lang = await loadFtsLanguage(client, table);
     for (const [unit, vector] of zip(units, vectors)) {
-      await upsertUnit(client, table, lang, vecType, batch, unit, vector, ctx, acl, provenance);
+      await upsertUnit(
+        client,
+        table,
+        lang,
+        vecType,
+        batch,
+        unit,
+        vector,
+        ctx,
+        acl,
+        provenance,
+        ftsContextualHeader,
+      );
     }
 
     // Identifier occurrence index (task 3.4, Requirement 12.2). The trailing
@@ -895,6 +916,7 @@ async function upsertUnit(
   ctx: UnitVisibilityContext,
   acl: { allowedUsers: string[]; allowedGroups: string[]; info?: DocumentInfo },
   provenance?: ExtractProvenance,
+  ftsContextualHeader = false,
 ): Promise<void> {
   const info = acl.info ?? {};
   const reference = `${batch.reference}#unit:${unit.unitId}`;
@@ -915,6 +937,20 @@ async function upsertUnit(
   // code like WE-01/A is tokenised verbatim rather than German-stemmed. Empty
   // string for a unit with no identifier → an empty vector that never matches.
   const identifierText = buildIdentifierText(unit.content);
+  // FTS_CONTEXTUAL_HEADER (weight D): document title + section path indexed
+  // alongside the content so title/section terms match every unit, not just
+  // the one containing them. Empty header → plain content tsvector.
+  const headerParts: string[] = [];
+  const headerTitle = info.title ?? info.email?.subject;
+  if (headerTitle) headerParts.push(headerTitle);
+  if (unit.sectionPath.length > 0) headerParts.push(unit.sectionPath.join(" \u203a "));
+  const ftsHeader =
+    ftsContextualHeader && headerParts.length > 0
+      ? prepareFtsContent(headerParts.join("\n"))
+      : "";
+  const tsSearchSql = ftsHeader
+    ? `setweight(to_tsvector('${lang}', $30), 'D') || to_tsvector('${lang}', $4)`
+    : `to_tsvector('${lang}', $4)`;
   await client.query(
     `INSERT INTO "${table}"
        (tenant_id, reference, base_ref, is_latest, content, vector, ts_search, ts_ident,
@@ -922,7 +958,7 @@ async function upsertUnit(
         page_start, page_end, figure_kind, document_id,
         parent_unit_id, prev_unit_id, next_unit_id, block_ids, figure_refs, table_id,
         allowed_users, allowed_groups, title, tags, link, source)
-     VALUES ($1, $2, $3, $23, $4, $5::${vecType}, to_tsvector('${lang}', $4), to_tsvector('simple', $22),
+     VALUES ($1, $2, $3, $23, $4, $5::${vecType}, ${tsSearchSql}, to_tsvector('simple', $22),
              $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15,
              $16, $17, $18, $19, $20, $21, $24, $25, $26, $27::text[], $28, $29)
      ON CONFLICT (tenant_id, unit_id) WHERE unit_id IS NOT NULL DO UPDATE SET
@@ -985,6 +1021,8 @@ async function upsertUnit(
       info.tags ?? [],
       info.link ?? null,
       info.sourceLabel ?? null,
+      // $30: contextual header for ts_search (unused unless the SQL references it)
+      ftsHeader,
     ],
   );
 }

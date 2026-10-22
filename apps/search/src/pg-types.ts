@@ -111,6 +111,13 @@ export interface PostgresClientConfig {
    * keeps `ts_rank_cd`.
    */
   ftsRanker?: "ts_rank_cd" | "bm25";
+  /**
+   * FTS_CONTEXTUAL_HEADER: when true, ingest writes `ts_search` as
+   * `setweight(to_tsvector(lang, header), 'D') || to_tsvector(lang, content)`
+   * with the header being the document title and section path. Only newly
+   * written chunks are affected. Default false.
+   */
+  ftsContextualHeader?: boolean;
   /** Interval in ms for flushing buffered stats to the database. Default: 30 000. */
   statsFlushIntervalMs?: number;
   /**

@@ -443,6 +443,17 @@ export interface Config {
   contextualChunkLlm: boolean; // CONTEXTUAL_CHUNK_LLM (default: false)
 
   /**
+   * Contextual header in the LEXICAL index (FTS). When `on`, ingest writes
+   * `ts_search` as `setweight(to_tsvector(lang, header), 'D') ||
+   * to_tsvector(lang, content)`, where the header is the document title and
+   * section path (no chunk content). Title/section terms therefore match
+   * every chunk of a document, not just chunk 0, at the lowest weight so
+   * ranking stays content-driven. Only newly written chunks are affected;
+   * existing rows keep their old tsvector until re-ingestion.
+   */
+  ftsContextualHeader: "off" | "on"; // FTS_CONTEXTUAL_HEADER (default: "off")
+
+  /**
    * Fraction of the chunk token budget the contextual embedding header may
    * occupy (Requirement 11.4). The header (title, section path, pages, type,
    * page summary) is measured with the token counter and truncated
@@ -1249,6 +1260,11 @@ export function loadConfig(): Config {
     Math.max(1, parseNonNegIntEnv("BATCH_WORKER_EMBED_CONCURRENCY", 4)),
   );
   const contextualChunkLlm = parseBoolEnv("CONTEXTUAL_CHUNK_LLM", false);
+  const ftsContextualHeader = parseEnumEnv(
+    "FTS_CONTEXTUAL_HEADER",
+    ["off", "on"] as const,
+    "off",
+  );
   const contextHeaderMaxFraction =
     parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ??
     0.15;
@@ -1752,6 +1768,7 @@ export function loadConfig(): Config {
     batchWorkerBackoffMs,
     batchWorkerEmbedConcurrency,
     contextualChunkLlm,
+    ftsContextualHeader,
     contextHeaderMaxFraction,
     converter,
     semanticChunking,

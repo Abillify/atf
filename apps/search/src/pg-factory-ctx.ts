@@ -61,6 +61,8 @@ export interface PgFactoryCtx {
   rrfWeightSparse: number;
   rrfMissingZero: boolean;
   ftsRanker: "ts_rank_cd" | "bm25";
+  /** FTS_CONTEXTUAL_HEADER=on: weight-D header (title + section path) in ts_search. */
+  ftsContextualHeader: boolean;
   quantizationConfig: "none" | "binary";
   expectedEmbeddingModel: string | undefined;
   expectedEmbeddingModelRevision: string | undefined;

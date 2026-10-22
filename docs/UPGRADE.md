@@ -497,6 +497,14 @@ configuration and clients. Do these **before** rolling out:
     works in this release as a deprecated alias (same values) and logs a
     warning; rename it to `ATF_PRESET`. Setting both to different values stops
     startup.
+28. **Search: contextual header in the lexical index (optional).** With
+    `FTS_CONTEXTUAL_HEADER=on`, ingest writes the document title and section
+    path into `ts_search` at weight `D` alongside the chunk content, so a
+    keyword query for a term that only appears in the title finds every chunk
+    of the document. It applies only to chunks ingested after it is turned on;
+    existing rows keep their old index until re-ingested. A language migration
+    (`bun run fts:language`) recomputes `ts_search` from the content alone and
+    drops the `D` weighting until those chunks are ingested again.
 
 ### Not yet shared between replicas (roadmap)
 

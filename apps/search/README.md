@@ -455,6 +455,7 @@ The v2 variables worth deciding deliberately:
 | `CONTEXT_HEADER_MAX_FRACTION` | 0.15 | Share of the chunk token budget the contextual header may use |
 | `TRANSACTION_JWKS_URI`, `TRANSACTION_ALGORITHMS` | (unset), derived | Verify ES256/EdDSA transaction tokens against the Runtime's JWKS; the algorithms accepted at the same time |
 | `CONTEXTUAL_CHUNK_LLM` | false | One `SUMMARY_*` model call per chunk for a placement sentence; expensive |
+| `FTS_CONTEXTUAL_HEADER` | off | `on` indexes the document title and section path (weight `D`) into `ts_search` of newly ingested chunks, so a keyword query for a title-only term finds them; existing rows are unchanged until re-ingestion |
 | `RATE_LIMIT_REDIS_URL` | (unset) | Shared backend for rate limiting; without it the limiter is per-process (ADR-0031) |
 | `REPLICAS` | 1 | Expected replica count; with more replicas and no shared Redis the production warnings fire |
 | `EMBED_FALLBACK_SAME_SPACE` | false | Startup aborts when `EMBED_FALLBACK_MODEL` differs from `EMBED_MODEL` unless this asserts both servers serve the same underlying model — a different fallback model would silently mix embedding spaces |

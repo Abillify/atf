@@ -274,6 +274,23 @@ export function buildFtsText(point: DocumentPoint): string {
 }
 
 /**
+ * Build the contextual header indexed at weight D when
+ * FTS_CONTEXTUAL_HEADER=on: the document title and section path only (no
+ * chunk content), mirroring the labels-free subset of the contextual
+ * embedding header in `contextual-header.ts`. Returns "" when the point
+ * carries neither, so the caller can skip the extra tsvector.
+ */
+export function buildFtsContextHeader(point: DocumentPoint): string {
+  const parts: string[] = [];
+  if (point.title) parts.push(point.title);
+  const sectionPath = point.chunk?.section_path;
+  if (sectionPath && sectionPath.length > 0) {
+    parts.push(sectionPath.join(" \u203a "));
+  }
+  return parts.length > 0 ? prepareFtsContent(parts.join("\n")) : "";
+}
+
+/**
  * Compare a pgvector version string (`0.8.6`, `0.7`, `0.8.0`) against a
  * minimum major/minor pair. Non-numeric suffixes (e.g. `0.8.0-rc1`) are
  * ignored; unparseable input counts as NOT meeting the minimum.

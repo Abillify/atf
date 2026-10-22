@@ -851,6 +851,7 @@ export function createApp(
     contextHeaderMaxFraction: config.contextHeaderMaxFraction,
     ...(summaryClient ? { summaryClient } : {}),
     contextualChunkLlm: config.contextualChunkLlm,
+    ftsContextualHeader: config.ftsContextualHeader === "on",
     // A document may arrive for a collection that does not exist yet; create
     // it with the same defaults the v1 ingest paths use.
     ensureCollection: (collection, vectorSize) =>
@@ -1717,6 +1718,7 @@ async function main(): Promise<void> {
     rrfWeightSparse: config.rrfWeightSparse,
     rrfMissingZero: config.rrfMissingZero,
     ftsRanker: config.ftsRanker,
+    ftsContextualHeader: config.ftsContextualHeader === "on",
     statsFlushIntervalMs: config.statsFlushIntervalMs,
     quantization: config.quantization,
     embeddingModel: config.embedModel,
