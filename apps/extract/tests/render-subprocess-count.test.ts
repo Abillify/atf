@@ -27,7 +27,8 @@
  * separately. A single `pdfinfo` for the whole document is not what the
  * prefetch does, and the existing window tests pin the per-window size read
  * (`readPageSizes` is called once per warm-up), so this file pins the real
- * numbers rather than one process per window.
+ * numbers rather than one process per window. The text layer is part of
+ * every rendered page (`rawText`), so the vision path reads it once per page.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -239,17 +240,16 @@ describe("render path subprocess budget — 600 pages at one DPI", () => {
 describe("render path subprocess budget — DPI change after page 100", () => {
 	// Pages 1-100 are A4 and render at the configured DPI; pages 101-600 are A0
 	// sheets, whose adaptive DPI sits at the floor. A window renders with a
-	// single -r, so a stretch at another DPI never joins a window: the pages up
-	// to the boundary still form 13 windows (12 full ones plus the short tail
-	// 97-100), and every oversized sheet renders on its own afterwards. That is
-	// deliberate — a window holds every image it produced in the warm cache, so
-	// eight A0 sheets at once would cost eight times the memory of eight A4
-	// pages — and it is what `page-renderer-window.test.ts` pins for a single
-	// sheet. The count is therefore 13 window renders, not one window per eight
-	// pages across the whole document.
+	// single -r, so the windows split at the boundary: 13 windows cover pages
+	// 1-100 (12 full ones plus the short tail 97-100) and 63 windows cover the
+	// sheets at their adaptive DPI (62 full ones plus 593-600, the boundary
+	// window 97-104 being split into 97-100 and 101-104) — ⌈100/8⌉ + ⌈500/8⌉ =
+	// 76 pdftoppm calls. The adaptive DPI bounds the pixels of every sheet, so
+	// a window of sheets holds no more than a window of ordinary pages would.
+	// The sizes a window's pdfinfo read are reused: no sheet is sized again.
 	const sizeOf = (page: number) => (page <= 100 ? A4 : A0);
 
-	it("splits the windows at the boundary and renders the oversized sheets singly", async () => {
+	it("splits the windows at the boundary and windows the oversized sheets at their own DPI", async () => {
 		const calls = freshCalls();
 		const prepared = await prepare(
 			stubOps(calls, { pageCount: PAGES, sizeOf }),
@@ -267,40 +267,42 @@ describe("render path subprocess budget — DPI change after page 100", () => {
 				}
 			}
 
-			// 13 windows cover pages 1-100 exactly once; nothing past the boundary
-			// is window-rendered.
-			expect(calls.renderPages).toEqual([
-				[1, 8, RENDER_DPI],
-				[9, 16, RENDER_DPI],
-				[17, 24, RENDER_DPI],
-				[25, 32, RENDER_DPI],
-				[33, 40, RENDER_DPI],
-				[41, 48, RENDER_DPI],
-				[49, 56, RENDER_DPI],
-				[57, 64, RENDER_DPI],
-				[65, 72, RENDER_DPI],
-				[73, 80, RENDER_DPI],
-				[81, 88, RENDER_DPI],
-				[89, 96, RENDER_DPI],
-				[97, 100, RENDER_DPI],
-			]);
-			expect(
-				calls.renderPages.some(
-					([first, , dpi]) => first > 100 || dpi !== RENDER_DPI,
-				),
-			).toBe(false);
+			const a4Windows = calls.renderPages.filter(([, , dpi]) => dpi === RENDER_DPI);
+			const sheetWindows = calls.renderPages.filter(([, , dpi]) => dpi !== RENDER_DPI);
+			expect(calls.renderPages).toHaveLength(76);
+			expect(a4Windows).toHaveLength(13);
+			expect(a4Windows.at(-1)).toEqual([97, 100, RENDER_DPI]);
+			expect(sheetWindows).toHaveLength(63);
+			expect(sheetWindows[0]).toEqual([101, 104, 72]);
+			expect(sheetWindows.at(-1)).toEqual([593, 600, 72]);
+			expect(a4Windows.some(([, to]) => to > 100)).toBe(false);
+			expect(sheetWindows.some(([from]) => from <= 100)).toBe(false);
 			// Every window still reads its sizes once — that read is what finds the
-			// boundary, and an all-oversized window spawns no pdftoppm at all.
+			// boundary — and no page is sized or rendered on its own.
 			expect(calls.readPageSizes).toHaveLength(75);
 			expect(calls.readPdfInfo).toBe(1);
-
-			// The oversized sheets rendered on demand during the drive above, one
-			// pdftoppm each, at the adaptive DPI rather than the configured one.
-			expect(calls.renderPage).toEqual(
-				Array.from({ length: PAGES - 100 }, (_, i) => [101 + i, 72]),
-			);
+			expect(calls.readPageSize).toEqual([]);
+			expect(calls.renderPage).toEqual([]);
 			expect(calls.extractPageText).toHaveLength(PAGES);
 			expect(calls.extractDocumentText).toEqual([]);
+		} finally {
+			await prepared.close();
+		}
+	});
+
+	it("still renders a single sheet between ordinary pages on its own, without a second pdfinfo", async () => {
+		const calls = freshCalls();
+		const prepared = await prepare(
+			stubOps(calls, { pageCount: 16, sizeOf: (page) => (page === 5 ? A0 : A4) }),
+		);
+		try {
+			await prepared.prefetch?.([1, 2, 3, 4, 5, 6, 7, 8]);
+			const sheet = await prepared.render(5);
+			expect(sheet.dpi).toBeLessThan(RENDER_DPI);
+			expect(calls.renderPage).toEqual([[5, 72]]);
+			expect(calls.readPageSize).toEqual([]);
+			expect(await prepared.pageSizePt(5)).toEqual(A0);
+			expect(calls.readPageSize).toEqual([]);
 		} finally {
 			await prepared.close();
 		}

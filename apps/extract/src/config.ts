@@ -141,13 +141,13 @@ export interface JobWorkerConfig {
   pollIntervalMs: number;
   /**
    * JOB_CONCURRENCY — how many jobs ONE worker process claims and runs in
-   * parallel (Phase 11). Default 1 keeps the historical one-job-per-process
+   * parallel. Default 1 keeps the historical one-job-per-process
    * loop; each lane holds its own lease/heartbeat, and the large-job lane cap
    * is enforced fleet-wide by the claim query, so raising this cannot
    * over-subscribe it. The per-job page window (PAGE_CONCURRENCY) is
    * independent: peak model calls ≈ JOB_CONCURRENCY × PAGE_CONCURRENCY.
    */
-  jobConcurrency: number;
+  jobConcurrency: number; // JOB_CONCURRENCY (default: 1)
   /**
    * JOB_MAX_TRANSIENT_WAIT_MS — how long a dependency (vision, text LLM, Search)
    * may stay unreachable with backoff before the job is parked in
@@ -237,7 +237,7 @@ export interface EmitterConfig {
    * smaller segment means the first pages are searchable sooner at the price of
    * more commit round-trips.
    */
-  segmentPages: number;
+  segmentPages: number; // SEGMENT_PAGES (default: 100)
   /**
    * ASSET_UPLOAD_CONCURRENCY — figure/page crops uploaded to Search in
    * parallel. Default 4 (design §5 S8). Bounded so a document with thousands of
@@ -689,11 +689,13 @@ export interface Config {
   /** PAGE_CONCURRENCY — pages of one document in flight against the model. */
   pageConcurrency: number; // PAGE_CONCURRENCY (default: 4)
   /**
-   * DERIVED_PDF_CACHE — reuse the derived PDF (a PDF source's working copy, or
-   * a LibreOffice conversion's output) across runs under
-   * `TEMP_DIR/derived-pdf`, keyed by the source sha256 and the converter
-   * identity (Phase 11). The cache inherits the scratch volume's lifecycle, so
-   * clearing TEMP_DIR clears it; false re-derives on every prepare.
+   * DERIVED_PDF_CACHE — reuse a LibreOffice conversion's PDF across runs under
+   * `TEMP_DIR/derived-pdf`, keyed by the source sha256, the converter identity
+   * and (for HTML) the sanitizer revision; PDF sources are read in place and
+   * never copied there. Entries are bounded by DERIVED_PDF_CACHE_MAX_MB and
+   * DERIVED_PDF_CACHE_MAX_AGE_HOURS (enforced after each conversion, at start
+   * and on the retention interval) and removed with the document; false
+   * re-converts on every prepare.
    */
   derivedPdfCache: boolean; // DERIVED_PDF_CACHE (default: true)
   /**

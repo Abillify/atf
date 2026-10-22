@@ -4,7 +4,7 @@
 /**
  * derived-pdf-cache-key.test.ts
  *
- * T-384: the derived-PDF cache key covers the converter identity and the HTML
+ * The derived-PDF cache key covers the converter identity and the HTML
  * sanitizer revision.
  *
  * `derivedPdfName` (page-renderer.ts) hashes
@@ -182,7 +182,7 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-describe("derived-PDF cache key (T-384)", () => {
+describe("derived-PDF cache key", () => {
 	it("misses for the same source digest under a different converter identity", async () => {
 		const storeDir = join(scratchRoot, "sources");
 		const { sha256, store } = await storeBytes(storeDir, DOCX_BYTES);

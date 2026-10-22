@@ -562,7 +562,7 @@ Source of truth: `apps/extract/src/config.ts`.
 | `CONVERTER_MODE` | enum | no | `local` | one of `local`, `isolated`; CONVERTER_MODE — where the poppler/LibreOffice binaries execute (requirement 5.7). (`converterMode`) |
 | `CONVERTER_SOCKET` | string | no | `/run/atf-converter/converter.sock` | CONVERTER_SOCKET — filesystem path of the converter RPC socket when CONVERTER_MODE=isolated. (`converterSocket`) |
 | `DEFAULT_TENANT_ID` | string | no | `default` | Tenant used for callers whose credential carries none (service token, single-tenant deployments). Default `default` (`defaultTenantId`) |
-| `DERIVED_PDF_CACHE` | boolean | no | `true` | DERIVED_PDF_CACHE — reuse the derived PDF (a PDF source's working copy, or a LibreOffice conversion's output) across runs under `TEMP_DIR/derived-pdf`, keyed by the source sha256 and the converter identity (Phase 11). (`derivedPdfCache`) |
+| `DERIVED_PDF_CACHE` | boolean | no | `true` | DERIVED_PDF_CACHE — reuse a LibreOffice conversion's PDF across runs under `TEMP_DIR/derived-pdf`, keyed by the source sha256, the converter identity and (for HTML) the sanitizer revision; PDF sources are read in place and never copied t… (`derivedPdfCache`) |
 | `DERIVED_PDF_CACHE_MAX_AGE_HOURS` | number | no | `168, 0=unlimited` | DERIVED_PDF_CACHE_MAX_AGE_HOURS — hours since last use after which a cached conversion is removed. (`derivedPdfCacheMaxAgeHours`) |
 | `DERIVED_PDF_CACHE_MAX_MB` | number | no | `2048, 0=unlimited` | DERIVED_PDF_CACHE_MAX_MB — size ceiling of the derived-PDF cache; the least recently used conversions are removed first. (`derivedPdfCacheMaxMb`) |
 | `EMIT_BATCH_PAGES` | string | no | — | Batch/segment/asset-concurrency tunables for the outbox emitter. (`emitter`) |

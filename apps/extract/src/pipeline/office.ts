@@ -166,7 +166,7 @@ export async function convertToPdf(
  * different bytes, so a PDF rendered from the previous (weaker) rewrite is not
  * served again.
  */
-export const HTML_SANITIZER_REVISION = 3;
+export const HTML_SANITIZER_REVISION = 4;
 
 /**
  * The LibreOffice build identity: the trimmed `--version` line, or `null` when
@@ -343,9 +343,12 @@ function decodeHtmlEntities(
   value: string,
   extraNamed: Record<string, string> = {},
 ): string {
+  // Numeric references need no ";" (an HTML parser ends them at the first
+  // non-digit, so `&#106avascript:` is `javascript:`); named ones keep it.
   return value.replace(
-    /&(#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31});/g,
-    (all, entity: string) => {
+    /&(#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31})(;?)/g,
+    (all, entity: string, semicolon: string) => {
+      if (!entity.startsWith("#") && semicolon !== ";") return all;
       if (entity.startsWith("#x") || entity.startsWith("#X")) {
         const code = Number.parseInt(entity.slice(2), 16);
         return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";

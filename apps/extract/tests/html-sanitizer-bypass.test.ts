@@ -39,7 +39,9 @@ function decodeEntities(s: string): string {
     lt: "<",
     gt: ">",
   };
-  out = out.replace(/&(#x[0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31});/g, (all, e: string) => {
+  // Numeric references decode without ";" as well, like an HTML parser.
+  out = out.replace(/&(#x[0-9a-fA-F]{1,6};?|#\d{1,7};?|[a-zA-Z][a-zA-Z0-9]{1,31};)/g, (all, raw: string) => {
+    const e = raw.endsWith(";") ? raw.slice(0, -1) : raw;
     if (e.startsWith("#x") || e.startsWith("#X")) {
       const code = Number.parseInt(e.slice(2), 16);
       return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
@@ -119,6 +121,9 @@ describe("neutralizeHtmlReferences bypass corpus", () => {
     expectNeutralized('<a href="&#106;avascript:alert(1)">x</a>');
     expectNeutralized('<a href="java&Tab;script:alert(1)">x</a>');
     expectNeutralized('<a href="javascript&colon;alert(1)">x</a>');
+    // Numeric references without the closing ";".
+    expectNeutralized('<a href="&#106avascript:alert(1)">x</a>');
+    expectNeutralized('<a href="jav&#x61script:alert(1)">x</a>');
   });
 
   it("11. drops <base>", () => {

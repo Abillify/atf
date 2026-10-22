@@ -200,27 +200,35 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
     //     left all of this behind — but NOT when the Search call failed: the
     //     caller retries, and until then the cancelled jobs stay as they are.
     //     Best effort, like 1b.
+    //     With an end-user identity, `deleted = 0` can also mean "exists, but
+    //     the caller's ACL does not see it": Search deleted under that scope.
+    //     Extract's own rows carry no Search ACL, so they are only erased when
+    //     Search confirmed the delete, or for a service call without an
+    //     end-user identity (where 0 really means Search never held it).
     let jobsRemoved = 0;
     let sourcesRemoved = 0;
-    try {
-      const erased = await store.eraseJobsByReference(
-        reference,
-        collection,
-        collection === defaultCollection,
-      );
-      jobsRemoved = erased.length;
-      const uploadIds = await store.eraseUploadsByReferences([reference]);
-      await removeSessionFiles(tmpDir, uploadIds, logger);
-      if (sourceStore?.remove !== undefined) {
-        for (const digest of await orphanedSourceDigests(store, erased)) {
-          if ((await sourceStore.remove(digest)) === true) sourcesRemoved += 1;
+    const eraseOwnData = outcome.deleted > 0 || identity === undefined;
+    if (eraseOwnData) {
+      try {
+        const erased = await store.eraseJobsByReference(
+          reference,
+          collection,
+          collection === defaultCollection,
+        );
+        jobsRemoved = erased.length;
+        const uploadIds = await store.eraseUploadsByReferences([reference]);
+        await removeSessionFiles(tmpDir, uploadIds, logger);
+        if (sourceStore?.remove !== undefined) {
+          for (const digest of await orphanedSourceDigests(store, erased)) {
+            if ((await sourceStore.remove(digest)) === true) sourcesRemoved += 1;
+          }
         }
+      } catch (err) {
+        logger.warn(
+          { err, reference, collection },
+          "Could not remove the Extract data of a deleted document",
+        );
       }
-    } catch (err) {
-      logger.warn(
-        { err, reference, collection },
-        "Could not remove the Extract data of a deleted document",
-      );
     }
     // 3. `deleted = 0` means Search never held this reference → 404 (9.9).
     if (outcome.deleted === 0) {

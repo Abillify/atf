@@ -394,7 +394,23 @@ export interface PageRenderer {
     reference?: string;
     signal?: AbortSignal;
   }): Promise<PreparedSource>;
+  /**
+   * Enforce the derived-PDF cache limits now (age, then size), independent
+   * of a conversion. The server runs it at start and on the retention
+   * interval, so cached conversions also expire when no further Office
+   * document arrives. Throttled like the sweep after a conversion; never
+   * throws.
+   */
+  sweepDerivedPdfCache?(): Promise<void>;
 }
+
+/**
+ * Cache files prepared sources are reading right now (path → holders), shared
+ * by every renderer of the process: the server runs one renderer for jobs and
+ * one for `/v2/render` over the same cache directory, and a sweep of either
+ * must spare the files the other is reading.
+ */
+const pinnedCachePaths = new Map<string, number>();
 
 /**
  * The cache file name for a derived PDF: the source content address plus a
@@ -449,12 +465,9 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     maxAgeMs: config.derivedPdfCacheMaxAgeMs ?? 0,
   };
 
-  /**
-   * Cache files a prepared source is reading right now (path → holders).
-   * Poppler re-opens the path for every page, so such a file must outlive the
-   * eviction sweeps until `close()`.
-   */
-  const pinnedCachePaths = new Map<string, number>();
+  // Pins go to the process-wide `pinnedCachePaths`: poppler re-opens the path
+  // for every page, so a file in use must outlive the eviction sweeps until
+  // `close()`.
   const pin = (path: string): void => {
     pinnedCachePaths.set(path, (pinnedCachePaths.get(path) ?? 0) + 1);
   };
@@ -911,6 +924,12 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     const warm = new Map<number, PdfRender>();
     /** Pages a prefetch is working on right now; `render` waits for these. */
     const warming = new Map<number, Promise<void>>();
+    /**
+     * Page sizes a window's `pdfinfo` already read. `render` and `pageSizePt`
+     * use them instead of spawning one `pdfinfo` per page; a few numbers per
+     * page, bounded by the page count.
+     */
+    const knownSizes = new Map<number, PdfPageSize>();
 
     async function prefetchPages(
       pages: readonly number[],
@@ -953,9 +972,12 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
           const first = run[0] ?? 0;
           const last = run[run.length - 1] ?? first;
           const sizes = await readSizes(pdfPath, first, last, tools, runOptions);
-          // One pdftoppm call per stretch of pages that render at the same DPI
-          // (an oversized sheet gets an adaptive, lower one and is rendered
-          // on its own by `render`).
+          for (const [p, size] of sizes) knownSizes.set(p, size);
+          // One pdftoppm call per stretch of pages that render at the same DPI.
+          // Oversized sheets get an adaptive, lower DPI, which bounds their
+          // pixels, so a stretch of them is windowed at that DPI too; a single
+          // sheet between pages of another DPI is rendered on its own by
+          // `render`.
           const dpiOf = (p: number): number => {
             const size = sizes.get(p);
             return size !== undefined ? adaptiveRenderDpi(size, config.renderDpi) : config.renderDpi;
@@ -967,7 +989,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
             while (end + 1 < run.length && dpiOf(run[end + 1] ?? 0) === dpi) end++;
             const from = run[start] ?? 0;
             const to = run[end] ?? from;
-            if (to > from && dpi === config.renderDpi) {
+            if (to > from) {
               const rendered = await renderWindow(
                 pdfPath,
                 from,
@@ -1032,16 +1054,18 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
         return ready;
       }
       const runOptions = subprocessOptions(signal);
-      let pageSize: PdfPageSize | null = null;
-      try {
-        pageSize = await pdfOps.readPageSize(
-          pageSource.pdfPath,
-          page,
-          tools,
-          runOptions,
-        );
-      } catch {
-        pageSize = null;
+      let pageSize: PdfPageSize | null = knownSizes.get(page) ?? null;
+      if (pageSize === null) {
+        try {
+          pageSize = await pdfOps.readPageSize(
+            pageSource.pdfPath,
+            page,
+            tools,
+            runOptions,
+          );
+        } catch {
+          pageSize = null;
+        }
       }
       const dpi =
         pageSize !== null
@@ -1186,9 +1210,11 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
             heightPt: (image.height * 72) / config.renderDpi,
           };
         }
-        const size = await pdfOps
-          .readPageSize(pageSource.pdfPath, page, tools, subprocessOptions(signal))
-          .catch(() => null);
+        const size =
+          knownSizes.get(page) ??
+          (await pdfOps
+            .readPageSize(pageSource.pdfPath, page, tools, subprocessOptions(signal))
+            .catch(() => null));
         if (size !== null) return { widthPt: size.widthPt, heightPt: size.heightPt };
         return (await renderPdfPage(page, signal)).sizePt;
       },
@@ -1304,7 +1330,11 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     return prepared;
   }
 
-  return { prepare };
+  return {
+    prepare,
+    sweepDerivedPdfCache: () =>
+      derivedPdfCacheEnabled ? sweepCache(config.tempDir || tmpdir()) : Promise.resolve(),
+  };
 }
 
 /** Re-exported so callers do not reach into the pipeline layer directly. */

@@ -605,6 +605,38 @@ describe("DELETE /v2/documents/{reference} · Extract's own data", () => {
     expect(removed).toEqual([sha(1)]);
   });
 
+  it("keeps Extract's data when Search deleted nothing under an end-user identity (ACL may hide it)", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });
+    store.seedUpload("11111111-1111-4111-8111-111111111111", "docs/a.pdf");
+    const { sourceStore, removed } = await withSources([sha(1)]);
+    const base = await buildApp(tokenEnv, {
+      store,
+      searchClient: indexBackedSearchClient({ current: new Set() }),
+      sourceStore,
+    });
+    const res = await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("X-User", "anna@example.com");
+    expect(res.status).toBe(404);
+    expect(store.peek(jobId(1))?.status).toBe("completed");
+    expect(store.peekUploads().map((u) => u.reference)).toEqual(["docs/a.pdf"]);
+    expect(removed).toEqual([]);
+  });
+  it("erases Extract's data when Search confirmed the delete under an end-user identity", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });
+    const { sourceStore, removed } = await withSources([sha(1)]);
+    const base = await buildApp(tokenEnv, { store, searchClient: stubSearchClient(), sourceStore });
+    const res = await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("X-User", "anna@example.com");
+    expect(res.status).toBe(200);
+    expect(store.peek(jobId(1))).toBeUndefined();
+    expect(removed).toEqual([sha(1)]);
+  });
   it("keeps everything but the cancelled state when the Search delete fails, so the retry still finds it", async () => {
     const store = createFakeJobStore();
     await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });

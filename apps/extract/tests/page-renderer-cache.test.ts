@@ -408,6 +408,42 @@ describe("page-renderer · retention sweep of the derived-PDF cache", () => {
     }
   });
 
+  it("evicts an old conversion on a scheduled sweep without any further conversion", async () => {
+    const cacheDir = join(scratchRoot, "derived-pdf");
+    await mkdir(cacheDir, { recursive: true });
+    const stale = join(cacheDir, `${"e".repeat(64)}-0123456789abcdef.pdf`);
+    const fresh = join(cacheDir, `${"f".repeat(64)}-0123456789abcdef.pdf`);
+    await writeFile(stale, "%PDF-1.4 stale");
+    await writeFile(fresh, "%PDF-1.4 fresh");
+    const longAgo = new Date(Date.now() - 40 * 3_600_000);
+    await utimes(stale, longAgo, longAgo);
+    const { store } = await storeBytes(join(scratchRoot, "sources"), PDF_BYTES);
+    const renderer = rendererFor(store, true, versionStubPath, { maxAgeMs: 24 * 3_600_000 });
+    // No prepare at all: the server's retention timer calls the sweep.
+    await renderer.sweepDerivedPdfCache?.();
+    expect(await exists(stale)).toBe(false);
+    expect(await exists(fresh)).toBe(true);
+    expect(convertCalls.count).toBe(0);
+  });
+
+  it("a scheduled sweep spares a file another renderer of the process is reading", async () => {
+    const { sha256, store } = await storeBytes(join(scratchRoot, "sources"), PPTX_BYTES);
+    const reading = await rendererFor(store, true, versionStubPath, {}).prepare({
+      sourceSha256: sha256,
+      filename: "deck.pptx",
+    });
+    try {
+      const cachePath = pdfPathOf(reading);
+      const longAgo = new Date(Date.now() - 40 * 3_600_000);
+      await utimes(cachePath, longAgo, longAgo);
+      // A second renderer (as the server runs one for /v2/render) sweeps.
+      await rendererFor(store, true, versionStubPath, { maxBytes: 1, maxAgeMs: 24 * 3_600_000 }).sweepDerivedPdfCache?.();
+      expect(await exists(cachePath)).toBe(true);
+    } finally {
+      await reading.close();
+    }
+  });
+
   it("with both limits at 0 nothing is ever evicted", async () => {
     const cacheDir = join(scratchRoot, "derived-pdf");
     await mkdir(cacheDir, { recursive: true });

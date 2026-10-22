@@ -1353,8 +1353,27 @@ export function createApp(
           tmpDir: config.sourceStore.tmpDir,
         })
       : null;
+  // Derived-PDF cache limits (DERIVED_PDF_CACHE_MAX_AGE_HOURS/_MAX_MB): also
+  // enforced at start and on the retention interval, not only after a new
+  // Office conversion, so cached document content expires when no further
+  // conversion arrives. Independent of JOB_RETENTION_DAYS.
+  const derivedPdfSweepTimer =
+    ownsStore &&
+    config.derivedPdfCache &&
+    (config.derivedPdfCacheMaxAgeHours > 0 || config.derivedPdfCacheMaxMb > 0)
+      ? (() => {
+          void renderPageRenderer.sweepDerivedPdfCache?.();
+          const timer = setInterval(
+            () => void renderPageRenderer.sweepDerivedPdfCache?.(),
+            Math.max(60_000, config.retentionSweepIntervalMinutes * 60_000),
+          );
+          timer.unref();
+          return timer;
+        })()
+      : null;
   function cleanup(): void {
     retentionSweeper?.stop();
+    if (derivedPdfSweepTimer !== null) clearInterval(derivedPdfSweepTimer);
     rateLimiter.close();
     renderRateLimiter.close();
     // Best-effort: flush buffered spans before the pool closes under us.
