@@ -267,6 +267,10 @@ vector database is required.
   collection supports (`unitRows`, `unitGraph`, `outline`, `pages`), and Runtime hides the
   Search navigation tools a pinned collection cannot serve (cached,
   `COLLECTION_CAPABILITY_TTL_MS`, fail-open).
+- **Traceability across time.** `trace` follows an identifier across two points in time
+  (added/removed/changed occurrences by document and section), and `document_diff` (MCP and
+  `GET /v2/documents/{base_ref}/diff`) compares a document's units between two points in
+  time, aligned by section, unit id, then reading order.
 - **Access control.** Retrieval is scoped by verified identity and group membership; the
   verified identity is authoritative and is never taken from a client-supplied field.
 

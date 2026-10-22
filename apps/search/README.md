@@ -41,6 +41,7 @@ reference. The principal routes are:
 | `POST /search` | Dense, hybrid, sparse, and optionally reranked retrieval (v1 shape, unchanged) |
 | `POST /v2/search` | v2 retrieval with unit filters, small-to-big expansion, assets and navigation (below) |
 | `/v2/documents/{ref}/revisions/…` | Resumable v2 ingest from Extract (below) |
+| `GET /v2/documents/{ref}/diff` | Unit-level diff of one document between two RFC 3339 instants `from` / `to` (below): `added` / `removed` / `changed` (before/after excerpts, max 300 chars) / `unchanged_count` |
 | `PUT`, `GET`, `HEAD /v2/assets/{assetId}` | Revision-bound v2 assets with `thumb` / `preview` / `full` variants |
 | `POST /evaluations/retrieval` | Evaluate retrieval results |
 | `DELETE /delete` | Delete indexed content |
@@ -283,6 +284,8 @@ could not retrieve through search:
 | `get_table` | A logical table reassembled across pages (`table_id`, `rows`) |
 | `find_identifier` | Exact occurrences of an identifier across the collection or beneath `path_prefix`, paginated |
 | `follow_ref` | Resolve the figures a unit references |
+| `trace` | An identifier's occurrences across two points in time `valid_at_a` / `valid_at_b` — added / removed / changed (by content hash) per document + section, plus `unchanged_count` (see *Traceability*) |
+| `document_diff` | One document's units between two points in time `from` / `to` — added / removed / changed (before/after excerpts) plus `unchanged_count` (see *Traceability*) |
 | `retrieve_for_answer` | Question → evidence within a token budget (see *Answer-ready retrieval*) |
 | `get_thread` | A whole e-mail thread chronologically (`reference` = a message's ref or `document_group.id`; `max_chars`, `offset`/`next_offset`, `path_prefix`) |
 
@@ -321,6 +324,28 @@ curl -H 'X-Collection: policies' -H 'X-Include-All-Versions: true' -H 'X-Valid-A
 ```
 
 Search results expose both nullable `valid_from` and always-present `effective_valid_from`. The same `valid_at` contract is available in retrieval evaluation and the MCP `search`, `retrieve_evidence`, and `verified_evidence_pack` tools.
+
+## Traceability across two points in time
+
+Two read tools answer "what changed between two dates?" without re-ingesting anything. Both
+read through the same temporal rule as `valid_at` (the version valid at each instant) and carry
+the content-trust labels like every other read.
+
+- **`trace` (MCP)** follows an identifier (e.g. `WE-01/A`) across two instants `valid_at_a` /
+  `valid_at_b`: it runs the lexical identifier lookup at each instant and diffs the occurrences
+  by document + section — `added` (only at b), `removed` (only at a), `changed` (present at
+  both, `content_hash` differs; SHA-256 of the normalized content) and `unchanged_count`. Each
+  occurrence carries `base_ref`, `reference`, `section`, `page_start` and a ≤300-char excerpt
+  centered on the hit.
+- **`document_diff` (MCP and `GET /v2/documents/{base_ref}/diff?collection=&from=&to=`)**
+  compares one document's units between two RFC 3339 instants. Units are loaded at both
+  instants via the navigation reads and aligned by `section_id`, then `unit_id`, then ordinal /
+  reading order. The response is `{ base_ref, from, to, added, removed, changed,
+  unchanged_count }`; `changed` entries carry `before_excerpt` / `after_excerpt` (max 300
+  chars), and `added` / `removed` units carry a head excerpt.
+
+Both tools are scoped by the caller's tenant/ACL exactly like `get_pages` — a diff can never
+surface a unit the caller could not retrieve.
 
 ## Retrieval pipeline
 
