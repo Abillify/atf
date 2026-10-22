@@ -404,6 +404,9 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
             modified: row.modified as Date,
             valid_from: (row.valid_from as Date | null) ?? null,
             effective_valid_from: row.effective_valid_from as Date,
+            ...(typeof row.revision_id === "string" && row.revision_id !== ""
+              ? { revision_id: row.revision_id as string }
+              : {}),
           }));
 
           // Tag hits that come from a partially-visible `progressive` revision

@@ -180,6 +180,19 @@ const searchResultSchema = {
     modified: { type: "string", format: "date-time" },
     valid_from: { type: ["string", "null"], format: "date-time", description: "Explicit business-validity start, or null for legacy rows." },
     effective_valid_from: { type: "string", format: "date-time", description: "COALESCE(valid_from, created)." },
+    revision_id: {
+      type: "string",
+      description: "Revision of the hit (v2 revision pipeline); absent for legacy v1 rows.",
+    },
+    truncated: {
+      type: "boolean",
+      description:
+        "group_by_document only: the document group reached SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT and chunks were dropped.",
+    },
+    omitted_chunks: {
+      type: "integer",
+      description: "group_by_document only: number of chunks dropped by the per-document cap.",
+    },
   },
 };
 
@@ -620,6 +633,13 @@ export function buildOpenApiSpec(serverUrl: string) {
               description:
                 "Search results. When `X-Rerank: async` is used, returns `text/event-stream` " +
                 "with `results`, `rerank`, and `done` events.",
+              headers: {
+                "X-Query-Truncated": {
+                  description:
+                    "`true` when the query was cut to SEARCH_MAX_QUERY_CHARS before searching.",
+                  schema: { type: "string", enum: ["true"] },
+                },
+              },
               content: {
                 "application/json": {
                   schema: {
@@ -2907,6 +2927,12 @@ export function buildOpenApiSpec(serverUrl: string) {
                         items: { type: "object", additionalProperties: true },
                       },
                       unchanged_count: { type: "integer" },
+                      truncated: {
+                        type: "boolean",
+                        description:
+                          "True when either point in time holds more units than one read loads; " +
+                          "the diff then covers only the first units in reading order.",
+                      },
                     },
                   },
                 },
@@ -3278,6 +3304,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                         $ref: "#/components/schemas/Abstention",
                         description:
                           "MIN_RERANK_SCORE abstention signal (only when a threshold is configured).",
+                      },
+                      query_truncated: {
+                        type: "boolean",
+                        description:
+                          "Present (true) when the query was cut to SEARCH_MAX_QUERY_CHARS before searching.",
                       },
                     },
                   },

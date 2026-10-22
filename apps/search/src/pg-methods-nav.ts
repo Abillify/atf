@@ -442,6 +442,54 @@ export function createNavMethods(ctx: PgFactoryCtx) {
       });
     },
 
+    async getDocumentUnits(
+      collection: string,
+      scope: AccessScope,
+      reference: string,
+      options?: NavReadOptions & { limit?: number },
+    ): Promise<PostgresResponse<{ units: NavUnitRow[]; truncated: boolean }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
+      }
+      const ref = normalizeReference(reference);
+      const limit = clampInt(options?.limit, NAV_MAX_UNITS, 1, NAV_MAX_UNITS);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        // One read of every visible unit of the document; one row past the
+        // limit tells the caller the set is incomplete.
+        const res = await client.query<NavRowShape>(
+          `${NAV_ROW_SELECT}
+             FROM "${table}"
+            WHERE base_ref = ${refPh}${temporalFilter}${accessSql}
+            ORDER BY ${DOCUMENT_ORDER_SQL}
+            LIMIT ${p.add(limit + 1)}`,
+          p.values,
+        );
+        const truncated = res.rows.length > limit;
+        return {
+          units: res.rows.slice(0, limit).map(navRow),
+          truncated,
+        };
+      });
+    },
+
     async getPageUnits(
       collection: string,
       scope: AccessScope,

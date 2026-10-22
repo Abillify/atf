@@ -353,8 +353,8 @@ export interface Config {
 
   /**
    * Requirement 4.7: ranker for the lexical (full-text) list. `ts_rank_cd`
-   * (default) uses PostgreSQL's coverage-density rank with length
-   * normalisation. `bm25` is honoured only when ParadeDB `pg_search` is
+   * (default) uses PostgreSQL's cover-density rank with normalisation flag 32
+   * (rank/(rank+1)). `bm25` is honoured only when ParadeDB `pg_search` is
    * installed; other BM25 extensions fall back to `ts_rank_cd`, and the
    * search service logs a warning once.
    */
@@ -1218,7 +1218,10 @@ export function loadConfig(): Config {
       groupMaxChunksPerDocumentRaw.trim() === ""
     )
       return 8;
-    const parsed = parseInt(groupMaxChunksPerDocumentRaw, 10);
+    // Digits only: parseInt would accept "8abc" as 8.
+    const parsed = /^\s*\d+\s*$/.test(groupMaxChunksPerDocumentRaw)
+      ? Number.parseInt(groupMaxChunksPerDocumentRaw, 10)
+      : Number.NaN;
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > 64) {
       throw new Error(
         "SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT must be between 1 and 64",

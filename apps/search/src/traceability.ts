@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * traceability.ts — Epic E7 (K1): the `trace` tool's logic.
+ * traceability.ts — traceability: the `trace` tool's logic.
  *
  * Follows an identifier (article/transaction/drawing code, e.g. "WE-01/A")
  * across two points in time: the identifier is looked up in the lexical index
@@ -91,6 +91,28 @@ export function centeredExcerpt(
   return `${prefix}${flat.slice(start, end)}${suffix}`;
 }
 
+/** Separators a writer adds or drops freely inside an identifier (see normalizeIdentifier). */
+const IDENTIFIER_SEPARATOR = "[\\s.\\-/\\u00a0]*";
+
+/**
+ * Exact-identifier predicate for lexical hits. The lexical list is an OR list
+ * (`WE-01/A` → `'WE-01' | 'A'`), so a chunk mentioning `WE-01/B` or a lone
+ * "Anlage A" is a hit too. This keeps only content that contains the
+ * identifier itself: the same characters in order, case-insensitive, with the
+ * separators `normalizeIdentifier` ignores allowed between them, and no
+ * letter or digit directly before or after (so `WE-01/AB` does not count).
+ * An identifier without letters or digits matches nothing.
+ */
+export function identifierMatcher(identifier: string): (content: string) => boolean {
+  const chars = [...identifier.normalize("NFC")].filter((c) => /[\p{L}\p{N}]/u.test(c));
+  if (chars.length === 0) return () => false;
+  const body = chars
+    .map((c) => c.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"))
+    .join(IDENTIFIER_SEPARATOR);
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "iu");
+  return (content) => re.test(content.normalize("NFC"));
+}
+
 /** The diff key: document + section ("" stands for "no section"). */
 export function traceOccurrenceKey(o: TraceOccurrence): string {
   return `${o.base_ref}${"\u0000"}${o.section ?? ""}`;
@@ -155,7 +177,7 @@ export async function traceIdentifier(
   return diffTraceOccurrences(occurrencesA, occurrencesB);
 }
 
-// ── document_diff: unit-level diff between two points in time (T-362) ──────
+// ── document_diff: unit-level diff between two points in time ──────
 
 /**
  * The unit shape the diff consumes — structurally satisfied by `NavUnitRow`

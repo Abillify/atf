@@ -161,3 +161,56 @@ describe("groupResultsV2 · include_all_versions", () => {
 		expect(grouped.every((g) => g.group.count === 1)).toBe(true);
 	});
 });
+/**
+ * v2 units carry a per-unit reference (`doc#unit:<id>`) and their revision in
+ * `revision_id`; the reference alone would make every unit its own revision.
+ */
+function v2Unit(
+	unitId: string,
+	revision: string,
+	score: number,
+	extraMeta: Record<string, unknown> = {},
+): SearchResult {
+	return {
+		id: unitId,
+		score,
+		content: `${revision} ${unitId}`,
+		metadata: extraMeta,
+		reference: `doc#unit:${unitId}`,
+		base_ref: "doc",
+		revision_id: revision,
+		created: instant,
+		modified: instant,
+		valid_from: null,
+		effective_valid_from: instant,
+	};
+}
+describe("include_all_versions · v2 revisions", () => {
+	it("uses the revision id as the revision identity", () => {
+		expect(revisionIdentity(v2Unit("u1", "rev-a", 1))).toBe(
+			revisionIdentity(v2Unit("u2", "rev-a", 1)),
+		);
+		expect(revisionIdentity(v2Unit("u1", "rev-a", 1))).not.toBe(
+			revisionIdentity(v2Unit("u3", "rev-b", 1)),
+		);
+	});
+	it("groups the units of two revisions into two groups", () => {
+		const results = [
+			v2Unit("a1", "rev-a", 9),
+			v2Unit("a2", "rev-a", 8),
+			v2Unit("b1", "rev-b", 7),
+			v2Unit("b2", "rev-b", 6),
+		];
+		const docs = groupResultsByDocument(results, 8, true);
+		expect(docs).toHaveLength(2);
+	});
+	it("collapses a table within one revision but not across revisions", () => {
+		const results = [
+			v2Unit("a1", "rev-a", 9, { table_id: "t1" }),
+			v2Unit("a2", "rev-a", 8, { table_id: "t1" }),
+			v2Unit("b1", "rev-b", 7, { table_id: "t1" }),
+		];
+		const out = diversifyResults(results, { includeAllVersions: true });
+		expect(out.map((r) => r.id)).toEqual(["a1", "b1"]);
+	});
+});

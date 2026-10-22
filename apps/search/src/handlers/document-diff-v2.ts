@@ -4,19 +4,17 @@
 /**
  * handlers/document-diff-v2.ts
  *
- * `document_diff` (Epic E7, K1): compares one document's units between two
+ * `document_diff` (traceability): compares one document's units between two
  * points in time.
  *
  *   GET /v2/documents/{base_ref}/diff?collection=&from=&to=
  *
- * The units at each instant are loaded through the existing navigation reads
- * (the same `getOutline` / `getSectionUnits` methods behind `get_pages`, each
- * with the temporal `valid_at` visibility rule and the caller's access scope),
- * then diffed by `diffDocumentUnits`: alignment by `section_id`, then
- * `unit_id`, then the ordinal-based pair key, then reading order.
- *
- * Coverage limitation: the loader walks the document's outline, so units that
- * belong to no section (documents without section units) are not covered.
+ * The units at each instant are loaded in one navigation read per instant
+ * (every unit of the document, with the temporal `valid_at` visibility rule
+ * and the caller's access scope), then diffed by `diffDocumentUnits`:
+ * alignment by `section_id`, then `unit_id`, then the ordinal-based pair key,
+ * then reading order. A document above the navigation unit cap is reported
+ * with `truncated: true`.
  */
 
 import type { RequestHandler } from "express";
@@ -61,6 +59,12 @@ export interface DocumentDiffPayload {
   removed: DocumentDiffUnit[];
   changed: DocumentDiffChanged[];
   unchanged_count: number;
+  /**
+   * True when either instant holds more units than one read loads (the
+   * navigation unit cap); the diff then covers only the first units in
+   * reading order and must not be read as complete.
+   */
+  truncated: boolean;
 }
 
 function toDiffUnit(u: DiffableUnit): DocumentDiffUnit {
@@ -76,12 +80,12 @@ function toDiffUnit(u: DiffableUnit): DocumentDiffUnit {
 }
 
 /**
- * Load one document's units as visible at `validAt` via the navigation reads:
- * the outline first, then each section's units, deduplicated by `unit_id`
- * (a section unit is returned both as an outline entry and inside its own
- * section's units). Rows without a `unit_id` are kept separately — they cannot
- * be deduplicated. Throws when a navigation query fails; a partial unit set
- * would produce a misleading diff.
+ * Load one document's units as visible at `validAt` in a single navigation
+ * read (all units of the document, reading order, temporal `valid_at` rule
+ * and the caller's access scope). At most the navigation unit cap is loaded;
+ * `truncated` reports a larger document, whose diff is then incomplete.
+ * Throws when the query fails; a partial unit set would produce a misleading
+ * diff.
  */
 export async function loadDocumentUnitsAt(
   postgresClient: PostgresClient,
@@ -89,36 +93,14 @@ export async function loadDocumentUnitsAt(
   scope: AccessScope,
   baseRef: string,
   validAt: string,
-): Promise<NavUnitRow[]> {
-  const outline = await postgresClient.getOutline(collection, scope, baseRef, {
+): Promise<{ units: NavUnitRow[]; truncated: boolean }> {
+  const res = await postgresClient.getDocumentUnits(collection, scope, baseRef, {
     validAt,
-    limit: 2000,
   });
-  if (!outline.ok) {
-    throw new Error(`Outline load failed: ${outline.error.message}`);
+  if (!res.ok) {
+    throw new Error(`Document units load failed: ${res.error.message}`);
   }
-
-  const seen = new Set<string>();
-  const units: NavUnitRow[] = [];
-  for (const entry of outline.result.entries) {
-    const res = await postgresClient.getSectionUnits(
-      collection,
-      scope,
-      baseRef,
-      { sectionPath: entry.section_path },
-      { validAt },
-    );
-    if (!res.ok) {
-      throw new Error(`Section units load failed: ${res.error.message}`);
-    }
-    for (const row of res.result) {
-      if (row.unit_id === null || !seen.has(row.unit_id)) {
-        if (row.unit_id !== null) seen.add(row.unit_id);
-        units.push(row);
-      }
-    }
-  }
-  return units;
+  return res.result;
 }
 
 /**
@@ -136,11 +118,12 @@ export async function buildDocumentDiff(
 ): Promise<DocumentDiffPayload> {
   const fromUnits = await loadDocumentUnitsAt(postgresClient, collection, scope, baseRef, from);
   const toUnits = await loadDocumentUnitsAt(postgresClient, collection, scope, baseRef, to);
-  const diff = diffDocumentUnits(fromUnits, toUnits);
+  const diff = diffDocumentUnits(fromUnits.units, toUnits.units);
   return {
     base_ref: baseRef,
     from,
     to,
+    truncated: fromUnits.truncated || toUnits.truncated,
     added: diff.added.map(toDiffUnit),
     removed: diff.removed.map(toDiffUnit),
     changed: diff.changed.map((c) => ({
@@ -175,7 +158,15 @@ export function createDocumentDiffHandler(
         readHeader(req, "x-collection") ??
         "documents";
 
-      const baseRef = decodeURIComponent((req.params as { ref?: string }).ref ?? "").trim();
+      // Same decoding as the other v2 document routes; a malformed escape
+      // (e.g. a literal "%") is a client error, not a 500.
+      let baseRef: string;
+      try {
+        baseRef = decodeURIComponent((req.params as { ref?: string }).ref ?? "").trim();
+      } catch {
+        res.status(400).json({ error: "base_ref is not a valid URI component", code: "INVALID_BASE_REF" });
+        return;
+      }
       if (baseRef === "") {
         res.status(400).json({ error: "base_ref is required", code: "INVALID_BASE_REF" });
         return;

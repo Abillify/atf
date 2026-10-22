@@ -179,12 +179,15 @@ export interface DiversifyOptions {
 }
 
 /**
- * Revision identity of a hit: its `reference` without the `_chunk_N` suffix.
- * Versioned rows carry the version in their reference (`doc_v2`), so this
- * separates the revisions of one document while all chunks of one revision
- * share it.
+ * Revision identity of a hit. v2 units carry their `revision_id`; their
+ * reference (`doc#unit:<id>`) is unique per unit and would split one revision
+ * into single units. Legacy v1 rows have no revision id but carry the version
+ * in their reference (`doc_v2`), so the reference without the `_chunk_N`
+ * suffix separates the revisions of one document while all chunks of one
+ * revision share it.
  */
 export function revisionIdentity(r: SearchResult): string {
+  if (r.revision_id !== undefined && r.revision_id !== "") return `rev:${r.revision_id}`;
   return r.reference.replace(/_chunk_\d+$/, "");
 }
 

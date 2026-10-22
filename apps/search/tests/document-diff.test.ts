@@ -2,12 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * tests/document-diff.test.ts — Epic E7 (K1): pure unit-level diff logic of
+ * tests/document-diff.test.ts — traceability: pure unit-level diff logic of
  * `document_diff` (no database): alignment ladder (section_id → unit_id →
  * ordinal pair key → reading order) and the head excerpt.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { buildDocumentDiff } from "../src/handlers/document-diff-v2.js";
+import type { PostgresClient } from "../src/postgres-client.js";
+import type { AccessScope } from "../src/access-scope.js";
 import {
   diffDocumentUnits,
   headExcerpt,
@@ -245,5 +248,53 @@ describe("diffDocumentUnits", () => {
     expect(diff.changed).toHaveLength(1);
     expect(diff.removed.map((u) => u.unit_id)).toEqual(["gone"]);
     expect(diff.added.map((u) => u.unit_id)).toEqual(["fresh"]);
+  });
+});
+describe("buildDocumentDiff loading", () => {
+  const scope = { tenantId: "t1", service: true } as unknown as AccessScope;
+  const row = (unitId: string, content: string) =>
+    ({ ...unit({ unit_id: unitId, content }), reference: `doc#unit:${unitId}` }) as never;
+
+  it("reads each instant in a single query and reports a truncated side", async () => {
+    const getDocumentUnits = vi.fn(async (_c: string, _s: AccessScope, _r: string, o?: { validAt?: string }) => ({
+      ok: true as const,
+      result:
+        o?.validAt === "2025-03-01T00:00:00Z"
+          ? { units: [row("a", "eins")], truncated: false }
+          : { units: [row("a", "eins"), row("b", "zwei")], truncated: true },
+    }));
+    const getSectionUnits = vi.fn();
+    const pg = { getDocumentUnits, getSectionUnits } as unknown as PostgresClient;
+    const payload = await buildDocumentDiff(
+      pg,
+      "documents",
+      scope,
+      "doc",
+      "2025-03-01T00:00:00Z",
+      "2025-07-01T00:00:00Z",
+    );
+    // One read per instant, never one per section.
+    expect(getDocumentUnits).toHaveBeenCalledTimes(2);
+    expect(getSectionUnits).not.toHaveBeenCalled();
+    expect(payload.truncated).toBe(true);
+    expect(payload.added.map((u) => u.unit_id)).toEqual(["b"]);
+    expect(payload.unchanged_count).toBe(1);
+  });
+
+  it("is not truncated when both reads are complete", async () => {
+    const pg = {
+      getDocumentUnits: vi.fn(async () => ({ ok: true as const, result: { units: [], truncated: false } })),
+    } as unknown as PostgresClient;
+    const payload = await buildDocumentDiff(pg, "documents", scope, "doc", "2025-03-01T00:00:00Z", "2025-07-01T00:00:00Z");
+    expect(payload.truncated).toBe(false);
+  });
+
+  it("fails instead of diffing a partial unit set", async () => {
+    const pg = {
+      getDocumentUnits: vi.fn(async () => ({ ok: false as const, error: { code: "POSTGRES_UNAVAILABLE", message: "down" } })),
+    } as unknown as PostgresClient;
+    await expect(
+      buildDocumentDiff(pg, "documents", scope, "doc", "2025-03-01T00:00:00Z", "2025-07-01T00:00:00Z"),
+    ).rejects.toThrow("Document units load failed: down");
   });
 });

@@ -47,6 +47,16 @@ describe("Config", () => {
     delete process.env["EMBED_URL"];
     expect(() => loadConfig()).toThrow("EMBED_URL");
   });
+  it("accepts only whole numbers 1–64 for SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT", () => {
+    delete process.env["SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT"];
+    expect(loadConfig().groupMaxChunksPerDocument).toBe(8);
+    process.env["SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT"] = "12";
+    expect(loadConfig().groupMaxChunksPerDocument).toBe(12);
+    for (const bad of ["8abc", "1.5", "0", "65", "-3"]) {
+      process.env["SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT"] = bad;
+      expect(() => loadConfig(), bad).toThrow("SEARCH_GROUP_MAX_CHUNKS_PER_DOCUMENT");
+    }
+  });
 
   // Req 12.4: migrations run at boot outside production by default;
   // production defaults to dedicated migration Jobs (`bun run migrate`).

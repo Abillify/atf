@@ -4,7 +4,7 @@
 /**
  * handlers/mcp-trace-tool.ts
  *
- * The MCP `trace` tool (Epic E7, K1): follows an identifier across two points
+ * The MCP `trace` tool (traceability): follows an identifier across two points
  * in time. At each instant the identifier is looked up in the lexical index
  * (FTS-only search with the temporal `valid_at` visibility rule); the two
  * occurrence sets are diffed into added / removed / changed / unchanged.
@@ -18,14 +18,25 @@ import type { PostgresResponse, SearchResult } from "../pg-types.js";
 import {
   centeredExcerpt,
   contentHash,
+  identifierMatcher,
   traceIdentifier,
   type TraceOccurrence,
 } from "../traceability.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
-function json(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+function json(
+  payload: unknown,
+  pretty: boolean,
+): { content: Array<{ type: "text"; text: string }> } {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, pretty ? 2 : undefined) }] };
 }
+
+/**
+ * Over-fetch factor of the lexical lookup: the OR list also returns chunks
+ * that contain only part of the identifier, which are filtered out afterwards.
+ */
+const TRACE_LOOKUP_OVERFETCH = 4;
+const TRACE_LOOKUP_MAX = 400;
 
 /** Shapes one lexical hit into a trace occurrence. */
 function shapeOccurrence(hit: SearchResult, identifier: string): TraceOccurrence {
@@ -45,7 +56,14 @@ function shapeOccurrence(hit: SearchResult, identifier: string): TraceOccurrence
 }
 
 export function registerTraceTool(opts: McpToolContext): void {
-  const { server, postgresClient, defaultCollection = "documents", authorize, emitQueryActivity } = opts;
+  const {
+    server,
+    postgresClient,
+    defaultCollection = "documents",
+    authorize,
+    emitQueryActivity,
+    mcpPrettyJson = false,
+  } = opts;
 
   server.tool(
     "trace",
@@ -91,12 +109,16 @@ export function registerTraceTool(opts: McpToolContext): void {
 
       // Each time point runs the same lexical lookup through the public search
       // interface (FTS-only, temporal visibility). A failed lookup aborts the
-      // trace — a partial diff would be misleading.
+      // trace — a partial diff would be misleading. The lexical list ORs the
+      // identifier's tokens, so it over-fetches and keeps only the hits that
+      // contain the identifier itself.
+      const containsIdentifier = identifierMatcher(identifier);
+      const fetchLimit = Math.min(limit * TRACE_LOOKUP_OVERFETCH, TRACE_LOOKUP_MAX);
       const lookup = async (validAt: string): Promise<TraceOccurrence[]> => {
         const res: PostgresResponse<SearchResult[]> = await postgresClient.search(
           identifier,
           [],
-          limit,
+          fetchLimit,
           col,
           accessScopeForMcp(),
           undefined,
@@ -118,7 +140,10 @@ export function registerTraceTool(opts: McpToolContext): void {
         if (!res.ok) {
           throw new Error(res.error.message);
         }
-        return res.result.map((hit) => shapeOccurrence(hit, identifier));
+        return res.result
+          .filter((hit) => containsIdentifier(hit.content))
+          .slice(0, limit)
+          .map((hit) => shapeOccurrence(hit, identifier));
       };
 
       try {
@@ -135,12 +160,15 @@ export function registerTraceTool(opts: McpToolContext): void {
         ];
         emitQueryActivity({
           tool: "trace",
-          summary: `${identifier}: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.changed.length} changed, ${diff.unchanged_count} unchanged`,
+          // Data minimisation: the activity stream is process-wide (operator
+          // subscribers see every tenant), so the identifier the caller searched
+          // for is reported by its length only, as for search queries.
+          summary: `identifier[${identifier.length} chars]: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.changed.length} changed, ${diff.unchanged_count} unchanged`,
           status: "ok",
           startTime,
           detail: {
             collection: col,
-            identifier,
+            identifier_length: identifier.length,
             valid_at_a: validAtA,
             valid_at_b: validAtB,
             added: diff.added.length,
@@ -163,15 +191,15 @@ export function registerTraceTool(opts: McpToolContext): void {
           })),
           unchanged_count: diff.unchanged_count,
           ...aggregateTrustLabels(occurrences.map((o) => trustLabels(o.excerpt).injection_risk)),
-        });
+        }, mcpPrettyJson);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         emitQueryActivity({
           tool: "trace",
-          summary: `${identifier} in ${col} — failed`,
+          summary: `identifier[${identifier.length} chars] in ${col} — failed`,
           status: "error",
           startTime,
-          detail: { collection: col, identifier, error: message },
+          detail: { collection: col, identifier_length: identifier.length, error: message },
         });
         return { content: [{ type: "text", text: `Trace failed: ${message}` }], isError: true };
       }

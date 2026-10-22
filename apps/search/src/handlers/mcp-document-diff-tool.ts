@@ -4,7 +4,7 @@
 /**
  * handlers/mcp-document-diff-tool.ts
  *
- * The MCP `document_diff` tool (Epic E7, K1): compares one document's units
+ * The MCP `document_diff` tool (traceability): compares one document's units
  * between two points in time. The units at each instant come from the same
  * navigation reads that back `get_pages` (with the temporal `valid_at`
  * visibility rule), so the diff sees exactly what a read at that instant
@@ -18,16 +18,26 @@ import { parseRfc3339DateTime } from "../rfc3339.js";
 import { buildDocumentDiff } from "./document-diff-v2.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
-function json(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+function json(
+  payload: unknown,
+  pretty: boolean,
+): { content: Array<{ type: "text"; text: string }> } {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, pretty ? 2 : undefined) }] };
 }
 
 export function registerDocumentDiffTool(opts: McpToolContext): void {
-  const { server, postgresClient, defaultCollection = "documents", authorize, emitQueryActivity } = opts;
+  const {
+    server,
+    postgresClient,
+    defaultCollection = "documents",
+    authorize,
+    emitQueryActivity,
+    mcpPrettyJson = false,
+  } = opts;
 
   server.tool(
     "document_diff",
-    "Compare one document's units between two points in time. Loads the document's units at `from` and at `to` (each with the temporal \"version valid at that instant\" rule) and diffs them by section, then unit id, then reading order: added (only at to), removed (only at from), changed (aligned unit whose content hash differs, with before/after excerpts) and unchanged_count.",
+    "Compare one document's units between two points in time. Loads the document's units at `from` and at `to` (each with the temporal \"version valid at that instant\" rule) and diffs them by section, then unit id, then reading order: added (only at to), removed (only at from), changed (aligned unit whose content hash differs, with before/after excerpts) and unchanged_count. Check truncated: a document above the navigation unit cap is diffed only over its first units.",
     {
       base_ref: z
         .string()
@@ -104,7 +114,7 @@ export function registerDocumentDiffTool(opts: McpToolContext): void {
             ...trustLabels(c.after_excerpt),
           })),
           ...aggregateTrustLabels(risks),
-        });
+        }, mcpPrettyJson);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         emitQueryActivity({

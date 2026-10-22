@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * `document_diff` against a REAL PostgreSQL + pgvector instance (Epic E7, K1):
+ * `document_diff` against a REAL PostgreSQL + pgvector instance (traceability):
  * two committed revisions of one document, the units loaded at an instant
  * inside each revision's visibility window through the same navigation reads
  * behind `get_pages` (`getOutline` + `getSectionUnits`, each with the temporal
@@ -227,5 +227,25 @@ describeIfPg("document_diff · units across two points in time · real postgres"
     expect(payload.changed).toEqual([]);
     // rev2 has 7 units (3 sections + 4 chunks).
     expect(payload.unchanged_count).toBe(7);
+  });
+
+  it("loads the whole document in one read and reports a capped read as truncated", async () => {
+    const full = await pg.getDocumentUnits(collection, serviceScope(), BASE_REF, { validAt: "2025-07-01T00:00:00Z" });
+    expect(full.ok).toBe(true);
+    if (!full.ok) return;
+    expect(full.result.truncated).toBe(false);
+    expect(full.result.units.map((u) => u.unit_id)).toHaveLength(7);
+    const capped = await pg.getDocumentUnits(collection, serviceScope(), BASE_REF, {
+      validAt: "2025-07-01T00:00:00Z",
+      limit: 3,
+    });
+    expect(capped.ok).toBe(true);
+    if (!capped.ok) return;
+    expect(capped.result.truncated).toBe(true);
+    expect(capped.result.units).toHaveLength(3);
+    // The capped read is the head of the full read (same reading order).
+    expect(capped.result.units.map((u) => u.unit_id)).toEqual(
+      full.result.units.slice(0, 3).map((u) => u.unit_id),
+    );
   });
 });

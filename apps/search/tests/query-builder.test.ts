@@ -661,6 +661,48 @@ describe("buildFtsQuery", () => {
     );
   });
 
+  /**
+   * The ORDER BY is two-tiered (all-terms flag, then score). A `(score, id)`
+   * keyset alone lost any-term hits scoring above a page boundary inside the
+   * all-terms tier, and repeated all-terms hits when the boundary was in the
+   * any-term tier. The cursor predicate leads with the same all-terms
+   * expression as the ORDER BY and recomputes the cursor row's tier.
+   */
+  it("pages the all-terms tier before the score in the cursor predicate", () => {
+    const f = flat(build(rankedCursor).sql);
+    const tier = "(ts_search @@ to_tsquery('german', $2))::int";
+    const cursorTier = `COALESCE((SELECT ${tier} FROM "${TABLE}" cursor_row WHERE cursor_row.id = $5::bigint), 1)`;
+    expect(f).toContain(
+      `AND (${tier} < ${cursorTier} OR (${tier} = ${cursorTier} AND (ts_rank_cd(ts_search, to_tsquery('german', $1), 32) < $4::float8::float4 OR (ts_rank_cd(ts_search, to_tsquery('german', $1), 32) = $4::float8::float4 AND id > $5::bigint`,
+    );
+    // The tier expression is the one the ORDER BY leads with.
+    expect(f).toContain("ORDER BY (ts_search @@ to_tsquery('german', $2)) DESC");
+  });
+
+  it("keeps the plain score cursor for the BM25 branch (no all-terms tier)", () => {
+    const sql = flat(
+      buildFtsQuery(
+        TABLE,
+        "german",
+        10,
+        undefined,
+        false,
+        0,
+        "mietvertrag",
+        serviceScope,
+        undefined,
+        rankedCursor,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { ranker: "bm25", bm25Engine: "pg_search" } as LexicalRanker,
+      ).sql,
+    );
+    expect(sql).toContain("paradedb.score(id) <");
+    expect(sql).not.toContain("cursor_row");
+  });
+
   it("returns only rows that actually match the query", () => {
     expect(build().sql).toContain("ts_search @@ to_tsquery");
   });

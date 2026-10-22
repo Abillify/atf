@@ -415,7 +415,9 @@ function buildScoreCursorSql(
   const scorePh = p.add(cursor.score);
   const idPh = p.add(cursor.id);
   // `id` (BIGSERIAL) is the tie-break, compared NUMERICALLY to match
-  // `ORDER BY ... id ASC`. A text comparison would order 10 before 9.
+  // `ORDER BY ... id ASC`. A text comparison would order 10 before 9. For
+  // the same reason the ranked queries select `id` uncast: with `id::text` in
+  // the SELECT list, a bare `id` in ORDER BY names the text output column.
   return (
     ` AND (${scoreExpr} < ${scorePh}::float8` +
     ` OR (${scoreExpr} = ${scorePh}::float8` +
@@ -423,6 +425,51 @@ function buildScoreCursorSql(
   );
 }
 
+/**
+ * Keyset predicate for the FTS-only query, whose order is two-tiered:
+ * `(allTerms) DESC, score DESC, id ASC`. A `(score, id)` cursor alone would
+ * drop any-term hits scoring above the cursor (page 1 ended in the all-terms
+ * tier) or repeat all-terms hits (page 1 ended in the any-term tier).
+ *
+ * The cursor row's tier is not stored in the cursor; it is recomputed from
+ * the row itself (`id` is the primary key), so the cursor format stays the
+ * same. If that row no longer exists the tier defaults to "all terms", which
+ * can repeat hits but never skips one.
+ *
+ * Without a real all-terms predicate (BM25 branch: `FALSE`) or for a legacy
+ * cursor without a score this is exactly {@link buildScoreCursorSql}.
+ */
+export function buildFtsCursorSql(
+  p: SqlParams,
+  cursor: SearchCursor | undefined,
+  scoreExpr: string,
+  allTermsExpr: string,
+  table: string,
+): string {
+  if (!cursor || cursor.score === undefined || allTermsExpr === "FALSE") {
+    return buildScoreCursorSql(p, cursor, scoreExpr);
+  }
+  const scorePh = p.add(cursor.score);
+  const idPh = p.add(cursor.id);
+  // The subquery's unqualified `ts_search` resolves to its own FROM item, i.e.
+  // the cursor row; the outer `allTermsExpr` refers to the candidate row.
+  const cursorTier =
+    `COALESCE((SELECT (${allTermsExpr})::int FROM "${table}" cursor_row` +
+    ` WHERE cursor_row.id = ${idPh}::bigint), 1)`;
+  const tier = `(${allTermsExpr})::int`;
+  // `ts_rank_cd`/`ts_rank` return `real`. The cursor carries the score as
+  // printed (shortest float4 text), so it is compared after rounding back to
+  // `real`: compared as float8, ties would never be equal and a page boundary
+  // inside a run of equal scores would skip or repeat rows.
+  const cursorScore = `${scorePh}::float8::float4`;
+  return (
+    ` AND (${tier} < ${cursorTier}` +
+    ` OR (${tier} = ${cursorTier}` +
+    ` AND (${scoreExpr} < ${cursorScore}` +
+    ` OR (${scoreExpr} = ${cursorScore}` +
+    ` AND id > ${idPh}::bigint))))`
+  );
+}
 /**
  * Hard cap of the hybrid (RRF) candidate pool in {@link buildHybridQuery}.
  * Exported so {@link candidatePoolSize} consumers outside the builder —
@@ -513,7 +560,7 @@ export function buildDenseQuery(
   return {
     sql: `
       SELECT
-        id::text,
+        id,
         reference,
         base_ref,
         content,
@@ -836,7 +883,7 @@ export function buildFtsQuery(
     return {
       sql: `
         SELECT
-          id::text,
+          id,
           reference,
           base_ref,
           content,
@@ -888,7 +935,7 @@ export function buildFtsQuery(
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
   const accessSql = buildAccessSql(p, scope);
-  const cursorSql = buildScoreCursorSql(p, cursor, score);
+  const cursorSql = buildFtsCursorSql(p, cursor, score, allTerms, table);
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
 
@@ -896,7 +943,7 @@ export function buildFtsQuery(
   return {
     sql: `
       SELECT
-        id::text,
+        id,
         reference,
         base_ref,
         content,

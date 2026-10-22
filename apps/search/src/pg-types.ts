@@ -325,6 +325,11 @@ export interface SearchResult {
   /** COALESCE(valid_from, created), always present. */
   effective_valid_from: Date;
   /**
+   * Revision the hit belongs to (v2 revision pipeline). Absent for legacy v1
+   * rows, whose version is part of `reference` (`doc_v2_chunk_3`).
+   */
+  revision_id?: string;
+  /**
    * `partial` when the hit comes from a partially-visible `progressive` revision
    * (Requirement 6.4). Mirrors `evidence.revision_state`. Absent otherwise.
    */
@@ -917,6 +922,18 @@ export interface PostgresClient {
     selector: { sectionId?: string; sectionPath?: string[] },
     options?: NavReadOptions,
   ): Promise<PostgresResponse<NavUnitRow[]>>;
+
+  /**
+   * Every unit of one document visible under `scope` (and `validAt`), in
+   * reading order, in a single read. At most `limit` units (default and cap:
+   * the navigation unit cap); `truncated` reports that more exist.
+   */
+  getDocumentUnits(
+    collection: string,
+    scope: AccessScope,
+    reference: string,
+    options?: NavReadOptions & { limit?: number },
+  ): Promise<PostgresResponse<{ units: NavUnitRow[]; truncated: boolean }>>;
 
   /**
    * The units overlapping a page range of one document (task 3.9), in reading
