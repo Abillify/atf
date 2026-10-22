@@ -27,9 +27,6 @@ regexes = [
   '''test-secret-at-least-(?:16|32)-chars-long(?:-0+)?''',
   '''test-cursor-secret-0123456789''',
   '''anchor-secret-1234567890''',
-  # TypeScript type name for Ed25519 evidence signing keys: annotations like
-  # "key: Ed25519EvidenceKey" are type declarations, not credentials.
-  '''Ed25519EvidenceKey''',
   # Self-signed HS256 JWTs with hand-written payloads (sub "123456789"/"user1").
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkifQ\.''',
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c2VyMSJ9\.''',
