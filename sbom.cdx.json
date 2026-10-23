@@ -50,7 +50,7 @@
       },
       {
         "name": "atf:cargo-lock:sha256",
-        "value": "c7c3634be4e2e5585aa13d8818e1d1e0980e358a7ffe9937ac5b7bd72f3014de"
+        "value": "7fd7fc1460f3fadcbe99befd59ca8114ac958eb3388c0e4d29db0649c8d6dc18"
       }
     ]
   },
@@ -16072,15 +16072,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/rustls@0.23.45",
+      "bom-ref": "pkg:cargo/rustls@0.23.46",
       "name": "rustls",
-      "version": "0.23.45",
+      "version": "0.23.46",
       "licenses": [
         {
           "expression": "Apache-2.0 OR ISC OR MIT"
         }
       ],
-      "purl": "pkg:cargo/rustls@0.23.45",
+      "purl": "pkg:cargo/rustls@0.23.46",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16162,15 +16162,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/rustls-webpki@0.103.15",
+      "bom-ref": "pkg:cargo/rustls-webpki@0.103.16",
       "name": "rustls-webpki",
-      "version": "0.103.15",
+      "version": "0.103.16",
       "licenses": [
         {
           "expression": "ISC"
         }
       ],
-      "purl": "pkg:cargo/rustls-webpki@0.103.15",
+      "purl": "pkg:cargo/rustls-webpki@0.103.16",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -20068,15 +20068,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/webpki-root-certs@1.0.9",
+      "bom-ref": "pkg:cargo/webpki-root-certs@1.0.10",
       "name": "webpki-root-certs",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "licenses": [
         {
           "expression": "CDLA-Permissive-2.0"
         }
       ],
-      "purl": "pkg:cargo/webpki-root-certs@1.0.9",
+      "purl": "pkg:cargo/webpki-root-certs@1.0.10",
       "properties": [
         {
           "name": "atf:compliance:classification",
