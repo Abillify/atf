@@ -117,6 +117,9 @@ services:
       # bge-m3 on the runner's CPU needs far longer than the 30 s default for
       # one ingest batch of the golden corpus.
       FETCH_TIMEOUT_MS: "600000"
+      # The baseline and the ablations send several hundred back-to-back
+      # queries from one client; the 120/min default answers 429 mid-run.
+      RATE_LIMIT: "0"
       RERANK_URL: http://rerank:80/rerank
       RERANK_MODEL: BAAI/bge-reranker-base
       RERANK_ENDPOINT: rerank
