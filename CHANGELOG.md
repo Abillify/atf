@@ -93,7 +93,10 @@ here, in `0.19.2`.
   the stack's deliberately unauthenticated settings. The eval stack's TEI
   healthchecks call `curl` instead of `wget`, which the
   `text-embeddings-inference:cpu-1.9` image does not ship, so both model
-  servers stayed unhealthy even after they reported ready.
+  servers stayed unhealthy even after they reported ready. Search in the
+  eval stack waits up to 10 minutes per embedding call
+  (`FETCH_TIMEOUT_MS=600000`): bge-m3 on the runner's CPU needs far longer
+  than the 30-second default for one ingest batch.
 
 ### Fixed
 
