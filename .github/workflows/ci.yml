@@ -369,6 +369,10 @@ jobs:
       # the host triple. The real sidecar is a SEA binary built only by
       # outpost-release.yml; the tests never execute it, so an empty
       # placeholder satisfies the build script.
+      # generate_context!() also embeds `frontendDist` (../dist), which only
+      # the Vite build produces.
+      - name: Build the outpost-desktop frontend for the Tauri context
+        run: bun run --filter @atf/outpost-desktop build
       - name: Placeholder sidecar for the Tauri build script
         run: |
           set -euo pipefail
@@ -744,6 +748,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             http://127.0.0.1:3002/ingest-file \
             -H 'Content-Type: application/pdf' \
+            -H 'X-Reference: quickstart-smoke.pdf' \
             --data-binary @/tmp/smoke.pdf
 
       - name: Logs on failure
