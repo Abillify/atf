@@ -71,10 +71,15 @@ here, in `0.19.2`.
 - **CI**: the `extract-dist` artifact budget is 5 MiB (was 4 MiB). CI builds with the
   pinned Bun 1.4.0 toolchain, whose bundle is 4.62 MB; newer Bun releases
   tree-shake `zod` further and produce about 3.8 MB locally.
-- **CI**: the Outpost job's `cargo test` creates an empty placeholder for the
-  Tauri `externalBin` sidecar first (tauri-build requires the file; the SEA
-  sidecar is built only by `outpost-release.yml`), and the job timeout is
-  60 minutes instead of 30.
+- **CI**: the Outpost job's `cargo test` first builds the outpost-desktop
+  frontend (`generate_context!()` embeds `frontendDist`) and creates an empty
+  placeholder for the Tauri `externalBin` sidecar (tauri-build requires the
+  file; the SEA sidecar is built only by `outpost-release.yml`). The job
+  timeout is 60 minutes instead of 30.
+- **CI**: the quickstart `/ingest-file` smoke sends the required
+  `X-Reference` header, and the retrieval-eval stack runs Search and Extract
+  with `ATF_PROFILE=development`, since the production-readiness gate refuses
+  the stack's deliberately unauthenticated settings.
 
 ### Fixed
 
@@ -101,6 +106,12 @@ here, in `0.19.2`.
   The committed baseline `docs/openapi/runtime.json` drops the two bogus keys;
   `openapi:check` reports that as breaking, but no client could have relied
   on keys that are not status codes.
+- **Outpost Desktop** (`apps/outpost-desktop`): the OAuth loopback listener is
+  non-blocking, and on macOS and Windows an accepted socket inherits that mode.
+  Reading the browser's redirect then failed with `WouldBlock` whenever the
+  request bytes had not arrived yet, so a source login could fail with
+  "OAuth-Redirect konnte nicht gelesen werden". The accepted connection is now
+  read in blocking mode with a 10-second timeout.
 - **Eval / Search tests**: `scripts/eval/de-morphology.test.ts` and
   `apps/search/tests/lexical-golden-mrr.integration.test.ts` read the
   gitignored `scripts/eval/golden-set/corpus/` and failed on a fresh checkout.
