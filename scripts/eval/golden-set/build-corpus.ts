@@ -29,7 +29,8 @@
  */
 
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	type GoldenDocument,
 	type GoldenDocumentKind,
@@ -344,7 +345,9 @@ export function renderMarkdown(doc: CorpusDocument): string {
 
 // ─── CLI ───────────────────────────────────────────────────────────────────────
 
-const HERE = import.meta.dir;
+// `import.meta.url` rather than Bun's `import.meta.dir`: the pure builders are
+// also imported by Node-run test suites (apps/search, vitest).
+const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_FIXTURE = resolve(HERE, "golden-set.v1.json");
 const DEFAULT_OUT = resolve(HERE, "corpus");
 

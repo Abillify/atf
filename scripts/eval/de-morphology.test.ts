@@ -9,8 +9,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildCorpus, renderMarkdown } from "./golden-set/build-corpus.ts";
 import {
 	expandVariantSet,
 	loadGoldenSet,
@@ -52,11 +53,9 @@ describe("de-morphology variant set", () => {
 
 	test("each variant drops at least one content word of its base, so exact matching cannot answer it", async () => {
 		const base = await loadGoldenSet(resolve(DIR, "golden-set.v1.json"));
-		const corpus = readdirSync(resolve(DIR, "corpus"))
-			.filter((f) => f.endsWith(".md"))
-			.map((f) => readFileSync(resolve(DIR, "corpus", f), "utf8"))
-			.join("\n")
-			.toLowerCase();
+		// Built in memory from the fixture: corpus/ is a gitignored build
+		// output, so a fresh checkout (CI) does not have it.
+		const corpus = buildCorpus(base).map(renderMarkdown).join("\n").toLowerCase();
 		const raw = JSON.parse(readFileSync(VARIANTS, "utf8")) as VariantSet;
 		for (const v of raw.variants) {
 			const source = base.questions.find((q) => q.id === v.base);

@@ -14,7 +14,8 @@
  *   - for the German morphology variants, all-terms-first within 0.01 of the
  *     plain-OR baseline (de-morphology must not regress).
  *
- * Corpus: scripts/eval/golden-set/corpus/*.md (pages split on `## Seite N`),
+ * Corpus: built in memory by scripts/eval/golden-set/build-corpus.ts (the
+ * same Markdown it writes to corpus/*.md; pages split on `## Seite N`),
  * questions: golden-set.v1.json, variants: de-morphology.v1.json.
  *
  * Self-skips when TEST_POSTGRES_URL is unset.
@@ -33,6 +34,11 @@ import {
   buildLexicalOrTsQuery,
 } from "../src/query-builder.js";
 import type { AccessScope } from "../src/access-scope.js";
+import { parseGoldenSet } from "../../../scripts/eval/golden-set.ts";
+import {
+  buildCorpus,
+  renderMarkdown,
+} from "../../../scripts/eval/golden-set/build-corpus.ts";
 
 const CONNECTION = process.env.TEST_POSTGRES_URL;
 const describeIfPg = CONNECTION ? describe : describe.skip;
@@ -44,11 +50,6 @@ const GOLDEN_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../scripts/eval/golden-set",
 );
-
-interface CorpusManifestDoc {
-  id: string;
-  file: string;
-}
 
 interface GoldenQuestionLike {
   id: string;
@@ -190,11 +191,13 @@ describeIfPg("lexical MRR@10 on the synthetic golden set · real postgres", () =
     const ensured = await pg.ensureCollection(collection, VECTOR_SIZE);
     expect(ensured.ok).toBe(true);
 
-    const manifest = JSON.parse(
-      readFileSync(resolve(GOLDEN_DIR, "corpus/manifest.json"), "utf8"),
-    ) as { documents: CorpusManifestDoc[] };
-    for (const doc of manifest.documents) {
-      const markdown = readFileSync(resolve(GOLDEN_DIR, "corpus", doc.file), "utf8");
+    // Built in memory with the same pure builder as build-corpus.ts:
+    // corpus/ is a gitignored build output, so a fresh checkout (CI) lacks it.
+    const golden = parseGoldenSet(
+      JSON.parse(readFileSync(resolve(GOLDEN_DIR, "golden-set.v1.json"), "utf8")),
+    );
+    for (const doc of buildCorpus(golden)) {
+      const markdown = renderMarkdown(doc);
       for (const [page, text] of splitPages(markdown)) {
         await pool.query(
           `INSERT INTO "${table}"
