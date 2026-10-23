@@ -58,7 +58,7 @@ services:
     volumes:
       - hf-cache:/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health"]
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/health"]
       interval: 5s
       timeout: 5s
       retries: 120
@@ -76,7 +76,7 @@ services:
     volumes:
       - hf-cache:/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health"]
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/health"]
       interval: 5s
       timeout: 5s
       retries: 120
