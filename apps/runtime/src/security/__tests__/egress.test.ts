@@ -112,6 +112,39 @@ describe("createRuntimeEgress", () => {
     }
   });
 
+  test("declares Content-Length for buffered bodies instead of chunked encoding", async () => {
+    const seen: Array<{ length?: string; encoding?: string; body: string }> = [];
+    const srv = await startServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        seen.push({
+          length: req.headers["content-length"],
+          encoding: req.headers["transfer-encoding"],
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+        res.end("ok");
+      });
+    });
+    try {
+      const egress = loopbackEgress(srv.baseUrl);
+      // Multi-byte UTF-8: the declared length is bytes, not UTF-16 units.
+      const payload = JSON.stringify({ q: "Prüfung ✓" });
+      for (const f of [egress.fetch, egress.fetchWithoutKeepAlive]) {
+        const res = await f(`${srv.baseUrl}/len`, { method: "POST", body: payload });
+        expect(await res.text()).toBe("ok");
+      }
+      for (const entry of seen) {
+        expect(entry.encoding).toBeUndefined();
+        expect(entry.length).toBe(String(Buffer.byteLength(payload)));
+        expect(entry.body).toBe(payload);
+      }
+      expect(seen).toHaveLength(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
   test("accepts URLSearchParams bodies", async () => {
     const srv = await startServer((req, res) => {
       const chunks: Buffer[] = [];

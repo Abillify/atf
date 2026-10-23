@@ -190,6 +190,13 @@ export function createRuntimeEgress(
       headers.forEach((value, key) => {
         requestHeaders[key] = value;
       });
+      // The body is always buffered here, so declare its length like `fetch`
+      // does. Without it node:http falls back to chunked transfer encoding,
+      // which servers that only honour Content-Length (Python's http.server,
+      // some local model gateways) read as an empty request body.
+      if (body !== undefined && requestHeaders["content-length"] === undefined) {
+        requestHeaders["content-length"] = String(Buffer.byteLength(body));
+      }
 
       const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
         url,
