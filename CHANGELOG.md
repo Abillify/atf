@@ -30,6 +30,17 @@ here, in `0.19.2`.
   `debian:bookworm-slim` digest, which carries `perl-base`
   5.36.0-7+deb12u4 and closes CVE-2026-13221, CVE-2026-42496, and
   CVE-2026-8376 (all CRITICAL, flagged by the CI image scan).
+- **Outpost Desktop** (`apps/outpost-desktop`): the Rust lockfile moves
+  `rustls` to 0.23.46 (RUSTSEC-2026-0346 to -0349), `rustls-webpki` to
+  0.103.16 (RUSTSEC-2026-0382), and `webpki-root-certs` to 1.0.10
+  (RUSTSEC-2026-0383); all three reach the app through the updater's HTTP
+  client. The three `zip` 4.6.1 advisories (RUSTSEC-2026-0367 to -0369) stay
+  open and are ignored with a recorded reason in `deny.toml` and the CI
+  `cargo audit` call: `zip` is built only for Windows through
+  `tauri-plugin-updater`'s `zip` feature, the fix (`zip` 9) needs the
+  updater's 3.0 alpha, the updater checks the Minisign signature before it
+  unpacks, and the app ships no updater artifacts. The ignores go away with
+  the first stable updater release on `zip` 9.
 
 ### Added
 
@@ -79,7 +90,10 @@ here, in `0.19.2`.
 - **CI**: the quickstart `/ingest-file` smoke sends the required
   `X-Reference` header, and the retrieval-eval stack runs Search and Extract
   with `ATF_PROFILE=development`, since the production-readiness gate refuses
-  the stack's deliberately unauthenticated settings.
+  the stack's deliberately unauthenticated settings. The eval stack's TEI
+  healthchecks call `curl` instead of `wget`, which the
+  `text-embeddings-inference:cpu-1.9` image does not ship, so both model
+  servers stayed unhealthy even after they reported ready.
 
 ### Fixed
 
@@ -99,6 +113,11 @@ here, in `0.19.2`.
   egress guard refuses private addresses. `deploy/examples/compose.yaml` now sets
   `EGRESS_ALLOW_PRIVATE_HOSTS=model-mock`, the one exact-host exception the
   stack needs.
+- **Quickstart**: Search's `POST /ingest-file` answered 404, because it uploads
+  to Extract's v2 routes and the quickstart Extract had no database, so
+  `/v2/uploads` was never mounted. Extract now gets `EXTRACT_DATABASE_URL`
+  pointing at the quickstart Postgres (its tables live in their own `extract`
+  schema), and `/ingest-file` returns 202 with a job id.
 - **Runtime OpenAPI**: `GET /health/ready` spread its `503` response object into
   the response map, so `description` and `content` appeared as bogus status
   codes and the real `503` was missing. The `503` response is now keyed under
