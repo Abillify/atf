@@ -3,7 +3,7 @@ name: extract
 description: ATF Extract - document conversion and vision extraction (requirement 12.3).
 type: application
 version: 0.1.0
-appVersion: "0.19.1"
+appVersion: "0.19.2"
 dependencies:
   - name: atf-common
     version: 0.1.0

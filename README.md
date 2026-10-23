@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/abillify/atf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/abillify/atf/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Elastic-2.0" src="https://img.shields.io/badge/license-Elastic--2.0-blue"></a>
-  <a href="CHANGELOG.md"><img alt="Release: 0.19.1" src="https://img.shields.io/badge/release-0.19.1-orange"></a>
+  <a href="CHANGELOG.md"><img alt="Release: 0.19.2" src="https://img.shields.io/badge/release-0.19.2-orange"></a>
   <img alt="Bun 1.4.0" src="https://img.shields.io/badge/bun-1.4.0-black">
   <img alt="Node 26" src="https://img.shields.io/badge/node-26-brightgreen">
   <img alt="TypeScript 7" src="https://img.shields.io/badge/typescript-7.0.2-3178c6">
@@ -26,7 +26,7 @@ deployable on its own. Five of them run as server services; the Extract Outpost 
 side — as a Docker daemon or a desktop app — and mirrors local folders and cloud storage into
 the platform.
 
-> **Project status:** ATF is at `0.19.1`: complete enough to evaluate the local service wiring
+> **Project status:** ATF is at `0.19.2`: complete enough to evaluate the local service wiring
 > end to end, but still pre-1.0. Governed capabilities require explicit configuration and
 > verification for each deployment. Contract packages already carry compatibility guarantees;
 > flow fields, environment variables, and HTTP routes may still change with documented

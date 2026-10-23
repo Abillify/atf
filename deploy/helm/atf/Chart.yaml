@@ -3,7 +3,7 @@ name: atf
 description: ATF (Aiperator Trust Fabric) production stack - runtime, gate, search, extract and control as vendored subcharts (requirement 12.3).
 type: application
 version: 0.1.0
-appVersion: "0.19.1"
+appVersion: "0.19.2"
 keywords:
   - atf
   - trust-fabric

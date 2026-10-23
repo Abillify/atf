@@ -18,7 +18,18 @@ releases:
 
 ## [Unreleased]
 
-## [0.19.1] - 2026-10-23
+## [0.19.2] - 2026-10-23
+
+`0.19.1` was prepared on `main` but never tagged: the first CI run after the
+repository went public surfaced the failures fixed below. Its changes ship
+here, in `0.19.2`.
+
+### Security
+
+- **Images**: the `atf-extract` runtime base moved to the current
+  `debian:bookworm-slim` digest, which carries `perl-base`
+  5.36.0-7+deb12u4 and closes CVE-2026-13221, CVE-2026-42496, and
+  CVE-2026-8376 (all CRITICAL, flagged by the CI image scan).
 
 ### Added
 
@@ -52,14 +63,49 @@ releases:
   result via `LlmStreamResult` (ATF never passes `experimental_lowMemory`),
   and the `media-tool` test mock now emits the flat V3 file-part `data` the
   v3→v4 adapter expects instead of a pre-tagged union.
+- **CI**: the quickstart smoke now asserts real output: the chat completion must carry
+  the mock's answer (an empty `finish_reason: "error"` reply passed before),
+  and the `/v1/convert` check expects the vision mock's page text — the
+  synchronous v1 path rasterises every page and calls the vision model; the
+  text fast path exists only in the v2 job runner.
+- **CI**: the `extract-dist` artifact budget is 5 MiB (was 4 MiB). CI builds with the
+  pinned Bun 1.4.0 toolchain, whose bundle is 4.62 MB; newer Bun releases
+  tree-shake `zod` further and produce about 3.8 MB locally.
+- **CI**: the Outpost job's `cargo test` creates an empty placeholder for the
+  Tauri `externalBin` sidecar first (tauri-build requires the file; the SEA
+  sidecar is built only by `outpost-release.yml`), and the job timeout is
+  60 minutes instead of 30.
 
 ### Fixed
 
 - **Deploy**: the quickstart `extract` stage in `deploy/examples/Dockerfile`
   kept `USER root` after its build-time apt block, so the image ran as root and
   the Trivy misconfiguration gate (DS-0002) failed the source scan. The stage
-  now drops back to the base image's unprivileged `bun` user, like the other
-  four quickstart stages.
+  now drops back to the base image's unprivileged `bun` user. (The other four
+  quickstart stages inherit the base image's default user, which is root;
+  compose drops all of their capabilities.)
+- **Runtime** (`@atf/runtime`): the egress-guarded `fetch` sent buffered request
+  bodies with chunked transfer encoding instead of a `Content-Length`. Servers
+  that only honour `Content-Length` — Python's `http.server`, and with it the
+  quickstart model mock — read an empty body, so a streamed chat completion
+  came back as plain JSON and the Runtime answered with an empty message
+  (`finish_reason: "error"`). Buffered bodies now declare their byte length.
+- **Quickstart**: the Runtime could not reach `model-mock` at all, because the
+  egress guard refuses private addresses. `deploy/examples/compose.yaml` now sets
+  `EGRESS_ALLOW_PRIVATE_HOSTS=model-mock`, the one exact-host exception the
+  stack needs.
+- **Runtime OpenAPI**: `GET /health/ready` spread its `503` response object into
+  the response map, so `description` and `content` appeared as bogus status
+  codes and the real `503` was missing. The `503` response is now keyed under
+  its status code, and a test pins that every response key is a status code.
+  The committed baseline `docs/openapi/runtime.json` drops the two bogus keys;
+  `openapi:check` reports that as breaking, but no client could have relied
+  on keys that are not status codes.
+- **Eval / Search tests**: `scripts/eval/de-morphology.test.ts` and
+  `apps/search/tests/lexical-golden-mrr.integration.test.ts` read the
+  gitignored `scripts/eval/golden-set/corpus/` and failed on a fresh checkout.
+  Both now build the corpus in memory with the same pure builder
+  (`buildCorpus`/`renderMarkdown`), byte-identical to the generated files.
 
 ### Documentation
 
@@ -4282,8 +4328,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.1...HEAD
-[0.19.1]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.1
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.2...HEAD
+[0.19.2]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.2
 [0.19.0]: https://github.com/Abillify/atf/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/abillify/atf/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/abillify/atf/compare/v0.17.0...v0.18.0
