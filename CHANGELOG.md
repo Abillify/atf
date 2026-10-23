@@ -34,7 +34,8 @@ here, in `0.19.2`.
   `rustls` to 0.23.46 (RUSTSEC-2026-0346 to -0349), `rustls-webpki` to
   0.103.16 (RUSTSEC-2026-0382), and `webpki-root-certs` to 1.0.10
   (RUSTSEC-2026-0383); all three reach the app through the updater's HTTP
-  client. The three `zip` 4.6.1 advisories (RUSTSEC-2026-0367 to -0369) stay
+  client. `ctutils` moves to 0.4.5 (RUSTSEC-2026-0385, non-constant-time
+  comparisons). The three `zip` 4.6.1 advisories (RUSTSEC-2026-0367 to -0369) stay
   open and are ignored with a recorded reason in `deny.toml` and the CI
   `cargo audit` call: `zip` is built only for Windows through
   `tauri-plugin-updater`'s `zip` feature, the fix (`zip` 9) needs the
@@ -97,6 +98,16 @@ here, in `0.19.2`.
   eval stack waits up to 10 minutes per embedding call
   (`FETCH_TIMEOUT_MS=600000`): bge-m3 on the runner's CPU needs far longer
   than the 30-second default for one ingest batch.
+- **Eval**: the retrieval gate is recalibrated on the first real bge-m3 run
+  (fixture 1.3.0): `page_recall` 0.95 → 0.80 and `ndcg` 0.60 → 0.53 in
+  `scripts/eval/baseline/thresholds.json`; `figure_recall`, `mrr` and the
+  latency floors are unchanged. The old floors came from bge-small-en-v1.5 on
+  fixture 1.2.0 and were never measured against bge-m3 — the job never got
+  past stack start-up until this release. Measured: page recall@10 82.5 %,
+  nDCG@10 0.5554, MRR@10 0.8957 (previously 100 % / 0.6602 / 0.9058 with the
+  old model and fixture). Whether the gap comes from the model or from the
+  harder fixture is not yet analysed; see
+  `scripts/eval/baseline/retrieval.bge-m3.md`.
 
 ### Fixed
 
