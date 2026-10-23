@@ -394,7 +394,13 @@ jobs:
           --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
           check
       - name: cargo audit
-        run: cargo audit --file apps/outpost-desktop/src-tauri/Cargo.lock
+        # The ignored zip advisories are justified in
+        # apps/outpost-desktop/src-tauri/deny.toml; keep both lists in sync.
+        run: >-
+          cargo audit --file apps/outpost-desktop/src-tauri/Cargo.lock
+          --ignore RUSTSEC-2026-0367
+          --ignore RUSTSEC-2026-0368
+          --ignore RUSTSEC-2026-0369
 
   build:
     name: Build

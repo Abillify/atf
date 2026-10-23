@@ -42,3 +42,15 @@ wildcards = "deny"
 [advisories]
 # Treat yanked crates as errors as well.
 yanked = "deny"
+# zip 4.6.1 reaches the app only on Windows, through tauri-plugin-updater's
+# `zip` feature; zip >= 9 needs tauri-plugin-updater 3 (alpha only). The
+# updater verifies the Minisign signature before it unpacks an update, so no
+# attacker-controlled archive reaches extraction, and the app ships no updater
+# artifacts (`createUpdaterArtifacts: false`). Keep in sync with the
+# `cargo audit --ignore` list in .github/workflows/ci.yml; drop these entries
+# once a stable updater release depends on zip >= 9.
+ignore = [
+    { id = "RUSTSEC-2026-0367", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
+]
