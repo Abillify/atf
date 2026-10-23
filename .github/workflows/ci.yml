@@ -318,7 +318,9 @@ jobs:
   outpost:
     name: Outpost
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The Playwright and Tauri apt installs alone took 27 minutes on a slow
+    # mirror day, before the Rust build and cargo-deny/cargo-audit installs.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -363,6 +365,16 @@ jobs:
             libssl-dev
       - name: cargo fmt
         run: cargo fmt --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml -- --check
+      # tauri-build refuses to compile unless every `externalBin` exists for
+      # the host triple. The real sidecar is a SEA binary built only by
+      # outpost-release.yml; the tests never execute it, so an empty
+      # placeholder satisfies the build script.
+      - name: Placeholder sidecar for the Tauri build script
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          install -D -m 0755 /dev/null \
+            "apps/outpost-desktop/src-tauri/binaries/atf-outpost-${triple}"
       - name: cargo test
         run: cargo test --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
       # The repository's Actions allow-list only admits GitHub-owned and
