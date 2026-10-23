@@ -150,9 +150,8 @@ services:
       TENANT_ISOLATION_ENABLED: "false"
       ACL_REQUIRE_IDENTITY: "false"
       TRANSACTION_ENFORCEMENT: off
-      # Mounts POST /ingest-file, which proxies a binary upload to the converter.
-      # Note the asymmetry with the converter's own /v1/ingest: this path forwards
-      # Markdown, so figure descriptions are indexed but figure images are not.
+      # Mounts POST /ingest-file, which uploads a binary document to Extract and
+      # starts a v2 job there (needs EXTRACT_DATABASE_URL on the extract side).
       CONVERTER_URL: http://extract:3000
     ports:
       - "${ATF_SEARCH_PORT:-3002}:3000"
@@ -197,6 +196,10 @@ services:
       TEMP_DIR: /tmp/atf-extract
       # Enables POST /v1/ingest, which converts and indexes in one call.
       SEARCH_URL: http://search:3000
+      # Enables the v2 job routes (/v2/uploads, /v2/jobs) that Search's
+      # /ingest-file proxies to. Extract keeps its tables in its own `extract`
+      # schema, so it shares the quickstart database with Search.
+      EXTRACT_DATABASE_URL: postgres://atf:atf-local-only@postgres:5432/atf_search
       SEARCH_COLLECTION: documents
       AUTHN_MODE: disabled
       AUTHZ_ENABLED: "false"
