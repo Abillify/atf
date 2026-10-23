@@ -50,7 +50,7 @@
       },
       {
         "name": "atf:cargo-lock:sha256",
-        "value": "7fd7fc1460f3fadcbe99befd59ca8114ac958eb3388c0e4d29db0649c8d6dc18"
+        "value": "a3f41abea067a7e492f7507260e4540a052954cac32267c2052cacc21ca559cc"
       }
     ]
   },
@@ -6748,15 +6748,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/ctutils@0.4.3",
+      "bom-ref": "pkg:cargo/ctutils@0.4.5",
       "name": "ctutils",
-      "version": "0.4.3",
+      "version": "0.4.5",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/ctutils@0.4.3",
+      "purl": "pkg:cargo/ctutils@0.4.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
