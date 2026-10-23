@@ -102,6 +102,11 @@ services:
       target: search
     environment:
       NODE_ENV: production
+      # Local, unauthenticated eval stack: the production-readiness gate
+      # (auth, converter token, ACL identity) would refuse to start. The
+      # explicit profile accepts that; NODE_ENV stays production for the
+      # runtime behaviour under measurement.
+      ATF_PROFILE: development
       PORT: "3000"
       POSTGRES_URL: postgres://atf:atf-eval-only@postgres:5432/atf_eval
       EMBED_URL: http://embedding:80/embed
@@ -154,6 +159,11 @@ services:
       target: extract
     environment:
       NODE_ENV: production
+      # Local, unauthenticated eval stack: the production-readiness gate
+      # (auth, converter token, ACL identity) would refuse to start. The
+      # explicit profile accepts that; NODE_ENV stays production for the
+      # runtime behaviour under measurement.
+      ATF_PROFILE: development
       PORT: "3000"
       VISION_URL: http://hyde-mock:8080
       VISION_MODEL: echo-hyde
