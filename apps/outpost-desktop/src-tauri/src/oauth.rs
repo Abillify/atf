@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(300);
+/// Upper bound for reading the redirect request once a browser connected.
+const REDIRECT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct LoopbackListener {
     listener: TcpListener,
@@ -34,7 +36,19 @@ impl LoopbackListener {
         let deadline = Instant::now() + timeout.min(AUTH_TIMEOUT);
         loop {
             match self.listener.accept() {
-                Ok((mut stream, _)) => return read_redirect(&mut stream),
+                Ok((mut stream, _)) => {
+                    // On macOS and Windows an accepted socket inherits the
+                    // listener's non-blocking mode, so the first read fails with
+                    // WouldBlock whenever the request bytes are not there yet.
+                    // Read the redirect in blocking mode, bounded by a timeout.
+                    stream
+                        .set_nonblocking(false)
+                        .and_then(|()| stream.set_read_timeout(Some(REDIRECT_READ_TIMEOUT)))
+                        .map_err(|error| {
+                            format!("OAuth-Redirect konnte nicht gelesen werden: {error}")
+                        })?;
+                    return read_redirect(&mut stream);
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err("OAuth-Loopback-Timeout".to_string());
