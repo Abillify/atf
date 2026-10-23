@@ -685,14 +685,18 @@ jobs:
           curl --fail-with-body --silent --show-error \
             http://127.0.0.1:3000/v1/chat/completions \
             -H 'Content-Type: application/json' \
-            -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}'
+            -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}' \
+            | tee /dev/stderr | grep -q 'deterministic mock model'
 
       # Task 16.5 (requirements 12.6/12.7): the converter is part of the
       # quickstart, so the smoke must prove an end-to-end conversion, not just
       # a healthy port. A minimal one-page PDF goes through Extract's
-      # /v1/convert (poppler text path, no vision needed for text output) and
-      # through Search's /ingest-file proxy, which starts an Extract v2 job —
-      # covering the Search -> Extract hop the documented stack relies on.
+      # /v1/convert and through Search's /ingest-file proxy, which starts an
+      # Extract v2 job — covering the Search -> Extract hop the documented
+      # stack relies on. The synchronous v1 path rasterises every page with
+      # poppler and sends it to the vision model (the text fast path exists
+      # only in the v2 job runner), so its Markdown is the deterministic mock's
+      # page text, not the PDF's own words.
       - name: Smoke the conversion path
         run: |
           set -euo pipefail
@@ -724,7 +728,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             http://127.0.0.1:3004/v1/convert \
             -H 'Content-Type: application/pdf' -H 'Accept: text/markdown' \
-            --data-binary @/tmp/smoke.pdf | grep -qi 'Quickstart conversion smoke'
+            --data-binary @/tmp/smoke.pdf | grep -q 'deterministischen Mock-Modell'
           curl --fail-with-body --silent --show-error \
             http://127.0.0.1:3002/ingest-file \
             -H 'Content-Type: application/pdf' \

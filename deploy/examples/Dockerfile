@@ -80,10 +80,10 @@ RUN apt-get update \
 RUN case "${TARGETARCH}" in amd64) actual_platform=linux-x64 ;; arm64) actual_platform=linux-arm64 ;; *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; esac \
     && { test -z "${INVENTORY_PLATFORM}" || test "${INVENTORY_PLATFORM}" = "${actual_platform}"; } \
     && bun run supply-chain --inventory-root /workspace --output-dir /usr/share/doc/atf --platform "${actual_platform}" --artifact-kind image --artifact-name quickstart-extract --git-sha "${GIT_SHA}"
-# Drop back to the unprivileged `bun` user from the base image; the root block
-# above is build-time only (apt packages and the inventory under
-# /usr/share/doc). Every quickstart stage must end non-root, like the other
-# four targets do by inheriting the base image's USER.
+# Run as the unprivileged `bun` user the base image ships; the root block above
+# is build-time only (apt packages and the inventory under /usr/share/doc).
+# The other four quickstart targets inherit the base image's default user,
+# which is root; the compose file drops all of their capabilities instead.
 USER bun
 # LibreOffice and poppler both need a writable HOME, and the conversion pipeline
 # writes rendered pages here.

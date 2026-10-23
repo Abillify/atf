@@ -76,6 +76,9 @@ services:
       CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
       PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","apiKey":"local-placeholder","local":true}]'
       DEFAULT_LLM: '{"provider":"quickstart","model":"example-chat"}'
+      # The egress guard refuses private addresses; model-mock lives on the
+      # compose network, so it is the one exact-host exception.
+      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock
     ports:
       - "${ATF_RUNTIME_PORT:-3000}:3000"
     volumes:
