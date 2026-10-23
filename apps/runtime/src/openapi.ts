@@ -519,7 +519,11 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
               description: "Success",
               content: { "application/json": { schema: { type: "object" } } },
             },
-            ...(HEALTH_RESPONSE_OVERRIDES[template]?.["503"] ?? {}),
+            // Keyed under its status code: spreading the response object itself
+            // would leak `description`/`content` in as bogus status keys.
+            ...(HEALTH_RESPONSE_OVERRIDES[template]?.["503"]
+              ? { "503": HEALTH_RESPONSE_OVERRIDES[template]["503"] }
+              : {}),
             default: JSON_ERROR_RESPONSE,
           },
           ...(securityFor(meta.auth) ? { security: securityFor(meta.auth) } : {}),

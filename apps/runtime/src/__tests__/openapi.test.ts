@@ -69,6 +69,21 @@ describe("buildOpenApiSpec (runtime)", () => {
     expect(spec.components.securitySchemes["webhookSignature"]).toBeDefined();
   });
 
+  test("response maps are keyed by status codes only", () => {
+    const responses = (
+      spec.paths as unknown as Record<string, Record<string, { responses?: Record<string, unknown> }>>
+    );
+    for (const [p, item] of Object.entries(responses)) {
+      for (const [method, op] of Object.entries(item)) {
+        for (const key of Object.keys(op.responses ?? {})) {
+          expect(key, `${method.toUpperCase()} ${p}`).toMatch(/^(default|[1-5](\d\d|XX))$/);
+        }
+      }
+    }
+    const ready = responses["/health/ready"]?.get?.responses ?? {};
+    expect(Object.keys(ready).sort()).toEqual(["200", "503", "default"]);
+  });
+
   test("path templates use OpenAPI braces, not framework colons", () => {
     for (const p of Object.keys(spec.paths)) {
       expect(p).not.toMatch(/:[A-Za-z_$]/);
