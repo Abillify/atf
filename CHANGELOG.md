@@ -97,7 +97,9 @@ here, in `0.19.2`.
   servers stayed unhealthy even after they reported ready. Search in the
   eval stack waits up to 10 minutes per embedding call
   (`FETCH_TIMEOUT_MS=600000`): bge-m3 on the runner's CPU needs far longer
-  than the 30-second default for one ingest batch.
+  than the 30-second default for one ingest batch. Its rate limit is off
+  (`RATE_LIMIT=0`), because the baseline and ablation runs send several
+  hundred back-to-back queries from one client and hit the 120/min default.
 - **Eval**: the retrieval gate is recalibrated on the first real bge-m3 run
   (fixture 1.3.0): `page_recall` 0.95 → 0.80 and `ndcg` 0.60 → 0.53 in
   `scripts/eval/baseline/thresholds.json`; `figure_recall`, `mrr` and the
