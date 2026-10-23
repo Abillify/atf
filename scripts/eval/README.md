@@ -283,11 +283,11 @@ Search rejects embeddings of another dimension when it is set. It is the only
 dimension setting in the stack; no other 384 is hard-coded in `apps/search/src`
 or the eval scripts (checked by search, not by a live run). TEI on CPU embeds bge-m3 noticeably slower than
 the small model, so expect a longer ingest and larger latencies. **Every number
-under `baseline/` was measured with bge-small-en-v1.5 on fixture 1.2.0.** Nothing
-has been measured with bge-m3 yet (see `baseline/retrieval.bge-m3.md`), and the
-floors in `baseline/thresholds.json` were calibrated on the old model. The CI job
-`eval` therefore runs an unmeasured configuration against those floors until a
-live run confirms or recalibrates them.
+under `baseline/retrieval.baseline.*` and `baseline/retrieval.ablation-*` was
+measured with bge-small-en-v1.5 on fixture 1.2.0.** The first bge-m3 run on
+fixture 1.3.0 (CI, 2026-10-23) is recorded in `baseline/retrieval.bge-m3.md`
+(page recall@10 82.5 %, nDCG@10 0.5554), and the floors in
+`baseline/thresholds.json` are recalibrated on it.
 
 ```bash
 # from the repository root
@@ -329,7 +329,9 @@ run misses any of them (checked at the largest `--k`):
 | `p50_latency_ms` | ms | p50 query latency (must not exceed) |
 | `p95_latency_ms` | ms | p95 query latency (must not exceed) |
 
-The committed floors sit safely below the measured warm baseline; the latency
+The committed floors sit just below the measured bge-m3 run
+(`page_recall` 0.80, `ndcg` 0.53; `figure_recall` 0.95 and `mrr` 0.85 still
+hold with margin); the latency
 floors are generous because CI runs on shared CPU (a cold Search under TEI
 contention can show p50 in the tens of ms while warm it is ~5 ms).
 

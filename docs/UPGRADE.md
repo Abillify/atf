@@ -187,9 +187,11 @@ allow them. Extract's API is unchanged.
 
 The eval compose stack embeds with `BAAI/bge-m3` (1024 dimensions) instead of
 `bge-small-en-v1.5`. Re-ingest the eval corpus, then run
-`bun run eval:retrieval` and `bun run eval:retrieval:de`. No bge-m3 numbers
-are committed yet and the CI floors in `scripts/eval/baseline/thresholds.json`
-are not recalibrated; production embedding settings are not affected.
+`bun run eval:retrieval` and `bun run eval:retrieval:de`. Since 0.19.2 the
+first bge-m3 numbers are committed in
+`scripts/eval/baseline/retrieval.bge-m3.md` and the CI floors in
+`scripts/eval/baseline/thresholds.json` are recalibrated on them; production
+embedding settings are not affected.
 
 ### 0.16 → 0.17
 
