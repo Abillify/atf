@@ -832,6 +832,71 @@ jobs:
             --base-url "$base" --label ablation-ctx-header \
             --out reports/eval/retrieval
 
+      # Reporting ablations without thresholds: answer-ready retrieval
+      # (POST /v2/retrieve) and the German compound set against the plain and
+      # the compound-splitting Search instance (ports 3012 / 3013, same
+      # database, query-side option only).
+      - name: Answer-ready retrieval and compound ablations
+        run: |
+          set -euo pipefail
+          bun run scripts/eval/retrieval.ts --retrieve --collection golden \
+            --base-url http://127.0.0.1:3012 --label ablation-retrieve \
+            --out reports/eval/retrieval
+          bun run scripts/eval/retrieval.ts \
+            --fixture scripts/eval/golden-set/de-morphology.v1.json \
+            --search-mode fts --collection golden \
+            --base-url http://127.0.0.1:3012 --label de-baseline \
+            --out reports/eval/retrieval
+          bun run scripts/eval/retrieval.ts \
+            --fixture scripts/eval/golden-set/de-morphology.v1.json \
+            --search-mode fts --collection golden \
+            --base-url http://127.0.0.1:3013 --label ablation-compound \
+            --out reports/eval/retrieval
+
+      - name: Eval summary
+        if: always()
+        run: |
+          bun -e '
+          const { readdirSync, readFileSync } = require("node:fs");
+          const dir = "reports/eval";
+          let files = [];
+          try {
+            files = readdirSync(dir, { withFileTypes: true })
+              .filter((e) => e.isFile() && e.name.startsWith("retrieval.") && e.name.endsWith(".json"))
+              .map((e) => e.name)
+              .sort();
+          } catch {
+            // no reports written — nothing to summarise
+          }
+          const dash = "–";
+          const fmt = (v, digits) => (typeof v === "number" ? v.toFixed(digits) : dash);
+          const rows = [];
+          for (const name of files) {
+            let report;
+            try {
+              report = JSON.parse(readFileSync(dir + "/" + name, "utf8"));
+            } catch {
+              continue;
+            }
+            const cutoffs = (report.parameters && report.parameters.cutoffs) || [];
+            const k = String(cutoffs[cutoffs.length - 1] ?? "");
+            const page = ((report.metrics || {}).page || {})[k];
+            const mrr = ((report.metrics || {}).mrr || {})[k];
+            const latency = report.latency || {};
+            rows.push(
+              "| " + (report.label || name) + " | " + fmt(page && page.recallAtK, 4) +
+                " | " + fmt(mrr, 4) + " | " + fmt(page && page.ndcgAtK, 4) +
+                " | " + fmt(latency.p50_ms, 1) + " | " + fmt(latency.p95_ms, 1) + " |",
+            );
+          }
+          if (rows.length > 0) {
+            console.log("## Eval runs\n");
+            console.log("| Label | page_recall | mrr | nDCG | p50 (ms) | p95 (ms) |");
+            console.log("| --- | --- | --- | --- | --- | --- |");
+            for (const row of rows) console.log(row);
+          }
+          ' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload eval reports
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()

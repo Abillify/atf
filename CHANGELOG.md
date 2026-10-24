@@ -34,6 +34,8 @@ releases:
   that response).
 - **Eval**: the eval stack runs a second Search instance with
   `FTS_COMPOUND_SPLIT=query` on port 3013 for the German compound ablation.
+- **CI** (eval): answer-ready retrieval and the German compound ablation run in
+  the eval job, and the job summary tabulates all eval runs.
 
 ### Changed
 
