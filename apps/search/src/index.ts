@@ -692,6 +692,7 @@ export function createApp(
       hybridSearch: config.hybridSearch,
       sparseClient,
       queryCache,
+      hydeClient,
       tokenCounter: unitTokenCounter,
       minRerankScore: config.minRerankScore,
       maxQueryChars: config.maxQueryChars,

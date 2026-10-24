@@ -40,6 +40,7 @@
  *     "group_by": "section",               // none|document|section (default none)
  *     "identifier_search": true,           // identifier RRF list (default true)
  *     "rerank": true,                      // optional
+ *     "hyde": true,                        // optional: embed a hypothetical answer (default false)
  *     "filters": {
  *       "pages": [37, 38] | { "start": 37, "end": 38 },
  *       "unit_type": "figure",             // chunk|table|figure|section|page|document
@@ -58,6 +59,7 @@ import type { EmbeddingClient } from "../embedding-client.js";
 import type { RerankerClient } from "../reranker-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
+import type { HydeClient } from "../hyde-client.js";
 import type { PostgresClient, SearchFilter } from "../postgres-client.js";
 import { prepareFtsContent } from "../postgres-client.js";
 import {
@@ -101,6 +103,14 @@ export interface SearchV2HandlerOptions {
   hybridSearch?: boolean;
   sparseClient?: SparseEmbeddingClient | null;
   queryCache?: QueryEmbeddingCache | null;
+  /**
+   * Optional HyDE generator (hyde-client.ts). Only consulted when the request
+   * body sets `hyde: true`; the dense/sparse embedding then runs on a
+   * hypothetical answer document while the lexical branch and the reranker
+   * keep the original query. Without it, `hyde: true` reports
+   * `hyde_applied: false`.
+   */
+  hydeClient?: HydeClient | null;
   /**
    * Optional tokenizer (token-counter.ts). When present, the rerank inputs are
    * trimmed to RERANK_MAX_TOKENS measured tokens (Requirement 13.2) instead of
@@ -400,6 +410,9 @@ export function createSearchV2Handler(
         ) {
           throw new BadRequest("identifier_search must be a boolean");
         }
+        if (body.hyde !== undefined && typeof body.hyde !== "boolean") {
+          throw new BadRequest("hyde must be a boolean");
+        }
         expandMode = parseExpandMode(
           typeof body.expand === "string" ? body.expand : undefined,
         );
@@ -442,6 +455,10 @@ export function createSearchV2Handler(
         return;
       }
       const rerankRequested = body.rerank === true;
+      // Optional HyDE (like v1's X-Hyde): the shared pipeline expands the
+      // query only when requested AND a hydeClient is wired; the response
+      // then reports the outcome as `hyde_applied`.
+      const hydeRequested = body.hyde === true;
       // The identifier RRF list (Req 12.3) is ON for v2 by default; the v1
       // /search handler never enables it (Req 13.7). `identifier_search:
       // false` opts out. Only the hybrid path fuses it (dense-only has no
@@ -508,12 +525,14 @@ export function createSearchV2Handler(
             queryCache,
             sparseClient,
             rerankerClient,
+            hydeClient: options.hydeClient ?? null,
           },
           log,
           {
             query: searchQuery,
             embedText,
             rerankQuery: query,
+            hyde: hydeRequested,
             collection,
             scope,
             filter,
@@ -604,6 +623,11 @@ export function createSearchV2Handler(
         content_trust: trust.content_trust,
         injection_risk: trust.injection_risk,
       };
+      // HyDE diagnostic: present only when the request asked for it, so an
+      // unflagged response stays byte-for-byte the previous shape.
+      const hydeFields = hydeRequested
+        ? { hyde_applied: pipeline.hyde.applied }
+        : {};
       res.status(200).json(
         pipeline.minScore.abstention
           ? {
@@ -611,6 +635,7 @@ export function createSearchV2Handler(
               score_scale: pipeline.scoreKind,
               ...trustFields,
               ...(queryTruncated ? { query_truncated: true } : {}),
+              ...hydeFields,
               abstention: pipeline.minScore.abstention,
             }
           : {
@@ -618,6 +643,7 @@ export function createSearchV2Handler(
               score_scale: pipeline.scoreKind,
               ...trustFields,
               ...(queryTruncated ? { query_truncated: true } : {}),
+              ...hydeFields,
             },
       );
     } catch (err) {

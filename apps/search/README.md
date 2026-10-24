@@ -71,6 +71,7 @@ It reuses the v1 building blocks (RRF, rerank, diversify) and leaves `/search` u
 | `group_by` | `none`, `document`, `section` | `none` |
 | `identifier_search` | boolean; adds the identifier list to hybrid RRF | `true` |
 | `rerank` | boolean | `false` |
+| `hyde` | boolean; embeds a hypothetical answer document instead of the query (needs `HYDE_*` config); lexical matching and reranking keep the original query, the response reports `hyde_applied` | `false` |
 | `filters` | `pages` (`[start, end]`, `[page]` or `{start, end}`), `unit_type` (`chunk`, `table`, `figure`, `section`, `page`, `document`), `figure_kind`, `section_prefix` (array), `identifier` | none |
 
 The response is `{ results: [...] }`. Each hit carries `score`, `unit_id`, `unit_type`,

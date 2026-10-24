@@ -757,3 +757,81 @@ describe("/v2/search · identifier list, group_by, budget clamp, tokenizer", () 
 		expect(longHit.score).toBe(0.99);
 	});
 });
+
+describe("/v2/search · optional HyDE expansion", () => {
+	const hydeOk = (result: string) => ({
+		expand: vi.fn(async () => ({ ok: true as const, result })),
+	});
+
+	it("embeds the expansion while the lexical branch keeps the original query", async () => {
+		const embedding = mockEmbedding();
+		const pg = mockPg();
+		const hydeClient = hydeOk("Die Buchung laeuet ueber das Modul Wareneingang.");
+		const handler = createSearchV2Handler(embedding, pg, logger, {
+			hydeClient: hydeClient as never,
+		});
+		const res = mockRes();
+		await handler(
+			mockReq({ query: "wareneingang buchung", hyde: true }) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode).toBe(200);
+		expect(hydeClient.expand).toHaveBeenCalledWith(
+			"wareneingang buchung",
+			"t1",
+		);
+		expect(embedding.embed).toHaveBeenCalledWith(
+			"Die Buchung laeuet ueber das Modul Wareneingang.",
+		);
+		// The PostgreSQL lexical branch still receives the original query.
+		expect((pg.search as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+			"wareneingang buchung",
+		);
+		expect(res.body).toMatchObject({ hyde_applied: true });
+	});
+
+	it("reports hyde_applied false when no HyDE client is configured", async () => {
+		const handler = createSearchV2Handler(mockEmbedding(), mockPg(), logger, {
+			hydeClient: null,
+		});
+		const res = mockRes();
+		await handler(
+			mockReq({ query: "wareneingang buchung", hyde: true }) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode).toBe(200);
+		expect(res.body).toMatchObject({ hyde_applied: false });
+	});
+
+	it("rejects a non-boolean hyde flag", async () => {
+		const handler = createSearchV2Handler(mockEmbedding(), mockPg(), logger);
+		const res = mockRes();
+		await handler(
+			mockReq({ query: "x", hyde: "yes" }) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode).toBe(400);
+		expect(res.body).toMatchObject({ error: "hyde must be a boolean" });
+	});
+
+	it("stays out of the response and the embedding path when not requested", async () => {
+		const embedding = mockEmbedding();
+		const hydeClient = hydeOk("unused");
+		const handler = createSearchV2Handler(embedding, mockPg(), logger, {
+			hydeClient: hydeClient as never,
+		});
+		const res = mockRes();
+		await handler(
+			mockReq({ query: "wareneingang buchung" }) as never,
+			res as never,
+			vi.fn(),
+		);
+		expect(res.statusCode).toBe(200);
+		expect(hydeClient.expand).not.toHaveBeenCalled();
+		expect(embedding.embed).toHaveBeenCalledWith("wareneingang buchung");
+		expect(res.body).not.toHaveProperty("hyde_applied");
+	});
+});

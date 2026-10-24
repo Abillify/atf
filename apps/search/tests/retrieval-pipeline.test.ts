@@ -678,4 +678,64 @@ describe("runRetrievalPipeline", () => {
     expect(lookup).not.toHaveBeenCalled();
     expect(out.figureInfo.size).toBe(0);
   });
+
+  it("embeds the HyDE expansion while the lexical branch keeps the original query", async () => {
+    const embed = vi.fn(async () => ({
+      ok: true as const,
+      result: { vector: [0.1, 0.2] },
+    }));
+    const expand = vi.fn(async () => ({
+      ok: true as const,
+      result: "Die Buchung erfolgt im Modul Wareneingang.",
+    }));
+    const { clients, search } = clientsFor([hit({ id: "a" })]);
+    clients.embeddingClient = { embed } as unknown as EmbeddingClient;
+    clients.hydeClient = { expand } as never;
+    const out = await runRetrievalPipeline(
+      clients,
+      silent,
+      cfg({ hyde: true }),
+    );
+    expect(expand).toHaveBeenCalledWith(cfg().query, undefined);
+    expect(embed).toHaveBeenCalledWith(
+      "Die Buchung erfolgt im Modul Wareneingang.",
+    );
+    // The PostgreSQL lexical branch still receives the original query.
+    expect(search.mock.calls[0]?.[0]).toBe(cfg().query);
+    expect(out.hyde).toEqual({ applied: true, fallbackReason: null });
+  });
+
+  it("reports HyDE as unavailable when no client is wired", async () => {
+    const { clients } = clientsFor([hit({ id: "a" })]);
+    const out = await runRetrievalPipeline(clients, silent, cfg({ hyde: true }));
+    expect(out.hyde).toEqual({ applied: false, fallbackReason: "unavailable" });
+  });
+
+  it("falls back to the configured embed text when the expansion fails", async () => {
+    const embed = vi.fn(async () => ({
+      ok: true as const,
+      result: { vector: [0.1, 0.2] },
+    }));
+    const { clients } = clientsFor([hit({ id: "a" })]);
+    clients.embeddingClient = { embed } as unknown as EmbeddingClient;
+    clients.hydeClient = {
+      expand: async () => ({ ok: false as const, error: "upstream timeout" }),
+    } as never;
+    const base = cfg({ hyde: true });
+    const out = await runRetrievalPipeline(clients, silent, base);
+    expect(embed).toHaveBeenCalledWith(base.embedText);
+    expect(out.hyde).toEqual({ applied: false, fallbackReason: "failed" });
+  });
+
+  it("never consults the HyDE client unless the config asks for it", async () => {
+    const expand = vi.fn(async () => ({ ok: true as const, result: "x" }));
+    const { clients } = clientsFor([hit({ id: "a" })]);
+    clients.hydeClient = { expand } as never;
+    const out = await runRetrievalPipeline(clients, silent, cfg());
+    expect(expand).not.toHaveBeenCalled();
+    expect(out.hyde).toEqual({
+      applied: false,
+      fallbackReason: "not-requested",
+    });
+  });
 });

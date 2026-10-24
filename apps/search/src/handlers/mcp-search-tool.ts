@@ -292,7 +292,6 @@ export function registerSearchTool(opts: McpToolContext): void {
       }
       const useHybrid = hybrid ?? hybridSearchDefault;
       const hydeRequested = hyde === true;
-      const useHyde = hydeRequested && hydeClient !== null;
       const rerankRequested = rerank === true;
       const rerankActive = rerankRequested && rerankerClient !== null;
       // MIN_RERANK_SCORE (task 6.10, Requirement 4.8): the server-side default
@@ -435,39 +434,15 @@ export function registerSearchTool(opts: McpToolContext): void {
         };
       }
 
-      // HyDE query expansion (optional): generate a hypothetical answer
-      // document and embed THAT instead of the raw query. The original `query`
-      // is still used for the PostgreSQL FTS/ts_rank/lexical branch below (keeps exact terms).
+      // HyDE query expansion (optional) runs inside the shared retrieval core
+      // below: with `hyde: true` and a configured HYDE model, the dense/sparse
+      // embedding input becomes a hypothetical answer document while the
+      // original `query` still drives the PostgreSQL FTS/ts_rank/lexical
+      // branch (keeps exact terms) and the reranker.
       // Same normalisation the other search surfaces apply before embedding
       // (markdown/URL/long-token cleanup); a query that is nothing but such
       // noise embeds as written.
-      let embedText = prepareFtsContent(query) || query;
-      let hydeApplied = false;
-      let hydeFallbackReason:
-        | "not-requested"
-        | "unavailable"
-        | "failed"
-        | null = hydeRequested
-        ? hydeClient === null
-          ? "unavailable"
-          : null
-        : "not-requested";
-      if (useHyde && hydeClient) {
-        const hydeRes = await hydeClient.expand(
-          query,
-          accessScopeForMcp().tenantId,
-        );
-        if (hydeRes.ok) {
-          embedText = hydeRes.result;
-          hydeApplied = true;
-        } else {
-          hydeFallbackReason = "failed";
-          logger.warn(
-            { error: hydeRes.error },
-            "[MCP] HyDE expansion failed; falling back to raw query",
-          );
-        }
-      }
+      const embedText = prepareFtsContent(query) || query;
 
       // Embed → sparse → candidates → rerank → document groups → diversify /
       // threshold → slice → expansion → figure lookup: the shared retrieval
@@ -491,11 +466,13 @@ export function registerSearchTool(opts: McpToolContext): void {
             queryCache,
             sparseClient,
             rerankerClient,
+            hydeClient,
           },
           logger,
           {
             query,
             embedText,
+            hyde: hydeRequested,
             collection: col,
             scope: accessScopeForMcp(),
             filter: effectiveFilter,
@@ -771,8 +748,8 @@ export function registerSearchTool(opts: McpToolContext): void {
                 hyde: {
                   requested: hydeRequested,
                   available: hydeClient !== null,
-                  applied: hydeApplied,
-                  fallbackReason: hydeFallbackReason,
+                  applied: pipe.hyde.applied,
+                  fallbackReason: pipe.hyde.fallbackReason,
                 },
                 score_kind: rerankStatus.applied ? "rerank" : "retrieval",
                 score_scale: finalScoreKind,

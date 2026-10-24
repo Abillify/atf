@@ -51,6 +51,9 @@ releases:
   (`decomposition: "llm"` with `RETRIEVE_DECOMPOSE_URL`/`RETRIEVE_DECOMPOSE_MODEL`);
   without it, or when the model answer is unusable, the rule-based split applies
   unchanged. The response names the method used.
+- **Search**: HyDE is available on `/v2/search` and the MCP search tool
+  (`hyde: true`, needs the existing `HYDE_*` configuration); lexical matching
+  and reranking keep the original query.
 
 ### Changed
 

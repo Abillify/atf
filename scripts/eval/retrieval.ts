@@ -229,7 +229,7 @@ export interface Args {
   searchMode?: "dense" | "hybrid" | "fts";
   /** Enable cross/bi-encoder reranking (`X-Rerank: true` / v2 body `rerank`). */
   rerank: boolean;
-  /** Enable HyDE query expansion (`X-Hyde: true`; v1 endpoint only). */
+  /** Enable HyDE query expansion (`X-Hyde: true` / v2 body `hyde`). */
   hyde: boolean;
   /** Threshold file (task 6.11): regression below any floor fails the run. */
   thresholds?: string;
@@ -486,11 +486,6 @@ async function runSearchV2(
 		"X-Collection": args.collection,
 	};
 	if (args.token) headers.Authorization = `Bearer ${args.token}`;
-	if (args.hyde) {
-    throw new Error(
-      "--hyde is only supported against the v1 /search endpoint (HyDE is wired to v1 only)",
-    );
-  }
   const body: Record<string, unknown> = {
     query: question,
     limit: maxResults,
@@ -500,6 +495,7 @@ async function runSearchV2(
   // both run the hybrid pipeline (the closest v2 equivalents).
   if (args.searchMode !== undefined) body.hybrid = args.searchMode !== "dense";
   if (args.rerank) body.rerank = true;
+  if (args.hyde) body.hyde = true;
 	const response = await fetch(`${args.baseUrl}/v2/search`, {
     method: "POST",
     headers,

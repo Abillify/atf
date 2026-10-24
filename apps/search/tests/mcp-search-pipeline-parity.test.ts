@@ -63,6 +63,12 @@ describe("MCP search tool · pipeline parity with /v2/search", () => {
       },
       sparseClient: null,
       queryCache: null,
+      hydeClient: {
+        expand: vi.fn(async () => ({
+          ok: true as const,
+          result: "Die Miete betraegt 850 Euro netto kalt.",
+        })),
+      },
       rerankerClient: {
         rerank: vi.fn(async (_q: string, documents: string[]) => {
           rerankDocs.push(documents);
@@ -140,6 +146,28 @@ describe("MCP search tool · pipeline parity with /v2/search", () => {
     const raw = "https://example.com/only/a/url";
     await client.callTool({ name: "search", arguments: { query: raw } });
     expect(embedded).toEqual([raw]);
+  });
+
+  it("embeds the HyDE expansion when the tool asks for it", async () => {
+    embedded.length = 0;
+    const res = (await client.callTool({
+      name: "search",
+      arguments: { query: "wie hoch ist die miete", hyde: true },
+    })) as {
+      isError?: boolean;
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(res.isError).not.toBe(true);
+    expect(embedded).toEqual(["Die Miete betraegt 850 Euro netto kalt."]);
+    const payload = JSON.parse(
+      res.content.find((c) => c.type === "text")?.text ?? "{}",
+    ) as { hyde?: Record<string, unknown> };
+    expect(payload.hyde).toMatchObject({
+      requested: true,
+      available: true,
+      applied: true,
+      fallbackReason: null,
+    });
   });
 
   it("fits the rerank inputs through the tokenizer when one is wired", async () => {

@@ -3114,6 +3114,15 @@ export function buildOpenApiSpec(serverUrl: string) {
                     },
                     rerank: { type: "boolean", default: false },
                     hybrid: { type: "boolean", default: true },
+                    hyde: {
+                      type: "boolean",
+                      default: false,
+                      description:
+                        "Embed a hypothetical answer document for the query (HyDE) instead of the query " +
+                        "itself; needs a HYDE model configured server-side. The lexical branch and the " +
+                        "reranker keep the original query. The response reports the outcome as " +
+                        "`hyde_applied`.",
+                    },
                     group_by: {
                       type: "string",
                       enum: ["none", "document", "section"],
@@ -3309,6 +3318,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                         type: "boolean",
                         description:
                           "Present (true) when the query was cut to SEARCH_MAX_QUERY_CHARS before searching.",
+                      },
+                      hyde_applied: {
+                        type: "boolean",
+                        description:
+                          "Present when `hyde` was requested: whether the hypothetical answer document was actually used for the embedding (false when no HYDE model is configured or the expansion failed).",
                       },
                     },
                   },

@@ -41,6 +41,7 @@ import type { Logger } from "pino";
 import type { AccessScope } from "../access-scope.js";
 import type { EmbeddingClient } from "../embedding-client.js";
 import type { ExpandMode } from "../expansion.js";
+import type { HydeClient } from "../hyde-client.js";
 import { referencedFigureIds } from "../search-v2-response.js";
 import type {
 	FigureUnitInfo,
@@ -85,6 +86,12 @@ export interface RetrievalClients {
 	queryCache?: QueryEmbeddingCache | null;
 	sparseClient?: SparseEmbeddingClient | null;
 	rerankerClient?: RerankerClient | null;
+	/**
+	 * Optional HyDE generator (hyde-client.ts). Only consulted when the
+	 * request sets {@link RetrievalPipelineConfig.hyde}; without it the
+	 * pipeline embeds the query text as given.
+	 */
+	hydeClient?: HydeClient | null;
 }
 
 /** The query embedding could not be produced (backend failure). */
@@ -450,6 +457,13 @@ export interface RetrievalPipelineConfig {
 	embedText: string;
 	/** Text handed to the reranker (defaults to `query`). */
 	rerankQuery?: string;
+	/**
+	 * Request HyDE expansion: when true AND a {@link RetrievalClients.hydeClient}
+	 * is configured, the dense/sparse embedding input becomes a hypothetical
+	 * answer document for `query` (the lexical branch and the rerank query keep
+	 * the original). Absent / false never consults the client.
+	 */
+	hyde?: boolean;
 	collection: string;
 	scope: AccessScope;
 	filter?: SearchFilter;
@@ -497,6 +511,8 @@ export interface RetrievalPipelineResult {
 	/** How many candidates the store returned (MCP rerank `input_count`). */
 	candidateCount: number;
 	rerank: RerankOutcome | null;
+	/** Outcome of the optional HyDE stage (why the embedding did or did not use one). */
+	hyde: HydeStageOutcome;
 	minScore: MinScoreOutcome<SearchResult>;
 	countBeforeMinScore: number;
 	countAfterMinScore: number;
@@ -504,6 +520,15 @@ export interface RetrievalPipelineResult {
 	scoreKind: ScoreKind;
 	/** figure_id → metadata, populated when `resolveFigures` was set. */
 	figureInfo: Map<string, FigureUnitInfo>;
+}
+
+/**
+ * Outcome of the optional HyDE stage: whether the dense/sparse embedding ran
+ * on a hypothetical answer document, and why it did not when it did not.
+ */
+export interface HydeStageOutcome {
+	applied: boolean;
+	fallbackReason: "not-requested" | "unavailable" | "failed" | null;
 }
 
 /**
@@ -517,13 +542,40 @@ export async function runRetrievalPipeline(
 	logger: Logger,
 	cfg: RetrievalPipelineConfig,
 ): Promise<RetrievalPipelineResult> {
+	// Optional HyDE stage (same as v1 /search): generate a hypothetical answer
+	// document for the query and embed THAT instead of the query text. The
+	// lexical (FTS) branch and the rerank query keep the original query. The
+	// generation cache inside the client is bound to the tenant like v1's.
+	let embedText = cfg.embedText;
+	const hyde: HydeStageOutcome = {
+		applied: false,
+		fallbackReason:
+			cfg.hyde === true ? (clients.hydeClient ? null : "unavailable") : "not-requested",
+	};
+	if (cfg.hyde === true && clients.hydeClient) {
+		const hydeRes = await clients.hydeClient.expand(
+			cfg.query,
+			cfg.scope.tenantId,
+		);
+		if (hydeRes.ok) {
+			embedText = hydeRes.result;
+			hyde.applied = true;
+		} else {
+			hyde.fallbackReason = "failed";
+			logger.warn(
+				{ error: hydeRes.error },
+				"HyDE expansion failed; falling back to the query text",
+			);
+		}
+	}
+
 	// The dense and the sparse query embedding are independent backends: run
 	// them side by side. A sparse failure degrades (the dense list still ranks);
 	// a dense failure throws, and the settled sparse promise is simply dropped.
 	const [vector, { vector: sparseVec, failed: sparseFailed }] =
 		await Promise.all([
-			embedQuery(clients, cfg.embedText, cfg.scope.tenantId),
-			embedSparseVector(clients, cfg.hybrid, cfg.embedText),
+			embedQuery(clients, embedText, cfg.scope.tenantId),
+			embedSparseVector(clients, cfg.hybrid, embedText),
 		]);
 	if (sparseFailed !== undefined && cfg.logSparseFailure) {
 		logger.warn({ error: sparseFailed }, "sparse embedding failed; skipping");
@@ -623,6 +675,7 @@ export async function runRetrievalPipeline(
 		qualified: ranking.qualified,
 		candidateCount: candidates.length,
 		rerank,
+		hyde,
 		minScore: ranking.minScore,
 		countBeforeMinScore: ranking.countBeforeMinScore,
 		countAfterMinScore: ranking.countAfterMinScore,
