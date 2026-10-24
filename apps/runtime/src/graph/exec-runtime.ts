@@ -541,6 +541,13 @@ export interface ExecRuntime {
    * carries that number or citation streaming is not wired.
    */
   lookupCitation?: (index: number) => Citation | undefined;
+  /**
+   * Number of distinct sources registered in this execution so far, i.e. the
+   * upper bound of the valid citation range `1..n` (see
+   * {@link registerCitations}). Used by the opt-in post-answer check that
+   * rejects answers citing `[n]` outside that range.
+   */
+  citationCount?: () => number;
   /** Optional embedder for RAG retrieval nodes (embeds the query). */
   embedder?: Embedder;
   /** Optional vector store backing RAG retrieval nodes. */

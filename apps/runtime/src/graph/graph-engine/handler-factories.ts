@@ -891,6 +891,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onCitations,
       registerCitations,
       lookupCitation: citationAt,
+      citationCount: () => citations.size,
       onNodeStart,
       onNodeEnd: emitNodeEnd,
       onNodeIo: (nodeId, io) => {

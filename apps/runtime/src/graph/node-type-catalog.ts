@@ -647,11 +647,12 @@ const LLM: NodeTypeDoc = {
       kind: "object",
       label: "Post-answer sources check",
       description:
-        "Opt-in deterministic check of the final answer (every switch defaults to off). `completeSection` appends each inline-cited `[n]` that the sources section lacks, built only from the sources registered in this execution, as a trailing stream chunk; it creates the section when missing. Unregistered `[n]` are reported, never invented. `stripRuleMarkers` removes the pseudo marker `[Regel: …]` from answer text that has not been streamed yet (buffered answers, e.g. with `suppressToolPreamble`). Results are reported in the `answer_sources_check` diagnostic.",
+        "Opt-in deterministic check of the final answer (every switch defaults to off). `completeSection` appends each inline-cited `[n]` that the sources section lacks, built only from the sources registered in this execution, as a trailing stream chunk; it creates the section when missing. Unregistered `[n]` are reported, never invented. `stripRuleMarkers` removes the pseudo marker `[Regel: …]` from answer text that has not been streamed yet (buffered answers, e.g. with `suppressToolPreamble`). `rejectOutOfRangeMarkers` retries the attempt when the answer cites markers outside the registered range `1..n` (hallucinated numbers); on buffered answers the rejected text never reaches the client. Results are reported in the `answer_sources_check` diagnostic; the marker retry uses the `citation_marker_out_of_range_retry`/`_rejected` diagnostic.",
       example: {
         completeSection: true,
         heading: "## Quellen",
         stripRuleMarkers: true,
+        rejectOutOfRangeMarkers: true,
       },
       fields: [
         {
@@ -676,6 +677,14 @@ const LLM: NodeTypeDoc = {
           default: false,
           description:
             "Remove the pseudo marker `[Regel: …]` from not-yet-streamed answer text. Other bracketed content is left untouched.",
+        },
+        {
+          key: "rejectOutOfRangeMarkers",
+          kind: "boolean",
+          label: "Reject out-of-range citation markers",
+          default: false,
+          description:
+            "Retry the attempt when the answer cites `[n]` outside the registered range `1..n`. Buffered answers (e.g. `suppressToolPreamble`) are checked before release, so rejected text never reaches the client; the final attempt is released with a warn diagnostic.",
         },
       ],
     },

@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import type { Citation } from "../../types/openai.js";
 import {
   completeSourcesSection,
+  findOutOfRangeMarkers,
   findRuleMarkers,
   formatSourceEntry,
   parseSourcesCheckConfig,
@@ -37,6 +38,9 @@ describe("parseSourcesCheckConfig", () => {
     expect(parseSourcesCheckConfig({})).toBeUndefined();
     expect(parseSourcesCheckConfig({ completeSection: false })).toBeUndefined();
     expect(parseSourcesCheckConfig({ completeSection: "yes" })).toBeUndefined();
+    expect(
+      parseSourcesCheckConfig({ rejectOutOfRangeMarkers: false }),
+    ).toBeUndefined();
     expect(parseSourcesCheckConfig("on")).toBeUndefined();
   });
 
@@ -45,6 +49,7 @@ describe("parseSourcesCheckConfig", () => {
       completeSection: true,
       heading: "## Quellen",
       stripRuleMarkers: false,
+      rejectOutOfRangeMarkers: false,
     });
     expect(
       parseSourcesCheckConfig({ stripRuleMarkers: true, heading: "## Sources" }),
@@ -52,7 +57,36 @@ describe("parseSourcesCheckConfig", () => {
       completeSection: false,
       heading: "## Sources",
       stripRuleMarkers: true,
+      rejectOutOfRangeMarkers: false,
     });
+    expect(
+      parseSourcesCheckConfig({ rejectOutOfRangeMarkers: true }),
+    ).toEqual({
+      completeSection: false,
+      heading: "## Quellen",
+      stripRuleMarkers: false,
+      rejectOutOfRangeMarkers: true,
+    });
+  });
+});
+
+describe("findOutOfRangeMarkers", () => {
+  test("empty when every marker resolves within 1..count", () => {
+    expect(findOutOfRangeMarkers("Befund [1][2].", 2)).toEqual([]);
+    expect(findOutOfRangeMarkers("keine Belege", 1)).toEqual([]);
+  });
+
+  test("collects markers above and below the range, deduplicated ascending", () => {
+    expect(findOutOfRangeMarkers("Siehe [491], [2], [1484] und erneut [491], auch [0].", 1)).toEqual([0, 2, 491, 1484]);
+  });
+
+  test("ignores markers inside fenced code", () => {
+    const text = "Text [1]\n```python\narr[7]\n```\nEnde [9]";
+    expect(findOutOfRangeMarkers(text, 1)).toEqual([9]);
+  });
+
+  test("count 0 rejects every marker", () => {
+    expect(findOutOfRangeMarkers("Antwort [1]", 0)).toEqual([1]);
   });
 });
 

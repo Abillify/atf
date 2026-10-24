@@ -33,6 +33,15 @@ export interface SourcesCheckConfig {
   heading: string;
   /** Remove `[Regel: …]` pseudo markers from not-yet-streamed answer text. */
   stripRuleMarkers: boolean;
+  /**
+   * Hard-retry an answer that cites `[n]` outside the registered range
+   * `1..citationCount` (local models hallucinate plausible-looking numbers,
+   * e.g. `[491]` when one source is registered). Requires the execution to
+   * expose `runtime.citationCount`; only applies while the answer text has not
+   * been streamed yet. Default off: out-of-range markers stay a warn-only
+   * node-end diagnostic.
+   */
+  rejectOutOfRangeMarkers: boolean;
 }
 
 export const DEFAULT_SOURCES_HEADING = "## Quellen";
@@ -51,12 +60,15 @@ export function parseSourcesCheckConfig(
   const record = raw as Record<string, unknown>;
   const completeSection = record.completeSection === true;
   const stripRuleMarkers = record.stripRuleMarkers === true;
-  if (!completeSection && !stripRuleMarkers) return undefined;
+  const rejectOutOfRangeMarkers = record.rejectOutOfRangeMarkers === true;
+  if (!completeSection && !stripRuleMarkers && !rejectOutOfRangeMarkers) {
+    return undefined;
+  }
   const heading =
     typeof record.heading === "string" && headingText(record.heading) !== ""
       ? record.heading.trim()
       : DEFAULT_SOURCES_HEADING;
-  return { completeSection, heading, stripRuleMarkers };
+  return { completeSection, heading, stripRuleMarkers, rejectOutOfRangeMarkers };
 }
 
 /** `[Regel: …]` with an optional single leading space/tab (no line breaks). */
@@ -100,6 +112,26 @@ function blankFencedCode(lines: string[]): string[] {
     }
     return inFence ? "" : line;
   });
+}
+
+/**
+ * Citation markers `[n]` in `text` outside the valid range `1..count`
+ * (deduplicated, ascending). `[n]` inside fenced code is ignored, matching
+ * {@link completeSourcesSection}. An empty array means every marker resolves
+ * against the registered sources.
+ */
+export function findOutOfRangeMarkers(
+  text: string,
+  count: number,
+): number[] {
+  const found = new Set<number>();
+  for (const line of blankFencedCode(text.split("\n"))) {
+    for (const match of line.matchAll(CITATION_RE)) {
+      const n = Number(match[1]);
+      if (n < 1 || n > count) found.add(n);
+    }
+  }
+  return [...found].sort((a, b) => a - b);
 }
 
 function pageLabel(citation: Citation): string | undefined {

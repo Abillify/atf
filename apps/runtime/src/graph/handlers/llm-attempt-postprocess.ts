@@ -41,6 +41,7 @@ import {
 import { applyToolResultBudgetToHistory } from "../tool-result-budget.js";
 import {
   completeSourcesSection,
+  findOutOfRangeMarkers,
   findRuleMarkers,
   stripRuleMarkers,
   type SourcesCheckConfig,
@@ -285,6 +286,89 @@ export async function postprocessAttempt(
     throw new StreamErrorSignal(
       "model emitted an unparsed text tool call instead of an answer",
     );
+  }
+
+  // Opt-in `sourcesCheck.rejectOutOfRangeMarkers`: models occasionally
+  // hallucinate citation markers far outside the registered range (bench
+  // traces e7fb6cda: `[491]`/`[1484]` with a single registered source,
+  // 605d2777: `[2]`–`[5]`). The check runs BEFORE the preamble release
+  // below: on `suppressToolPreamble` nodes the answer still only lives in
+  // `st.preambleBuf` here, so a rejected answer never reaches the client.
+  // `requireToolUse` nodes are skipped — their preamble is still held for
+  // the post-stream guards, and the warn-only lifecycle net
+  // (`citation_marker_out_of_range` in run-node-lifecycle) stays the
+  // backstop for everything that passes through.
+  if (
+    sourcesCheck?.rejectOutOfRangeMarkers === true &&
+    !requireToolUse &&
+    runtime.citationCount !== undefined
+  ) {
+    const citationCount = runtime.citationCount();
+    const outOfRange = findOutOfRangeMarkers(
+      st.fullText + st.preambleBuf,
+      citationCount,
+    );
+    if (outOfRange.length > 0) {
+      const canRetry = attempt < maxAttempts;
+      const continued = canRetry
+        ? await captureRetryContinuation()
+        : false;
+      const markerList = outOfRange.map((n) => `[${n}]`).join(", ");
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: canRetry
+          ? "citation_marker_out_of_range_retry"
+          : "citation_marker_out_of_range_rejected",
+        message:
+          `Answer cites source markers outside the registered range ` +
+          `1..${citationCount}: ${markerList}.`,
+        details: {
+          attempt,
+          model: `${candidate.provider}/${candidate.model}`,
+          out_of_range_markers: outOfRange,
+          citation_count: citationCount,
+          continuation_messages: continued
+            ? (st.retryContinuation?.length ?? 0)
+            : 0,
+        },
+      });
+      if (canRetry) {
+        st.fullText = "";
+        st.preambleBuf = "";
+        st.emittedAny = false;
+        st.forcedAnswer = true;
+        const rangeDesc =
+          citationCount === 0
+            ? "no sources are registered in this execution, so no [n] " +
+              "citation marker is valid"
+            : citationCount === 1
+              ? "the only registered source is [1]"
+              : `the only valid citation markers are [1]..[${citationCount}]`;
+        st.retryGuidance = {
+          role: "user",
+          content:
+            `Your previous answer used citation markers ${markerList}, ` +
+            `but ${rangeDesc}. Rewrite the answer now: keep the content, ` +
+            "but use only citation markers within the valid range — or " +
+            "no markers at all. Never invent source numbers. Do not " +
+            "call another tool.",
+        };
+        // Answer-only retry without tools (same rationale as
+        // `post_tool_answer_missing`: `toolChoice: "none"` alone still
+        // sends the tool list with @ai-sdk/openai).
+        st.finalAnswerOnly = true;
+        streamParams.toolChoice = "none" as const;
+        accountAttempt("error");
+        runtime.metrics.recordLlmRetry(
+          candidate.provider,
+          candidate.model,
+        );
+        await sleep(fullJitter(backoffMs));
+        return { action: "continue" };
+      }
+      // Final attempt: the answer is released as-is; the lifecycle net
+      // reports the violation without failing the node.
+    }
   }
 
   // A held-back preamble is normally released here as the direct answer.
