@@ -90,6 +90,19 @@ describe("applyProfile", () => {
     expect(r.env.PII_VAULT_ENABLED).toBeUndefined();
   });
 
+  it("hardened presets keep the exact caches but not the semantic cache", () => {
+    for (const name of ["secure", "regulated", "regulated-multitenant"]) {
+      const r = applyProfile({ PROFILE: name });
+      expect(r.env.RESPONSE_CACHE_ENABLED).toBe("true");
+      expect(r.env.EMBEDDING_CACHE_ENABLED).toBe("true");
+      // Similarity matching stays opt-in for regulated presets.
+      expect(r.env.SEMANTIC_CACHE_ENABLED).toBeUndefined();
+    }
+    expect(applyProfile({ PROFILE: "performance" }).env.SEMANTIC_CACHE_ENABLED).toBe(
+      "true",
+    );
+  });
+
   it("dev profile sets development env + debug logging", () => {
     const r = applyProfile({ PROFILE: "dev" });
     expect(r.env.APP_ENV).toBe("development");

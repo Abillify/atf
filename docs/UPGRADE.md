@@ -610,6 +610,9 @@ Changes since 0.19.3 that need operator attention:
 
 1. Runtime: semantic-cache entries written before this release are not found any
    more (new namespace). The cache refills on its own; no action needed.
+2. Runtime: the presets `secure`, `regulated` and `regulated-multitenant` no
+   longer turn on the semantic cache. Set `SEMANTIC_CACHE_ENABLED=true` to keep
+   the previous behaviour.
 
 ### Not yet shared between replicas (roadmap)
 

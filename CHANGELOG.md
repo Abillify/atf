@@ -27,6 +27,12 @@ releases:
   a long shared system prompt could produce hits between different questions or
   across users with different document access.
 
+### Changed
+
+- **Runtime** (presets): `secure`, `regulated` and `regulated-multitenant` no
+  longer enable the semantic cache; they keep the exact response cache and the
+  embedding cache. Set `SEMANTIC_CACHE_ENABLED=true` explicitly to keep it.
+
 ### Fixed
 
 - **Runtime** (erasure): the semantic cache is erased per user, so erasure

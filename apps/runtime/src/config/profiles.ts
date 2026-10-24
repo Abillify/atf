@@ -74,6 +74,12 @@ const PERFORMANCE_CACHES: ProfileDefaults = {
   EMBEDDING_CACHE_ENABLED: "true",
 };
 
+/** Caches that only hit on identical input — safe for regulated presets. The semantic cache matches on similarity and stays opt-in there. */
+const EXACT_CACHES: ProfileDefaults = {
+  RESPONSE_CACHE_ENABLED: "true",
+  EMBEDDING_CACHE_ENABLED: "true",
+};
+
 // ---------------------------------------------------------------------------
 // Shipped profiles
 // ---------------------------------------------------------------------------
@@ -88,21 +94,21 @@ export const PROFILES: Record<string, ProfileDefaults> = {
   /** Hardened production edge without the regulated privacy stack. */
   secure: {
     ...SECURE_BASE,
-    ...PERFORMANCE_CACHES,
+    ...EXACT_CACHES,
   },
 
   /** Single-tenant regulated deployment (GDPR/EU-AI-Act posture). */
   regulated: {
     ...SECURE_BASE,
     ...REGULATED_CONTROLS,
-    ...PERFORMANCE_CACHES,
+    ...EXACT_CACHES,
   },
 
   /** Regulated deployment serving multiple tenants — adds isolation + BYOK. */
   "regulated-multitenant": {
     ...SECURE_BASE,
     ...REGULATED_CONTROLS,
-    ...PERFORMANCE_CACHES,
+    ...EXACT_CACHES,
     TENANT_MANAGEMENT_ENABLED: "true",
     BYOK_ENABLED: "true",
     TENANT_RLS_ENABLED: "true",
