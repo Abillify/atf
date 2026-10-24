@@ -138,6 +138,41 @@ describe("mergeDebugTraceIntoNodeStates", () => {
     expect(merged.get("llm-1")?.error_type).toBeUndefined();
   });
 
+  test("copies the cascade outcome and harness progress onto the node", () => {
+    const states = deriveNodeStates([
+      event({ node_id: "llm-1" }),
+      event({ node_id: "harness-1" }),
+    ]);
+    const cascade = {
+      escalated: true,
+      reasons: ["groundedness_below_threshold"],
+      firstModel: "openai/gpt-4o-mini",
+      finalModel: "openai/gpt-4o",
+    };
+    const progress = {
+      phase: "research" as const,
+      tasksDone: 1,
+      tasksTotal: 2,
+      elapsedMs: 1500,
+    };
+    const merged = mergeDebugTraceIntoNodeStates(
+      states,
+      trace([
+        traceNode({ node_id: "llm-1", cascade }),
+        traceNode({ node_id: "harness-1", progress }),
+      ]),
+    );
+    expect(merged.get("llm-1")?.cascade).toEqual(cascade);
+    expect(merged.get("llm-1")?.progress).toBeUndefined();
+    expect(merged.get("harness-1")?.progress).toEqual(progress);
+    // a trace node with no matching event state is still skipped
+    const mergedNoState = mergeDebugTraceIntoNodeStates(
+      deriveNodeStates([event({ node_id: "llm-1" })]),
+      trace([traceNode({ node_id: "harness-1", progress })]),
+    );
+    expect(mergedNoState.get("harness-1")).toBeUndefined();
+  });
+
   test("error_type/error_details only apply to nodes that errored in the trace", () => {
     const states = deriveNodeStates([event({ node_id: "llm-1" })]);
     const merged = mergeDebugTraceIntoNodeStates(

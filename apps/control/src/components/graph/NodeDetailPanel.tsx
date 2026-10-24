@@ -33,6 +33,8 @@ import {
   RouterNodeDetail,
 } from "./nodedetail/NodeDetailRenderers";
 import { ErrorRecording, ToolCallEntry } from "./nodedetail/ErrorRecording";
+import { CascadeSection } from "./nodedetail/CascadeSection";
+import { ProgressSection } from "./nodedetail/ProgressSection";
 import { translate, formatNumber, formatTime } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,31 @@ import { translate, formatNumber, formatTime } from "../../lib/i18n";
 export interface NodeDetailPanelProps {
   state: NodeState;
   onClose: () => void;
+}
+
+/**
+ * Prominent banner for a node whose run was stopped by an execution budget.
+ * The runtime records the stop as a `budget_exceeded` diagnostic (the flow
+ * finishes gracefully with the text produced so far, so there is no error);
+ * the banner makes that stop visible wherever the node's details render.
+ */
+function BudgetStopBanner({ state }: { state: NodeState }) {
+  const budgetDiag = state.diagnostics?.find(
+    (d) => d.code === "budget_exceeded",
+  );
+  if (budgetDiag === undefined) return null;
+  return (
+    <div
+      role="status"
+      data-testid="budget-stop-banner"
+      className="rounded-lg border border-warning-border bg-warning-soft px-3 py-2 text-xs font-semibold text-warning"
+    >
+      {translate("nodeDetailPanel.stoppedByExecutionBudget")}
+      {budgetDiag.message !== "" && (
+        <p className="mt-1 break-words font-normal">{budgetDiag.message}</p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -75,6 +102,9 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
 
   return (
     <div className="space-y-3 text-sm text-foreground">
+      {/* Execution-budget stop — when this node's run was cut short by it */}
+      <BudgetStopBanner state={state} />
+
       {/* Timing — always shown */}
       <AccordionSection title={translate("nodeDetailPanel.timing")} defaultOpen>
         <KvGrid
@@ -172,6 +202,12 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
 
       {/* Type-specific detail */}
       {renderTypeDetail()}
+
+      {/* Model cascade outcome — when the node ran with a cascade */}
+      <CascadeSection cascade={state.cascade} />
+
+      {/* Agent-harness progress — when the node emitted structured progress */}
+      <ProgressSection progress={state.progress} />
 
       {/* Tool Calls — generic (non-retrieval nodes that have tool calls) */}
       {state.tool_calls &&
@@ -275,6 +311,9 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
 
       {/* Body */}
       <div className="p-4 space-y-3 max-h-[75vh] overflow-y-auto text-sm text-foreground">
+        {/* Execution-budget stop — when this node's run was cut short by it */}
+        <BudgetStopBanner state={state} />
+
         {/* Timing — always shown */}
         <AccordionSection title={translate("nodeDetailPanel.timing")} defaultOpen>
           <KvGrid
@@ -375,6 +414,12 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
 
         {/* Type-specific detail */}
         {renderTypeDetail()}
+
+        {/* Model cascade outcome — when the node ran with a cascade */}
+        <CascadeSection cascade={state.cascade} />
+
+        {/* Agent-harness progress — when the node emitted structured progress */}
+        <ProgressSection progress={state.progress} />
 
         {/* Tool Calls — generic (non-retrieval nodes that have tool calls) */}
         {state.tool_calls &&

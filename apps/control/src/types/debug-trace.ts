@@ -43,6 +43,63 @@ export interface DebugToolCallRecord {
   exec_time_seconds?: number | null;
 }
 
+/**
+ * Loop phase the agent harness was in when a progress event was emitted
+ * (mirrors `apps/runtime/src/graph/agent-harness/progress-event.ts`).
+ */
+export type HarnessProgressPhase =
+  | "planning"
+  | "research"
+  | "verification"
+  | "synthesis";
+
+/** Coarse coverage counters shipped with a progress event. */
+export interface HarnessProgressCoverage {
+  /** Documents settled beyond doubt (reviewed or excluded). */
+  covered: number;
+  /** Documents the queue promised overall. */
+  total: number;
+  /** Documents still owed (`total - covered`). */
+  open: number;
+}
+
+/**
+ * Structured progress of an agent-harness node: the LAST `atf.progress`
+ * event seen for the node, so a finished trace shows how far the harness
+ * got (phase, tasks done/total, coverage, elapsed time, ETA).
+ */
+export interface HarnessProgress {
+  /** Loop phase at emit time. */
+  phase: HarnessProgressPhase;
+  /** Tasks in a terminal state (`completed` or `failed`). */
+  tasksDone: number;
+  /** All tasks known to the harness (plan + re-plans). */
+  tasksTotal: number;
+  /** Deterministic coverage counters, present only when coverage is configured. */
+  coverage?: HarnessProgressCoverage;
+  /** Wall-clock time since the harness started. */
+  elapsedMs: number;
+  /** Linear extrapolation of the remaining wall-clock time, once estimable. */
+  etaMs?: number;
+  /** The free-text status line that triggered this event, unchanged. */
+  message?: string;
+}
+
+/**
+ * Model cascade outcome (`config.cascade`) of a node, derived by the runtime
+ * from its `cascade_escalated` / `cascade_kept` diagnostics.
+ */
+export interface DebugNodeCascade {
+  /** True when the answer was regenerated with the stronger model. */
+  escalated: boolean;
+  /** Why the answer was escalated (empty when the answer stood). */
+  reasons: string[];
+  /** `provider/model` of the first attempt. */
+  firstModel: string;
+  /** `provider/model` of the answer that was kept. */
+  finalModel: string;
+}
+
 /** Per-node detail inside a debug trace (subset of the runtime shape). */
 export interface DebugNodeTrace {
   node_id: string;
@@ -60,6 +117,16 @@ export interface DebugNodeTrace {
   diagnostics?: DebugNodeDiagnostic[];
   /** Tool calls made by this node, with full result payloads. */
   tool_calls?: DebugToolCallRecord[];
+  /**
+   * Model cascade outcome; absent for nodes that ran without a cascade.
+   * Mirrors the runtime's derived `cascade` field on the trace node.
+   */
+  cascade?: DebugNodeCascade;
+  /**
+   * Last `atf.progress` event of an agent-harness node; absent for other
+   * nodes and for harnesses that never emitted structured progress.
+   */
+  progress?: HarnessProgress;
 }
 
 /** Full debug trace for one flow execution (subset of the runtime shape). */

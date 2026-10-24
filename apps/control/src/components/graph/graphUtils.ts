@@ -21,7 +21,12 @@ import type {
   NodeToolCall,
   RoutingDecision,
 } from "../../types/monitoring";
-import type { DebugNodeDiagnostic, DebugTrace } from "../../types/debug-trace";
+import type {
+  DebugNodeCascade,
+  DebugNodeDiagnostic,
+  DebugTrace,
+  HarnessProgress,
+} from "../../types/debug-trace";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,6 +96,16 @@ export interface NodeState {
    * keeps the complete (still operator-safe) payload.
    */
   tool_error_result?: unknown;
+  /**
+   * Model cascade outcome (kept vs. escalated, reasons, first/final model),
+   * from the debug trace. Present only for nodes that ran with a cascade.
+   */
+  cascade?: DebugNodeCascade;
+  /**
+   * Last structured `atf.progress` event of an agent-harness node, from the
+   * debug trace. Present only while the harness's trace is still available.
+   */
+  progress?: HarnessProgress;
   /**
    * Short editor-only descriptive line (e.g. "openai/gpt-4o-mini", "3 tool(s)")
    * shown under the label. Set by the Studio builder for a node that has no
@@ -440,6 +455,8 @@ export function mergeDebugTraceIntoNodeStates(
         ...(tn.diagnostics !== undefined && tn.diagnostics.length > 0
           ? { diagnostics: tn.diagnostics }
           : {}),
+        ...(tn.cascade !== undefined ? { cascade: tn.cascade } : {}),
+        ...(tn.progress !== undefined ? { progress: tn.progress } : {}),
         ...(own.status === "error" &&
         own.error_message === undefined &&
         tn.error_message !== undefined

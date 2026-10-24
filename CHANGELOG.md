@@ -41,6 +41,9 @@ releases:
   `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`.
 - **Control**: a Governance posture page shows which controls are active
   (`GET /monitoring/posture`), grouped by area with ok/warn/fail.
+- **Control** (trace view): node details show the cascade outcome and
+  agent-harness progress, and a run stopped by an execution budget is marked
+  as such.
 
 ### Changed
 
