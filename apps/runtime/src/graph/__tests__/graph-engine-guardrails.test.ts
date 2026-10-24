@@ -417,6 +417,8 @@ describe("executeFlow — semantic cache", () => {
         stores++;
         await inner.set(input, value);
       },
+      eraseUser: (tenantScope, userScope) =>
+        inner.eraseUser(tenantScope, userScope),
     };
 
     const engine = createGraphEngine(

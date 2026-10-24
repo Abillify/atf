@@ -9,14 +9,23 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { randomUUID } from "node:crypto";
 import {
   cosineSimilarity,
   InMemoryVectorStore,
   createSemanticCache,
   type Embedder,
+  type SemanticCache,
   type SemanticCacheKeyInput,
 } from "../semantic-cache.js";
 import type { CachedResponse } from "../response-cache.js";
+import { semanticCacheRetentionTarget } from "../../bootstrap/observability.js";
+import { RetentionService } from "../../observability/retention.js";
+import {
+  createErasureOrchestrator,
+  RUNTIME_STORE_SERVICE,
+} from "../../compliance/erasure-orchestrator.js";
+import type { ErasureRequest } from "@atf/erasure-contract";
 
 /** `createSemanticCache` for args known to produce a cache. */
 function mustCreateSemanticCache(
@@ -30,6 +39,20 @@ function mustCreateSemanticCache(
 const value = (text: string): CachedResponse => ({
   text,
   usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+});
+
+const key = (
+  text: string,
+  over: Partial<SemanticCacheKeyInput> = {},
+): SemanticCacheKeyInput => ({
+  provider: "openai",
+  model: "gpt-4o-mini",
+  temperature: 0,
+  text,
+  tenantScope: "tenant-a",
+  userScope: "user-a",
+  contextHash: "ctx-identical",
+  ...over,
 });
 
 /** Embeds by a small lookup; near-duplicates share almost-identical vectors. */
@@ -86,20 +109,6 @@ describe("InMemoryVectorStore", () => {
 });
 
 describe("createSemanticCache", () => {
-  const key = (
-    text: string,
-    over: Partial<SemanticCacheKeyInput> = {},
-  ): SemanticCacheKeyInput => ({
-    provider: "openai",
-    model: "gpt-4o-mini",
-    temperature: 0,
-    text,
-    tenantScope: "tenant-a",
-    userScope: "user-a",
-    contextHash: "ctx-identical",
-    ...over,
-  });
-
   it("returns undefined when disabled or no embedder", () => {
     expect(
       createSemanticCache({ enabled: false }, new FakeEmbedder({})),
@@ -214,6 +223,38 @@ describe("createSemanticCache", () => {
     ).toBe("Paris");
   });
 
+  it("erases exactly the entries of one user", async () => {
+    const embedder = new FakeEmbedder({
+      "a one": [1, 0, 0],
+      "a two": [0.9, 0.1, 0],
+      "b one": [0, 1, 0],
+      "b two": [0.1, 0.9, 0],
+    });
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 300, maxEntries: 100 },
+      embedder,
+    );
+    await cache.set(key("a one", { userScope: "user-a" }), value("A1"));
+    await cache.set(key("a two", { userScope: "user-a" }), value("A2"));
+    await cache.set(key("b one", { userScope: "user-b" }), value("B1"));
+    await cache.set(key("b two", { userScope: "user-b" }), value("B2"));
+
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(2);
+
+    expect(await cache.get(key("a one", { userScope: "user-a" }))).toBeUndefined();
+    expect(await cache.get(key("a two", { userScope: "user-a" }))).toBeUndefined();
+    expect((await cache.get(key("b one", { userScope: "user-b" })))?.text).toBe(
+      "B1",
+    );
+    expect((await cache.get(key("b two", { userScope: "user-b" })))?.text).toBe(
+      "B2",
+    );
+    // Erasing the same user again removes nothing.
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(0);
+    // Another tenant is untouched.
+    expect(await cache.eraseUser("tenant-b", "user-a")).toBe(0);
+  });
+
   it("is only cacheable for deterministic, tool-free requests", () => {
     const cache = mustCreateSemanticCache({ enabled: true }, new FakeEmbedder({}));
     expect(cache.isCacheable({ hasTools: false, temperature: 0 })).toBe(true);
@@ -221,5 +262,126 @@ describe("createSemanticCache", () => {
     expect(cache.isCacheable({ hasTools: false, temperature: 0.7 })).toBe(
       false,
     );
+  });
+});
+
+describe("semantic cache as a retention target", () => {
+  /** Erasure request for one subject, in the shape the orchestrator receives. */
+  const erasureRequest = (
+    overrides: Partial<ErasureRequest> = {},
+  ): ErasureRequest => ({
+    requestId: randomUUID(),
+    tenantId: "acme",
+    subject: { userId: "u@x.de", externalIds: [] },
+    scope: "subject",
+    dryRun: false,
+    ...overrides,
+  });
+
+  const twoUsers = async (): Promise<
+    NonNullable<ReturnType<typeof createSemanticCache>>
+  > => {
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 300 },
+      new FakeEmbedder({
+        "my invoices": [1, 0, 0],
+        "my contracts": [0.9, 0.1, 0],
+        "their invoices": [0, 1, 0],
+        "their contracts": [0.1, 0.9, 0],
+      }),
+    );
+    await cache.set(
+      key("my invoices", { tenantScope: "acme", userScope: "u@x.de" }),
+      value("Mine 1"),
+    );
+    await cache.set(
+      key("my contracts", { tenantScope: "acme", userScope: "u@x.de" }),
+      value("Mine 2"),
+    );
+    await cache.set(
+      key("their invoices", { tenantScope: "acme", userScope: "other@x.de" }),
+      value("Theirs 1"),
+    );
+    await cache.set(
+      key("their contracts", { tenantScope: "acme", userScope: "other@x.de" }),
+      value("Theirs 2"),
+    );
+    return cache;
+  };
+
+  it("erases the subject's entries through the retention service", async () => {
+    const cache = await twoUsers();
+    const retention = new RetentionService([semanticCacheRetentionTarget(cache)]);
+
+    expect(retention.describeTargets()).toEqual([
+      {
+        name: "semantic_cache",
+        agePurge: false,
+        subjectErase: true,
+        maxAgeDays: null,
+      },
+    ]);
+
+    const results = await retention.forget({
+      tenantId: "acme",
+      userId: "u@x.de",
+      userAliases: [],
+    });
+    expect(results).toEqual([{ target: "semantic_cache", erased: 2 }]);
+    expect(await cache.get(key("my invoices"))).toBeUndefined();
+    expect(
+      (
+        await cache.get(
+          key("their invoices", {
+            tenantScope: "acme",
+            userScope: "other@x.de",
+          }),
+        )
+      )?.text,
+    ).toBe("Theirs 1");
+  });
+
+  it("reports the cache as erased, so an erasure run is not partial", async () => {
+    const cache = await twoUsers();
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([semanticCacheRetentionTarget(cache)]),
+    });
+
+    const op = await orch.execute(erasureRequest());
+
+    expect(op.status).toBe("complete");
+    expect(op.erased).toBe(2);
+    expect(op.results).toEqual([
+      { store: "semantic_cache", status: "ok", erased: 2 },
+    ]);
+    expect(op.storeGroups).toEqual([
+      { service: RUNTIME_STORE_SERVICE, stores: ["semantic_cache"] },
+    ]);
+  });
+
+  it("keeps reporting the gap when the backend cannot delete", () => {
+    const cache: SemanticCache = {
+      enabled: true,
+      erasureSupported: false,
+      get: async () => undefined,
+      set: async () => {},
+      eraseUser: async () => 0,
+      isCacheable: () => true,
+    };
+
+    const target = semanticCacheRetentionTarget(cache);
+    expect(target.eraseSubject).toBeUndefined();
+    expect(target.erasureGap).toBe(
+      "the configured vector store cannot delete entries",
+    );
+    expect(new RetentionService([target]).describeTargets()).toEqual([
+      {
+        name: "semantic_cache",
+        agePurge: false,
+        subjectErase: false,
+        maxAgeDays: null,
+        erasureGap: "the configured vector store cannot delete entries",
+      },
+    ]);
   });
 });

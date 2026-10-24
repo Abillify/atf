@@ -230,6 +230,60 @@ describe("createVectorStoreSemanticCache", () => {
     expect((await cache.get(key("q")))?.text).toBe("second");
   });
 
+  it("erases exactly the entries of one user", async () => {
+    const embedder = new FakeEmbedder({
+      "a one": [1, 0, 0],
+      "a two": [0.9, 0.1, 0],
+      "b one": [0, 1, 0],
+      "b two": [0.1, 0.9, 0],
+    });
+    const store = new InMemoryRagStore();
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 300 },
+      embedder,
+      store,
+    );
+    await cache.set(key("a one", { userScope: "user-a" }), value("A1"));
+    await cache.set(key("a two", { userScope: "user-a" }), value("A2"));
+    await cache.set(key("b one", { userScope: "user-b" }), value("B1"));
+    await cache.set(key("b two", { userScope: "user-b" }), value("B2"));
+
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(2);
+
+    expect(await cache.get(key("a one", { userScope: "user-a" }))).toBeUndefined();
+    expect(await cache.get(key("a two", { userScope: "user-a" }))).toBeUndefined();
+    expect((await cache.get(key("b one", { userScope: "user-b" })))?.text).toBe(
+      "B1",
+    );
+    expect((await cache.get(key("b two", { userScope: "user-b" })))?.text).toBe(
+      "B2",
+    );
+    // The backing store no longer holds the erased user's documents.
+    const collections = await store.listCollections();
+    const remaining = await Promise.all(collections.map((c) => store.count(c)));
+    expect(remaining.reduce((a, b) => a + b, 0)).toBe(2);
+    // Erasing the same user again removes nothing.
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(0);
+  });
+
+  it("reports erasure as unsupported when the store cannot delete", async () => {
+    const storeWithoutDelete = {
+      upsert: async () => {},
+      query: async () => [],
+      deleteCollection: async () => 0,
+      count: async () => 0,
+      listCollections: async () => [],
+      listDocuments: async () => [],
+    } as unknown as InMemoryRagStore;
+    const cache = mustCreateSemanticCache(
+      { enabled: true },
+      new FakeEmbedder({}),
+      storeWithoutDelete,
+    );
+    expect(cache.erasureSupported).toBe(false);
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(0);
+  });
+
   it("is only cacheable for deterministic, tool-free requests", () => {
     const cache = mustCreateSemanticCache(
       { enabled: true },

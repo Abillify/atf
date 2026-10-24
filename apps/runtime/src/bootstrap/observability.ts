@@ -45,7 +45,12 @@ import {
   parseEvidenceSigningKey,
   type Ed25519EvidenceKey,
 } from "../observability/evidence-key.js";
-import { RetentionService } from "../observability/retention.js";
+import {
+  RetentionService,
+  subjectUserIds,
+  type ErasureSubject,
+  type RetentionTarget,
+} from "../observability/retention.js";
 import {
   replayRetentionTarget,
   executionHistoryRetentionTarget,
@@ -66,6 +71,10 @@ import {
 import type { ReplayStore } from "../graph/replay.js";
 import type { ExecutionStore } from "../monitoring/execution-store.js";
 import type { PiiVaultStore } from "../graph/pii-vault.js";
+import {
+  SINGLE_TENANT_SCOPE,
+  type SemanticCache,
+} from "../graph/semantic-cache.js";
 
 export interface ObservabilityResult {
   metrics: Metrics;
@@ -89,6 +98,39 @@ export interface ObservabilityResult {
   evidenceKey: Ed25519EvidenceKey | undefined;
 }
 
+/**
+ * Retention target for the semantic cache. Cached answers are keyed by tenant
+ * and user (plus model, context and sampling params), so a subject is resolved
+ * to the user identifiers it carries — the same resolution the other in-process
+ * targets use — and every entry of those users is removed. A subject without
+ * user identifiers erases nothing, because the cache cannot enumerate the users
+ * of a tenant.
+ *
+ * When the backing store cannot delete entries, the target keeps reporting the
+ * gap instead of claiming an erasure it cannot perform.
+ */
+export function semanticCacheRetentionTarget(
+  cache: SemanticCache,
+): RetentionTarget {
+  if (cache.erasureSupported === false) {
+    return {
+      name: "semantic_cache",
+      erasureGap: "the configured vector store cannot delete entries",
+    };
+  }
+  return {
+    name: "semantic_cache",
+    eraseSubject: async (subject: ErasureSubject): Promise<number> => {
+      const tenantScope = subject.tenantId?.trim() || SINGLE_TENANT_SCOPE;
+      let erased = 0;
+      for (const userId of subjectUserIds(subject)) {
+        erased += await cache.eraseUser(tenantScope, userId);
+      }
+      return erased;
+    },
+  };
+}
+
 export function buildObservability(
   config: AppConfig,
   logger: Logger,
@@ -98,12 +140,18 @@ export function buildObservability(
     replayStore,
     memoryStore,
     piiVaultStore,
+    semanticCache,
     metrics: metricsOption,
   }: {
     executionStore?: ExecutionStore;
     replayStore?: ReplayStore;
     memoryStore?: MemoryStore;
     piiVaultStore?: PiiVaultStore;
+    /**
+     * Active semantic cache, registered as an erasure target so a
+     * right-to-be-forgotten run removes that user's cached answers too.
+     */
+    semanticCache?: SemanticCache;
     /**
      * Pre-built metrics registry. index.ts creates metrics before the cache
      * bundle (the memory extractor reports degradations through them,
@@ -288,14 +336,8 @@ export function buildObservability(
         autopilotRunRetentionTarget(database),
       );
     }
-    if (config.semanticCacheEnabled === true) {
-      targets.push(
-        uncoveredRetentionTarget(
-          "semantic_cache",
-          "semantic-cache entries are keyed by tenant and prompt, not by user; " +
-            "they expire after SEMANTIC_CACHE_TTL_SECONDS",
-        ),
-      );
+    if (semanticCache !== undefined) {
+      targets.push(semanticCacheRetentionTarget(semanticCache));
     }
     if (executionStore !== undefined)
       targets.push(executionHistoryRetentionTarget(executionStore));

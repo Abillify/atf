@@ -27,6 +27,11 @@ releases:
   a long shared system prompt could produce hits between different questions or
   across users with different document access.
 
+### Fixed
+
+- **Runtime** (erasure): the semantic cache is erased per user, so erasure
+  reports no longer turn `partial` because of it.
+
 ## [0.19.3] - 2026-10-24
 
 ### Added

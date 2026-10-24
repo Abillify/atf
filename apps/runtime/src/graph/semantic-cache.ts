@@ -176,6 +176,14 @@ export class InMemoryVectorStore {
   private readonly byNamespace = new Map<string, Map<string, VectorEntry>>();
   private seq = 0;
 
+  /**
+   * Notified whenever an entry leaves the store on its own — an expired entry
+   * met during a search, or an entry dropped by the size cap. An owner that
+   * keeps its own per-entry bookkeeping uses this to stay in sync, so that
+   * bookkeeping cannot outlive the entries it describes.
+   */
+  onRemoval?: (namespace: string, key: string) => void;
+
   constructor(private readonly maxEntries = 500) {
     this.maxEntries = Math.max(1, maxEntries);
   }
@@ -195,6 +203,7 @@ export class InMemoryVectorStore {
     for (const [key, entry] of bucket) {
       if (now > entry.expiresAt) {
         bucket.delete(key);
+        this.onRemoval?.(namespace, key);
         continue;
       }
       const sim = cosineSimilarity(vector, entry.vector);
@@ -256,9 +265,23 @@ export class InMemoryVectorStore {
       if (lruNs === undefined || lruKey === undefined) break;
       const bucket = this.byNamespace.get(lruNs);
       bucket?.delete(lruKey);
+      this.onRemoval?.(lruNs, lruKey);
       if (bucket !== undefined && bucket.size === 0)
         this.byNamespace.delete(lruNs);
     }
+  }
+
+  /**
+   * Deletes the listed keys of one namespace and returns how many were really
+   * there. Namespaces left empty are dropped.
+   */
+  deleteKeys(namespace: string, keys: Iterable<string>): number {
+    const bucket = this.byNamespace.get(namespace);
+    if (bucket === undefined) return 0;
+    let removed = 0;
+    for (const key of keys) if (bucket.delete(key)) removed++;
+    if (bucket.size === 0) this.byNamespace.delete(namespace);
+    return removed;
   }
 }
 
@@ -298,6 +321,18 @@ export interface SemanticCache {
   get(input: SemanticCacheKeyInput): Promise<CachedResponse | undefined>;
   set(input: SemanticCacheKeyInput, value: CachedResponse): Promise<void>;
   isCacheable(opts: { hasTools: boolean; temperature?: number }): boolean;
+  /**
+   * Deletes every entry stored for one user of one tenant and returns the
+   * number of entries removed. Scopes match exactly what `get`/`set` used: the
+   * same `tenantScope` and `userScope`, across all models, contexts and cached
+   * questions of that user. Entries that already expired do not count.
+   */
+  eraseUser(tenantScope: string, userScope: string): Promise<number>;
+  /**
+   * False when the backing store cannot delete entries, so {@link eraseUser}
+   * cannot honour an erasure request. Omitted (treated as supported) otherwise.
+   */
+  readonly erasureSupported?: boolean;
 }
 
 /**
@@ -320,9 +355,29 @@ function namespaceOf(input: SemanticCacheKeyInput): string {
   });
 }
 
+/** Separator that cannot appear in a namespace or entry key. */
+const SCOPE_SEP = "\u0000";
+
+/** Index key of one user inside one tenant. */
+function userIndexKey(tenantScope: string, userScope: string): string {
+  return `${tenantScope}${SCOPE_SEP}${userScope}`;
+}
+
+/** Index member identifying one stored entry. */
+function entryIndexKey(namespace: string, key: string): string {
+  return `${namespace}${SCOPE_SEP}${key}`;
+}
+
 class SemanticCacheImpl implements SemanticCache {
   readonly enabled = true;
   private keySeq = 0;
+
+  /**
+   * `tenantScope|userScope` -> the entries written for that user, so an
+   * erasure can find them again: namespaces also contain the context hash, the
+   * model and the sampling params, which an erasure request does not know.
+   */
+  private readonly byUser = new Map<string, Set<string>>();
 
   constructor(
     private readonly embedder: Embedder,
@@ -330,7 +385,22 @@ class SemanticCacheImpl implements SemanticCache {
     private readonly threshold: number,
     private readonly ttlSeconds: number,
     private readonly logger?: Logger,
-  ) {}
+  ) {
+    // Entries also leave on their own (TTL, size cap); drop them from the
+    // erasure index too so it cannot grow past the cache itself.
+    store.onRemoval = (namespace, key) => {
+      this.forget(entryIndexKey(namespace, key));
+    };
+  }
+
+  /** Removes one entry from every user bucket of the erasure index. */
+  private forget(entryKey: string): void {
+    for (const [userKey, entries] of this.byUser) {
+      if (entries.delete(entryKey) && entries.size === 0) {
+        this.byUser.delete(userKey);
+      }
+    }
+  }
 
   async get(input: SemanticCacheKeyInput): Promise<CachedResponse | undefined> {
     if (input.text.trim().length === 0) return undefined;
@@ -352,18 +422,46 @@ class SemanticCacheImpl implements SemanticCache {
     if (value.text.length === 0 || input.text.trim().length === 0) return;
     try {
       const vector = await this.embedder.embed(input.text);
-      this.store.insert(
-        namespaceOf(input),
-        `e${++this.keySeq}`,
-        vector,
-        value,
-        this.ttlSeconds,
-      );
+      const namespace = namespaceOf(input);
+      const key = `e${++this.keySeq}`;
+      this.store.insert(namespace, key, vector, value, this.ttlSeconds);
+      const userKey = userIndexKey(input.tenantScope, input.userScope);
+      let entries = this.byUser.get(userKey);
+      if (entries === undefined) {
+        entries = new Set<string>();
+        this.byUser.set(userKey, entries);
+      }
+      entries.add(entryIndexKey(namespace, key));
     } catch (err) {
       this.logger?.warn("Semantic cache set failed", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  async eraseUser(tenantScope: string, userScope: string): Promise<number> {
+    const entries = this.byUser.get(userIndexKey(tenantScope, userScope));
+    if (entries === undefined || entries.size === 0) return 0;
+    const byNamespace = new Map<string, string[]>();
+    for (const entryKey of entries) {
+      const sep = entryKey.indexOf(SCOPE_SEP);
+      const namespace = entryKey.slice(0, sep);
+      const key = entryKey.slice(sep + SCOPE_SEP.length);
+      const keys = byNamespace.get(namespace);
+      if (keys === undefined) byNamespace.set(namespace, [key]);
+      else keys.push(key);
+    }
+    this.byUser.delete(userIndexKey(tenantScope, userScope));
+    let removed = 0;
+    for (const [namespace, keys] of byNamespace) {
+      removed += this.store.deleteKeys(namespace, keys);
+    }
+    this.logger?.debug("Semantic cache erased entries for a user", {
+      tenantScope,
+      userScope,
+      erased: removed,
+    });
+    return removed;
   }
 
   isCacheable(opts: { hasTools: boolean; temperature?: number }): boolean {
@@ -443,6 +541,20 @@ class VectorStoreSemanticCache implements SemanticCache {
   /** Last purge time per collection (ms) — throttles the opportunistic sweep. */
   private readonly lastPurgeAt = new Map<string, number>();
 
+  /**
+   * `tenantScope|userScope` -> the documents written for that user
+   * (`collection|id`). The collection name is a hash over the whole namespace,
+   * which also contains the context hash, model and sampling params, so an
+   * erasure request cannot derive it from the user alone.
+   */
+  private readonly byUser = new Map<string, Set<string>>();
+
+  /**
+   * False when the injected store has no way of deleting documents, which
+   * makes per-user erasure impossible.
+   */
+  readonly erasureSupported: boolean;
+
   constructor(
     private readonly embedder: Embedder,
     private readonly store: VectorStore,
@@ -461,7 +573,22 @@ class VectorStoreSemanticCache implements SemanticCache {
     private readonly maxEntries = 5000,
     /** Minimum interval between opportunistic purges of one collection (ms). */
     private readonly purgeIntervalMs = 60_000,
-  ) {}
+  ) {
+    // A store without delete support cannot honour an erasure request. The
+    // interface requires the method, but injected or partial stores may not
+    // provide it, so the capability is checked rather than assumed.
+    const deleter = (store as { deleteDocuments?: unknown }).deleteDocuments;
+    this.erasureSupported = typeof deleter === "function";
+  }
+
+  /** Removes one document from every user bucket of the erasure index. */
+  private forget(entryKey: string): void {
+    for (const [userKey, entries] of this.byUser) {
+      if (entries.delete(entryKey) && entries.size === 0) {
+        this.byUser.delete(userKey);
+      }
+    }
+  }
 
   /**
    * Opportunistic, throttled purge of a namespace collection: deletes entries
@@ -495,6 +622,9 @@ class VectorStoreSemanticCache implements SemanticCache {
       }
       if (expiredIds.length > 0) {
         await this.store.deleteDocuments(collection, expiredIds);
+        for (const id of expiredIds) {
+          this.forget(entryIndexKey(collection, id));
+        }
         this.logger?.debug("Semantic cache (vector) purged entries", {
           collection,
           removed: expiredIds.length,
@@ -554,7 +684,8 @@ class VectorStoreSemanticCache implements SemanticCache {
         .createHash("sha256")
         .update(`${namespaceOf(input)}\u0000${input.text}`)
         .digest("hex");
-      await this.store.upsert(this.collection(input), [
+      const collection = this.collection(input);
+      await this.store.upsert(collection, [
         {
           id,
           text: input.text,
@@ -565,14 +696,55 @@ class VectorStoreSemanticCache implements SemanticCache {
           },
         },
       ]);
+      const userKey = userIndexKey(input.tenantScope, input.userScope);
+      let entries = this.byUser.get(userKey);
+      if (entries === undefined) {
+        entries = new Set<string>();
+        this.byUser.set(userKey, entries);
+      }
+      entries.add(entryIndexKey(collection, id));
       // Fire-and-forget: sweep expired/overflow entries so the shared index
       // stays bounded. Throttled per collection; never blocks the request.
-      void this.maybePurge(this.collection(input));
+      void this.maybePurge(collection);
     } catch (err) {
       this.logger?.warn("Semantic cache (vector) set failed", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  async eraseUser(tenantScope: string, userScope: string): Promise<number> {
+    if (this.erasureSupported !== true) return 0;
+    const entries = this.byUser.get(userIndexKey(tenantScope, userScope));
+    if (entries === undefined || entries.size === 0) return 0;
+    this.byUser.delete(userIndexKey(tenantScope, userScope));
+    const idsByCollection = new Map<string, string[]>();
+    for (const entryKey of entries) {
+      const sep = entryKey.indexOf(SCOPE_SEP);
+      const collection = entryKey.slice(0, sep);
+      const id = entryKey.slice(sep + SCOPE_SEP.length);
+      const ids = idsByCollection.get(collection);
+      if (ids === undefined) idsByCollection.set(collection, [id]);
+      else ids.push(id);
+    }
+    let erased = 0;
+    try {
+      for (const [collection, ids] of idsByCollection) {
+        erased += await this.store.deleteDocuments(collection, ids);
+      }
+    } catch (err) {
+      this.logger?.warn("Semantic cache (vector) erase failed", {
+        tenantScope,
+        userScope,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.logger?.debug("Semantic cache (vector) erased entries for a user", {
+      tenantScope,
+      userScope,
+      erased,
+    });
+    return erased;
   }
 
   isCacheable(opts: { hasTools: boolean; temperature?: number }): boolean {

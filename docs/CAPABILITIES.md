@@ -432,9 +432,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   `assistant_workspaces`, `cost_ledger`, `analysis_artifacts`, `rocketchat_connect_requests`,
   `autopilot_runs` (age purge only), `execution_history` (with the usage log) and
   `long_term_memory`; `RETENTION_MAX_AGE_DAYS` takes these names as keys. A store that holds
-  personal data but cannot be erased automatically (the semantic cache, or in-memory checkpoint
-  and assistant stores without `DATABASE_URL`) is listed with its gap in `GET /v1/me/data` and
-  the compliance dossier, and makes every erasure report `partial` rather than `complete`. The
+  personal data but cannot be erased automatically (in-memory checkpoint and assistant stores
+  without `DATABASE_URL`, or a semantic cache on a vector store that cannot delete entries) is
+  listed with its gap in `GET /v1/me/data` and the compliance dossier, and makes every erasure
+  report `partial` rather than `complete`. The
   audit log and `erasure_requests` are retained as accountability records.
 - **Decision receipts.** With `DECISION_RECEIPTS_ENABLED` and `RECEIPT_SIGNING_KEY`, each chat
   completion and tool call yields a signed COSE_Sign1 receipt (`GET /v1/receipts/:id`), appended

@@ -210,6 +210,7 @@ if (import.meta.main) {
     executionStore,
     memoryStore,
     piiVaultStore,
+    semanticCache,
     metrics,
   });
   const {
