@@ -18,7 +18,7 @@ controls the platform contributes.
 | Categories of data subjects | | End users, persons named in documents |
 | Data categories | | Chat content, documents, metadata, audit log |
 | Special categories (Art. 9)? | | Document content may contain Art. 9 data → check the PII-vault mode |
-| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantischer Antwort-Cache (`SEMANTIC_CACHE_ENABLED`): pro Mandant und Nutzer getrennt, Löschung je Nutzer, TTL `SEMANTIC_CACHE_TTL_SECONDS` |
+| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantischer Antwort-Cache (`SEMANTIC_CACHE_ENABLED`): pro Tenant und Nutzer getrennt, Löschung je Nutzer, TTL `SEMANTIC_CACHE_TTL_SECONDS` |
 | Retention periods | | TTLs: vault, sessions, audit — configurable. Extract keeps finished jobs (with the stored model response of every page) until `JOB_RETENTION_DAYS` (default: forever), abandoned uploads for `UPLOAD_SESSION_MAX_AGE_HOURS` (72), the derived-PDF cache by size and age; source bytes until the document is deleted or erased |
 
 → ATF: the processing overview comes from the record of processing
