@@ -28,7 +28,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 const checkOnly = process.argv.includes("--check");
 
-interface Occurrence {
+export interface Occurrence {
 	/** Repository-relative path. */
 	file: string;
 	/** Must capture exactly the version string in group 1. Global. */
@@ -48,6 +48,53 @@ const WORKSPACE_MANIFESTS = [
 	"apps/runtime/package.json",
 	"apps/search/package.json",
 	"integration/system/package.json",
+];
+
+/** The umbrella Helm chart and all of its subcharts. */
+const HELM_CHART_FILES = [
+	"deploy/helm/atf/Chart.yaml",
+	"deploy/helm/atf/charts/atf-common/Chart.yaml",
+	"deploy/helm/atf/charts/runtime/Chart.yaml",
+	"deploy/helm/atf/charts/gate/Chart.yaml",
+	"deploy/helm/atf/charts/search/Chart.yaml",
+	"deploy/helm/atf/charts/extract/Chart.yaml",
+	"deploy/helm/atf/charts/control/Chart.yaml",
+];
+
+/** Service subcharts that declare a dependency on the atf-common library chart. */
+const HELM_SUBCHART_FILES = HELM_CHART_FILES.filter(
+	(file) => file !== "deploy/helm/atf/Chart.yaml" && file !== "deploy/helm/atf/charts/atf-common/Chart.yaml",
+);
+
+/**
+ * Helm version statements that track the product version. Exported for the
+ * test, which replays them against a temporary chart tree.
+ */
+export const HELM_OCCURRENCES: Occurrence[] = [
+	...HELM_CHART_FILES.map((file) => ({
+		file,
+		pattern: /^appVersion: "(\d+\.\d+\.\d+)"$/gm,
+		label: "Helm chart appVersion",
+		expected: 1,
+	})),
+	...HELM_CHART_FILES.map((file) => ({
+		file,
+		pattern: /^version: (\d+\.\d+\.\d+)$/gm,
+		label: "Helm chart version",
+		expected: 1,
+	})),
+	{
+		file: "deploy/helm/atf/Chart.yaml",
+		pattern: /^ {4}version: (\d+\.\d+\.\d+)$/gm,
+		label: "Helm umbrella dependency version",
+		expected: 6,
+	},
+	...HELM_SUBCHART_FILES.map((file) => ({
+		file,
+		pattern: /^ {4}version: (\d+\.\d+\.\d+)$/gm,
+		label: "Helm subchart dependency version",
+		expected: 1,
+	})),
 ];
 
 const OCCURRENCES: Occurrence[] = [
@@ -125,85 +172,80 @@ const OCCURRENCES: Occurrence[] = [
 		expected: 1,
 	},
 	// Helm charts (task 16.4): the appVersion of the umbrella chart and every
-	// subchart tracks the product version, so image tags default to it.
-	...[
-		"deploy/helm/atf/Chart.yaml",
-		"deploy/helm/atf/charts/atf-common/Chart.yaml",
-		"deploy/helm/atf/charts/runtime/Chart.yaml",
-		"deploy/helm/atf/charts/gate/Chart.yaml",
-		"deploy/helm/atf/charts/search/Chart.yaml",
-		"deploy/helm/atf/charts/extract/Chart.yaml",
-		"deploy/helm/atf/charts/control/Chart.yaml",
-	].map((file) => ({
-		file,
-		pattern: /^appVersion: "(\d+\.\d+\.\d+)"$/gm,
-		label: "Helm chart appVersion",
-		expected: 1,
-	})),
+	// subchart tracks the product version, so image tags default to it. The
+	// chart `version` itself follows the product version too — helm upgrades
+	// key off it — and the dependency constraints that pin the subcharts (in
+	// the umbrella chart and the service subcharts onto atf-common) must match
+	// it, or `helm lint` refuses the vendored charts.
+	...HELM_OCCURRENCES,
 ];
 
-const manifest = JSON.parse(
-	await readFile(resolve(root, "package.json"), "utf8"),
-) as { version?: string };
-const version = manifest.version;
-if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
-	console.error("Root package.json has no usable semantic version");
-	process.exit(1);
-}
+/**
+ * Rewrite (or, with `checkOnly`, verify) every declared occurrence in `dir`
+ * to `version`. Exported for the test, which runs it against a temporary
+ * tree; the CLI path below is the only caller in production use.
+ */
+export async function syncOccurrences(
+	occurrences: Occurrence[],
+	version: string,
+	dir: string,
+	checkOnly: boolean,
+): Promise<{ problems: string[]; rewritten: string[] }> {
+	const problems: string[] = [];
+	const rewritten: string[] = [];
 
-const problems: string[] = [];
-const rewritten: string[] = [];
-
-// Files are grouped so several occurrences in one file produce one write.
-const byFile = new Map<string, Occurrence[]>();
-for (const occurrence of OCCURRENCES) {
-	const list = byFile.get(occurrence.file) ?? [];
-	list.push(occurrence);
-	byFile.set(occurrence.file, list);
-}
-
-for (const [file, occurrences] of byFile) {
-	const path = resolve(root, file);
-	let text: string;
-	try {
-		text = await readFile(path, "utf8");
-	} catch {
-		problems.push(`${file}: cannot read (occurrence list is stale)`);
-		continue;
-	}
-	let updated = text;
+	// Files are grouped so several occurrences in one file produce one write.
+	const byFile = new Map<string, Occurrence[]>();
 	for (const occurrence of occurrences) {
-		const pattern = new RegExp(
-			occurrence.pattern.source,
-			occurrence.pattern.flags.includes("g")
-				? occurrence.pattern.flags
-				: `${occurrence.pattern.flags}g`,
-		);
-		const matches = [...updated.matchAll(pattern)];
-		if (occurrence.expected > 0 && matches.length !== occurrence.expected) {
-			problems.push(
-				`${file}: expected ${occurrence.expected} occurrence(s) of ${occurrence.label}, found ${matches.length} — the file changed shape, update scripts/check-product-version.ts`,
-			);
+		const list = byFile.get(occurrence.file) ?? [];
+		list.push(occurrence);
+		byFile.set(occurrence.file, list);
+	}
+
+	for (const [file, fileOccurrences] of byFile) {
+		const path = resolve(dir, file);
+		let text: string;
+		try {
+			text = await readFile(path, "utf8");
+		} catch {
+			problems.push(`${file}: cannot read (occurrence list is stale)`);
 			continue;
 		}
-		// Rewrite back to front: each replacement can change the text length
-		// (e.g. 0.9.2 → 0.10.0), which would shift the offsets of later matches.
-		for (const match of [...matches].reverse()) {
-			const found = match[1];
-			if (found === version) continue;
-			if (checkOnly) {
+		let updated = text;
+		for (const occurrence of fileOccurrences) {
+			const pattern = new RegExp(
+				occurrence.pattern.source,
+				occurrence.pattern.flags.includes("g")
+					? occurrence.pattern.flags
+					: `${occurrence.pattern.flags}g`,
+			);
+			const matches = [...updated.matchAll(pattern)];
+			if (occurrence.expected > 0 && matches.length !== occurrence.expected) {
 				problems.push(
-					`${file}: ${occurrence.label} declares ${found}, root package.json declares ${version}`,
+					`${file}: expected ${occurrence.expected} occurrence(s) of ${occurrence.label}, found ${matches.length} — the file changed shape, update scripts/check-product-version.ts`,
 				);
-			} else {
-				// Replace only the captured span, so surrounding text is untouched.
-				const start = match.index + match[0].indexOf(found);
-				updated = `${updated.slice(0, start)}${version}${updated.slice(start + found.length)}`;
-				rewritten.push(`${file}: ${occurrence.label} ${found} → ${version}`);
+				continue;
+			}
+			// Rewrite back to front: each replacement can change the text length
+			// (e.g. 0.9.2 → 0.10.0), which would shift the offsets of later matches.
+			for (const match of [...matches].reverse()) {
+				const found = match[1];
+				if (found === version) continue;
+				if (checkOnly) {
+					problems.push(
+						`${file}: ${occurrence.label} declares ${found}, root package.json declares ${version}`,
+					);
+				} else {
+					// Replace only the captured span, so surrounding text is untouched.
+					const start = match.index + match[0].indexOf(found);
+					updated = `${updated.slice(0, start)}${version}${updated.slice(start + found.length)}`;
+					rewritten.push(`${file}: ${occurrence.label} ${found} → ${version}`);
+				}
 			}
 		}
+		if (!checkOnly && updated !== text) await writeFile(path, updated, "utf8");
 	}
-	if (!checkOnly && updated !== text) await writeFile(path, updated, "utf8");
+	return { problems, rewritten };
 }
 
 // Contract packages (Requirement 11.5): the package version must cover the
@@ -259,94 +301,120 @@ const CONTRACT_PACKAGES: ContractCheck[] = [
 	},
 ];
 
-for (const contract of CONTRACT_PACKAGES) {
-	const manifestPath = resolve(root, contract.dir, "package.json");
-	const sourcePath = resolve(root, contract.source);
-	let pkgVersion: string | undefined;
-	let wireVersion: string | undefined;
-	try {
-		pkgVersion = (
-			JSON.parse(await readFile(manifestPath, "utf8")) as { version?: string }
-		).version;
-		const source = await readFile(sourcePath, "utf8");
-		wireVersion = new RegExp(
-			`export const ${contract.constant}\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"`,
-		).exec(source)?.[1];
-	} catch {
-		problems.push(
-			`${contract.dir}: cannot read manifest or ${contract.source} — contract list is stale`,
-		);
-		continue;
+/**
+ * Command-line entry point: resolve the product version, sync or verify every
+ * declared occurrence, then check the contract packages and the architecture
+ * table. Guarded by `import.meta.main` at the bottom of this file so the test
+ * can import `syncOccurrences` without running the CLI.
+ */
+async function main(): Promise<void> {
+	const manifest = JSON.parse(
+		await readFile(resolve(root, "package.json"), "utf8"),
+	) as { version?: string };
+	const version = manifest.version;
+	if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
+		console.error("Root package.json has no usable semantic version");
+		process.exit(1);
 	}
-	if (wireVersion === undefined) {
-		problems.push(
-			`${contract.source}: no \`export const ${contract.constant} = "<semver>"\` found — update scripts/check-product-version.ts`,
-		);
-		continue;
-	}
-	if (pkgVersion !== undefined && coversWire(pkgVersion, wireVersion)) continue;
-	if (checkOnly) {
-		problems.push(
-			`${contract.dir}: package version ${pkgVersion} is below wire constant ${contract.constant} = "${wireVersion}" (package major.minor must be >= wire major.minor)`,
-		);
-	} else {
-		// The manifest lags behind the wire promise: raise it to the wire value
-		// (never lowers a version).
-		const manifestText = await readFile(manifestPath, "utf8");
-		const updated = manifestText.replace(
-			/("version"\s*:\s*")(\d+\.\d+\.\d+)(")/,
-			`$1${wireVersion}$3`,
-		);
-		await writeFile(manifestPath, updated, "utf8");
-		rewritten.push(
-			`${contract.dir}: package version ${pkgVersion} → ${wireVersion} (from ${contract.constant})`,
-		);
-	}
-}
 
-// The contract table in ARCHITECTURE.md repeats each package version. Compare
-// the "Package version" column with the manifests so the table cannot drift
-// (the wire column is not checked here; the loop above covers the constants).
-{
-	const architecture = await readFile(resolve(root, "ARCHITECTURE.md"), "utf8");
-	const rows = [
-		...architecture.matchAll(
-			/^\|\s*`@atf\/([a-z0-9-]+)`\s*\|\s*(\d+\.\d+\.\d+)\s*\|/gm,
-		),
-	];
-	for (const [, name, listed] of rows) {
-		let actual: string | undefined;
+	const { problems, rewritten } = await syncOccurrences(
+		OCCURRENCES,
+		version,
+		root,
+		checkOnly,
+	);
+
+	for (const contract of CONTRACT_PACKAGES) {
+		const manifestPath = resolve(root, contract.dir, "package.json");
+		const sourcePath = resolve(root, contract.source);
+		let pkgVersion: string | undefined;
+		let wireVersion: string | undefined;
 		try {
-			actual = (
-				JSON.parse(
-					await readFile(resolve(root, "packages", name ?? "", "package.json"), "utf8"),
-				) as { version?: string }
+			pkgVersion = (
+				JSON.parse(await readFile(manifestPath, "utf8")) as { version?: string }
 			).version;
+			const source = await readFile(sourcePath, "utf8");
+			wireVersion = new RegExp(
+				`export const ${contract.constant}\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"`,
+			).exec(source)?.[1];
 		} catch {
-			problems.push(`ARCHITECTURE.md lists @atf/${name}, but packages/${name}/package.json cannot be read`);
+			problems.push(
+				`${contract.dir}: cannot read manifest or ${contract.source} — contract list is stale`,
+			);
 			continue;
 		}
-		if (actual !== listed) {
-			problems.push(`ARCHITECTURE.md lists @atf/${name} ${listed}, package.json has ${actual}`);
+		if (wireVersion === undefined) {
+			problems.push(
+				`${contract.source}: no \`export const ${contract.constant} = "<semver>"\` found — update scripts/check-product-version.ts`,
+			);
+			continue;
+		}
+		if (pkgVersion !== undefined && coversWire(pkgVersion, wireVersion)) continue;
+		if (checkOnly) {
+			problems.push(
+				`${contract.dir}: package version ${pkgVersion} is below wire constant ${contract.constant} = "${wireVersion}" (package major.minor must be >= wire major.minor)`,
+			);
+		} else {
+			// The manifest lags behind the wire promise: raise it to the wire value
+			// (never lowers a version).
+			const manifestText = await readFile(manifestPath, "utf8");
+			const updated = manifestText.replace(
+				/("version"\s*:\s*")(\d+\.\d+\.\d+)(")/,
+				`$1${wireVersion}$3`,
+			);
+			await writeFile(manifestPath, updated, "utf8");
+			rewritten.push(
+				`${contract.dir}: package version ${pkgVersion} → ${wireVersion} (from ${contract.constant})`,
+			);
 		}
 	}
-	if (rows.length === 0) {
-		problems.push("ARCHITECTURE.md: contract package table not found — update scripts/check-product-version.ts");
+
+	// The contract table in ARCHITECTURE.md repeats each package version. Compare
+	// the "Package version" column with the manifests so the table cannot drift
+	// (the wire column is not checked here; the loop above covers the constants).
+	{
+		const architecture = await readFile(resolve(root, "ARCHITECTURE.md"), "utf8");
+		const rows = [
+			...architecture.matchAll(
+				/^\|\s*`@atf\/([a-z0-9-]+)`\s*\|\s*(\d+\.\d+\.\d+)\s*\|/gm,
+			),
+		];
+		for (const [, name, listed] of rows) {
+			let actual: string | undefined;
+			try {
+				actual = (
+					JSON.parse(
+						await readFile(resolve(root, "packages", name ?? "", "package.json"), "utf8"),
+					) as { version?: string }
+				).version;
+			} catch {
+				problems.push(`ARCHITECTURE.md lists @atf/${name}, but packages/${name}/package.json cannot be read`);
+				continue;
+			}
+			if (actual !== listed) {
+				problems.push(`ARCHITECTURE.md lists @atf/${name} ${listed}, package.json has ${actual}`);
+			}
+		}
+		if (rows.length === 0) {
+			problems.push("ARCHITECTURE.md: contract package table not found — update scripts/check-product-version.ts");
+		}
 	}
-}
 
-if (problems.length > 0) {
-	console.error(
-		`Product version is ${version}; ${problems.length} problem(s):\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+	if (problems.length > 0) {
+		console.error(
+			`Product version is ${version}; ${problems.length} problem(s):\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+		);
+		if (checkOnly) console.error("\nRun `bun run version:sync` to fix.");
+		process.exit(1);
+	}
+
+	console.log(
+		checkOnly
+			? `Product version ${version} verified across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
+			: rewritten.length === 0
+				? `Product version ${version} already consistent across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
+				: `Synchronised:\n${rewritten.map((r) => `  - ${r}`).join("\n")}`,
 	);
-	if (checkOnly) console.error("\nRun `bun run version:sync` to fix.");
-	process.exit(1);
 }
 
-console.log(
-	checkOnly
-		? `Product version ${version} verified across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
-		: rewritten.length === 0
-			? `Product version ${version} already consistent across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
-			: `Synchronised:\n${rewritten.map((r) => `  - ${r}`).join("\n")}`,
-);
+if (import.meta.main) await main();

@@ -53,6 +53,9 @@ releases:
 - **Runtime** (presets): `secure`, `regulated` and `regulated-multitenant` no
   longer enable the semantic cache; they keep the exact response cache and the
   embedding cache. Set `SEMANTIC_CACHE_ENABLED=true` explicitly to keep it.
+- **Helm**: the chart version follows the product version (`version:sync` sets
+  it, `verify:version` checks it). Releases push the chart to
+  `oci://ghcr.io/abillify/charts/atf`, signed with cosign.
 
 ### Fixed
 

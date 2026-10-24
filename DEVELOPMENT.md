@@ -73,6 +73,7 @@ Regenerate after the relevant change, and commit the result:
 bun run spdx              # after adding source files
 bun run supply-chain      # Linux x64 only: refresh the committed workspace reference
 bun run config-reference  # after adding or changing a configuration variable
+bun run version:sync      # after a release bump: rewrites every stated version, including the Helm chart `version` and its dependency constraints, to the root package version
 ```
 
 The root notices and SBOM are the committed Linux x64 workspace reference; do not regenerate
