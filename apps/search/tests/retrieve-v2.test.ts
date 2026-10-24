@@ -88,6 +88,8 @@ describe("POST /v2/retrieve", () => {
       { include_all_versions: "yes" },
       { valid_at: "yesterday" },
       { collection: "other" },
+      { decomposition: "magic" },
+      { decomposition: 7 },
     ]) {
       const res = await request(app).post("/v2/retrieve").set(auth).send({ question, ...extra });
       expect(res.status, JSON.stringify(extra)).toBe(400);
@@ -103,11 +105,27 @@ describe("POST /v2/retrieve", () => {
     expect(res.status).toBe(200);
     expect(res.body.subqueries).toHaveLength(3);
     expect(search).toHaveBeenCalledTimes(3);
-    expect(res.body).toMatchObject({ budget_tokens: 4000, truncated: false, content_trust: "untrusted", injection_risk: "suspected" });
+    expect(res.body).toMatchObject({
+      budget_tokens: 4000,
+      truncated: false,
+      content_trust: "untrusted",
+      injection_risk: "suspected",
+      decomposition: "rules",
+    });
     const ids = res.body.evidence.map((e: { id: string }) => e.id);
     expect(ids.sort()).toEqual(["a", "b"]);
     expect(res.body.evidence.find((e: { id: string }) => e.id === "b").injection_risk).toBe("suspected");
     expect(res.body.evidence.find((e: { id: string }) => e.id === "a").injection_risk).toBe("none");
+  });
+
+  it("answers 200 on the rules when llm is requested but no model is configured", async () => {
+    const { app } = build();
+    const res = await request(app)
+      .post("/v2/retrieve")
+      .set(auth)
+      .send({ question: "Wie hoch ist die Miete?", decomposition: "llm" });
+    expect(res.status).toBe(200);
+    expect(res.body.decomposition).toBe("rules");
   });
 
   it("takes the collection from X-Collection and accepts an equal body collection", async () => {

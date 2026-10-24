@@ -56,6 +56,7 @@ import {
 } from "./reranker-client.js";
 import { createSparseEmbeddingClient } from "./sparse-embedding-client.js";
 import { createHydeClient } from "./hyde-client.js";
+import { createDecomposeClient } from "./decompose-client.js";
 import { createSummaryClient } from "./summary-client.js";
 import {
   createPostgresClient,
@@ -498,6 +499,21 @@ export function createApp(
         })
       : null;
 
+  // Optional model-based question decomposition for retrieve_for_answer;
+  // null keeps the rule-based split. The cache TTL follows the HyDE knob.
+  const decomposeClient =
+    config.retrieveDecomposeUrl !== null && config.retrieveDecomposeModel !== null
+      ? createDecomposeClient({
+          url: config.retrieveDecomposeUrl,
+          model: config.retrieveDecomposeModel,
+          token: config.retrieveDecomposeToken,
+          timeoutMs: config.retrieveDecomposeTimeoutMs,
+          maxTokens: config.retrieveDecomposeMaxTokens,
+          cacheTtlMs: config.hydeCacheTtlSeconds * 1000,
+          logger,
+        })
+      : null;
+
   const summaryClient =
     config.summaryModel && summaryBreaker
       ? createSummaryClient({
@@ -693,6 +709,7 @@ export function createApp(
       sparseClient,
       queryCache,
       tokenCounter: unitTokenCounter,
+      decomposeClient,
       maxQueryChars: config.maxQueryChars,
     },
   );
@@ -910,6 +927,7 @@ export function createApp(
     chunkingOptions: mcpChunkingOptions,
     summaryClient,
     hydeClient,
+    decomposeClient,
     serviceName: config.mcpServiceName,
     serviceVersion: config.mcpServiceVersion,
     embeddingModel: config.embedModel,

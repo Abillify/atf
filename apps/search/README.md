@@ -93,19 +93,23 @@ The response is `{ results: [...] }`. Each hit carries `score`, `unit_id`, `unit
 ### Answer-ready retrieval
 
 `retrieve_for_answer` (MCP) and `POST /v2/retrieve` (HTTP) turn a question into the evidence that
-fits a model's context in one call. No model takes part, so the same question over the same index
-gives the same answer.
+fits a model's context in one call. By default no model takes part, so the same question over the
+same index gives the same answer; `decomposition: "llm"` opts into a model-based split when one is
+configured.
 
 | Field | Meaning |
 | --- | --- |
 | `question` | Required. Cut at `SEARCH_MAX_QUERY_CHARS` like any query (`query_truncated`). |
 | `budget_tokens` | 256–32000, default 4000. Counted with the tokenizer of the embedding model (character heuristic when unavailable). |
 | `max_subqueries` | 1–6, default 4; the original question counts. |
+| `decomposition` | `"rules"` (default) or `"llm"`. `llm` asks the model behind `RETRIEVE_DECOMPOSE_URL`/`RETRIEVE_DECOMPOSE_MODEL` for the split; without a configured model, or when its answer is unusable, the rules apply and the response still says `"rules"`. |
 | `filter`, `path_prefix`, `valid_at`, `include_all_versions` | As on `search`. HTTP also takes the collection from `X-Collection` (default `documents`) and `X-Valid-At`. |
 
-How it works: the question is cut at `?`, `;` and the conjunctions ` und `, ` sowie `, ` and `,
-` as well as ` where both sides have at least three words, and duplicates are dropped; the
-original always comes first. Each part is searched (hybrid, 20 hits, up to 4 at a time, no
+How it works: by default the question is cut at `?`, `;` and the conjunctions ` und `, ` sowie `,
+` and `, ` as well as ` where both sides have at least three words, and duplicates are dropped;
+the original always comes first. With `decomposition: "llm"` a configured model proposes the parts
+instead (answers are cached per tenant like HyDE generations); its parts are merged behind the
+original, and an unusable answer falls back to the rule-based split. Each part is searched (hybrid, 20 hits, up to 4 at a time, no
 rerank, no grouping), and the ranked lists are fused by reciprocal rank (`Σ 1/(60+rank)`). A
 repeated chunk and a near-duplicate text (equal first 512 characters after case and whitespace
 folding) collapse to the higher-fused one. When a reranker is configured the top 50 are reranked
@@ -114,8 +118,8 @@ document; one that does not fit is skipped, never cut, and packing stops looking
 64 tokens remain after a skip.
 
 The answer carries `question`, `subqueries`, `budget_tokens`, `used_tokens`, `truncated` (candidates
-were left out because they did not fit), `reranked`, `content_trust: "untrusted"`, `injection_risk`
-and `evidence[]` with `id`, `reference`, `base_ref`, `title`, `section`, `page_start`/`page_end`,
+were left out because they did not fit), `reranked`, `decomposition` (the split actually used),
+`content_trust: "untrusted"`, `injection_risk` and `evidence[]` with `id`, `reference`, `base_ref`, `title`, `section`, `page_start`/`page_end`,
 `content`, `score`, `matched_subqueries` and the same labels per passage. A failing sub-question only
 narrows the recall; a failing original question fails the call.
 

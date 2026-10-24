@@ -28,6 +28,7 @@
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
 import { accessScopeForRequest } from "../access-scope.js";
+import type { DecomposeClient } from "../decompose-client.js";
 import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { EmbeddingClient } from "../embedding-client.js";
 import type { Metadata } from "../metadata.js";
@@ -55,6 +56,8 @@ export interface RetrieveV2HandlerOptions {
   sparseClient?: SparseEmbeddingClient | null;
   queryCache?: QueryEmbeddingCache | null;
   tokenCounter?: TokenCounter | null;
+  /** Model-based question decomposition; null/absent = rules only. */
+  decomposeClient?: DecomposeClient | null;
   /** SEARCH_MAX_QUERY_CHARS: an over-long question is cut at the last space before it. */
   maxQueryChars?: number;
 }
@@ -82,6 +85,7 @@ export function createRetrieveV2Handler(
   const sparseClient = options.sparseClient ?? null;
   const queryCache = options.queryCache ?? null;
   const tokenCounter = options.tokenCounter ?? null;
+  const decomposeClient = options.decomposeClient ?? null;
   const maxQueryChars = options.maxQueryChars ?? DEFAULT_MAX_QUERY_CHARS;
 
   return async (req, res, next) => {
@@ -102,6 +106,7 @@ export function createRetrieveV2Handler(
       let pathPrefix: string | undefined;
       let filter: SearchFilter | undefined;
       let validAt: string | undefined;
+      let decomposition: "rules" | "llm" | undefined;
       try {
         if (typeof body.question !== "string" || body.question.trim() === "") {
           throw new BadRequest("question must be a non-empty string");
@@ -120,6 +125,12 @@ export function createRetrieveV2Handler(
         }
         if (body.include_all_versions !== undefined && typeof body.include_all_versions !== "boolean") {
           throw new BadRequest("include_all_versions must be a boolean");
+        }
+        if (body.decomposition !== undefined) {
+          if (body.decomposition !== "rules" && body.decomposition !== "llm") {
+            throw new BadRequest('decomposition must be "rules" or "llm"');
+          }
+          decomposition = body.decomposition;
         }
         if (body.filter !== undefined && body.filter !== null) {
           if (typeof body.filter !== "object" || Array.isArray(body.filter)) {
@@ -160,7 +171,7 @@ export function createRetrieveV2Handler(
       let out: Awaited<ReturnType<typeof runRetrieveForAnswer>>;
       try {
         out = await runRetrieveForAnswer(
-          { embeddingClient, postgresClient, queryCache, sparseClient, rerankerClient, tokenCounter },
+          { embeddingClient, postgresClient, queryCache, sparseClient, rerankerClient, tokenCounter, decomposeClient },
           log,
           {
             question,
@@ -168,6 +179,7 @@ export function createRetrieveV2Handler(
             scope,
             budgetTokens,
             maxSubqueries,
+            decomposition,
             filter,
             pathPrefix,
             validAt,

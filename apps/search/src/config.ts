@@ -269,6 +269,27 @@ export interface Config {
    */
   hydeCacheTtlSeconds: number; // HYDE_CACHE_TTL_SECONDS (default: 600)
 
+  // ── Model-based question decomposition (retrieve_for_answer) ────────────
+  /**
+   * Full chat-completions URL for `retrieve_for_answer` decomposition.
+   * Empty (default) disables the feature and the rule-based split applies.
+   */
+  retrieveDecomposeUrl: string | null; // RETRIEVE_DECOMPOSE_URL (optional)
+  /** Model for the decomposition call. Required when the URL is set. */
+  retrieveDecomposeModel: string | null; // RETRIEVE_DECOMPOSE_MODEL (optional)
+  /**
+   * Bearer token sent as `Authorization: Bearer <token>` on decomposition
+   * HTTP calls. null = no header.
+   */
+  retrieveDecomposeToken: string | null; // RETRIEVE_DECOMPOSE_TOKEN (optional)
+  /**
+   * Per-call timeout for the decomposition model in ms.
+   * 0 disables the timeout.
+   */
+  retrieveDecomposeTimeoutMs: number; // RETRIEVE_DECOMPOSE_TIMEOUT_MS (default: 4000, 0 = disabled)
+  /** Completion cap for the decomposition call in tokens. */
+  retrieveDecomposeMaxTokens: number; // RETRIEVE_DECOMPOSE_MAX_TOKENS (default: 200)
+
   // ── Document summarization (ingest-time context prefix) ──────────────────
   /** URL of the chat-completions server for summarization. Default: EMBED_URL. */
   summaryUrl: string; // SUMMARY_URL (default: EMBED_URL)
@@ -1538,6 +1559,23 @@ export function loadConfig(): Config {
   const hydeModel = optionalString("HYDE_MODEL");
   const hydeToken = optionalString("HYDE_TOKEN");
   const hydeCacheTtlSeconds = parseNonNegIntEnv("HYDE_CACHE_TTL_SECONDS", 600);
+  const retrieveDecomposeUrl = optionalString("RETRIEVE_DECOMPOSE_URL");
+  const retrieveDecomposeModel = optionalString("RETRIEVE_DECOMPOSE_MODEL");
+  const retrieveDecomposeToken = optionalString("RETRIEVE_DECOMPOSE_TOKEN");
+  // 0 disables the decomposition timeout entirely (see decompose-client.ts).
+  const retrieveDecomposeTimeoutMs = parseNonNegIntEnv(
+    "RETRIEVE_DECOMPOSE_TIMEOUT_MS",
+    4_000,
+  );
+  const retrieveDecomposeMaxTokens = parseIntEnv(
+    "RETRIEVE_DECOMPOSE_MAX_TOKENS",
+    200,
+  );
+  if (retrieveDecomposeUrl !== null && retrieveDecomposeModel === null) {
+    throw new Error(
+      "RETRIEVE_DECOMPOSE_MODEL is required when RETRIEVE_DECOMPOSE_URL is set",
+    );
+  }
   const summaryUrl = resolveUrl("SUMMARY_URL", embedUrl);
   const summaryModel = optionalString("SUMMARY_MODEL");
   const summaryToken = optionalString("SUMMARY_TOKEN");
@@ -1751,6 +1789,11 @@ export function loadConfig(): Config {
     hydeEnableThinking,
     hydeToken,
     hydeCacheTtlSeconds,
+    retrieveDecomposeUrl,
+    retrieveDecomposeModel,
+    retrieveDecomposeToken,
+    retrieveDecomposeTimeoutMs,
+    retrieveDecomposeMaxTokens,
     summaryUrl,
     summaryModel,
     summaryMaxTokens,

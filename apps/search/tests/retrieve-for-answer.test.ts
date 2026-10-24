@@ -314,4 +314,45 @@ describe("retrieveForAnswer", () => {
     expect(out.subqueries).toHaveLength(1);
     expect(out.budget_tokens).toBe(256);
   });
+
+  it("names the rules as the method by default", async () => {
+    const { deps: d } = deps();
+    const out = await retrieveForAnswer(d, { question });
+    expect(out.decomposition).toBe("rules");
+  });
+
+  it("uses model parts with the original first and names llm as the method", async () => {
+    const decompose = vi.fn(async () => ["Pflichtfelder in Maske M-2", "Rechte fuer Benutzer"]);
+    const { deps: d, calls } = deps({ decompose });
+    const out = await retrieveForAnswer(d, { question, decomposition: "llm", tenantId: "tenant-a" });
+    expect(decompose).toHaveBeenCalledWith(question, 4, "tenant-a");
+    expect(out.subqueries).toEqual([
+      question,
+      "Pflichtfelder in Maske M-2",
+      "Rechte fuer Benutzer",
+    ]);
+    expect(calls.map((c) => c.query)).toEqual(out.subqueries);
+    expect(out.decomposition).toBe("llm");
+  });
+
+  it("merges model parts behind the original without duplicates and caps at max_subqueries", async () => {
+    const decompose = async () => [question, "Erste neue Teilfrage", "Zweite neue Teilfrage"];
+    const { deps: d } = deps({ decompose });
+    const out = await retrieveForAnswer(d, { question, decomposition: "llm", maxSubqueries: 2 });
+    expect(out.subqueries).toEqual([question, "Erste neue Teilfrage"]);
+    expect(out.decomposition).toBe("llm");
+  });
+
+  it("falls back to the rules when the model answer is unusable", async () => {
+    const { deps: d } = deps({ decompose: async () => undefined });
+    const out = await retrieveForAnswer(d, { question, decomposition: "llm" });
+    expect(out.decomposition).toBe("rules");
+    expect(out.subqueries).toHaveLength(3);
+  });
+
+  it("stays on the rules when llm is requested but no client is wired", async () => {
+    const { deps: d } = deps();
+    const out = await retrieveForAnswer(d, { question, decomposition: "llm" });
+    expect(out.decomposition).toBe("rules");
+  });
 });

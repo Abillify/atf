@@ -15,6 +15,7 @@
 
 import type { Logger } from "pino";
 import type { AccessScope } from "../access-scope.js";
+import type { DecomposeClient } from "../decompose-client.js";
 import { prepareFtsContent } from "../postgres-client.js";
 import type { SearchFilter } from "../postgres-client.js";
 import type { SearchResult } from "../pg-types.js";
@@ -29,6 +30,7 @@ import {
 } from "./retrieval-pipeline.js";
 import {
   retrieveForAnswer,
+  type DecompositionMethod,
   type RetrieveForAnswerDeps,
   type RetrieveForAnswerOutput,
 } from "../retrieve-for-answer.js";
@@ -46,10 +48,14 @@ export interface RetrieveRequest {
   includeAllVersions?: boolean | undefined;
   hybrid: boolean;
   candidateMultiplier: number;
+  /** `"llm"` asks the decomposition model first; anything else uses the rules. */
+  decomposition?: DecompositionMethod | undefined;
 }
 
 export interface RetrieveServiceClients extends RetrievalClients {
   tokenCounter?: TokenCounter | null;
+  /** Model-based question decomposition; null/absent = rules only. */
+  decomposeClient?: DecomposeClient | null;
 }
 
 /** The pipeline-backed collaborators of {@link retrieveForAnswer} for one request. */
@@ -99,6 +105,19 @@ export function retrieveDeps(
           },
         }
       : {}),
+    ...(clients.decomposeClient
+      ? {
+          decompose: (
+            question: string,
+            maxSubqueries: number,
+            tenantId?: string,
+          ): Promise<string[] | undefined> => {
+            const decomposeClient = clients.decomposeClient;
+            if (decomposeClient == null) return Promise.resolve(undefined);
+            return decomposeClient.decompose(question, maxSubqueries, tenantId);
+          },
+        }
+      : {}),
     countTokens: async (text: string): Promise<number> =>
       tokenCounter !== null ? tokenCounter.count(text) : heuristicTokenCount(text),
   };
@@ -113,5 +132,7 @@ export async function runRetrieveForAnswer(
     question: req.question,
     budgetTokens: req.budgetTokens,
     maxSubqueries: req.maxSubqueries,
+    decomposition: req.decomposition,
+    tenantId: req.scope.tenantId,
   });
 }

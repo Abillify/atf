@@ -3332,8 +3332,10 @@ export function buildOpenApiSpec(serverUrl: string) {
           summary: "Answer-ready retrieval (question → evidence within a token budget)",
           description:
             "The HTTP twin of the MCP tool `retrieve_for_answer`. The question is split into " +
-            "sub-questions by rule (no model; cut at `?`, `;`, ` und `, ` sowie `, ` and `, ` as well as ` where both " +
-            "sides have at least three words), each is searched, the ranked lists are fused by reciprocal rank " +
+            "sub-questions by rule (cut at `?`, `;`, ` und `, ` sowie `, ` and `, ` as well as ` where both " +
+            "sides have at least three words), or — with `decomposition: \"llm\"` and a configured " +
+            "decomposition model — by that model, falling back to the rules when its answer is unusable; the " +
+            "response names the method used. Each sub-question is searched, the ranked lists are fused by reciprocal rank " +
             "(`Σ 1/(60+rank)`), repeated chunks and near-duplicate texts are removed, the top 50 are reranked " +
             "against the original question when a reranker is configured, and the passages are packed into " +
             "`budget_tokens` (at most 3 per document; a passage that does not fit is skipped, never cut). " +
@@ -3377,6 +3379,13 @@ export function buildOpenApiSpec(serverUrl: string) {
                     path_prefix: { type: "string" },
                     valid_at: { type: "string", format: "date-time" },
                     include_all_versions: { type: "boolean", default: false },
+                    decomposition: {
+                      type: "string",
+                      enum: ["rules", "llm"],
+                      default: "rules",
+                      description:
+                        "Split the question by rule or by the configured model; an unusable model answer falls back to the rules.",
+                    },
                     collection: {
                       type: "string",
                       description: "Must equal the `X-Collection` header when given.",
@@ -3403,6 +3412,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                         description: "More candidates existed than fitted the budget.",
                       },
                       reranked: { type: "boolean" },
+                      decomposition: {
+                        type: "string",
+                        enum: ["rules", "llm"],
+                        description: "The split actually used: `llm` only when the model parts were taken.",
+                      },
                       content_trust: { type: "string", enum: ["untrusted"] },
                       injection_risk: { type: "string", enum: ["none", "suspected"] },
                       evidence: {

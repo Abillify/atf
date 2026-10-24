@@ -5,12 +5,16 @@
  * retrieve-for-answer.ts
  *
  * Answer-ready retrieval: one call turns a question into the evidence that
- * fits a model's context. No model is involved in the steps below — they are
- * rules, so the same question over the same index gives the same answer.
+ * fits a model's context. The steps below are rules, so the same question
+ * over the same index gives the same answer; only the optional model-based
+ * decomposition (off by default) adds a model call, and it degrades to the
+ * rules whenever its answer is unusable.
  *
  *   1. {@link decomposeQuestion}: the question plus its parts. A question is cut
  *      at `?`, `;` and the conjunctions " und ", " sowie ", " and ",
  *      " as well as ", but only where both sides have at least three words.
+ *      With `decomposition: "llm"` and a decomposition client, a model
+ *      supplies the parts instead (the original question still comes first).
  *   2. Each sub-question is searched (injected `search`, concurrency 4).
  *   3. {@link fuseRrf}: the ranked lists are fused by reciprocal rank,
  *      `score(chunk) = Σ 1 / (60 + rank)`, ranks counted from 1.
@@ -247,10 +251,21 @@ export async function packEvidence(
 
 // ─── Orchestration ──────────────────────────────────────────────────────────
 
+/** How the question was cut into sub-questions. */
+export type DecompositionMethod = "rules" | "llm";
+
 export interface RetrieveForAnswerInput {
   question: string;
   budgetTokens?: number | undefined;
   maxSubqueries?: number | undefined;
+  /**
+   * `"llm"` asks {@link RetrieveForAnswerDeps.decompose} first; without it,
+   * without the dependency, or when the model answer is unusable, the
+   * rule-based split applies.
+   */
+  decomposition?: DecompositionMethod | undefined;
+  /** Tenant id forwarded to the decomposition model (cache binding). */
+  tenantId?: string | undefined;
 }
 
 export interface RetrieveForAnswerDeps {
@@ -261,6 +276,12 @@ export interface RetrieveForAnswerDeps {
    * the reranker did not apply (not configured, too few results, failed).
    */
   rerank?: ((question: string, results: SearchResult[]) => Promise<SearchResult[] | undefined>) | undefined;
+  /**
+   * Model-generated sub-questions covering `question`, at most
+   * `maxSubqueries` long; `undefined` = unusable (not configured, failed),
+   * fall back to the rule-based split.
+   */
+  decompose?: ((question: string, maxSubqueries: number, tenantId?: string) => Promise<string[] | undefined>) | undefined;
   countTokens(text: string): Promise<number>;
 }
 
@@ -274,6 +295,8 @@ export interface RetrieveForAnswerOutput {
   evidence: PackedEvidence[];
   /** True when the reranker was applied. */
   reranked: boolean;
+  /** The split actually used: `"llm"` only when its parts were taken. */
+  decomposition: DecompositionMethod;
 }
 
 export async function retrieveForAnswer(
@@ -281,7 +304,27 @@ export async function retrieveForAnswer(
   input: RetrieveForAnswerInput,
 ): Promise<RetrieveForAnswerOutput> {
   const budget = input.budgetTokens ?? DEFAULT_BUDGET_TOKENS;
-  const subqueries = decomposeQuestion(input.question, input.maxSubqueries ?? DEFAULT_MAX_SUBQUERIES);
+  const max = input.maxSubqueries ?? DEFAULT_MAX_SUBQUERIES;
+  let subqueries = decomposeQuestion(input.question, max);
+  let decomposition: DecompositionMethod = "rules";
+  if (input.decomposition === "llm" && deps.decompose !== undefined) {
+    const parts = await deps.decompose(input.question, max, input.tenantId);
+    // An unusable model answer (undefined) keeps the rule-based split.
+    if (parts !== undefined) {
+      const original = input.question.trim();
+      const seen = new Set<string>([foldKey(original)]);
+      const merged: string[] = [original];
+      for (const part of parts) {
+        const key = foldKey(part);
+        if (key === "" || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(part);
+        if (merged.length >= Math.max(1, max)) break;
+      }
+      subqueries = merged;
+      decomposition = "llm";
+    }
+  }
   const lists = await mapWithConcurrency(subqueries, SUBQUERY_CONCURRENCY, async (query, index) => {
     try {
       return await deps.search(query, SUBQUERY_LIMIT);
@@ -327,5 +370,6 @@ export async function retrieveForAnswer(
     content_trust: "untrusted",
     evidence: packed.evidence,
     reranked,
+    decomposition,
   };
 }

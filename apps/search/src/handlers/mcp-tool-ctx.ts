@@ -25,6 +25,7 @@ import type { QueryEmbeddingCache } from "../query-cache.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { RerankerClient } from "../reranker-client.js";
 import type { HydeClient } from "../hyde-client.js";
+import type { DecomposeClient } from "../decompose-client.js";
 import type { ChunkingOptions } from "../ingest-jobs.js";
 import type { SummaryClient } from "../summary-client.js";
 import type { TransactionConfig } from "../transaction-context.js";
@@ -43,6 +44,8 @@ export interface McpToolContext {
    */
   tokenCounter?: TokenCounter | null;
   hydeClient?: HydeClient | null;
+  /** Model-based question decomposition for `retrieve_for_answer`; null = rules only. */
+  decomposeClient?: DecomposeClient | null;
   logger: Logger;
   defaultCollection?: string;
   hybridSearchDefault?: boolean;

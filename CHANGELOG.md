@@ -47,6 +47,10 @@ releases:
 - **Release**: `atf-verify` ships for linux-x64, linux-arm64, darwin-x64,
   darwin-arm64 and windows-x64, each attested. Container images are published
   for linux/amd64 and linux/arm64.
+- **Search** (`retrieve_for_answer`): optional model-based question decomposition
+  (`decomposition: "llm"` with `RETRIEVE_DECOMPOSE_URL`/`RETRIEVE_DECOMPOSE_MODEL`);
+  without it, or when the model answer is unusable, the rule-based split applies
+  unchanged. The response names the method used.
 
 ### Changed
 
