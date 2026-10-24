@@ -27,6 +27,12 @@ releases:
   a long shared system prompt could produce hits between different questions or
   across users with different document access.
 
+### Added
+
+- **Eval**: `scripts/eval/retrieval.ts --retrieve` measures `POST /v2/retrieve`
+  with the golden set (page recall, MRR, nDCG, latency; figures are not part of
+  that response).
+
 ### Changed
 
 - **Runtime** (presets): `secure`, `regulated` and `regulated-multitenant` no

@@ -19,6 +19,12 @@
  * request body differ. Everything else (offline `--responses`/`--capture`,
  * `--extractions`, the report) is unchanged.
  *
+ * With `--retrieve` the golden questions run against Search's `POST
+ * /v2/retrieve` (answer-ready retrieval) instead; the response's `evidence`
+ * entries map back to the same hit shape, so page recall, MRR, nDCG and
+ * latency are comparable across endpoints. `/v2/retrieve` carries no figure
+ * evidence, so Figure Recall reports as null for this mode.
+ *
  * Usage:
  *   bun run scripts/eval/retrieval.ts \
  *     --collection <name> \
@@ -29,6 +35,7 @@
  *     [--out reports/retrieval] \
  *     [--label baseline] \
  *     [--v2] \
+ *     [--retrieve] \
  *     [--extractions <captured-extractions.json>]
  *
  * Extraction-quality metrics (task T2.10, requirement 18.3) — table-cell
@@ -155,9 +162,41 @@ export function normalizeV2Hit(hit: SearchHitV2): SearchHit {
 	};
 }
 
+// ─── Minimal shape of a `/v2/retrieve` response we depend on ───────────────────
+
+/**
+ * One `evidence` element of a `/v2/retrieve` response (`PackedEvidence`):
+ * `reference`/`base_ref` plus `page_start`/`page_end` when the chunk carries
+ * pages. The endpoint returns no figure evidence.
+ */
+interface RetrieveEvidenceV2 {
+	reference: string;
+	base_ref?: string;
+	page_start?: number;
+	page_end?: number;
+	score?: number;
+}
+
+/**
+ * Map one `/v2/retrieve` evidence element into the {@link SearchHit} shape the
+ * metrics consume; the rank is the element's position in the `evidence`
+ * array. PURE.
+ */
+export function normalizeRetrieveEvidence(item: RetrieveEvidenceV2): SearchHit {
+	const evidence: SearchEvidence = {};
+	if (typeof item.page_start === "number") evidence.page_start = item.page_start;
+	if (typeof item.page_end === "number") evidence.page_end = item.page_end;
+	return {
+		...(item.base_ref !== undefined ? { base_ref: item.base_ref } : {}),
+		reference: item.reference,
+		evidence,
+		...(typeof item.score === "number" ? { score: item.score } : {}),
+	};
+}
+
 // ─── CLI parsing ───────────────────────────────────────────────────────────────
 
-interface Args {
+export interface Args {
   fixture: string;
   collection: string;
   baseUrl: string;
@@ -167,6 +206,16 @@ interface Args {
   label: string;
   /** Target `POST /v2/search` (task 3.7) instead of the v1 `POST /search`. */
   v2: boolean;
+  /**
+   * Target `POST /v2/retrieve` (answer-ready retrieval) instead of the search
+   * endpoints. Mutually exclusive with `--v2`, `--hyde`, `--rerank` and
+   * `--search-mode`: the retrieve pipeline has its own fixed configuration.
+   */
+  retrieve: boolean;
+  /** `budget_tokens` on the retrieve request (default 4000). */
+  budgetTokens: number;
+  /** `max_subqueries` on the retrieve request (default 4). */
+  maxSubqueries: number;
   responses?: string;
   capture?: string;
   extractions?: string;
@@ -222,7 +271,11 @@ const HERE = import.meta.dir;
 const ROOT = resolve(HERE, "..", "..");
 const DEFAULT_FIXTURE = resolve(HERE, "golden-set", "golden-set.v1.json");
 
-function parseArgs(argv: string[]): Args {
+/** Defaults matching the server-side retrieve defaults for the eval harness. */
+const DEFAULT_BUDGET_TOKENS = 4000;
+const DEFAULT_MAX_SUBQUERIES = 4;
+
+export function parseArgs(argv: string[]): Args {
 	const get = (name: string): string | undefined => {
 		const index = argv.indexOf(name);
 		return index >= 0 ? argv[index + 1] : undefined;
@@ -256,6 +309,25 @@ function parseArgs(argv: string[]): Args {
 		}
 		return value;
 	};
+	const positiveInt = (name: string, fallback: number): number => {
+		const raw = get(name);
+		if (raw === undefined) return fallback;
+		const value = Number.parseInt(raw, 10);
+		if (!Number.isInteger(value) || value <= 0) {
+			throw new Error(`${name} must be a positive integer`);
+		}
+		return value;
+	};
+	const retrieve = has("--retrieve");
+	if (retrieve) {
+		// The retrieve pipeline fixes its own configuration; combining it with a
+		// search-endpoint knob would silently ignore that knob.
+		for (const flag of ["--v2", "--hyde", "--rerank", "--search-mode"]) {
+			if (has(flag)) {
+				throw new Error(`--retrieve cannot be combined with ${flag}`);
+			}
+		}
+	}
 	return {
     fixture: get("--fixture") ?? DEFAULT_FIXTURE,
     collection: get("--collection") ?? "documents",
@@ -269,6 +341,9 @@ function parseArgs(argv: string[]): Args {
     out: get("--out") ?? "reports/retrieval",
     label: get("--label") ?? "run",
     v2: has("--v2"),
+    retrieve,
+    budgetTokens: positiveInt("--budget-tokens", DEFAULT_BUDGET_TOKENS),
+    maxSubqueries: positiveInt("--max-subqueries", DEFAULT_MAX_SUBQUERIES),
     responses: get("--responses"),
     capture: get("--capture"),
     extractions: get("--extractions"),
@@ -328,7 +403,7 @@ function hitFigureRefs(hit: SearchHit): string[] {
   return [];
 }
 
-function toRankedHits(hits: SearchHit[]): RankedHit[] {
+export function toRankedHits(hits: SearchHit[]): RankedHit[] {
 	return hits.map((hit) => ({
 		pageRefs: hitPageRefs(hit),
 		figureRefs: hitFigureRefs(hit),
@@ -357,6 +432,7 @@ async function runSearch(
 	question: string,
 	maxResults: number,
 ): Promise<SearchHit[]> {
+	if (args.retrieve) return runRetrieveV2(args, question);
 	return args.v2
 		? runSearchV2(args, question, maxResults)
 		: runSearchV1(args, question, maxResults);
@@ -440,6 +516,44 @@ async function runSearchV2(
 	return hits.map(normalizeV2Hit);
 }
 
+/**
+ * `POST /v2/retrieve` (answer-ready retrieval): JSON body with the question,
+ * `budget_tokens` and `max_subqueries`, `X-Collection` header like v2 search.
+ * The packing budget — not a result limit — decides how many evidence entries
+ * come back; their order is the ranking the metrics consume. The endpoint
+ * carries no figure evidence, so figure metrics are reported as null for this
+ * mode (see `figures_measured` in the report).
+ */
+export async function runRetrieveV2(
+	args: Args,
+	question: string,
+): Promise<SearchHit[]> {
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		"X-Collection": args.collection,
+	};
+	if (args.token) headers.Authorization = `Bearer ${args.token}`;
+	const body = {
+		question,
+		budget_tokens: args.budgetTokens,
+		max_subqueries: args.maxSubqueries,
+	};
+	const response = await fetch(`${args.baseUrl}/v2/retrieve`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify(body),
+	});
+	if (!response.ok) {
+		const detail = await response.text().catch(() => "");
+		throw new Error(
+			`Retrieve v2 ${response.status} for "${question}": ${detail.slice(0, 200)}`,
+		);
+	}
+	const payload = (await response.json()) as { evidence?: RetrieveEvidenceV2[] };
+	const evidence = Array.isArray(payload.evidence) ? payload.evidence : [];
+	return evidence.map(normalizeRetrieveEvidence);
+}
+
 // ─── Report shaping ────────────────────────────────────────────────────────────
 
 interface Report {
@@ -456,8 +570,8 @@ interface Report {
     base_url: string;
     cutoffs: number[];
     mode: "live" | "offline";
-    /** Which endpoint the run targeted: v1 `/search` or v2 `/v2/search` (task 3.7). */
-    endpoint: "v1" | "v2";
+    /** Which endpoint the run targeted: v1 `/search`, v2 `/v2/search` or v2 `/v2/retrieve`. */
+    endpoint: "v1" | "v2" | "retrieve";
     /** Ablation configuration of this run (task 6.11, requirement 4.10). */
     search_mode?: "dense" | "hybrid" | "fts";
     rerank?: boolean;
@@ -472,7 +586,12 @@ interface Report {
   pending: boolean;
   metrics: {
     page: Record<string, ReturnType<typeof pageMetrics>>;
-    figure: Record<string, ReturnType<typeof figureMetrics>>;
+    /**
+     * Figure metrics, or null when the endpoint carries no figure evidence
+     * (`--retrieve`): Figure Recall is then not measured and figure thresholds
+     * are skipped rather than scored as misses.
+     */
+    figure: Record<string, ReturnType<typeof figureMetrics>> | null;
     mrr: Record<string, number>;
     figure_hit_rate: Record<string, ReturnType<typeof figureHitRate>>;
     /** Abstention on unanswerable questions, per cutoff (see `abstention_gate`). */
@@ -563,10 +682,13 @@ function buildReport(
   const mrr: Record<string, number> = {};
   const hitRate: Record<string, ReturnType<typeof figureHitRate>> = {};
   const abstention: Record<string, ReturnType<typeof abstentionMetrics>> = {};
+  // `/v2/retrieve` returns no figure evidence: Figure Recall is reported as
+  // null for that mode instead of a misleading 0.
+  const figuresMeasured = !args.retrieve;
   for (const k of args.cutoffs) {
     abstention[String(k)] = abstentionMetrics(cases, k, args.abstainMinScore);
     page[String(k)] = pageMetrics(cases, k);
-    figure[String(k)] = figureMetrics(cases, k);
+    if (figuresMeasured) figure[String(k)] = figureMetrics(cases, k);
     mrr[String(k)] = overallMrr(cases, k);
     hitRate[String(k)] = figureHitRate(cases, k);
   }
@@ -594,7 +716,7 @@ function buildReport(
       base_url: args.baseUrl,
       cutoffs: args.cutoffs,
       mode,
-      endpoint: args.v2 ? "v2" : "v1",
+      endpoint: args.retrieve ? "retrieve" : args.v2 ? "v2" : "v1",
       ...(args.searchMode !== undefined
         ? { search_mode: args.searchMode }
         : {}),
@@ -610,7 +732,13 @@ function buildReport(
           },
         }
       : {}),
-    metrics: { page, figure, mrr, figure_hit_rate: hitRate, abstention },
+    metrics: {
+      page,
+      figure: figuresMeasured ? figure : null,
+      mrr,
+      figure_hit_rate: hitRate,
+      abstention,
+    },
     abstention_min_score: args.abstainMinScore ?? null,
     extraction,
     coverage: {
@@ -664,9 +792,10 @@ export function renderMarkdown(report: Report): string {
 	const pageRow = cutoffs.map((k) =>
 		pct(report.metrics.page[String(k)]?.recallAtK ?? 0),
 	);
-	const figureRow = cutoffs.map((k) =>
-		pct(report.metrics.figure[String(k)]?.recallAtK ?? 0),
-	);
+	const figureRow =
+		report.metrics.figure === null
+			? cutoffs.map(() => "n/a")
+			: cutoffs.map((k) => pct(report.metrics.figure?.[String(k)]?.recallAtK ?? 0));
 	const mrrRow = cutoffs.map((k) =>
 		(report.metrics.mrr[String(k)] ?? 0).toFixed(4),
 	);
@@ -861,7 +990,7 @@ async function main(): Promise<void> {
 			failed = true;
 		}
 	}
-	if (args.minFigureRecall !== undefined) {
+	if (args.minFigureRecall !== undefined && report.metrics.figure !== null) {
 		const value = report.metrics.figure[String(maxCutoff)]?.recallAtK ?? 0;
 		if (value < args.minFigureRecall) {
 			console.error(
@@ -878,7 +1007,7 @@ async function main(): Promise<void> {
     const thresholds = (await file.json()) as Thresholds;
     const pageValue = report.metrics.page[String(maxCutoff)]?.recallAtK ?? 0;
     const figureValue =
-      report.metrics.figure[String(maxCutoff)]?.recallAtK ?? 0;
+      report.metrics.figure?.[String(maxCutoff)]?.recallAtK ?? 0;
     const mrrValue = report.metrics.mrr[String(maxCutoff)] ?? 0;
     const ndcgValue = report.metrics.page[String(maxCutoff)]?.ndcgAtK ?? 0;
     const p50 = report.latency?.p50_ms ?? 0;
@@ -894,6 +1023,7 @@ async function main(): Promise<void> {
     }
     if (
       thresholds.figure_recall !== undefined &&
+      report.metrics.figure !== null &&
       figureValue < thresholds.figure_recall
     ) {
       console.error(

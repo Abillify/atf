@@ -199,6 +199,9 @@ All flags of `retrieval.ts`:
 | `--out <prefix>` | `reports/retrieval` | report path prefix (`<out>.<label>.{json,md}`) |
 | `--label <name>` | `run` | run label used in the report file names |
 | `--v2` | off | target `POST /v2/search` instead of v1 `POST /search` |
+| `--retrieve` | off | target `POST /v2/retrieve` (answer-ready retrieval) instead of the search endpoints; excludes `--v2`, `--hyde`, `--rerank`, `--search-mode` |
+| `--budget-tokens <n>` | `4000` | `budget_tokens` on the `--retrieve` request |
+| `--max-subqueries <n>` | `4` | `max_subqueries` on the `--retrieve` request |
 | `--responses <path>` | — | replay captured responses offline instead of calling Search |
 | `--capture <path>` | — | write the raw per-question results of a live run |
 | `--extractions <path>` | — | produced extraction output for the extraction-quality metrics |
@@ -232,11 +235,37 @@ The v2 hit shape (top-level `pages`, `assets`) is normalised back to the same
 reference-bearing shape the v1 path uses, so **the metrics and the report layout
 are identical and directly comparable** — only the endpoint and request body
 differ. The report records which endpoint a run targeted under
-`parameters.endpoint` (`"v1"` | `"v2"`). A figure hit is an asset with
+`parameters.endpoint` (`"v1"` | `"v2"`, or `"retrieve"` for `--retrieve`). A figure hit is an asset with
 `relation:"hit"` and a `figure_id` (the v2 equivalent of v1's image evidence);
 referenced figures do not count as the hit's own figure, matching v1. A `--v2`
 `--capture` stores the already-normalised hits, so replaying it offline with
 `--responses` reproduces the run without normalisation ambiguity.
+
+### Answer-ready retrieval (`--retrieve`)
+
+Add `--retrieve` to run the same golden questions against `POST /v2/retrieve`
+(answer-ready retrieval, the HTTP twin of the MCP tool `retrieve_for_answer`)
+instead of a search endpoint:
+
+```bash
+bun run eval:retrieval -- \
+  --collection <name> --base-url http://127.0.0.1:3002 --retrieve \
+  --budget-tokens 4000 --max-subqueries 4 \
+  --k 5,10 --out reports/retrieval --label retrieve
+```
+
+The request carries `question`, `budget_tokens` and `max_subqueries`; the
+response's `evidence` array is mapped back to the same hit shape the v1/v2
+paths use (rank = position in `evidence`, pages from `page_start`/`page_end`),
+so page recall, MRR, nDCG and latency are directly comparable across endpoints.
+The report records the endpoint as `"retrieve"` under
+`parameters.endpoint`.
+
+`/v2/retrieve` returns no figure evidence, so **Figure Recall is reported as
+`n/a` (null in the JSON) for this mode** and a `--min-figure-recall` gate or a
+`figure_recall` threshold is skipped rather than scored as a miss. `--retrieve`
+cannot be combined with `--v2`, `--hyde`, `--rerank` or `--search-mode` — the
+retrieve pipeline has its own fixed configuration.
 
 The `--extractions` file is a JSON map of question id → produced extraction,
 assembled from Extract's emitted units for the golden documents:
