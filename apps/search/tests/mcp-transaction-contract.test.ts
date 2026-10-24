@@ -163,6 +163,16 @@ describe("vectorsearch real MCP transaction _meta contract", () => {
       .send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "search", arguments: {} }, _meta: meta });
     expect(mismatch.status).toBe(400);
     expect(mismatch.body.error.message).toBe("HeaderMismatch");
+
+    // Invalid tool arguments must name the offending parameter and expected values.
+    const badArgs = await request(app).post(handlers.path)
+      .set("MCP-Protocol-Version", "2026-07-28").set("Mcp-Method", "tools/call").set("Mcp-Name", "search")
+      .send({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "search", arguments: { query: "test", granularity: "figure" } }, _meta: meta });
+    expect(badArgs.status).toBe(400);
+    expect(badArgs.body.error.code).toBe(-32602);
+    expect(badArgs.body.error.message).toContain("Invalid tool arguments");
+    expect(badArgs.body.error.message).toContain("granularity");
+    expect(badArgs.body.error.message).toContain("chunk");
   });
 
   it("fails a protected real MCP request before dispatch on principal mismatch", async () => {

@@ -171,7 +171,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         .enum(["chunk", "section", "page", "document"])
         .optional()
         .describe(
-          "v2: restrict hits to one unit level (applied as a unit_type filter unless unit_type is given).",
+          'v2: restrict hits to one unit level: "chunk" | "section" | "page" | "document" (applied as a unit_type filter unless unit_type is given). Figure and table hits are NOT selectable here — use unit_type ("figure" | "table") for those.',
         ),
       include_assets: z
         .enum(["none", "refs", "thumbnails"])

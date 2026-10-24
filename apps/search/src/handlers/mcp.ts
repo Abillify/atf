@@ -750,6 +750,22 @@ function mcp2026Error(res: Response, status: number, id: unknown, code: number, 
   res.status(status).json(jsonRpcErrorBody(id, code, message));
 }
 
+/**
+ * Compact human-readable summary of Zod issues for tool-call 400s, e.g.
+ * `granularity: Invalid option: expected one of "chunk"|"section"|...`.
+ * Models act on this message, so it must name the offending parameter and the
+ * expected values instead of a bare "Invalid tool arguments".
+ */
+function describeToolArgumentIssues(issues: z.ZodIssue[]): string {
+  return issues
+    .slice(0, 5)
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+      return `${path}: ${issue.message}`;
+    })
+    .join("; ");
+}
+
 /** Offset pagination with the transaction-error vocabulary of this service. */
 function mcp2026Page<T>(items: T[], params: Record<string, unknown>): { items: T[]; nextCursor?: string } {
   return paginate(items, params, {
@@ -867,7 +883,10 @@ export function createMcp2026Handlers(
         }
         const args = params["arguments"] ?? {};
         const parsed = tool.inputSchema ? await tool.inputSchema.safeParseAsync(args) : { success: true as const, data: undefined };
-        if (!parsed.success) { mcp2026Error(res, 400, body.id, -32602, "Invalid tool arguments"); return; }
+        if (!parsed.success) {
+          mcp2026Error(res, 400, body.id, -32602, `Invalid tool arguments: ${describeToolArgumentIssues(parsed.error.issues)}`);
+          return;
+        }
 
         const rawHeader = req.headers["x-transaction-token"];
         const headerToken = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
