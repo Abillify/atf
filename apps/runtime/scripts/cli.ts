@@ -249,13 +249,50 @@ function findFlowsDir(filePath: string): string {
 }
 
 type FlowIssue = { path: string; message: string };
+
 /**
- * The causes behind a failed load: schema failures name each offending field
- * (zod `flatten()` shape), anything else keeps its serialized details. A bare
- * "Schema validation failed" would force the author to start the runtime to
- * learn what is wrong.
+ * Renders a schema-issue path the way the Runtime's validator does: a node
+ * path carries the node ID, so `["nodes",0,"llm","provider"]` becomes
+ * `nodes[0](answer).llm.provider` instead of a bare `[nodes]`.
  */
-export function flowIssues(reason: string, details: unknown): FlowIssue[] {
+function formatFlowPath(issuePath: Array<string | number>, raw: unknown): string {
+  const [head, index, ...rest] = issuePath;
+  if (head === "nodes" && typeof index === "number") {
+    const rawNodes = (raw as { nodes?: unknown } | null)?.nodes;
+    const nodeId = Array.isArray(rawNodes)
+      ? (rawNodes[index] as { id?: unknown } | undefined)?.id
+      : undefined;
+    const tail = rest.map((p) => (typeof p === "number" ? `[${p}]` : `.${p}`)).join("");
+    return `nodes[${index}]${typeof nodeId === "string" ? `(${nodeId})` : ""}${tail}`;
+  }
+  return issuePath.length > 0
+    ? issuePath.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".").replace(/\.\[/g, "[")
+    : "$";
+}
+
+/**
+ * The causes behind a failed load: schema failures name each offending field,
+ * anything else keeps its serialized details. A bare "Schema validation
+ * failed" would force the author to start the runtime to learn what is wrong.
+ *
+ * `issues` are the flattened per-field issues the parser already computed
+ * (`describeSchemaIssues`), which survive nesting; the zod `flatten()` shape in
+ * `details` is only the fallback for failures that carry no issues, because it
+ * collapses a nested error to its top-level key. `raw` is the flow source used
+ * to name a node by ID in a path.
+ */
+export function flowIssues(
+  reason: string,
+  details: unknown,
+  issues?: Array<{ path: Array<string | number>; message: string }>,
+  raw?: unknown,
+): FlowIssue[] {
+  if (issues !== undefined && issues.length > 0) {
+    return [
+      { path: "$", message: reason },
+      ...issues.map((issue) => ({ path: formatFlowPath(issue.path, raw), message: issue.message })),
+    ];
+  }
   if (details !== null && typeof details === "object") {
     const flat = details as { formErrors?: unknown; fieldErrors?: unknown };
     const issues: FlowIssue[] = [];
@@ -288,9 +325,18 @@ function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   const flowsDir = findFlowsDir(filePath);
   const fileName = path.relative(flowsDir, filePath);
   const source = raw as Record<string, unknown>;
+  // A sub-flow node skipped on an ID collision is only a JSON log line in the
+  // parser; count it as this file's warning so the summary shows it.
+  const includeWarnings: FlowIssue[] = [];
+  const collectIncludeWarning = (reason: string) => {
+    includeWarnings.push({
+      path: "$include.subflows",
+      message: `${reason} — use $include.patches to change an included node`,
+    });
+  };
   let resolved: ReturnType<typeof validateFlowSource>;
   try {
-    resolveFlowIncludes(source, flowsDir, fileName);
+    resolveFlowIncludes(source, flowsDir, fileName, collectIncludeWarning);
     const shortcuts = loadModelShortcuts(flowsDir);
     resolved = validateFlowSource(source, (flow, overrides, name) => {
       resolveRawFlowVariables(flow, overrides, name);
@@ -299,12 +345,20 @@ function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   } catch (err) {
     // An unresolvable include, variable or shortcut throws; report it as the
     // file's error instead of aborting the whole run with a stack trace.
-    return invalidReport([{ path: "$", message: err instanceof Error ? err.message : String(err) }]);
+    const report = invalidReport([{ path: "$", message: err instanceof Error ? err.message : String(err) }]);
+    report.warnings.push(...includeWarnings);
+    return report;
   }
   if (!resolved.success) {
-    return invalidReport(flowIssues(resolved.error.reason, resolved.error.details));
+    const report = invalidReport(
+      flowIssues(resolved.error.reason, resolved.error.details, resolved.error.issues, source),
+    );
+    report.warnings.push(...includeWarnings);
+    return report;
   }
-  return validateFlow(resolved.data);
+  const report = validateFlow(resolved.data);
+  report.warnings.push(...includeWarnings);
+  return report;
 }
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -375,6 +429,14 @@ function collectFlowFiles(target: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * The schema message for an `llm.provider` that is neither a configured
+ * instance name nor a built-in protocol. Kept as a constant here so the
+ * validator can recognise it and name the likely cause (an unset `PROVIDERS`).
+ */
+const PROVIDER_UNRESOLVED_MESSAGE =
+  "provider must be a configured PROVIDERS name or a built-in protocol";
+
+/**
  * Publishes provider instances from the `PROVIDERS` env var so `llm.provider`
  * references resolve during offline validation. Deliberately does NOT call
  * `loadConfig()` — that would enforce every unrelated env requirement and
@@ -440,10 +502,17 @@ async function cmdValidate(args: ParsedArgs): Promise<number> {
   }
 
   let exitCode = 0;
+  // A named provider only resolves when the deployment's PROVIDERS JSON is in
+  // the environment; remember that this run failed on it so the operator is
+  // told the likely cause once instead of per file.
+  let missingProviders = false;
   const results: Array<{ file: string; valid: boolean; errors: number; warnings: number }> = [];
 
   for (const file of files) {
     const report = validateFlowFile(file);
+    if (!process.env.PROVIDERS && report.errors.some((e) => e.message === PROVIDER_UNRESOLVED_MESSAGE)) {
+      missingProviders = true;
+    }
     if (args.requireVersion) {
       const problem = flowVersionProblem(loadFlowFile(file));
       if (problem !== undefined) {
@@ -479,6 +548,9 @@ async function cmdValidate(args: ParsedArgs): Promise<number> {
   if (args.json) {
     console.log(JSON.stringify(results, null, 2));
   } else {
+    if (missingProviders) {
+      console.log(`\n${warn} ${c.yellow}hint:${c.reset} PROVIDERS is not set, so only built-in protocols resolve. Export the same PROVIDERS JSON the Runtime uses (secrets are not needed for validation; names and protocols are enough) and run validate again.`);
+    }
     const valid = results.filter((r) => r.valid).length;
     const invalid = results.length - valid;
     const totalWarnings = results.reduce((n, r) => n + r.warnings, 0);

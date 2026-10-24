@@ -13,7 +13,10 @@
  * and an unset variable preserves the legacy protocol-only behaviour.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   configuredProviderNames,
   isKnownProviderName,
@@ -83,5 +86,60 @@ describe("registerProvidersFromEnv", () => {
     expect(() => registerProvidersFromEnv()).not.toThrow();
     expect(configuredProviderNames()).toEqual([]);
     expect(isKnownProviderName("gpuvllm")).toBe(false);
+  });
+});
+
+const PROVIDERS_JSON = JSON.stringify([
+  { name: "llm1", protocol: "openai", url: "http://192.0.2.10/v1", local: true },
+]);
+
+const llmFlow = (id: string) =>
+  `id: ${id}\nname: ${id}\nnodes:\n  - id: answer\n    type: llm\n    llm:\n      provider: llm1\n      model: gpt-4o-mini\nedges: []\n`;
+
+describe("validate (CLI) and the PROVIDERS environment", () => {
+  const cli = join(import.meta.dir, "..", "cli.ts");
+  const run = (target: string, providers?: string) =>
+    Bun.spawnSync(["bun", "run", cli, "validate", target], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, PROVIDERS: providers ?? "" },
+    });
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "cli-validate-providers-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("names the node and field of an unknown provider", () => {
+    const file = join(dir, "one.yaml");
+    writeFileSync(file, llmFlow("one"));
+
+    const result = run(file);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain("[nodes[0](answer).llm.provider]");
+  });
+
+  test("hints at the missing PROVIDERS exactly once for several files", () => {
+    writeFileSync(join(dir, "one.yaml"), llmFlow("one"));
+    writeFileSync(join(dir, "two.yaml"), llmFlow("two"));
+
+    const result = run(dir);
+
+    const out = result.stdout.toString();
+    expect(out.match(/PROVIDERS is not set, so only built-in protocols resolve\./g)).toHaveLength(1);
+    expect(out).toContain("2 invalid");
+  });
+
+  test("a configured provider validates and produces no hint", () => {
+    const file = join(dir, "one.yaml");
+    writeFileSync(file, llmFlow("one"));
+
+    const result = run(file, PROVIDERS_JSON);
+
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout.toString();
+    expect(out).toContain("1 valid");
+    expect(out).not.toContain("PROVIDERS is not set");
   });
 });

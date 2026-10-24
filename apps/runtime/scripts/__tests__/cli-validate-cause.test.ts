@@ -6,7 +6,7 @@
  * a CI failure could not be fixed without starting the runtime.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { flowIssues } from "../cli.js";
@@ -30,6 +30,27 @@ describe("flowIssues", () => {
 
   test("a reason without details stays a single line", () => {
     expect(flowIssues("Something", undefined)).toEqual([{ path: "$", message: "Something" }]);
+  });
+
+  test("flattened issues name the node by ID and win over the flatten() fallback", () => {
+    const issues = flowIssues(
+      "Schema validation failed",
+      { formErrors: [], fieldErrors: { nodes: ["Invalid input"] } },
+      [{ path: ["nodes", 0, "llm", "provider"], message: "provider must be a configured PROVIDERS name or a built-in protocol" }],
+      { nodes: [{ id: "answer" }] },
+    );
+    expect(issues[0]).toEqual({ path: "$", message: "Schema validation failed" });
+    expect(issues[1]).toEqual({
+      path: "nodes[0](answer).llm.provider",
+      message: "provider must be a configured PROVIDERS name or a built-in protocol",
+    });
+  });
+
+  test("a non-node issue path stays a dotted path", () => {
+    const issues = flowIssues("Schema validation failed", undefined, [
+      { path: ["metadata", "$include", "subflows", 0], message: "Required" },
+    ]);
+    expect(issues[1]?.path).toBe("metadata.$include.subflows[0]");
   });
 });
 
@@ -63,6 +84,25 @@ describe("validate (CLI) reports the cause", () => {
     const result = run(file);
     expect(result.exitCode).toBe(1);
     expect(result.stdout.toString()).toContain("missing");
+  });
+
+  test("a sub-flow node skipped on an ID collision counts as a warning", () => {
+    const subflowsDir = join(dir, "subflows");
+    mkdirSync(subflowsDir);
+    writeFileSync(
+      join(subflowsDir, "dup.yaml"),
+      "nodes:\n  - id: router\n    type: tool\nedges: []\n",
+    );
+    writeFileSync(
+      join(dir, "parent.yaml"),
+      "id: parent\nname: Parent\nmetadata:\n  $include:\n    subflows: [\"subflows/dup.yaml\"]\nnodes:\n  - id: router\n    type: router\nedges: []\n",
+    );
+    const result = run(dir);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout.toString();
+    expect(out).toContain("[$include.subflows]");
+    expect(out).toContain("use $include.patches to change an included node");
+    expect(out).toContain("1 warning(s)");
   });
 
   test("an unknown config key is a warning, not an error", () => {

@@ -198,7 +198,9 @@ bun run scripts/cli.ts deploy flows/my-flow.yaml --server http://127.0.0.1:3000
 ```
 
 The validator checks more than the JSON schema does: edge reference integrity, node type and
-config compatibility, and provider references against the registry. Examples:
+config compatibility, and provider references against the registry. Flows that reference named
+providers validate only with the Runtime's `PROVIDERS` JSON exported in the shell; names and
+protocols are enough, keys are not needed. Examples:
 `deploy/examples/flows/README.md`. Complete reference: `docs/FLOWS.md`.
 Add `--require-version` to fail when an entry flow has no semantic `metadata.version` (x.y.z).
 That version is reported as `flow_version` in the debug trace, next to `flow_digest` (a hash of the

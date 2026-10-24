@@ -613,6 +613,9 @@ Changes since 0.19.3 that need operator attention:
 2. Runtime: the presets `secure`, `regulated` and `regulated-multitenant` no
    longer turn on the semantic cache. Set `SEMANTIC_CACHE_ENABLED=true` to keep
    the previous behaviour.
+3. Runtime CLI: flows that reference named providers validate only with the
+   Runtime's `PROVIDERS` JSON exported in the shell; names and protocols are
+   enough, keys are not needed.
 
 ### Not yet shared between replicas (roadmap)
 

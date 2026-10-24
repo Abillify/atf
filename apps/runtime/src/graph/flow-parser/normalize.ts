@@ -208,6 +208,7 @@ function loadSubflowRaw(
   visited: Set<string>,
   resolvePrompts = true,
   warnDuplicates = true,
+  onWarning?: (reason: string) => void,
 ): { nodes: unknown[]; edges: unknown[] } {
   const empty = { nodes: [], edges: [] };
   if (depth > maxDepth) {
@@ -262,6 +263,7 @@ function loadSubflowRaw(
     resolvePrompts,
     undefined,
     warnDuplicates,
+    onWarning,
   );
 
   const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
@@ -301,6 +303,12 @@ function resolveSubflowIncludes(
    * each duplicate is reported once. Skipping the node is unaffected.
    */
   warnDuplicates = true,
+  /**
+   * Optional collector for the duplicate-node-ID reason. The offline validator
+   * counts the skipped node as a validation warning of the file instead of
+   * only writing the JSON log line.
+   */
+  onWarning?: (reason: string) => void,
 ): void {
   const metadata = raw.metadata;
   if (typeof metadata !== "object" || metadata === null) return;
@@ -350,6 +358,7 @@ function resolveSubflowIncludes(
       visited,
       resolvePrompts,
       warnDuplicates,
+      onWarning,
     );
 
     for (const node of subNodes) {
@@ -358,15 +367,17 @@ function resolveSubflowIncludes(
       const id = n.id;
       if (typeof id !== "string") continue;
       if (existingNodeIds.has(id)) {
+        const reason = `Sub-flow node ID "${id}" already exists in parent flow — skipping sub-flow node`;
         if (warnDuplicates) process.stderr.write(
           `${JSON.stringify({
             level: "warn",
             component: "flow-parser",
             fileName,
-            reason: `Sub-flow node ID "${id}" already exists in parent flow — skipping sub-flow node`,
+            reason,
             subflow: relPath,
           })}\n`,
         );
+        if (warnDuplicates) onWarning?.(reason);
         continue;
       }
       existingNodeIds.add(id);
@@ -597,9 +608,10 @@ export function resolveFlowIncludes(
   raw: Record<string, unknown>,
   flowsDir: string,
   fileName: string,
+  onWarning?: (reason: string) => void,
 ): void {
   resolvePromptIncludes(raw, flowsDir, fileName);
-  mergeSubflows(raw, flowsDir, fileName, true);
+  mergeSubflows(raw, flowsDir, fileName, true, onWarning);
 }
 
 /**
@@ -665,6 +677,7 @@ function mergeSubflows(
   flowsDir: string,
   fileName: string,
   resolvePrompts: boolean,
+  onWarning?: (reason: string) => void,
 ): void {
   const origins: Record<string, string> = {};
   // Edge origins are only needed to write a SOURCE form back (an edge between
@@ -685,6 +698,7 @@ function mergeSubflows(
     edgeOrigins,
     // Only the runtime merge warns about duplicate node IDs (see above).
     resolvePrompts,
+    onWarning,
   );
   if (
     Object.keys(origins).length > 0 ||

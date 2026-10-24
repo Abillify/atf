@@ -37,6 +37,10 @@ releases:
 
 - **Runtime** (erasure): the semantic cache is erased per user, so erasure
   reports no longer turn `partial` because of it.
+- **Runtime CLI** (`validate`): schema errors name the node and field
+  (`nodes[0](answer).llm.provider`) instead of `[nodes] Invalid input`, a
+  missing `PROVIDERS` is reported as the likely cause, and a skipped sub-flow
+  node counts as a warning.
 
 ## [0.19.3] - 2026-10-24
 
