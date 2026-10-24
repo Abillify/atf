@@ -145,6 +145,44 @@ describe("loadBenchFile", () => {
 });
 
 describe("BenchFileSchema", () => {
+  test("accepts the cascade, budget and wall time thresholds", () => {
+    const file = writeBench(
+      "demo.bench.yaml",
+      VALID_YAML.replace(
+        "  maxTokensP50: 800\n",
+        "  maxTokensP50: 800\n  maxCascadeEscalationRate: 0.2\n  maxBudgetExceeded: 0\n  maxWallMsP95: 9000\n",
+      ),
+    );
+    const bench = loadBenchFile(file);
+    expect(bench.thresholds.maxCascadeEscalationRate).toBe(0.2);
+    expect(bench.thresholds.maxBudgetExceeded).toBe(0);
+    expect(bench.thresholds.maxWallMsP95).toBe(9000);
+  });
+
+  test("rejects a cascade rate outside 0-1 and non-positive wall/budget caps", () => {
+    const badRate = BenchFileSchema.safeParse({
+      version: 1,
+      flow: "demo",
+      cases: [{ id: "c", messages: [{ role: "user", content: "x" }] }],
+      thresholds: { passRate: 1, maxCascadeEscalationRate: 1.5 },
+    });
+    expect(badRate.success).toBe(false);
+    const badWall = BenchFileSchema.safeParse({
+      version: 1,
+      flow: "demo",
+      cases: [{ id: "c", messages: [{ role: "user", content: "x" }] }],
+      thresholds: { passRate: 1, maxWallMsP95: 0 },
+    });
+    expect(badWall.success).toBe(false);
+    const badBudget = BenchFileSchema.safeParse({
+      version: 1,
+      flow: "demo",
+      cases: [{ id: "c", messages: [{ role: "user", content: "x" }] }],
+      thresholds: { passRate: 1, maxBudgetExceeded: -1 },
+    });
+    expect(badBudget.success).toBe(false);
+  });
+
   test("requires at least one message per case", () => {
     const result = BenchFileSchema.safeParse({
       version: 1,

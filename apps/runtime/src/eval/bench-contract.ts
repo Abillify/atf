@@ -55,6 +55,15 @@ const BenchThresholdsSchema = z
     maxLatencyMsP50: z.number().int().positive().finite().optional(),
     /** Median total tokens (prompt + completion) must stay at or below this. */
     maxTokensP50: z.number().int().positive().finite().optional(),
+    /**
+     * Share (0–1) of the cases that ran a model cascade may escalate. Checked
+     * only when set — a flow without cascade nodes is never measured against it.
+     */
+    maxCascadeEscalationRate: z.number().min(0).max(1).optional(),
+    /** Number of cases that may end in a budget stop. Checked only when set. */
+    maxBudgetExceeded: z.number().int().nonnegative().optional(),
+    /** p95 wall time (ms) of a case must stay at or below this. Checked only when set. */
+    maxWallMsP95: z.number().int().positive().finite().optional(),
   })
   .strict();
 

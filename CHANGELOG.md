@@ -36,6 +36,9 @@ releases:
   `FTS_COMPOUND_SPLIT=query` on port 3013 for the German compound ablation.
 - **CI** (eval): answer-ready retrieval and the German compound ablation run in
   the eval job, and the job summary tabulates all eval runs.
+- **Runtime** (`flows release`): bench statistics report the cascade escalation
+  rate, budget stops and p50/p95 wall time; bench files may cap them with
+  `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`.
 
 ### Changed
 

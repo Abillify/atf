@@ -85,6 +85,22 @@ describe("summarizeDebugTrace", () => {
     expect(bare.flowVersion).toBeUndefined();
     expect(bare.flowDigest).toBeUndefined();
   });
+  it("counts cascade nodes and reports an escalation", () => {
+    const summary = summarizeDebugTrace({
+      nodes: [
+        { cascade: { escalated: false, attempts: 1 } },
+        { cascade: { escalated: true, attempts: 2 } },
+        { tool_calls: [] },
+      ],
+    });
+    expect(summary.cascadeNodes).toBe(2);
+    expect(summary.cascadeEscalated).toBe(true);
+  });
+  it("reports no cascade activity for traces without cascade entries", () => {
+    const summary = summarizeDebugTrace({ nodes: [{ tool_calls: [] }, null] });
+    expect(summary.cascadeNodes).toBe(0);
+    expect(summary.cascadeEscalated).toBe(false);
+  });
 });
 
 describe("createHttpExecutor trace fetch", () => {
@@ -179,5 +195,38 @@ describe("createHttpExecutor trace fetch", () => {
     const result = await executor("demo", [{ role: "user", content: "hi" }]);
     expect(result.toolCalls).toBeUndefined();
     expect(urls).toHaveLength(1);
+  });
+
+  it("reports cascade outcome, budget stops and wall time from the trace", async () => {
+    const fetchFn = (async (input: string | URL | Request) =>
+      String(input).endsWith("/v1/chat/completions")
+        ? jsonResponse(completionBody("exec-cascade"))
+        : jsonResponse({
+            nodes: [
+              { cascade: { escalated: true, attempts: 2 } },
+              { finish_reason: "budget_exceeded" },
+            ],
+          })) as unknown as typeof fetch;
+
+    const executor = createHttpExecutor("http://localhost:3000", undefined, fetchFn);
+    const result = await executor("demo", [{ role: "user", content: "hi" }]);
+    expect(result.cascadeNodes).toBe(1);
+    expect(result.cascadeEscalated).toBe(true);
+    expect(result.budgetExceeded).toBe(true);
+    expect(result.wallMs).toBeTypeOf("number");
+    expect(result.wallMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("defaults cascade and budget flags when the trace shows neither", async () => {
+    const fetchFn = (async (input: string | URL | Request) =>
+      String(input).endsWith("/v1/chat/completions")
+        ? jsonResponse(completionBody("exec-plain"))
+        : jsonResponse({ nodes: [{ finish_reason: "stop" }] })) as unknown as typeof fetch;
+
+    const executor = createHttpExecutor("http://localhost:3000", undefined, fetchFn);
+    const result = await executor("demo", [{ role: "user", content: "hi" }]);
+    expect(result.cascadeNodes).toBe(0);
+    expect(result.cascadeEscalated).toBe(false);
+    expect(result.budgetExceeded).toBe(false);
   });
 });

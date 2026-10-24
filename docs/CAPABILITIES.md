@@ -473,7 +473,8 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   and every assertion do.
 - **Evidence-bound flow releases.** `bun run scripts/cli.ts flows release` (in `apps/runtime`) gates a flow release on a versioned
   bench file (`flows/bench/<flowId>.bench.yaml`): recorded conversations with assertions,
-  a required pass rate plus optional p50 latency/token thresholds, a SemVer check against a
+  a required pass rate plus optional thresholds (p50 latency, p50 tokens, cascade escalation
+  rate, budget stops, p95 wall time), a SemVer check against a
   base revision, and a baseline comparison that rejects pass-rate regressions. A passing gate
   can emit an Ed25519-signed release receipt (`atf.flow-release-receipt`) over the flow digest,
   bench digest and results, verifiable independently with

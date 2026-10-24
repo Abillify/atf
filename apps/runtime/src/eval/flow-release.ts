@@ -15,6 +15,7 @@
 import { type KeyObject, createHash } from "node:crypto";
 import { z } from "zod";
 import type { BenchFile, BenchThresholds } from "./bench-contract.js";
+import type { BenchExecutionExtras } from "./run.js";
 import {
   type EvalCase,
   type EvalReport,
@@ -96,6 +97,20 @@ function comparePrerelease(a: string[], b: string[]): number {
 }
 
 /**
+ * Percentile of the given values by nearest-rank: the smallest value whose
+ * rank is at least `p` percent of the sample. Throws on an empty input — a
+ * release run always produces at least one case.
+ */
+export function percentile(values: number[], p: number): number {
+  if (values.length === 0) {
+    throw new Error(`percentile(${p}) requires at least one value`);
+  }
+  const sorted = [...values].sort((x, y) => x - y);
+  const rank = Math.max(1, Math.ceil((p / 100) * sorted.length));
+  return sorted[rank - 1];
+}
+
+/**
  * Median (50th percentile) of the given values. For an even count the
  * convention is the average of the two middle values. Throws on an empty
  * input — a release run always produces at least one case.
@@ -117,6 +132,18 @@ export interface ReleaseStats {
   passRate: number;
   latencyMsP50: number;
   tokensP50: number;
+  /**
+   * Share (0–1) of the cases whose flow ran at least one cascade node that
+   * escalated; `null` when no case executed a cascade node at all. Optional
+   * so that statistics stored in older release receipts stay valid.
+   */
+  cascadeEscalationRate?: number | null;
+  /** Cases that ended in a budget stop (`finishReason === "budget_exceeded"`). */
+  budgetExceededCount?: number;
+  /** p50 wall time (ms) over all cases. */
+  wallMsP50?: number;
+  /** p95 wall time (ms) over all cases. */
+  wallMsP95?: number;
 }
 
 /**
@@ -147,6 +174,33 @@ export function evaluateThresholds(
   ) {
     failures.push(
       `p50 tokens ${Math.round(stats.tokensP50)} above max ${thresholds.maxTokensP50}`,
+    );
+  }
+  if (
+    thresholds.maxCascadeEscalationRate !== undefined &&
+    stats.cascadeEscalationRate !== undefined &&
+    stats.cascadeEscalationRate !== null &&
+    stats.cascadeEscalationRate > thresholds.maxCascadeEscalationRate
+  ) {
+    failures.push(
+      `cascade escalation rate ${formatRate(stats.cascadeEscalationRate)} above max ${formatRate(thresholds.maxCascadeEscalationRate)}`,
+    );
+  }
+  if (
+    thresholds.maxBudgetExceeded !== undefined &&
+    (stats.budgetExceededCount ?? 0) > thresholds.maxBudgetExceeded
+  ) {
+    failures.push(
+      `budget exceeded ${stats.budgetExceededCount ?? 0} above max ${thresholds.maxBudgetExceeded}`,
+    );
+  }
+  if (
+    thresholds.maxWallMsP95 !== undefined &&
+    stats.wallMsP95 !== undefined &&
+    stats.wallMsP95 > thresholds.maxWallMsP95
+  ) {
+    failures.push(
+      `p95 wall time ${Math.round(stats.wallMsP95)}ms above max ${thresholds.maxWallMsP95}ms`,
     );
   }
   return failures;
@@ -250,6 +304,14 @@ export interface ReleaseCaseStat {
   passed: boolean;
   latencyMs: number;
   tokens: number | undefined;
+  /** A cascade node in the case's trace escalated; absent when the trace had none. */
+  cascadeEscalated?: boolean;
+  /** Cascade nodes the case's trace recorded; 0 means the flow ran none. */
+  cascadeNodes?: number;
+  /** The case ended with `finishReason === "budget_exceeded"`. */
+  budgetExceeded?: boolean;
+  /** Wall time of the case's request in ms; falls back to the case latency. */
+  wallMs?: number;
 }
 
 /** Shape of the token usage subset the release gate reads. */
@@ -296,6 +358,7 @@ export async function runBenchCases(
 
   const tokensByMessages = new Map<unknown, number | undefined>();
   const revisionByMessages = new Map<unknown, ObservedRevision>();
+  const extrasByMessages = new Map<unknown, BenchExecutionExtras>();
   const wrapped: FlowExecutor = async (flowId, messages, metadata) => {
     const result = await executor(flowId, messages, metadata);
     tokensByMessages.set(messages, totalTokensOf(result.usage));
@@ -303,6 +366,7 @@ export async function runBenchCases(
       ...(result.flowVersion !== undefined ? { flowVersion: result.flowVersion } : {}),
       ...(result.flowDigest !== undefined ? { flowDigest: result.flowDigest } : {}),
     });
+    extrasByMessages.set(messages, result as BenchExecutionExtras);
     return result;
   };
 
@@ -312,11 +376,20 @@ export async function runBenchCases(
 
   const stats: ReleaseCaseStat[] = report.cases.map((caseResult) => {
     const evalCase = evalCases.find((c) => c.id === caseResult.id);
+    const extras = evalCase !== undefined ? extrasByMessages.get(evalCase.messages) : undefined;
     return {
       id: caseResult.id,
       passed: caseResult.passed,
       latencyMs: caseResult.latencyMs,
       tokens: evalCase !== undefined ? tokensByMessages.get(evalCase.messages) : undefined,
+      ...(extras?.cascadeEscalated !== undefined
+        ? { cascadeEscalated: extras.cascadeEscalated }
+        : {}),
+      ...(extras?.cascadeNodes !== undefined ? { cascadeNodes: extras.cascadeNodes } : {}),
+      ...(extras?.budgetExceeded !== undefined
+        ? { budgetExceeded: extras.budgetExceeded }
+        : {}),
+      ...(extras?.wallMs !== undefined ? { wallMs: extras.wallMs } : {}),
     };
   });
   const revisions: ObservedRevision[] = report.cases.map((caseResult) => {
@@ -332,7 +405,10 @@ export async function runBenchCases(
 /**
  * Aggregates per-case observations into the release statistics. Cases
  * without token usage are excluded from the token median; if no case
- * reported usage the token median is 0.
+ * reported usage the token median is 0. The cascade escalation rate is
+ * measured only over cases whose flow executed at least one cascade node,
+ * and is `null` when no case did. Wall time falls back to the case latency
+ * when the executor reported none.
  */
 export function aggregateStats(
   report: EvalReport,
@@ -341,12 +417,20 @@ export function aggregateStats(
   const tokens = caseStats
     .map((c) => c.tokens)
     .filter((t): t is number => typeof t === "number");
+  const cascadeCases = caseStats.filter((c) => (c.cascadeNodes ?? 0) > 0);
+  const escalated = cascadeCases.filter((c) => c.cascadeEscalated === true).length;
+  const wallValues = caseStats.map((c) => c.wallMs ?? c.latencyMs);
   return {
     cases: report.total,
     passed: report.passed,
     passRate: report.passRate,
     latencyMsP50: percentile50(caseStats.map((c) => c.latencyMs)),
     tokensP50: tokens.length > 0 ? percentile50(tokens) : 0,
+    cascadeEscalationRate:
+      cascadeCases.length > 0 ? escalated / cascadeCases.length : null,
+    budgetExceededCount: caseStats.filter((c) => c.budgetExceeded === true).length,
+    wallMsP50: wallValues.length > 0 ? percentile50(wallValues) : 0,
+    wallMsP95: wallValues.length > 0 ? percentile(wallValues, 95) : 0,
   };
 }
 
@@ -448,6 +532,11 @@ export const FlowReleaseReceiptSchema = z
         passRate: z.number().min(0).max(1),
         latencyMsP50: z.number().finite().nonnegative(),
         tokensP50: z.number().finite().nonnegative(),
+        // Optional: receipts written before these statistics existed stay valid.
+        cascadeEscalationRate: z.number().min(0).max(1).nullable().optional(),
+        budgetExceededCount: z.number().int().nonnegative().optional(),
+        wallMsP50: z.number().finite().nonnegative().optional(),
+        wallMsP95: z.number().finite().nonnegative().optional(),
       })
       .strict(),
     thresholds: z
@@ -455,6 +544,9 @@ export const FlowReleaseReceiptSchema = z
         passRate: z.number().min(0).max(1),
         maxLatencyMsP50: z.number().int().positive().finite().optional(),
         maxTokensP50: z.number().int().positive().finite().optional(),
+        maxCascadeEscalationRate: z.number().min(0).max(1).optional(),
+        maxBudgetExceeded: z.number().int().nonnegative().optional(),
+        maxWallMsP95: z.number().int().positive().finite().optional(),
       })
       .strict(),
     createdAt: z.string().min(1),

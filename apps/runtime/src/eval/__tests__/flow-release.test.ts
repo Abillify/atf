@@ -29,6 +29,7 @@ import {
 } from "../flow-release.js";
 import type { BenchFile } from "../bench-contract.js";
 import type { FlowExecutionResult, FlowExecutor } from "../eval-runner.js";
+import type { BenchExecutionExtras } from "../run.js";
 import { parseEvidenceSigningKey } from "../../observability/evidence-key.js";
 
 describe("compareSemVer", () => {
@@ -106,6 +107,54 @@ describe("evaluateThresholds", () => {
     expect(failures).toHaveLength(2);
     expect(failures[0]).toContain("p50 latency");
     expect(failures[1]).toContain("p50 tokens");
+  });
+
+  test("reports cascade escalation, budget stops and p95 wall time above their maxima", () => {
+    const failures = evaluateThresholds(
+      {
+        ...stats,
+        cascadeEscalationRate: 0.4,
+        budgetExceededCount: 2,
+        wallMsP50: 300,
+        wallMsP95: 1_200,
+      },
+      {
+        passRate: 1,
+        maxCascadeEscalationRate: 0.3,
+        maxBudgetExceeded: 1,
+        maxWallMsP95: 1_000,
+      },
+    );
+    expect(failures).toEqual([
+      "cascade escalation rate 40.0% above max 30.0%",
+      "budget exceeded 2 above max 1",
+      "p95 wall time 1200ms above max 1000ms",
+    ]);
+  });
+
+  test("new thresholds pass at their exact limit and are unchecked when unset", () => {
+    expect(
+      evaluateThresholds(
+        { ...stats, cascadeEscalationRate: 0.3, budgetExceededCount: 1, wallMsP95: 1_000 },
+        { passRate: 1, maxCascadeEscalationRate: 0.3, maxBudgetExceeded: 1, maxWallMsP95: 1_000 },
+      ),
+    ).toEqual([]);
+    // Unset thresholds never fire, even on bad numbers.
+    expect(
+      evaluateThresholds(
+        { ...stats, cascadeEscalationRate: 1, budgetExceededCount: 9, wallMsP95: 9_000 },
+        { passRate: 1 },
+      ),
+    ).toEqual([]);
+  });
+
+  test("a null cascade rate is never a violation", () => {
+    expect(
+      evaluateThresholds(
+        { ...stats, cascadeEscalationRate: null },
+        { passRate: 1, maxCascadeEscalationRate: 0 },
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -259,6 +308,59 @@ describe("runBenchCases + aggregateStats", () => {
     });
     const bare = await runBenchCases(bench, noUsage, 1);
     expect(aggregateStats(bare.report, bare.stats).tokensP50).toBe(0);
+  });
+
+  test("aggregates cascade escalations, budget stops and wall time over mixed cases", async () => {
+    const mixedBench: BenchFile = {
+      version: 1,
+      flow: "demo",
+      cases: [
+        { id: "plain", messages: [{ role: "user", content: "a" }] },
+        { id: "cascade-kept", messages: [{ role: "user", content: "b" }] },
+        { id: "cascade-escalated", messages: [{ role: "user", content: "c" }] },
+        { id: "budget", messages: [{ role: "user", content: "d" }] },
+      ],
+      thresholds: { passRate: 0 },
+    };
+    const executor: FlowExecutor = async (
+      _flowId,
+      messages,
+    ): Promise<FlowExecutionResult & BenchExecutionExtras> => {
+      const content = lastText(messages);
+      const base: FlowExecutionResult & BenchExecutionExtras = {
+        response: content,
+        latencyMs: 10,
+      };
+      if (content === "a") return { ...base, wallMs: 100 };
+      if (content === "b") return { ...base, cascadeNodes: 1, cascadeEscalated: false, wallMs: 200 };
+      if (content === "c") return { ...base, cascadeNodes: 2, cascadeEscalated: true, wallMs: 300 };
+      return { ...base, finishReason: "budget_exceeded", budgetExceeded: true, wallMs: 900 };
+    };
+    const { report, stats } = await runBenchCases(mixedBench, executor, 1);
+    // The plain case reports no cascade observation at all.
+    expect(stats.find((s) => s.id === "plain")?.cascadeNodes).toBeUndefined();
+    expect(stats.find((s) => s.id === "cascade-escalated")?.cascadeEscalated).toBe(true);
+    expect(stats.find((s) => s.id === "budget")?.budgetExceeded).toBe(true);
+
+    const aggregated = aggregateStats(report, stats);
+    // Only the two cascade cases count: one of two escalated.
+    expect(aggregated.cascadeEscalationRate).toBeCloseTo(0.5);
+    expect(aggregated.budgetExceededCount).toBe(1);
+    expect(aggregated.wallMsP50).toBe(250);
+    expect(aggregated.wallMsP95).toBe(900);
+  });
+
+  test("the cascade rate is null when no case ran a cascade node", async () => {
+    const { report, stats } = await runBenchCases(bench, async (_f, messages) => ({
+      response: lastText(messages),
+      latencyMs: 5,
+    }), 1);
+    const aggregated = aggregateStats(report, stats);
+    expect(aggregated.cascadeEscalationRate).toBeNull();
+    expect(aggregated.budgetExceededCount).toBe(0);
+    // Wall time falls back to the case latency when the executor reports none.
+    expect(aggregated.wallMsP50).toBe(5);
+    expect(aggregated.wallMsP95).toBe(5);
   });
 });
 
@@ -441,5 +543,37 @@ describe("release receipts", () => {
     expect(
       FlowReleaseReceiptSchema.safeParse({ ...receipt, unknown: true }).success,
     ).toBe(false);
+  });
+
+  test("the new statistics travel through results and keep the receipt valid", () => {
+    const receipt = signReleaseReceipt(
+      buildReleaseReceipt({
+        ...unsigned,
+        results: {
+          ...unsigned.results,
+          cascadeEscalationRate: 0.25,
+          budgetExceededCount: 1,
+          wallMsP50: 30,
+          wallMsP95: 90,
+        },
+        thresholds: { ...unsigned.thresholds, maxWallMsP95: 100 },
+      }),
+      key,
+    );
+    expect(receipt.results.cascadeEscalationRate).toBe(0.25);
+    expect(receipt.results.budgetExceededCount).toBe(1);
+    expect(receipt.results.wallMsP50).toBe(30);
+    expect(receipt.results.wallMsP95).toBe(90);
+    expect(receipt.thresholds.maxWallMsP95).toBe(100);
+    expect(FlowReleaseReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+  });
+
+  test("a receipt written without the new statistics still parses and verifies", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    const restored = FlowReleaseReceiptSchema.parse(JSON.parse(JSON.stringify(receipt)));
+    expect(restored.results.cascadeEscalationRate).toBeUndefined();
+    expect(restored.results.wallMsP95).toBeUndefined();
+    expect(verifyReleaseReceiptSignature(restored, key.publicKeyRaw)).toBe(true);
   });
 });

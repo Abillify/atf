@@ -363,7 +363,7 @@ export const FLOWS_DIR_ENTRIES: ReferenceField[] = [
   {
     key: "bench/",
     description:
-      "Bench files `<flowId>.bench.yaml` — recorded conversations (`cases` with `messages`, optional `metadata` and `assert` assertions) plus release `thresholds` (`passRate` 0–1 required, optional `maxLatencyMsP50` and `maxTokensP50`), with `version: 1` and `flow: <flowId>`. Read by `atf flows release` as the release gate; never loaded as flows.",
+      "Bench files `<flowId>.bench.yaml` — recorded conversations (`cases` with `messages`, optional `metadata` and `assert` assertions) plus release `thresholds` (`passRate` 0–1 required, optional `maxLatencyMsP50`, `maxTokensP50`, `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`), with `version: 1` and `flow: <flowId>`. Read by `atf flows release` as the release gate; never loaded as flows.",
   },
   {
     key: "*.example.yaml",

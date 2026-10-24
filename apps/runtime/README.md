@@ -213,8 +213,8 @@ Complete reference (generated): [`docs/FLOWS.md`](../../docs/FLOWS.md). Examples
 
 Releases are gated by a versioned bench file next to the flow:
 `flows/bench/<flowId>.bench.yaml` records conversations (`cases` with `messages` and
-`assert` assertions) plus release `thresholds` (`passRate`, optional `maxLatencyMsP50`
-and `maxTokensP50`).
+`assert` assertions) plus release `thresholds` (`passRate`, optional `maxLatencyMsP50`,
+`maxTokensP50`, `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`).
 
 ```bash
 # from apps/runtime — runs the bench cases against a live server and checks thresholds

@@ -22,7 +22,6 @@ import {
   runEval,
   formatReport,
   type EvalDataset,
-  type FlowExecutor,
   type FlowExecutionResult,
   type Judge,
 } from "./eval-runner.js";
@@ -101,12 +100,17 @@ export interface DebugTraceSummary {
   flowVersion?: string;
   /** `flow_digest` the server recorded for the execution, when present. */
   flowDigest?: string;
+  /** Nodes that ran a model cascade (`nodes[].cascade` present), 0 when none. */
+  cascadeNodes: number;
+  /** True when at least one cascade node escalated to its stronger model. */
+  cascadeEscalated: boolean;
 }
 
 /**
  * Pure summary of a debug trace (unknown shape tolerated): tool-call names
  * from `nodes[].tool_calls[].name`, the LAST node-level `finish_reason`
- * (falling back to a top-level one), and every `diagnostics[].code`.
+ * (falling back to a top-level one), every `diagnostics[].code`, and the
+ * cascade outcome (`nodes[].cascade`).
  */
 export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
   const root = (trace ?? {}) as {
@@ -118,13 +122,22 @@ export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
   const toolCalls: string[] = [];
   const diagnostics: string[] = [];
   let finishReason: string | undefined;
+  let cascadeNodes = 0;
+  let cascadeEscalated = false;
   const nodes = Array.isArray(root.nodes) ? root.nodes : [];
   for (const raw of nodes) {
     const node = (raw ?? {}) as {
       tool_calls?: unknown;
       diagnostics?: unknown;
       finish_reason?: unknown;
+      cascade?: unknown;
     };
+    if (node.cascade !== null && typeof node.cascade === "object") {
+      cascadeNodes += 1;
+      if ((node.cascade as { escalated?: unknown }).escalated === true) {
+        cascadeEscalated = true;
+      }
+    }
     if (Array.isArray(node.tool_calls)) {
       for (const call of node.tool_calls) {
         const name = (call as { name?: unknown } | null)?.name;
@@ -148,8 +161,30 @@ export function summarizeDebugTrace(trace: unknown): DebugTraceSummary {
     diagnostics,
     ...(typeof root.flow_version === "string" ? { flowVersion: root.flow_version } : {}),
     ...(typeof root.flow_digest === "string" ? { flowDigest: root.flow_digest } : {}),
+    cascadeNodes,
+    cascadeEscalated,
   };
 }
+
+/**
+ * Extra fields {@link createHttpExecutor} reports on top of
+ * {@link FlowExecutionResult} for the release bench statistics: the cascade
+ * outcome of the trace, whether the execution stopped on a budget, and the
+ * wall time of the request.
+ */
+export interface BenchExecutionExtras {
+  /** A cascade node in the trace escalated to its stronger model. */
+  cascadeEscalated?: boolean;
+  /** Cascade nodes the trace recorded; 0 means the flow ran none. */
+  cascadeNodes?: number;
+  /** The execution ended with `finishReason === "budget_exceeded"`. */
+  budgetExceeded?: boolean;
+  /** Wall time of the request in ms (response minus request start). */
+  wallMs?: number;
+}
+
+/** Result shape of {@link createHttpExecutor}. */
+export type BenchHttpExecutionResult = FlowExecutionResult & BenchExecutionExtras;
 
 /** Builds an executor that POSTs to /v1/chat/completions (non-streaming). */
 export function createHttpExecutor(
@@ -162,12 +197,13 @@ export function createHttpExecutor(
    * `toolCalled` and trace-based assertions can pass against a server.
    */
   fetchTrace = true,
-): FlowExecutor {
+): (flow: string, messages: ChatMessage[], metadata?: Record<string, unknown>) => Promise<BenchHttpExecutionResult> {
   return async (
     flow: string,
     messages: ChatMessage[],
     metadata?: Record<string, unknown>,
-  ): Promise<FlowExecutionResult> => {
+  ): Promise<BenchHttpExecutionResult> => {
+    const startedAt = Date.now();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -199,9 +235,13 @@ export function createHttpExecutor(
       };
     };
     const text = json.choices?.[0]?.message?.content ?? "";
-    const result: FlowExecutionResult = {
+    const result: BenchHttpExecutionResult = {
       text,
       ...(json.usage !== undefined ? { usage: json.usage } : {}),
+      wallMs: Date.now() - startedAt,
+      cascadeEscalated: false,
+      cascadeNodes: 0,
+      budgetExceeded: false,
     };
     const executionId = executionIdFromCompletionId(json.id);
     if (fetchTrace && executionId !== undefined) {
@@ -216,6 +256,9 @@ export function createHttpExecutor(
           result.diagnostics = summary.diagnostics;
           if (summary.flowVersion !== undefined) result.flowVersion = summary.flowVersion;
           if (summary.flowDigest !== undefined) result.flowDigest = summary.flowDigest;
+          result.cascadeNodes = summary.cascadeNodes;
+          result.cascadeEscalated = summary.cascadeEscalated;
+          result.budgetExceeded = summary.finishReason === "budget_exceeded";
         } else {
           process.stderr.write(
             `eval: debug trace for ${executionId} unavailable (HTTP ${traceRes.status}); toolCalled/trace assertions cannot pass\n`,
