@@ -54,6 +54,10 @@ releases:
 - **Search**: HyDE is available on `/v2/search` and the MCP search tool
   (`hyde: true`, needs the existing `HYDE_*` configuration); lexical matching
   and reranking keep the original query.
+- **Tooling**: `bun run release:preflight` runs the CI gates locally, warns
+  when the local Bun differs from the pinned one, scans the commits since the
+  last tag with gitleaks and, with `--container`, checks the supply-chain
+  inventory in a linux/amd64 container.
 
 ### Changed
 

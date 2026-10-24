@@ -47,6 +47,25 @@ bun run check:budgets:ci         # bundle-size budgets
 gitleaks git . --config .gitleaks.toml --redact --no-banner   # secret scan over the full history, as CI runs it
 ```
 
+### Release preflight
+
+Before pushing a release branch, run the CI gates locally:
+
+```bash
+bun run release:preflight              # the gate list above, in order
+bun run release:preflight -- --skip knip --skip gitleaks
+bun run release:preflight -- --container   # also the supply-chain inventory in linux/amd64
+```
+
+The script runs the gates sequentially, stops at the first failure (exit 1), and prints a
+summary table of every step. It warns when the local Bun differs from the `packageManager`
+pin and measures the bundle budgets with the pinned version via `npx` in that case, so the
+numbers match CI. The secret scan runs over the commits since the last tag when `gitleaks`
+is installed; otherwise CI is the first place that scans. `supply-chain:check` is only
+meaningful in a `linux/amd64` container and runs only with `--container`, which copies the
+tracked files to a temporary directory (override with `--workdir <path>`) and removes it
+afterwards.
+
 Reviewed false positives of the secret scan are listed by fingerprint in `.gitleaksignore`
 (`<commit>:<file>:<rule>:<line>`). Add an entry only after checking that the matched line is
 not a credential; never widen the allowlist in `.gitleaks.toml` for a single finding.
