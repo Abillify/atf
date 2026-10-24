@@ -253,8 +253,9 @@ setting that governs it.
 Every artefact the platform issues — decision receipts, signed evidence
 bundles, Ed25519 erasure receipts, audit-log exports with anchors — can be
 verified offline with `atf-verify`, without trusting or contacting the issuing
-instance. Each GitHub release ships a standalone Linux x64 binary
-(`atf-verify-linux-x64`); in a source checkout the same tool runs as
+instance. Each GitHub release ships a standalone binary for Linux (x64 and
+arm64), macOS (x64 and arm64) and Windows (x64, `.exe`)
+(`atf-verify-<platform>`); in a source checkout the same tool runs as
 `bun run scripts/atf-verify.ts`. Public keys come from the instance's JWKS
 (fetched once or from a saved file); the artefact's own `kid` selects the key.
 
@@ -271,6 +272,13 @@ Legacy HMAC artefacts verify with `--secret` via
 `bun run scripts/cli.ts verify-bundle` in `apps/runtime`. See
 [ADR 0030](docs/adr/0030-asymmetric-evidence-chain-ed25519.md) for the
 verification design.
+
+Releases publish multi-arch service images (`linux/amd64`, `linux/arm64`) to
+`ghcr.io/abillify/atf-<service>` and the Helm chart to
+`oci://ghcr.io/abillify/charts/atf`, both cosign-signed. Install and verify them
+with the commands in [DEPLOYMENT.md](DEPLOYMENT.md); if a pull fails with
+`denied` or `not found`, the package is not public yet — build from source or
+ask the maintainers.
 
 ## Development
 

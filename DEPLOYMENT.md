@@ -92,7 +92,28 @@ helm install atf deploy/helm/atf --namespace atf --create-namespace \
   --set global.secrets.search=atf-search --set global.secrets.extract=atf-extract \
   --set global.secrets.control=atf-control \
   --set runtime.flowsConfigMap=atf-flows --set gate.configMap=atf-gate-config \
-  --set global.image.tag=0.16.0
+  --set global.image.tag=<VERSION>
+```
+
+Released charts are also published as an OCI artifact, so an install needs no source
+checkout:
+
+```sh
+helm install atf oci://ghcr.io/abillify/charts/atf --version <VERSION> \
+  --namespace atf --create-namespace \
+  --set global.secrets.runtime=atf-runtime --set global.secrets.gate=atf-gate \
+  --set global.secrets.search=atf-search --set global.secrets.extract=atf-extract \
+  --set global.secrets.control=atf-control \
+  --set runtime.flowsConfigMap=atf-flows --set gate.configMap=atf-gate-config \
+  --set global.image.tag=<VERSION>
+```
+
+Verify the chart signature before installing it from the registry:
+
+```sh
+cosign verify ghcr.io/abillify/charts/atf:<VERSION> \
+  --certificate-identity-regexp 'https://github.com/Abillify/atf/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 ## Inference provider configuration
@@ -311,16 +332,20 @@ geometry-driven refinements (heading candidates, bbox snapping, the text fast-pa
 
 Tag releases attach a checksummed bundle containing both native workspace inventories and all
 five Quickstart image inventories. They also publish the five service images (`runtime`,
-`search`, `gate`, `extract`, `control`) to `ghcr.io/abillify/atf-<service>`, tagged with the
-release version and the exact commit SHA. The `Container images` job in
+`search`, `gate`, `extract`, `control`) to `ghcr.io/abillify/atf-<service>` for `linux/amd64`
+and `linux/arm64`, tagged with the release version and the exact commit SHA, and push the Helm
+chart to `oci://ghcr.io/abillify/charts/atf` (`atf-<VERSION>.tgz`). The `Container images` job in
 `.github/workflows/release.yml` signs each image digest with cosign (keyless) and attaches a
 SLSA build-provenance attestation and a CycloneDX SBOM attestation, and scans each image's
 OS-package licenses with Trivy into a per-image `atf-<service>-licenses.cdx.json` added to the
-bundle ([docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md)). The images exist only after
-the tag run has finished. Production images remain deployment-owned and require their own
-inventory, source-availability, replaceability, attribution, scanning, and immutable-digest
-review. The 0.16 operating changes (`JWT_ISSUER_TENANTS`, `CONTROL_PUBLIC_ORIGIN`, the German
-full-text default) are listed in [docs/UPGRADE.md](docs/UPGRADE.md).
+bundle ([docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md)). The `publish` job signs the chart the
+same way (see the `cosign verify` example under the Helm chart above). The images exist only after
+the tag run has finished. If pulling an image or the chart fails with `denied` or `not found`, the
+package is not public yet; build the images from source (see Development) or ask the maintainers.
+Production images remain deployment-owned and require their own inventory, source-availability,
+replaceability, attribution, scanning, and immutable-digest review. The 0.16 operating changes
+(`JWT_ISSUER_TENANTS`, `CONTROL_PUBLIC_ORIGIN`, the German full-text default) are listed in
+[docs/UPGRADE.md](docs/UPGRADE.md).
 
 ### Image verification
 

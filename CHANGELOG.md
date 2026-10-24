@@ -66,6 +66,11 @@ releases:
   missing `PROVIDERS` is reported as the likely cause, and a skipped sub-flow
   node counts as a warning.
 
+### Documentation
+
+- Deployment guide: install from the OCI chart, verify chart and images with
+  cosign, supported platforms.
+
 ## [0.19.3] - 2026-10-24
 
 ### Added
