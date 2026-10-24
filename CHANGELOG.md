@@ -78,6 +78,9 @@ releases:
   node counts as a warning.
 - **Search** (`trace`): the result reports `truncated: true` when an instant
   hit the lookup cap, instead of looking complete.
+- **Gate** (approvals): the per-tenant `maxPending` limit holds under
+  concurrent requests across replicas (check and insert run as one Redis
+  script).
 
 ### Documentation
 

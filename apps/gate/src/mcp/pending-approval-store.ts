@@ -212,6 +212,29 @@ const TENANT_INDEX_PREFIX = "mcpgate:approval:tenant:";
 const CLAIM_KEY_PREFIX = "mcpgate:approval:claim:";
 
 /**
+ * Create-with-limit as one Redis script: prune the tenant index, count it
+ * against `maxPending`, insert the entry, and refresh the index TTL run
+ * atomically, so two replicas can not both count below the limit and both
+ * write. Returns `1` (created), `0` (tenant at the limit), `-1` (the state
+ * key already exists). The `PENDING_APPROVAL_CREATE` marker lets the
+ * unit-test fake recognise and interpret exactly this script.
+ */
+const CREATE_WITH_LIMIT_SCRIPT = `PENDING_APPROVAL_CREATE
+-- KEYS[1]=tenant index, KEYS[2]=entry key
+-- ARGV[1]=cutoff, ARGV[2]=maxPending, ARGV[3]=entry JSON, ARGV[4]=entry TTL ms,
+-- ARGV[5]=createdAt, ARGV[6]=requestState, ARGV[7]=index TTL ms
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
+if tonumber(redis.call("ZCARD", KEYS[1])) >= tonumber(ARGV[2]) then
+  return 0
+end
+if redis.call("SET", KEYS[2], ARGV[3], "NX", "PX", ARGV[4]) ~= "OK" then
+  return -1
+end
+redis.call("ZADD", KEYS[1], ARGV[5], ARGV[6])
+redis.call("PEXPIRE", KEYS[1], ARGV[7])
+return 1`;
+
+/**
  * Shared cross-replica implementation: the entry lives as JSON under
  * `mcpgate:approval:pending:<requestState>` with `PX` set to its remaining
  * lifetime (Redis expires it), indexed per tenant in the ZSET
@@ -271,13 +294,17 @@ export class RedisPendingApprovalStore implements PendingApprovalStoreLike {
     let full = false;
     try {
       if (this.maxPending !== undefined) {
-        // Drop index members older than one TTL (their entries have expired),
-        // then count what is left against the limit.
-        await this.client.sendCommand(["ZREMRANGEBYSCORE", index, "-inf", String(now - this.ttlMs)]);
-        const count = Number(await this.client.sendCommand(["ZCARD", index]));
-        full = Number.isFinite(count) && count >= this.maxPending;
-      }
-      if (!full) {
+        // Prune, count, insert, and refresh the index TTL in one script so
+        // concurrent replicas can not both pass the limit check.
+        const result = Number(await this.client.sendCommand([
+          "EVAL", CREATE_WITH_LIMIT_SCRIPT, "2", index, this.key(entry.requestState),
+          String(now - this.ttlMs), String(this.maxPending), JSON.stringify(entry),
+          String(entry.expiresAt - now), String(entry.createdAt), entry.requestState,
+          String(this.ttlMs),
+        ]));
+        if (result === 0) full = true;
+        if (result === -1) throw new Error(`request state ${entry.requestState} already exists`);
+      } else {
         const written = await this.client.sendCommand([
           "SET", this.key(entry.requestState), JSON.stringify(entry),
           "PX", String(entry.expiresAt - now), "NX",

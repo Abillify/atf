@@ -105,6 +105,32 @@ function fakeRedis(options: { failOn?: string } = {}) {
         indexTtls.set(args[1] ?? "", Number(args[2]));
         return indexes.has(args[1] ?? "") ? 1 : 0;
       }
+      if (name === "EVAL") {
+        // Mini-interpreter for the one script the store ships: it runs the
+        // same steps the Lua script does, in one synchronous block, so the
+        // command log shows what the script executed.
+        const script = args[1] ?? "";
+        if (!script.includes("PENDING_APPROVAL_CREATE")) {
+          throw new Error("fake redis only interprets the pending-approval create script");
+        }
+        const [indexKey, entryKey, cutoff, maxPending, json, entryTtl, createdAt, state, indexTtl] =
+          args.slice(3);
+        if (indexKey === undefined || entryKey === undefined) throw new Error("EVAL needs two keys");
+        const index = indexes.get(indexKey) ?? new Map<string, number>();
+        indexes.set(indexKey, index);
+        const cut = Number(cutoff);
+        for (const [member, score] of index) if (score <= cut) index.delete(member);
+        commands.push(["ZREMRANGEBYSCORE", indexKey, "-inf", cutoff ?? ""]);
+        if (index.size >= Number(maxPending)) return 0;
+        commands.push(["SET", entryKey, json ?? "", "NX", "PX", entryTtl ?? ""]);
+        if (alive(entryKey)) return -1;
+        values.set(entryKey, { value: json ?? "", expiresAt: now() + Number(entryTtl) });
+        index.set(state ?? "", Number(createdAt));
+        commands.push(["ZADD", indexKey, createdAt ?? "", state ?? ""]);
+        indexTtls.set(indexKey, Number(indexTtl));
+        commands.push(["PEXPIRE", indexKey, indexTtl ?? ""]);
+        return 1;
+      }
       throw new Error(`fake redis does not implement ${name}`);
     },
   };
@@ -303,6 +329,23 @@ describe("RedisPendingApprovalStore capacity and index lifetime", () => {
     await store.create("owner-a", "tenant-a", "one", {});
     await Bun.sleep(1_001);
     expect(await store.create("owner-a", "tenant-a", "two", {})).toBeDefined();
+  });
+
+  it("holds the limit under concurrent creates", async () => {
+    // The limit check and the insert run as one script, so parallel callers
+    // (modelling separate replicas) can not both count below the limit.
+    const { client } = fakeRedis();
+    const store = new RedisPendingApprovalStore(client, 60_000, 5);
+    const results = await Promise.allSettled(
+      Array.from({ length: 20 }, () => store.create("owner-a", "tenant-a", "one", {})),
+    );
+    const created = results.filter((r) => r.status === "fulfilled").length;
+    expect(created).toBe(5);
+    expect(
+      results.every((r) => r.status === "fulfilled" || r.reason instanceof TaskCapacityError),
+    ).toBe(true);
+    const listed = await store.list("tenant-a", () => true);
+    expect(listed.approvals).toHaveLength(5);
   });
 
   it("gives the tenant index a TTL on every write", async () => {
