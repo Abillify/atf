@@ -29,6 +29,7 @@ import {
   GitBranch,
   Plug,
   ShieldCheck,
+  ShieldHalf,
   Lock,
   Scale,
   Cable,
@@ -190,6 +191,12 @@ export const NAV_GROUPS: NavGroup[] = [
         labelKey: "nav.compliance",
         hintKey: "nav.compliance.hint",
         icon: Scale,
+      },
+      {
+        href: "/posture",
+        labelKey: "nav.posture",
+        hintKey: "nav.posture.hint",
+        icon: ShieldHalf,
       },
       {
         href: "/mcp",

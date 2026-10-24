@@ -39,6 +39,8 @@ releases:
 - **Runtime** (`flows release`): bench statistics report the cascade escalation
   rate, budget stops and p50/p95 wall time; bench files may cap them with
   `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`.
+- **Control**: a Governance posture page shows which controls are active
+  (`GET /monitoring/posture`), grouped by area with ok/warn/fail.
 
 ### Changed
 

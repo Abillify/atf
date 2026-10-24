@@ -60,6 +60,8 @@ export const de: Catalog = {
   "nav.pii-vault.hint": "Reversible PII-Tokenisierung",
   "nav.compliance": "Compliance",
   "nav.compliance.hint": "Policy & Nachweisdossier",
+  "nav.posture": "Governance-Status",
+  "nav.posture.hint": "Welche Kontrollen gerade aktiv sind",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Verbundene MCP-Server",
 

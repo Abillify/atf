@@ -60,6 +60,8 @@ export const en = {
   "nav.pii-vault.hint": "Reversible PII tokenization",
   "nav.compliance": "Compliance",
   "nav.compliance.hint": "Policy & evidentiary dossier",
+  "nav.posture": "Governance posture",
+  "nav.posture.hint": "Which controls are active right now",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Connected MCP servers",
 
