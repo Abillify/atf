@@ -304,6 +304,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Applications, contracts, request path, design rules |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Every capability and the settings that govern it |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Generated configuration reference; the current count is recorded in that generated file |
+| [docs/CONFIGURATION-ESSENTIALS.md](docs/CONFIGURATION-ESSENTIALS.md) | The variables a first production deployment needs, per service |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production requirements and the supported boundary |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |

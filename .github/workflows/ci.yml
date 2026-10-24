@@ -107,6 +107,9 @@ jobs:
       - name: Configuration reference is current
         run: bun run config-reference:check
 
+      - name: Configuration essentials match the reference
+        run: bun run check:config-essentials
+
       - name: Flow reference and flow schema are current
         run: bun run flow-reference:check
 

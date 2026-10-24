@@ -8,6 +8,7 @@
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | You need the applications, contracts, and request path |
 | [CAPABILITIES.md](CAPABILITIES.md) | You want to know whether ATF does a specific thing |
 | [CONFIGURATION.md](CONFIGURATION.md) | You are configuring a deployment. Generated from the schemas |
+| [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The variables a first production deployment needs per service |
 | [FLOWS.md](FLOWS.md) | You are writing or changing a flow. Generated from the flow schema and node type catalog |
 | [../DEVELOPMENT.md](../DEVELOPMENT.md) | You are about to change code |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | You are deploying to production |
@@ -46,6 +47,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | --- | --- |
 | [CAPABILITIES.md](CAPABILITIES.md) | Every capability and the settings that govern it |
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables per service. **Generated** — run `bun run config-reference` |
+| [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The short list per service for a first production deployment |
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
 | [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |

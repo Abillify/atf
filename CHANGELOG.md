@@ -86,6 +86,9 @@ releases:
 - Threat model, DPIA template and operations/TCO guide cover answer-ready
   retrieval, trace and document diff, bench files and release receipts, the
   cascade and the Runtime's cost levers.
+- `docs/CONFIGURATION-ESSENTIALS.md` lists the variables a production start
+  needs per service; CI checks that every listed variable exists in the
+  configuration reference.
 
 ## [0.19.3] - 2026-10-24
 
