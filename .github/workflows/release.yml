@@ -164,6 +164,7 @@ jobs:
           persist-credentials: false
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -176,7 +177,7 @@ jobs:
         with:
           context: .
           file: deploy/images/Dockerfile.${{ matrix.service }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: >-
             ${{ env.IMAGE }}:${{ needs.guard.outputs.version }},
@@ -274,17 +275,26 @@ jobs:
         with:
           pattern: release-*-${{ github.sha }}
           path: staging/bundle
-      # The offline verifier ships as a standalone Linux x64 binary so third
-      # parties can verify decision receipts, evidence bundles, erasure
-      # receipts and audit exports without a Bun checkout. Building it into
-      # the bundle directory includes it in CHECKSUMS.sha256 and the attested
-      # tarball; the same file is uploaded as a release asset.
-      - name: Build atf-verify Linux x64 binary
+      # The offline verifier ships as a standalone binary per platform so
+      # third parties can verify decision receipts, evidence bundles, erasure
+      # receipts and audit exports without a Bun checkout. Building them into
+      # the bundle directory includes them in CHECKSUMS.sha256 and the attested
+      # tarball; the same files are uploaded as release assets. Only the
+      # linux-x64 binary can run on the runner, so it is the only one smoke-
+      # tested with --help; the others are compile-checked by bun itself.
+      - name: Build atf-verify binaries (all platforms)
         run: |
           set -euo pipefail
-          bun build --compile scripts/atf-verify.ts --outfile dist/bin/atf-verify-linux-x64
-          dist/bin/atf-verify-linux-x64 --help >/dev/null
-          cp dist/bin/atf-verify-linux-x64 staging/bundle/atf-verify-linux-x64
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            ext=""
+            [ "$target" = "windows-x64" ] && ext=".exe"
+            bun build --compile --target="bun-${target}" scripts/atf-verify.ts \
+              --outfile "dist/bin/atf-verify-${target}${ext}"
+            if [ "$target" = "linux-x64" ]; then
+              dist/bin/atf-verify-linux-x64 --help >/dev/null
+            fi
+            cp "dist/bin/atf-verify-${target}${ext}" "staging/bundle/atf-verify-${target}${ext}"
+          done
       - name: Create checksummed bundle
         run: |
           set -euo pipefail
@@ -300,11 +310,16 @@ jobs:
       - name: Attest supply-chain bundle provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          # The verifier binary is also a standalone release asset, so it is
-          # attested on its own (`gh attestation verify atf-verify-linux-x64`).
+          # The verifier binaries are also standalone release assets, so they
+          # are attested on their own (`gh attestation verify
+          # atf-verify-<platform>`).
           subject-path: |
             atf-supply-chain-${{ github.ref_name }}-${{ github.sha }}.tar.gz
             staging/bundle/atf-verify-linux-x64
+            staging/bundle/atf-verify-linux-arm64
+            staging/bundle/atf-verify-darwin-x64
+            staging/bundle/atf-verify-darwin-arm64
+            staging/bundle/atf-verify-windows-x64.exe
       # The release notes are the version's own CHANGELOG section, not an
       # auto-generated list of pull requests. A missing or empty section fails
       # the job before anything is published.
@@ -335,4 +350,8 @@ jobs:
             --notes-file release-notes.md \
             "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz" \
             "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz.sha256" \
-            "staging/bundle/atf-verify-linux-x64"
+            "staging/bundle/atf-verify-linux-x64" \
+            "staging/bundle/atf-verify-linux-arm64" \
+            "staging/bundle/atf-verify-darwin-x64" \
+            "staging/bundle/atf-verify-darwin-arm64" \
+            "staging/bundle/atf-verify-windows-x64.exe"

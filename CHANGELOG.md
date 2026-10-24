@@ -44,6 +44,9 @@ releases:
 - **Control** (trace view): node details show the cascade outcome and
   agent-harness progress, and a run stopped by an execution budget is marked
   as such.
+- **Release**: `atf-verify` ships for linux-x64, linux-arm64, darwin-x64,
+  darwin-arm64 and windows-x64, each attested. Container images are published
+  for linux/amd64 and linux/arm64.
 
 ### Changed
 
