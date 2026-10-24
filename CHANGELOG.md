@@ -4414,6 +4414,8 @@ Public-release hardening patch. No contract-package or executable flow version c
 - A synthetic, non-auto-loaded compliance-policy example with documented activation and
   fail-open loading boundary.
 - Canonical CC0-1.0 license text for the narrowly reviewed `type-fest@0.13.1` expression.
+- **Outpost Desktop**: `check:desktop-updater` refuses release builds with the
+  placeholder updater key; first tests for the sidecar API client.
 
 ### Changed
 

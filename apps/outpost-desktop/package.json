@@ -11,6 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
+    "test": "bun test src",
     "test:a11y": "playwright test"
   },
   "dependencies": {

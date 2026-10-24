@@ -54,6 +54,7 @@
 		"lint:baseline": "bun run scripts/check-lint-baseline.ts",
 		"check:raw-fetch": "bun run scripts/check-raw-fetch.ts",
 		"check:config-essentials": "bun run scripts/check-config-essentials.ts",
+		"check:desktop-updater": "bun run scripts/check-desktop-updater.ts",
 		"check:workspace-counts": "bun run scripts/check-workspace-counts.ts",
 		"check:links": "bun run scripts/check-markdown-links.ts",
 		"check:flow-versions": "bun run scripts/check-flow-versions.ts",

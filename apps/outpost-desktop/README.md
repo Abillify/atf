@@ -72,6 +72,24 @@ updates happen through the deployment channel. The threat-model entry for
 the updater (`docs/THREAT-MODEL.md`) describes what changes once it is
 enabled.
 
+## Release builds
+
+Before a build that ships the updater, provision a real signing key:
+
+1. Generate a minisign key pair:
+   `bunx @tauri-apps/cli signer generate -p` (the password becomes the
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` build secret).
+2. Put the printed **public key** into `plugins.updater.pubkey` in
+   `src-tauri/tauri.conf.json` and set the update `endpoints` next to it.
+3. Store the **private key** only as a CI secret
+   (`TAURI_SIGNING_PRIVATE_KEY`) — never commit it or keep it on a
+   developer machine beyond the signing step.
+4. Check the configuration before building:
+   `OUTPOST_DESKTOP_RELEASE=1 bun run check:desktop-updater` (from the
+   repository root). With `OUTPOST_DESKTOP_RELEASE=1` the check fails while
+   `pubkey` still starts with `REPLACE_WITH` or `endpoints` is empty;
+   without the variable it only prints a hint.
+
 ## Security notes
 
 - Windows installs run with `installMode: passive` — no elevation prompts
