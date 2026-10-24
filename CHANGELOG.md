@@ -32,6 +32,8 @@ releases:
 - **Eval**: `scripts/eval/retrieval.ts --retrieve` measures `POST /v2/retrieve`
   with the golden set (page recall, MRR, nDCG, latency; figures are not part of
   that response).
+- **Eval**: the eval stack runs a second Search instance with
+  `FTS_COMPOUND_SPLIT=query` on port 3013 for the German compound ablation.
 
 ### Changed
 

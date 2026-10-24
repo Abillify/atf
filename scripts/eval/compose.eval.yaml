@@ -95,12 +95,12 @@ services:
       timeout: 3s
       retries: 20
 
-  search:
+  search: &search-base
     build:
       context: ../..
       dockerfile: deploy/examples/Dockerfile
       target: search
-    environment:
+    environment: &search-env
       NODE_ENV: production
       # Local, unauthenticated eval stack: the production-readiness gate
       # (auth, converter token, ACL identity) would refuse to start. The
@@ -154,6 +154,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 60
+
+  # Ablation twin of the search service for the German compound set: same image,
+  # same database, no separate ingest. FTS_COMPOUND_SPLIT acts on the query side
+  # only, so both instances answer from the same vectors and FTS index and the
+  # comparison isolates query-side compound splitting (scripts/eval/README.md,
+  # "German morphology set").
+  search-compound:
+    <<: *search-base
+    environment:
+      <<: *search-env
+      FTS_COMPOUND_SPLIT: query
+    ports:
+      - "${ATF_EVAL_SEARCH_COMPOUND_PORT:-3013}:3000"
 
   # Part of the stack per design §Eval; the Markdown corpus ingests without it,
   # but the binary conversion path (POST /ingest-file) stays exercised by the

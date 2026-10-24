@@ -145,6 +145,20 @@ docs/operations-and-retrieval.md) and compare:
 bun run eval:retrieval:de -- --search-mode fts --collection golden
 ```
 
+The eval stack (`compose.eval.yaml`) runs a second Search instance,
+`search-compound`, with `FTS_COMPOUND_SPLIT=query` on host port 3013 against the
+same database. The option applies to the query side only, so no re-ingest is
+needed; compare the two ports directly:
+
+```sh
+bun run scripts/eval/retrieval.ts --fixture scripts/eval/golden-set/de-morphology.v1.json \
+  --search-mode fts --collection golden --base-url http://127.0.0.1:3012 \
+  --label de-baseline
+bun run scripts/eval/retrieval.ts --fixture scripts/eval/golden-set/de-morphology.v1.json \
+  --search-mode fts --collection golden --base-url http://127.0.0.1:3013 \
+  --label ablation-compound
+```
+
 `de-morphology.test.ts` guards the set: every variant must drop at least one
 content word of its base and must not occur verbatim in the corpus.
 
