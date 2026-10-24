@@ -67,7 +67,7 @@ export function registerTraceTool(opts: McpToolContext): void {
 
   server.tool(
     "trace",
-    'Trace an identifier (e.g. "WE-01/A") across two points in time. Runs the lexical identifier lookup at valid_at_a and at valid_at_b (each with the temporal "version valid at that instant" rule) and diffs the occurrences by document + section: added (only at b), removed (only at a), changed (present at both, content hash differs) and unchanged_count.',
+    'Trace an identifier (e.g. "WE-01/A") across two points in time. Runs the lexical identifier lookup at valid_at_a and at valid_at_b (each with the temporal "version valid at that instant" rule) and diffs the occurrences by document + section: added (only at b), removed (only at a), changed (present at both, content hash differs) and unchanged_count. truncated: true means at least one instant hit the lookup cap; narrow the collection or the identifier.',
     {
       identifier: z
         .string()
@@ -114,6 +114,11 @@ export function registerTraceTool(opts: McpToolContext): void {
       // contain the identifier itself.
       const containsIdentifier = identifierMatcher(identifier);
       const fetchLimit = Math.min(limit * TRACE_LOOKUP_OVERFETCH, TRACE_LOOKUP_MAX);
+      // Whether the raw lookup result filled the fetch window at each instant,
+      // checked BEFORE the identifier filter: a full window means more matches
+      // may exist beyond the cap, so the diff for that instant is incomplete
+      // even when few hits survive the filter (mirrors document_diff).
+      const capped: boolean[] = [];
       const lookup = async (validAt: string): Promise<TraceOccurrence[]> => {
         const res: PostgresResponse<SearchResult[]> = await postgresClient.search(
           identifier,
@@ -140,6 +145,7 @@ export function registerTraceTool(opts: McpToolContext): void {
         if (!res.ok) {
           throw new Error(res.error.message);
         }
+        capped.push(res.result.length >= fetchLimit);
         return res.result
           .filter((hit) => containsIdentifier(hit.content))
           .slice(0, limit)
@@ -190,6 +196,7 @@ export function registerTraceTool(opts: McpToolContext): void {
             b: { ...c.b, ...trustLabels(c.b.excerpt) },
           })),
           unchanged_count: diff.unchanged_count,
+          truncated: capped.some((wasCapped) => wasCapped),
           ...aggregateTrustLabels(occurrences.map((o) => trustLabels(o.excerpt).injection_risk)),
         }, mcpPrettyJson);
       } catch (err) {

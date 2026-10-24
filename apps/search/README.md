@@ -341,7 +341,8 @@ the content-trust labels like every other read.
   by document + section — `added` (only at b), `removed` (only at a), `changed` (present at
   both, `content_hash` differs; SHA-256 of the normalized content) and `unchanged_count`. Each
   occurrence carries `base_ref`, `reference`, `section`, `page_start` and a ≤300-char excerpt
-  centered on the hit.
+  centered on the hit. `truncated: true` means at least one instant hit the lookup cap; narrow
+  the collection or the identifier.
 - **`document_diff` (MCP and `GET /v2/documents/{base_ref}/diff?collection=&from=&to=`)**
   compares one document's units between two RFC 3339 instants. Units are loaded at both
   instants via the navigation reads and aligned by `section_id`, then `unit_id`, then ordinal /

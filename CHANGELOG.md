@@ -72,6 +72,8 @@ releases:
   (`nodes[0](answer).llm.provider`) instead of `[nodes] Invalid input`, a
   missing `PROVIDERS` is reported as the likely cause, and a skipped sub-flow
   node counts as a warning.
+- **Search** (`trace`): the result reports `truncated: true` when an instant
+  hit the lookup cap, instead of looking complete.
 
 ### Documentation
 
