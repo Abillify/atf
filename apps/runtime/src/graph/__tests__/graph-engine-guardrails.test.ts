@@ -10,7 +10,11 @@ import { describe, test, expect } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
 import { createGraphEngine } from "../graph-engine.js";
 import { createOutputGuardrail } from "../output-guardrails.js";
-import { createSemanticCache, type Embedder } from "../semantic-cache.js";
+import {
+  createSemanticCache,
+  type Embedder,
+  type SemanticCache,
+} from "../semantic-cache.js";
 import type { FlowRegistry } from "../flow-parser.js";
 import type { FlowDefinition } from "../../types/flow.js";
 import type { AppConfig } from "../../config/index.js";
@@ -73,6 +77,16 @@ const flow: FlowDefinition = {
   id: "g-flow",
   name: "Guardrail Flow",
   nodes: [{ id: "llm-1", type: "llm" }],
+  edges: [],
+};
+
+/** Same flow, but the engine must not append a synthetic user turn. */
+const flowWithoutUserTurn: FlowDefinition = {
+  id: "g-flow",
+  name: "Guardrail Flow",
+  nodes: [
+    { id: "llm-1", type: "llm", config: { allowTrailingAssistantTurn: true } },
+  ],
   edges: [],
 };
 
@@ -307,5 +321,136 @@ describe("executeFlow — semantic cache", () => {
       "Paris",
     );
     expect(calls).toBe(2); // a SECOND provider call — no cross-tenant reuse
+  });
+
+  test("embeds only the last user message, not the shared system prompt", async () => {
+    // The system prompt is long and identical for both requests. The fake
+    // embedder maps each question to an orthogonal vector, so a hit is only
+    // possible if the embedding text is the question alone.
+    const systemPrompt = `SYSTEM-PROMPT-MARKER ${"policy ".repeat(200)}`;
+    const embedded: string[] = [];
+    const embedder: Embedder = {
+      embed: async (text: string) => {
+        embedded.push(text);
+        if (text.includes("capital of france")) return [1, 0, 0];
+        return [0, 1, 0];
+      },
+    };
+    const semCache = createSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 300 },
+      embedder,
+    );
+    if (semCache === undefined) throw new Error("expected the semantic cache to be enabled");
+
+    let calls = 0;
+    const modelFactory = mockLlmFactory(["Paris"]);
+    const countingFactory = () => {
+      calls++;
+      return modelFactory();
+    };
+    const engine = createGraphEngine(
+      {
+        ...baseConfig,
+        defaultLlm: {
+          provider: "openai",
+          model: "mock-model",
+          parameters: { temperature: 0 },
+        },
+      },
+      {
+        flowRegistry: singleNodeRegistry({
+          id: "g-flow",
+          name: "Guardrail Flow",
+          nodes: [{ id: "llm-1", type: "llm", systemPrompt }],
+          edges: [],
+        }),
+        llmProviderFactory: countingFactory,
+        semanticCache: semCache,
+      },
+    );
+
+    await engine.executeFlow(
+      "g-flow",
+      [{ role: "user", content: "what is the capital of france" }],
+      { ssoToken: "a.b.c", executionId: "exec-1" },
+      async () => {},
+      async () => {},
+    );
+    await engine.executeFlow(
+      "g-flow",
+      [{ role: "user", content: "how do I reset my password" }],
+      { ssoToken: "a.b.c", executionId: "exec-2" },
+      async () => {},
+      async () => {},
+    );
+
+    // Two unrelated questions → no semantic hit despite the shared prompt.
+    expect(calls).toBe(2);
+    // The system prompt is not part of the embedding text any more: every text
+    // handed to the embedder (lookup and store) is only the last user message.
+    expect([...new Set(embedded)].sort()).toEqual([
+      "user: how do I reset my password",
+      "user: what is the capital of france",
+    ]);
+    for (const text of embedded) {
+      expect(text).not.toContain("SYSTEM-PROMPT-MARKER");
+      expect(text).not.toContain("policy");
+    }
+  });
+
+  test("a prompt without a user message is not semantically cached", async () => {
+    let lookups = 0;
+    let stores = 0;
+    const inner = createSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 300 },
+      { embed: async () => [1, 0, 0] },
+    );
+    if (inner === undefined) throw new Error("expected the semantic cache to be enabled");
+    const semCache: SemanticCache = {
+      enabled: inner.enabled,
+      isCacheable: (opts) => inner.isCacheable(opts),
+      get: async (input) => {
+        lookups++;
+        return inner.get(input);
+      },
+      set: async (input, value) => {
+        stores++;
+        await inner.set(input, value);
+      },
+    };
+
+    const engine = createGraphEngine(
+      {
+        ...baseConfig,
+        defaultLlm: {
+          provider: "openai",
+          model: "mock-model",
+          parameters: { temperature: 0 },
+        },
+      },
+      {
+        // `allowTrailingAssistantTurn` keeps the engine from appending its own
+        // user turn, so the prompt really does have no user role.
+        flowRegistry: singleNodeRegistry(flowWithoutUserTurn),
+        llmProviderFactory: mockLlmFactory(["Paris"]),
+        semanticCache: semCache,
+      },
+    );
+
+    const chunks: ChatCompletionChunk[] = [];
+    await engine.executeFlow(
+      "g-flow",
+      [{ role: "assistant", content: "no user turn here" }],
+      { ssoToken: "a.b.c", executionId: "exec-1" },
+      async (c) => {
+        chunks.push(c);
+      },
+      async () => {},
+    );
+    expect(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join("")).toBe(
+      "Paris",
+    );
+    expect(lookups).toBe(0);
+    expect(stores).toBe(0);
   });
 });

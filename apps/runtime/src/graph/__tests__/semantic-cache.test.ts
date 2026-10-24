@@ -95,6 +95,8 @@ describe("createSemanticCache", () => {
     temperature: 0,
     text,
     tenantScope: "tenant-a",
+    userScope: "user-a",
+    contextHash: "ctx-identical",
     ...over,
   });
 
@@ -164,6 +166,52 @@ describe("createSemanticCache", () => {
       key("tell me my account balance", { tenantScope: "tenant-a" }),
     );
     expect(sameTenantHit?.text).toBe("Tenant A's balance is €500");
+  });
+
+  it("never crosses user scopes inside the same tenant (regression)", async () => {
+    const embedder = new FakeEmbedder({
+      "what is my account balance": [1, 0, 0],
+      "tell me my account balance": [0.99, 0.01, 0],
+    });
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9 },
+      embedder,
+    );
+    await cache.set(
+      key("what is my account balance", { userScope: "user-a" }),
+      value("User A's balance is €500"),
+    );
+    // Same tenant, different user → miss even though the embeddings match.
+    expect(
+      await cache.get(key("tell me my account balance", { userScope: "user-b" })),
+    ).toBeUndefined();
+    // The same user still gets its semantic hit.
+    const hit = await cache.get(
+      key("tell me my account balance", { userScope: "user-a" }),
+    );
+    expect(hit?.text).toBe("User A's balance is €500");
+  });
+
+  it("never hits on a different context hash", async () => {
+    const embedder = new FakeEmbedder({
+      "what is the capital of france": [1, 0, 0],
+      "tell me france's capital": [0.99, 0.01, 0],
+    });
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9 },
+      embedder,
+    );
+    await cache.set(
+      key("what is the capital of france", { contextHash: "ctx-one" }),
+      value("Paris"),
+    );
+    expect(
+      await cache.get(key("tell me france's capital", { contextHash: "ctx-two" })),
+    ).toBeUndefined();
+    expect(
+      (await cache.get(key("tell me france's capital", { contextHash: "ctx-one" })))
+        ?.text,
+    ).toBe("Paris");
   });
 
   it("is only cacheable for deterministic, tool-free requests", () => {

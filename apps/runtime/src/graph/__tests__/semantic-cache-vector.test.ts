@@ -54,6 +54,8 @@ const key = (
   temperature: 0,
   text,
   tenantScope: "tenant-a",
+  userScope: "user-a",
+  contextHash: "ctx-identical",
   ...over,
 });
 
@@ -166,6 +168,34 @@ describe("createVectorStoreSemanticCache", () => {
       key("tell me my account balance", { tenantScope: "tenant-a" }),
     );
     expect(sameTenantHit?.text).toBe("Tenant A's balance is €500");
+  });
+
+  it("never crosses user scopes or contexts inside one tenant (regression)", async () => {
+    const embedder = new FakeEmbedder({
+      "what is my account balance": [1, 0, 0],
+      "tell me my account balance": [0.99, 0.01, 0],
+    });
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9 },
+      embedder,
+      new InMemoryRagStore(),
+    );
+    await cache.set(
+      key("what is my account balance", { userScope: "user-a" }),
+      value("User A's balance is €500"),
+    );
+    expect(
+      await cache.get(
+        key("tell me my account balance", { userScope: "user-b" }),
+      ),
+    ).toBeUndefined();
+    expect(
+      await cache.get(
+        key("tell me my account balance", { contextHash: "ctx-other" }),
+      ),
+    ).toBeUndefined();
+    const hit = await cache.get(key("tell me my account balance"));
+    expect(hit?.text).toBe("User A's balance is €500");
   });
 
   it("skips expired entries (TTL honoured at read time)", async () => {

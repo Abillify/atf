@@ -630,6 +630,8 @@ suite("Postgres — cluster-wide semantic cache (pgvector)", () => {
     temperature: 0,
     text,
     tenantScope: "tenant-a",
+    userScope: "user-a",
+    contextHash: "ctx-identical",
   });
   const value = (text: string) => ({
     text,

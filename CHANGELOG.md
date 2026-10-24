@@ -18,6 +18,15 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Runtime** (semantic cache): entries are scoped to tenant AND user, and a hit
+  additionally requires an identical context (system prompt, injected sources,
+  earlier turns); only the last user message is matched semantically. Before,
+  every user of a tenant shared the cache and the whole prompt was embedded, so
+  a long shared system prompt could produce hits between different questions or
+  across users with different document access.
+
 ## [0.19.3] - 2026-10-24
 
 ### Added

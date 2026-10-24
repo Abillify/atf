@@ -17,6 +17,7 @@
  * usage accumulation) forms one atomic unit.
  */
 
+import crypto from "node:crypto";
 import { AIMessage } from "@langchain/core/messages";
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 
@@ -49,6 +50,7 @@ import {
 import { parseObjectiveConfig, solveObjective } from "../objective-solver.js";
 import type { CachedResponse } from "../response-cache.js";
 import { SINGLE_TENANT_SCOPE } from "../response-cache.js";
+import { SINGLE_USER_SCOPE } from "../semantic-cache.js";
 
 import {
   sameModel,
@@ -450,15 +452,41 @@ export function createLlmNodeHandler(
           tenantScope,
         }
       : undefined;
+    // Semantic hits need the same tenant AND user, an identical context (system
+    // prompt, injected sources, history) and a similar last user message.
+    // Matching on the whole prompt let a shared system prompt dominate the
+    // embedding. Without a user message there is nothing to match on, so the
+    // request is not semantically cacheable; the exact cache is unaffected.
+    const userScope = runtime.ctx.userId ?? SINGLE_USER_SCOPE;
+    let lastUserMessageIndex = -1;
+    for (let i = messagesWithSystemPrompt.length - 1; i >= 0; i--) {
+      if (messagesWithSystemPrompt[i]?.role === "user") {
+        lastUserMessageIndex = i;
+        break;
+      }
+    }
     const semKeyInput =
-      cacheable && semCache !== undefined
+      cacheable && semCache !== undefined && lastUserMessageIndex >= 0
         ? {
             provider: llmConfig.provider,
             model: llmConfig.model,
             ...(temperature !== undefined ? { temperature } : {}),
             ...(maxTokens !== undefined ? { maxTokens } : {}),
-            text: coreMessagesToText(messagesWithSystemPrompt),
+            text: coreMessagesToText([
+              messagesWithSystemPrompt[lastUserMessageIndex],
+            ]),
             tenantScope,
+            userScope,
+            contextHash: crypto
+              .createHash("sha256")
+              .update(
+                coreMessagesToText(
+                  messagesWithSystemPrompt.filter(
+                    (_, i) => i !== lastUserMessageIndex,
+                  ),
+                ),
+              )
+              .digest("hex"),
           }
         : undefined;
 

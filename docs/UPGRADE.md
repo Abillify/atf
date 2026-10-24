@@ -604,6 +604,13 @@ add none; the rest is configuration and clients. Do these **before** rolling out
     chunk. The debug trace (`progress` per node) and `GET /v1/jobs/{id}` report
     progress regardless.
 
+### 0.19 → next
+
+Changes since 0.19.3 that need operator attention:
+
+1. Runtime: semantic-cache entries written before this release are not found any
+   more (new namespace). The cache refills on its own; no action needed.
+
 ### Not yet shared between replicas (roadmap)
 
 These are known single-process behaviours, not defects of a correct single-replica

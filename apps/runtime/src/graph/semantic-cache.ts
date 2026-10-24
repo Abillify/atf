@@ -5,8 +5,8 @@
  * Semantic response cache (`src/graph/semantic-cache.ts`)
  *
  * The exact-match {@link ResponseCache} only reuses a result when the request
- * is byte-identical. This cache goes one step further: it embeds the request
- * text and reuses a prior response when an existing entry is *semantically*
+ * is byte-identical. This cache goes one step further: it embeds the last user
+ * message and reuses a prior response when an existing entry is *semantically*
  * similar above a cosine threshold. So paraphrases ("capital of France?" vs.
  * "what is France's capital") collapse onto a single provider call — the single
  * biggest cost/latency lever for FAQ-style and agent-retry traffic.
@@ -14,8 +14,10 @@
  * Correctness is preserved by construction:
  *   - Only DETERMINISTIC nodes are cacheable (no tools, temperature 0/unset),
  *     exactly like the exact-match cache.
- *   - Entries are partitioned by a {@link namespace} (provider/model/params) so
- *     a hit can never cross models or sampling settings.
+ *   - Entries are partitioned by a {@link namespace} (tenant/user/context/
+ *     provider/model/params), so a hit needs the same tenant AND user plus a
+ *     byte-identical context and can never cross models or sampling settings.
+ *     Only the last user message is matched on similarity.
  *
  * The embedding backend is injected via the {@link Embedder} contract, so the
  * similarity/threshold/eviction logic is fully unit-testable without any
@@ -38,6 +40,13 @@ import { isCacheableRequest, SINGLE_TENANT_SCOPE } from "./response-cache.js";
 
 export { SINGLE_TENANT_SCOPE };
 import type { VectorStore } from "./vector-store.js";
+
+/**
+ * User isolation scope for deployments without per-user identity. Mirrors
+ * {@link SINGLE_TENANT_SCOPE}: a sentinel, never an omission, so an entry is
+ * always bound to a concrete user scope.
+ */
+export const SINGLE_USER_SCOPE = "__single_user__";
 
 // ---------------------------------------------------------------------------
 // Embedder contract
@@ -262,7 +271,13 @@ export interface SemanticCacheKeyInput {
   model: string;
   temperature?: number;
   maxTokens?: number;
-  /** The text to embed and match on (typically the concatenated prompt). */
+  /**
+   * The text to embed and match on: the last user message only. Everything else
+   * (system prompt, injected context, earlier turns) travels in
+   * {@link contextHash} instead — embedding the whole prompt let a long shared
+   * system prompt dominate the vector and produce hits between different
+   * questions.
+   */
   text: string;
   /**
    * Tenant/client isolation scope — REQUIRED. Mixed into the namespace so a
@@ -272,6 +287,10 @@ export interface SemanticCacheKeyInput {
    * {@link SINGLE_TENANT_SCOPE} for deployments without multi-tenancy.
    */
   tenantScope: string;
+  /** User isolation scope inside the tenant — REQUIRED. Use SINGLE_USER_SCOPE when no user is known. */
+  userScope: string;
+  /** SHA-256 (hex) over everything except the last user message: system prompt, injected context, earlier turns. Hits require an identical value. */
+  contextHash: string;
 }
 
 export interface SemanticCache {
@@ -282,13 +301,18 @@ export interface SemanticCache {
 }
 
 /**
- * Namespace partitions entries so a hit can never cross tenant, model, or
- * sampling params. `tenantScope` is listed first and is never optional — see
- * {@link SemanticCacheKeyInput.tenantScope}.
+ * Namespace partitions entries so a hit can never cross tenant, user, context,
+ * model, or sampling params. `tenantScope` and `userScope` are listed first and
+ * are never optional — see {@link SemanticCacheKeyInput.tenantScope}.
+ * `contextHash` binds an entry to the exact prompt around the last user
+ * message, so a hit cannot reuse an answer generated from another system
+ * prompt, another injected context or another conversation history.
  */
 function namespaceOf(input: SemanticCacheKeyInput): string {
   return JSON.stringify({
     tn: input.tenantScope,
+    us: input.userScope,
+    ch: input.contextHash,
     p: input.provider,
     m: input.model,
     t: input.temperature ?? null,
