@@ -18,6 +18,30 @@ releases:
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-10-24
+
+### Added
+
+- **Runtime** (`llm` node): `sourcesCheck.rejectOutOfRangeMarkers` (opt-in,
+  default `false`) retries an attempt whose answer cites `[n]` outside the
+  range of sources registered in this execution (`1..n`), for example a
+  hallucinated `[491]` when only one source exists. The retry is answer-only
+  (no tools) and carries guidance naming the valid range. On buffered answers
+  (`suppressToolPreamble`) the check runs before release, so rejected text
+  never reaches the client; `requireToolUse` nodes are skipped. The final
+  attempt is released as-is. Diagnostics: `citation_marker_out_of_range_retry`
+  and `citation_marker_out_of_range_rejected`. Markers inside fenced code are
+  ignored. Documented in [docs/FLOWS.md](docs/FLOWS.md).
+
+### Fixed
+
+- **Search** (MCP 2026 `tools/call`): invalid tool arguments now return a
+  `-32602` message that names the offending parameter and the expected values
+  (up to five Zod issues, e.g. `granularity: Invalid option: expected one of …`)
+  instead of a bare `Invalid tool arguments`, so models can correct the call.
+  The `search` tool's `granularity` description now lists its four values and
+  points to `unit_type` for figure and table hits.
+
 ## [0.19.2] - 2026-10-23
 
 `0.19.1` was prepared on `main` but never tagged: the first CI run after the
@@ -4374,7 +4398,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.2...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.3...HEAD
+[0.19.3]: https://github.com/Abillify/atf/compare/v0.19.2...v0.19.3
 [0.19.2]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.2
 [0.19.0]: https://github.com/Abillify/atf/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/abillify/atf/compare/v0.18.0...v0.18.1
