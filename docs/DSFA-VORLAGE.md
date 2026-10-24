@@ -74,6 +74,7 @@ log. Newer entries carry only subject hashes and keyed pseudonyms
 | Data leaking through tool misuse (prompt injection) | | | Tool policy (ADR 0011), red-teaming (ADR 0010), retrieved context handed to the model as delimited untrusted data (`RETRIEVAL_CONTEXT_MODE`), injection scan on chunks and tool results, approval for write tools after a finding (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`); detection is heuristic | |
 | Personal data in service logs | | | Shared log redaction for credentials and tokens, no raw search queries or user ids in Search logs, hashed emails in OIDC logs | |
 | Audit tampering | | | Hash chain + externally stored signed anchor | |
+| Frühere Revisionen mit personenbezogenen Daten bleiben über `document_diff` / `trace` lesbar | | | Gleiche Zugriffsrechte wie die Suche (`valid_at`-Regel auf dem Token des Aufrufenden); Löschung über Löschkonzept / Erasure und Revisions-TTL | Gelöschte oder ersetzte Inhalte früherer Revisionen sind für berechtigte Nutzer lesbar, solange die Revisionen gespeichert sind; Restlöschung erst mit Erasure oder TTL-Ablauf |
 
 → Detailed attack surfaces: `THREAT-MODEL.md` (STRIDE per service).
 

@@ -206,6 +206,44 @@ self-serve usage.
 - Backups with tested restores — the cheapest insurance against the most
   expensive incident (corpus loss = full re-ingest = full VLM bill again).
 
+## Cost levers in the Runtime
+
+Beyond the per-service knobs above, the Runtime ships flow-level levers that
+change what a flow execution costs. None of them has a universal right
+setting — measure with your own flow and model before and after.
+
+**Cascade.** A node with a `cascade` block answers with a cheap model first
+and re-runs the same input on the model in `cascade.escalateTo` only when the
+evidence rules in `cascade.when` fire (diagnostics, refusals, length). The
+saving depends entirely on the escalation rate: at a low rate most executions
+pay the cheap model once, at a high rate they pay both models. Measure the
+rate — `flows release` runs the bench suite and its statistics cover the
+executions behind the release decision, and the escalation counter
+(`aiperator_cascade_escalations_total`) is exported per flow and node.
+
+**Budgets.** A flow's `budgets` block caps one execution: total tokens, tool
+calls, and wall-clock time. A budget breach stops the execution
+(`BUDGET_EXCEEDED`) instead of letting a looping or oversized run spend
+unbounded tokens — the per-execution floor under the deployment-level
+`BUDGET_*` caps (§4.4).
+
+**Coverage-queue lanes.** The agent harness's `coverageQueue.lanes` runs
+parallel coverage assignments for one execution. Each lane issues its own
+model calls concurrently, so lanes trade latency for concurrent inference
+load: size them to the number of model endpoints (or the batch capacity of
+one server), not to the CPU of the Runtime pod.
+
+**Sticky model pools.** A model pool with `pool.sticky` pins an execution (or
+session) to one pool member. On single-slot servers — one model per GPU, with
+a prefix cache that is per process — this reuses the cached prefix across the
+calls of an execution instead of paying it cold on every call; round-robin
+across replicas defeats that cache.
+
+**Answer-ready retrieval.** `retrieve_for_answer` packs evidence into a token
+budget (`packEvidence`): the answering model receives at most that many
+tokens of passages regardless of how many candidates matched, bounding the
+input side of the answer call per request.
+
 ## 7. Operating effort
 
 Recurring platform work is small compared to the inference bill, but it is

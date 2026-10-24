@@ -79,6 +79,9 @@ releases:
 
 - Deployment guide: install from the OCI chart, verify chart and images with
   cosign, supported platforms.
+- Threat model, DPIA template and operations/TCO guide cover answer-ready
+  retrieval, trace and document diff, bench files and release receipts, the
+  cascade and the Runtime's cost levers.
 
 ## [0.19.3] - 2026-10-24
 
