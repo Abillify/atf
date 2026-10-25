@@ -505,6 +505,13 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   can emit an Ed25519-signed release receipt (`atf.flow-release-receipt`) over the flow digest,
   bench digest and results, verifiable independently with
   `atf-verify --release-receipt <file> --jwks <url|file>`.
+- **Bench cases from executions.** `bun run scripts/cli.ts bench capture` (in `apps/runtime`)
+  turns recorded executions (`--execution <id>`, chosen in the Control history) into bench
+  cases for `flows release`: the conversation, a `toolCalled` assertion per tool the
+  execution called, its finish reason, and token/latency caps with headroom over what was
+  observed. Inputs containing personal data abort the capture unless `--allow-raw` is given;
+  the result is validated against the bench contract before it is written. Bench files are
+  committed expectations like any other code under review.
 - **Extract quality eval.** `bun run eval:extract-quality` scores Extract output against a
   golden set — character error rate, Heading-F1 (text and strict with level) and table TEDS
   (and TEDS-S) — with a gating mode (`--max-cer`, `--min-heading-f1`, `--min-teds`) and a

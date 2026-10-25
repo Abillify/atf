@@ -119,6 +119,7 @@ releases:
   needs per service; CI checks that every listed variable exists in the
   configuration reference.
 - Citation impact: capabilities, configuration, runbook, threat model and DPIA notes.
+- Flow releases: capturing bench cases from executions.
 
 ## [0.19.3] - 2026-10-24
 

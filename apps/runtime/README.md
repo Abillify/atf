@@ -223,6 +223,25 @@ Releases are gated by a versioned bench file next to the flow:
 `assert` assertions) plus release `thresholds` (`passRate`, optional `maxLatencyMsP50`,
 `maxTokensP50`, `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`).
 
+Bench cases do not have to be written by hand. Pick representative executions in Control
+(monitoring history), note their execution ids, and capture them:
+
+```bash
+# from apps/runtime — turn recorded executions into bench cases
+bun run scripts/cli.ts bench capture --server http://localhost:3001 [--token <t>] \
+  --execution <id> [--execution <id> …] \
+  --out ./flows/bench/<flowId>.bench.yaml [--append] [--allow-raw]
+```
+
+Each case keeps the conversation, asserts the tools the execution called and its finish
+reason, and caps tokens and latency with headroom over what was observed. The input is
+checked for personal data: a match aborts the capture unless `--allow-raw` is given
+(capturing personal data into a committed file is a review decision, not a default).
+The file is validated against the bench contract before it is written, and every case
+carries a `# captured from execution <id> …` comment. Review the expectations, adjust
+anything that reads wrong, commit the bench file like any other code under review, then
+release:
+
 ```bash
 # from apps/runtime — runs the bench cases against a live server and checks thresholds
 bun run scripts/cli.ts flows release <flowId> --flows-dir ./flows \
