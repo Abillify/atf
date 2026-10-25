@@ -28,6 +28,48 @@ function SourceBadge({ source }: { source: FlowHealthEntry["source"] }): React.J
   );
 }
 
+/**
+ * Service-objective cell: a destructive badge per breached objective, a
+ * waiting note while the window is still filling, a plain OK once the
+ * objectives hold — and an em dash for flows that declare no `slo`.
+ */
+function SloCell({ entry }: { entry: FlowHealthEntry }): React.JSX.Element {
+  const slo = entry.slo;
+  if (slo === undefined) return <span>—</span>;
+  if (slo.breached.length > 0) {
+    return (
+      <span className="flex flex-wrap gap-1">
+        {slo.breached.map((objective) => (
+          <Badge key={objective} variant="destructive">
+            {objective}
+          </Badge>
+        ))}
+      </span>
+    );
+  }
+  if (slo.samples < slo.minSamples) {
+    return (
+      <span>
+        {translate("flowHealthPanel.sloPending", {
+          samples: slo.samples,
+          minSamples: slo.minSamples,
+        })}
+      </span>
+    );
+  }
+  return (
+    <span>
+      <Badge variant="success">{translate("flowHealthPanel.sloOk")}</Badge>
+      <span className="ml-2 tabular-nums">
+        {translate("flowHealthPanel.sloSamples", {
+          samples: slo.samples,
+          window: slo.window,
+        })}
+      </span>
+    </span>
+  );
+}
+
 function LoadFailures({
   failures,
 }: {
@@ -118,6 +160,9 @@ export function FlowHealthPanel({
                 <th scope="col" className="px-3 py-2 font-medium">
                   {translate("flowHealthPanel.colLastEval")}
                 </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  {translate("flowHealthPanel.colSlo")}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -161,6 +206,9 @@ export function FlowHealthPanel({
                     ) : (
                       <span>{translate("flowHealthPanel.neverEvaluated")}</span>
                     )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    <SloCell entry={f} />
                   </td>
                 </tr>
               ))}

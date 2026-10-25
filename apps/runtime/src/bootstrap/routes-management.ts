@@ -164,6 +164,8 @@ export interface ManagementRouteDeps {
   abManager: AbManager | undefined;
   flowStore: PersistenceResult["flowStore"];
   dbFlowSource: DbFlowSource | undefined;
+  /** Process-local flow SLO evaluator from the engine bootstrap. */
+  flowSlo: EngineResult["flowSlo"];
   /**
    * Shared rate limit store from `createHttpMiddleware` (Redis-backed when
    * REDIS_URL is set). Forwarded to the GitOps webhook router so its per-IP
@@ -249,6 +251,7 @@ export async function registerManagementRoutes(
     abManager,
     flowStore,
     dbFlowSource,
+    flowSlo,
   } = deps;
 
   // Flow-as-MCP-Server: POST/GET/DELETE /mcp. Unlike /v1 routes it is mounted
@@ -864,6 +867,7 @@ export async function registerManagementRoutes(
         fileRegistry,
         ...(dbFlowSource !== undefined ? { dbSource: dbFlowSource } : {}),
         evalHistory: evalRunHistory,
+        flowSlo,
         authRequired: config.monitoringAuthRequired,
         operatorAuth,
         ...(config.monitoringTicketSecret !== undefined

@@ -206,6 +206,14 @@ export interface GraphEngineOptions {
    */
   citationIndex?: import("../../compliance/citation-index.js").CitationIndexStore;
   /**
+   * Optional flow service-objective evaluator (flow `slo` block). When set,
+   * every finished execution — success, handled timeout, budget stop or error
+   * — is offered to it; the evaluator reports objective breaches via
+   * `aiperator_flow_slo_breach_total` and the flow-health route. Recording
+   * never blocks or fails the execution. See `observability/flow-slo.ts`.
+   */
+  flowSlo?: import("../../observability/flow-slo.js").FlowSloEvaluator;
+  /**
    * Engine-wide breaker that OBSERVES provider reachability across executions,
    * so the operator monitoring plane can report it. It deliberately does not
    * decide anything for a run: each execution gets its own flow-local breaker
@@ -279,6 +287,10 @@ class GraphEngineServiceImpl implements GraphEngineService {
   private readonly citationIndex:
     | import("../../compliance/citation-index.js").CitationIndexStore
     | undefined;
+  /** Optional flow SLO evaluator — see GraphEngineOptions.flowSlo. */
+  private readonly flowSlo:
+    | import("../../observability/flow-slo.js").FlowSloEvaluator
+    | undefined;
   /** Optional LLM summariser of MCP server instructions for select_tools. */
   private readonly toolGroupSummarizer: ToolGroupSummarizer | undefined;
   /** Optional debug trace store — captures full, untruncated execution detail. */
@@ -329,6 +341,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       toolOutputValidator,
       providerCircuitBreaker,
       citationIndex,
+      flowSlo,
       logger,
     } = options;
     this.logger = logger;
@@ -363,6 +376,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
     this.reranker = reranker;
     this.toolOutputValidator = toolOutputValidator;
     this.citationIndex = citationIndex;
+    this.flowSlo = flowSlo;
     this.semaphore = new Semaphore(
       appConfig.maxConcurrentExecutions,
       appConfig.maxQueueDepth ?? 0,
@@ -630,6 +644,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
         "object",
     );
     const flowProgressStartedAt = Date.now();
+    // Wall-clock start of the whole execution — the duration the flow SLO
+    // evaluator measures (see observability/flow-slo.ts).
+    const executionStartedAt = Date.now();
     const formatProgressDuration = (elapsedMs: number): string => {
       const totalSeconds = Math.max(0, Math.round(elapsedMs / 1000));
       const minutes = Math.floor(totalSeconds / 60);
@@ -1135,6 +1152,10 @@ class GraphEngineServiceImpl implements GraphEngineService {
         : undefined;
     let finalResponse: string | undefined;
     let finalNodeId: string | undefined;
+    // Set only on the branches that end the execution with a thrown error; the
+    // graceful budget stop stays `false`. Node errors and aborts additionally
+    // set `st.flowErrored`, which the SLO recording ORs in.
+    let sloErrored = false;
 
     try {
       // --- Threaded-history contract (see graph-engine/history-contract.ts) ---
@@ -1545,6 +1566,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
         // success path below, and the chat route's `__response__` boundary
         // only covers requests that go through it (not triggers/MCP).
         emitFlowEnd("error");
+        sloErrored = true;
         throw err;
       }
     } finally {
@@ -1553,6 +1575,21 @@ class GraphEngineServiceImpl implements GraphEngineService {
       await threadHandle?.release();
       for (const toolCallId of [...toolNodes.keys()]) {
         emitToolNodeEnd(toolCallId, 0);
+      }
+      // Flow service objectives: offer the finished execution (success, handled
+      // timeout, budget stop or error) to the evaluator. Synchronous and
+      // in-memory; a failure here must never change the execution's outcome,
+      // so it is fully guarded. Flows without `slo` are a no-op.
+      if (this.flowSlo !== undefined) {
+        try {
+          this.flowSlo.recordExecution(flowId, flowDef.slo, {
+            latencyMs: Date.now() - executionStartedAt,
+            totalTokens: usage.totalTokens,
+            errored: sloErrored || st.flowErrored,
+          });
+        } catch {
+          /* observation only — never affects the execution */
+        }
       }
     }
 

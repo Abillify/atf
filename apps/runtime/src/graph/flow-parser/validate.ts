@@ -1162,6 +1162,69 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
 		.describe(
 			"Per-execution budgets: once a limit is reached the execution stops before the next model or tool call and finishes with `finishReason: budget_exceeded`.",
 		),
+	slo: z
+		.object({
+			window: z
+				.number()
+				.int()
+				.min(10)
+				.max(1000)
+				.optional()
+				.describe(
+					"Number of recent executions to evaluate over, per replica (default 50).",
+				),
+			p50LatencyMs: z
+				.number()
+				.int()
+				.min(1)
+				.optional()
+				.describe(
+					"Upper bound for the median (p50) end-to-end execution latency in milliseconds.",
+				),
+			p95LatencyMs: z
+				.number()
+				.int()
+				.min(1)
+				.optional()
+				.describe(
+					"Upper bound for the 95th-percentile end-to-end execution latency in milliseconds.",
+				),
+			maxTokensP50: z
+				.number()
+				.int()
+				.min(1)
+				.optional()
+				.describe(
+					"Upper bound for the median (p50) total tokens of an execution.",
+				),
+			maxErrorRate: z
+				.number()
+				.min(0)
+				.max(1)
+				.optional()
+				.describe(
+					"Upper bound for the share of errored executions in the window (0–1).",
+				),
+		})
+		.superRefine((slo, ctx) => {
+			// An empty objectives block would silently evaluate nothing — require
+			// at least one concrete objective so `slo:` always states a goal.
+			if (
+				slo.p50LatencyMs === undefined &&
+				slo.p95LatencyMs === undefined &&
+				slo.maxTokensP50 === undefined &&
+				slo.maxErrorRate === undefined
+			) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "slo needs at least one objective",
+				});
+			}
+		})
+		.optional()
+		.describe(
+			"Service objectives for this flow. The Runtime evaluates them over the last `window` executions per replica; breaches show in GET /monitoring/flow-health and as aiperator_flow_slo_breach_total.",
+		),
 	nodes: z
 		.array(FlowNodeSchema)
 		.min(1)

@@ -602,6 +602,13 @@ export interface FlowDefinition {
    * Absent → no budget enforcement (behaviour unchanged).
    */
   budgets?: FlowExecutionBudget;
+  /**
+   * Service objectives for this flow. The Runtime evaluates them over the
+   * last `window` executions per replica; breaches show in
+   * `GET /monitoring/flow-health` and as `aiperator_flow_slo_breach_total`.
+   * Evaluation never interferes with the execution itself.
+   */
+  slo?: FlowServiceObjectives;
   /** Flow nodes — between 1 and 100 */
   nodes: FlowNode[];
   /** Flow edges — between 0 and 500 */
@@ -630,6 +637,28 @@ export interface FlowExecutionBudget {
   maxToolCalls?: number;
   /** Max wall-clock milliseconds since the execution started. */
   maxWallMs?: number;
+}
+
+/**
+ * Service objectives declared by a flow (`slo` block). The Runtime keeps a
+ * process-local ring buffer of the last `window` executions per flow and
+ * evaluates the objectives over it once at least 10 samples are available.
+ * A transition from ok to breached raises
+ * `aiperator_flow_slo_breach_total{flow_id, objective}` and a warning log;
+ * the transition back logs at info level. Evaluation is observational only —
+ * it never interferes with the execution. Multiple replicas count separately.
+ */
+export interface FlowServiceObjectives {
+  /** Number of recent executions to evaluate over (10–1000, default 50). */
+  window?: number;
+  /** Upper bound for the median (p50) end-to-end execution latency in ms. */
+  p50LatencyMs?: number;
+  /** Upper bound for the 95th-percentile end-to-end execution latency in ms. */
+  p95LatencyMs?: number;
+  /** Upper bound for the median (p50) total tokens of an execution. */
+  maxTokensP50?: number;
+  /** Upper bound for the share of errored executions in the window (0..1). */
+  maxErrorRate?: number;
 }
 
 /**

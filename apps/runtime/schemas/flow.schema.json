@@ -126,6 +126,43 @@
       },
       "additionalProperties": false
     },
+    "slo": {
+      "description": "Service objectives for this flow. The Runtime evaluates them over the last `window` executions per replica; breaches show in GET /monitoring/flow-health and as aiperator_flow_slo_breach_total.",
+      "type": "object",
+      "properties": {
+        "window": {
+          "description": "Number of recent executions to evaluate over, per replica (default 50).",
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 1000
+        },
+        "p50LatencyMs": {
+          "description": "Upper bound for the median (p50) end-to-end execution latency in milliseconds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "p95LatencyMs": {
+          "description": "Upper bound for the 95th-percentile end-to-end execution latency in milliseconds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxTokensP50": {
+          "description": "Upper bound for the median (p50) total tokens of an execution.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxErrorRate": {
+          "description": "Upper bound for the share of errored executions in the window (0–1).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "nodes": {
       "minItems": 1,
       "maxItems": 100,

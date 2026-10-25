@@ -17,6 +17,7 @@ import {
   recordFlowLoadFailure,
   resetFlowLoadFailures,
 } from "../../graph/flow-parser/validate.js";
+import { FlowSloEvaluator } from "../../observability/flow-slo.js";
 import type { FlowDefinition } from "../../types/flow.js";
 
 const TICKET_SECRET = "flow-health-test-secret";
@@ -60,6 +61,13 @@ interface HealthResponse {
     digest?: string;
     shadowsFile: boolean;
     lastEval?: { runId: string; at: string; passed: number; failed: number };
+    slo?: {
+      window: number;
+      objectives: Record<string, number>;
+      samples: number;
+      minSamples: number;
+      breached: string[];
+    };
   }>;
   loadFailures: Array<{ file: string; reason: string; since: string }>;
 }
@@ -231,5 +239,60 @@ describe("GET /monitoring/flow-health", () => {
     });
     const res = await app.request("/monitoring/flow-health");
     expect(res.status).toBe(200);
+  });
+
+  it("reports declared slo with the evaluator's live state", async () => {
+    const flowSlo = new FlowSloEvaluator({
+      metrics: { recordCounter: () => {} },
+    });
+    const slo = { window: 20, p50LatencyMs: 500 };
+    for (let i = 0; i < 12; i++) {
+      flowSlo.recordExecution("flow-a", slo, {
+        latencyMs: 5000,
+        totalTokens: 10,
+        errored: false,
+      });
+    }
+    const { app } = buildApp({
+      flowRegistry: {
+        list: () => [flow("flow-a", { slo }), flow("flow-b")],
+      },
+      flowSlo,
+    });
+    const res = await app.request("/monitoring/flow-health", {
+      headers: { Authorization: "Bearer viewer-tok" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as HealthResponse;
+    const a = body.flows[0];
+    if (a?.slo === undefined) throw new Error("expected slo on flow-a");
+    expect(a.slo.window).toBe(20);
+    expect(a.slo.objectives).toEqual({ p50LatencyMs: 500 });
+    expect(a.slo.samples).toBe(12);
+    expect(a.slo.minSamples).toBe(10);
+    expect(a.slo.breached).toEqual(["p50LatencyMs"]);
+    // A flow without a declaration has no slo field at all.
+    const b = body.flows[1];
+    if (b === undefined) throw new Error("expected flow-b");
+    expect(b.slo).toBeUndefined();
+  });
+
+  it("reports declared objectives with an empty state when no evaluator is wired", async () => {
+    const { app } = buildApp({
+      flowRegistry: {
+        list: () => [flow("flow-a", { slo: { maxErrorRate: 0.05 } })],
+      },
+      flowSlo: undefined,
+    });
+    const res = await app.request("/monitoring/flow-health", {
+      headers: { Authorization: "Bearer viewer-tok" },
+    });
+    const body = (await res.json()) as HealthResponse;
+    const a = body.flows[0];
+    if (a?.slo === undefined) throw new Error("expected slo on flow-a");
+    expect(a.slo.window).toBe(50);
+    expect(a.slo.objectives).toEqual({ maxErrorRate: 0.05 });
+    expect(a.slo.samples).toBe(0);
+    expect(a.slo.breached).toEqual([]);
   });
 });

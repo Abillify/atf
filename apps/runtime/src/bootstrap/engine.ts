@@ -79,6 +79,7 @@ import {
   PostgresCitationIndexStore,
   type CitationIndexStore,
 } from "../compliance/citation-index.js";
+import { FlowSloEvaluator } from "../observability/flow-slo.js";
 export interface EngineResult {
   graphEngine: GraphEngine;
   modelQuality: ModelQualityRegistry;
@@ -95,6 +96,8 @@ export interface EngineResult {
   llmProviderFactory: LlmProviderFactory | undefined;
   providerKeyPool: ProviderKeyPool;
   providerCircuitBreaker: ProviderCircuitBreaker;
+  /** Process-local flow SLO evaluator — engine records, flow-health reads. */
+  flowSlo: FlowSloEvaluator;
 }
 
 export async function buildEngine(
@@ -248,6 +251,10 @@ export async function buildEngine(
 
   // ── Graph engine ───────────────────────────────────────────────────────────
   const providerCircuitBreaker = createProviderCircuitBreaker();
+  // Flow service objectives (flow `slo` block): process-local ring buffers per
+  // flow, fed by the engine at execution end and surfaced by the flow-health
+  // route. Always on — flows without `slo` never reach the evaluator.
+  const flowSlo = new FlowSloEvaluator({ metrics, logger });
   const graphEngine = createGraphEngine(config, {
     flowRegistry,
     mcpWrapper,
@@ -278,6 +285,7 @@ export async function buildEngine(
     toolOutputValidator,
     providerCircuitBreaker,
     ...(citationIndex !== undefined ? { citationIndex } : {}),
+    flowSlo,
     logger,
   });
 
@@ -456,5 +464,6 @@ export async function buildEngine(
     llmProviderFactory,
     providerKeyPool,
     providerCircuitBreaker,
+    flowSlo,
   };
 }

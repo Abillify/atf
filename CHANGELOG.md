@@ -84,6 +84,9 @@ releases:
 - **Runtime CLI**: `bench capture` turns executions into bench cases for `flows release`
   (tools called, finish reason, token and latency caps), refusing inputs with personal
   data unless `--allow-raw` is given.
+- **Runtime**: flows may declare `slo` (latency percentiles, median tokens, error
+  rate); the Runtime evaluates it over recent executions and reports breaches in
+  `GET /monitoring/flow-health`, Control and `aiperator_flow_slo_breach_total`.
 
 ### Changed
 

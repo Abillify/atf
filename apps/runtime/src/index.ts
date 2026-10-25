@@ -1057,6 +1057,7 @@ if (import.meta.main) {
       providerKeyPool,
       providerCircuitBreaker: _engineResult.providerCircuitBreaker,
       llmProviderFactory: _engineResult.llmProviderFactory,
+      flowSlo: _engineResult.flowSlo,
       piiVault,
       piiVaultStore,
       guardrailPolicy,

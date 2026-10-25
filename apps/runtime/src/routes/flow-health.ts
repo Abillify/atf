@@ -36,6 +36,12 @@ import {
   roleHasPermission,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
+import {
+  SLO_DEFAULT_WINDOW,
+  SLO_MIN_SAMPLES,
+  type FlowSloEvaluator,
+  type SloObjective,
+} from "../observability/flow-slo.js";
 
 export interface FlowHealthRouterDeps {
   /** Merged registry the engine serves from (composite when DB flows exist). */
@@ -46,6 +52,13 @@ export interface FlowHealthRouterDeps {
   dbSource?: Pick<DbFlowSource, "get" | "list">;
   /** Eval-run history behind `/admin/eval/runs`; omit `lastEval` when absent. */
   evalHistory?: EvalRunHistory;
+  /**
+   * Process-local SLO evaluator — supplies the live evaluation state
+   * (samples in window, breached objectives) for each flow's `slo` field.
+   * Without it the declared objectives are still reported, with an empty
+   * state. Per replica: each runtime instance reports its own window.
+   */
+  flowSlo?: FlowSloEvaluator;
   /** Mirrors MONITORING_AUTH for the monitoring plane. */
   authRequired?: boolean;
   operatorAuth?: OperatorAuthorizer;
@@ -62,6 +75,18 @@ interface FlowHealthEntry {
   digest?: string;
   shadowsFile: boolean;
   lastEval?: { runId: string; at: string; passed: number; failed: number };
+  /**
+   * Declared service objectives plus this replica's live evaluation state.
+   * Present only when the flow declares `slo`.
+   */
+  slo?: {
+    window: number;
+    objectives: Partial<Record<SloObjective, number>>;
+    samples: number;
+    /** Executions needed before objectives are evaluated (fixed, 10). */
+    minSamples: number;
+    breached: SloObjective[];
+  };
 }
 
 function unauthorized(c: Context) {
@@ -133,6 +158,26 @@ export function createFlowHealthRouter(deps: FlowHealthRouterDeps): Hono {
         const version = flow.metadata?.["version"];
         if (typeof version === "string") entry.version = version;
         entry.digest = computeFlowDigest(flow);
+        if (flow.slo !== undefined) {
+          const objectives: Partial<Record<SloObjective, number>> = {};
+          for (const key of [
+            "p50LatencyMs",
+            "p95LatencyMs",
+            "maxTokensP50",
+            "maxErrorRate",
+          ] as const) {
+            const value = flow.slo[key];
+            if (typeof value === "number") objectives[key] = value;
+          }
+          const status = deps.flowSlo?.status(flow.id);
+          entry.slo = {
+            window: flow.slo.window ?? SLO_DEFAULT_WINDOW,
+            objectives,
+            samples: status?.samples ?? 0,
+            minSamples: SLO_MIN_SAMPLES,
+            breached: status?.breached ?? [],
+          };
+        }
         return entry;
       });
 

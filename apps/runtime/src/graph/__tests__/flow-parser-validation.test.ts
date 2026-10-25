@@ -836,3 +836,112 @@ describe("logValidationError", () => {
     expect("details" in parsed).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// validateFlowDefinition — service objectives (`slo`)
+// ---------------------------------------------------------------------------
+
+describe("validateFlowDefinition slo", () => {
+  test("accepts a flow without slo", () => {
+    expect(validateFlowDefinition(minimalValidFlow()).success).toBe(true);
+  });
+
+  test("accepts a full slo declaration", () => {
+    const result = validateFlowDefinition(
+      minimalValidFlow({
+        slo: {
+          window: 50,
+          p50LatencyMs: 20000,
+          p95LatencyMs: 60000,
+          maxTokensP50: 30000,
+          maxErrorRate: 0.05,
+        },
+      }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.slo?.window).toBe(50);
+      expect(result.data.slo?.maxErrorRate).toBe(0.05);
+    }
+  });
+
+  test("accepts a single objective without window", () => {
+    const result = validateFlowDefinition(
+      minimalValidFlow({ slo: { p95LatencyMs: 60000 } }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects an empty slo block with the objective message", () => {
+    const result = validateFlowDefinition(minimalValidFlow({ slo: {} }));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = (result.error.issues ?? []).map((i) => i.message);
+      expect(messages.join(" ")).toContain("slo needs at least one objective");
+    }
+  });
+
+  test("rejects window below 10", () => {
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { window: 9, p50LatencyMs: 100 } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  test("rejects window above 1000", () => {
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { window: 1001, p50LatencyMs: 100 } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  test("accepts window boundaries 10 and 1000", () => {
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { window: 10, p50LatencyMs: 100 } }),
+      ).success,
+    ).toBe(true);
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { window: 1000, p50LatencyMs: 100 } }),
+      ).success,
+    ).toBe(true);
+  });
+
+  test("rejects maxErrorRate outside 0..1", () => {
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { maxErrorRate: 1.01 } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { maxErrorRate: -0.01 } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { maxErrorRate: 0 } }),
+      ).success,
+    ).toBe(true);
+    expect(
+      validateFlowDefinition(
+        minimalValidFlow({ slo: { maxErrorRate: 1 } }),
+      ).success,
+    ).toBe(true);
+  });
+
+  test("drops unknown keys inside slo like the parser does everywhere", () => {
+    const result = validateFlowDefinition(
+      minimalValidFlow({
+        slo: { p50LatencyMs: 100, p99LatencyMs: 200 },
+      } as never),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.slo).toEqual({ p50LatencyMs: 100 });
+    }
+  });
+});

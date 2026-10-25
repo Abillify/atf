@@ -15,6 +15,22 @@ export interface FlowHealthLastEval {
   failed: number;
 }
 
+/** Service objectives of a flow + this replica's live evaluation state. */
+export interface FlowHealthSlo {
+  /** Executions evaluated per replica (declared `window`, default 50). */
+  window: number;
+  /** Declared objectives; only the keys the flow actually sets are present. */
+  objectives: Partial<
+    Record<"p50LatencyMs" | "p95LatencyMs" | "maxTokensP50" | "maxErrorRate", number>
+  >;
+  /** Executions recorded in this replica's window so far. */
+  samples: number;
+  /** Executions needed before objectives are evaluated. */
+  minSamples: number;
+  /** Objectives currently breached (transition-reported via metrics). */
+  breached: string[];
+}
+
 /** One served flow: origin (file vs. DB), version, digest and last eval. */
 export interface FlowHealthEntry {
   id: string;
@@ -25,6 +41,8 @@ export interface FlowHealthEntry {
   /** True when a DB flow with this id shadows a same-id flow file. */
   shadowsFile: boolean;
   lastEval?: FlowHealthLastEval;
+  /** Declared service objectives + live evaluation state; only when set. */
+  slo?: FlowHealthSlo;
 }
 
 /** A flow file that failed to load and has been in the failure ledger since. */
