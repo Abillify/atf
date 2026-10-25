@@ -397,6 +397,8 @@ export function loadConfig(): AppConfig {
     canaryJudgeModel: env.CANARY_JUDGE_MODEL,
     replayEnabled: env.REPLAY_ENABLED,
     citationIndexEnabled: env.CITATION_INDEX_ENABLED,
+    citationCheckUrl: env.CITATION_CHECK_URL,
+    citationCheckToken: env.CITATION_CHECK_TOKEN,
     flowEditorEnabled: env.FLOW_EDITOR_ENABLED,
     optimizerEnabled: env.OPTIMIZER_ENABLED,
     optimizerGeneratorModel: env.OPTIMIZER_GENERATOR_MODEL,

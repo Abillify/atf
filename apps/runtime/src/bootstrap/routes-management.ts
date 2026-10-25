@@ -1135,6 +1135,39 @@ export async function registerManagementRoutes(
     logger.info("Governance posture report enabled at GET /monitoring/posture");
   }
 
+  // Citation impact report route — past answers whose cited passages changed
+  // or disappeared. Needs the citation index (a database); the check itself
+  // runs against Search (CITATION_CHECK_URL), so the route stays mounted
+  // without it and answers 503 with the configuration hint.
+  {
+    const { createCitationImpactRouter } = await import(
+      "../routes/citation-impact.js"
+    );
+    const { PostgresCitationImpactSource } = await import(
+      "../compliance/citation-impact.js"
+    );
+    app.route(
+      "/",
+      createCitationImpactRouter({
+        config,
+        authRequired: config.monitoringAuthRequired,
+        operatorAuth,
+        ...(database !== undefined
+          ? {
+              source: new PostgresCitationImpactSource(
+                database as NonNullable<typeof database>,
+              ),
+            }
+          : {}),
+        ...(evidenceKey !== undefined ? { evidenceKey } : {}),
+      }),
+    );
+    logger.info(
+      "Citation impact report enabled at GET /monitoring/citation-impact",
+      { citationIndex: database !== undefined },
+    );
+  }
+
   // FinOps forecasting + CO2/ESG accounting route
   {
     const { createFinopsRouter } = await import("../routes/finops.js");

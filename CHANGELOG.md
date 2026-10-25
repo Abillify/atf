@@ -35,6 +35,10 @@ releases:
 - **Runtime**: with `CITATION_INDEX_ENABLED=true` (needs `DATABASE_URL`) the chunks an
   answer cited are recorded per execution in `answer_citations`; the table is covered
   by retention and erasure.
+- **Runtime**: `GET /monitoring/citation-impact` and `cli.ts citations impact` list
+  past answers whose cited passages changed or disappeared in a newer document
+  revision (Search `/v2/citations/check` via `CITATION_CHECK_URL`); the report is
+  signed with the evidence key and verifiable with `atf-verify --citation-impact`.
 - **Outpost**: `sharepoint` source for SharePoint Online and OneDrive for Business
   document libraries (Microsoft Graph, client credentials, delta sync);
   `aclFromPermissions` maps item permissions to the document access list.

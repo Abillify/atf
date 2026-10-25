@@ -105,6 +105,10 @@ import {
   RELEASE_RECEIPT_TYPE,
   releaseReceiptSigningBytes,
 } from "../apps/runtime/src/eval/flow-release.ts";
+import {
+  citationImpactSigningBytes,
+  type CitationImpactReport,
+} from "../apps/runtime/src/compliance/citation-impact.ts";
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -117,6 +121,7 @@ Usage:
   atf-verify --bundle <file> --jwks <url|file> [options]
   atf-verify --erasure-receipt <file> --jwks <url|file> [options]
   atf-verify --release-receipt <file> --jwks <url|file> [options]
+  atf-verify --citation-impact <file> --jwks <url|file> [options]
   atf-verify --audit-export <file> [--anchor <file>] [--jwks <url|file>]
              [options]
 
@@ -138,6 +143,12 @@ Modes (exactly one is required):
                     signature over the canonical JSON receipt without its
                     "signature" field is verified offline and the document
                     is schema-checked.
+  --citation-impact <file>
+                    Citation impact report JSON (the body of
+                    GET /monitoring/citation-impact): the Ed25519 signature
+                    over the canonical JSON report without its "signature"
+                    field is verified offline, same envelope mode as the
+                    release receipt. An unsigned report is rejected.
   --audit-export <file>
                     Audit-log export in JSON Lines format (the body of
                     GET /monitoring/audit/export?format=jsonl, one compact
@@ -178,6 +189,7 @@ type Mode =
   | "bundle"
   | "erasure-receipt"
   | "release-receipt"
+  | "citation-impact"
   | "audit-export";
 
 interface CliOptions {
@@ -186,6 +198,7 @@ interface CliOptions {
   bundle?: string;
   erasureReceipt?: string;
   releaseReceipt?: string;
+  citationImpact?: string;
   auditExport?: string;
   anchor?: string;
   jwks: string;
@@ -217,6 +230,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break;
       case "--release-receipt":
         opts.releaseReceipt = needValue(arg, argv[++i]);
+        break;
+      case "--citation-impact":
+        opts.citationImpact = needValue(arg, argv[++i]);
         break;
       case "--audit-export":
         opts.auditExport = needValue(arg, argv[++i]);
@@ -253,6 +269,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     opts.bundle !== undefined ? "--bundle" : undefined,
     opts.erasureReceipt !== undefined ? "--erasure-receipt" : undefined,
     opts.releaseReceipt !== undefined ? "--release-receipt" : undefined,
+    opts.citationImpact !== undefined ? "--citation-impact" : undefined,
     opts.auditExport !== undefined ? "--audit-export" : undefined,
   ].filter((flag): flag is string => flag !== undefined);
   if (modeFlags.length > 1) {
@@ -262,7 +279,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   }
   if (modeFlags.length === 0) {
     throw new UsageError(
-      "--receipt, --bundle, --erasure-receipt, --release-receipt or --audit-export is required",
+      "--receipt, --bundle, --erasure-receipt, --release-receipt, --citation-impact or --audit-export is required",
     );
   }
   if (opts.proof !== undefined && opts.receipt === undefined) {
@@ -286,9 +303,11 @@ function parseArgs(argv: readonly string[]): CliOptions {
           ? "erasure-receipt"
           : opts.releaseReceipt !== undefined
             ? "release-receipt"
-            : opts.auditExport !== undefined
-              ? "audit-export"
-              : "receipt",
+            : opts.citationImpact !== undefined
+              ? "citation-impact"
+              : opts.auditExport !== undefined
+                ? "audit-export"
+                : "receipt",
     jwks: opts.jwks ?? "",
     json: opts.json === true,
     help: false,
@@ -299,6 +318,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
       : {}),
     ...(opts.releaseReceipt !== undefined
       ? { releaseReceipt: opts.releaseReceipt }
+      : {}),
+    ...(opts.citationImpact !== undefined
+      ? { citationImpact: opts.citationImpact }
       : {}),
     ...(opts.auditExport !== undefined
       ? { auditExport: opts.auditExport }
@@ -1139,6 +1161,164 @@ function printReleaseReceiptText(
   console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
 }
 
+interface CitationImpactVerifyReport {
+  valid: boolean;
+  mode: "citation-impact";
+  generated_at: string | null;
+  since: string | null;
+  tenant_id: string | null;
+  executions_checked: number | null;
+  executions_affected: number | null;
+  changed: number | null;
+  removed: number | null;
+  algorithm: string | null;
+  kid: string | null;
+  signature_valid: boolean;
+  verifier: string | null;
+  errors: string[];
+}
+
+async function runCitationImpact(
+  opts: CliOptions,
+): Promise<CitationImpactVerifyReport> {
+  const path = opts.citationImpact ?? "";
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw new UsageError(`cannot read citation impact file: ${path}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new UsageError(`citation impact file is not valid JSON: ${path}`);
+  }
+  const report = doc as Partial<CitationImpactReport> & {
+    summary?: {
+      executions_checked?: unknown;
+      executions_affected?: unknown;
+      chunks?: Record<string, unknown>;
+    };
+  };
+  if (report === null || typeof report !== "object" || Array.isArray(doc)) {
+    throw new UsageError(`citation impact file is not a report object: ${path}`);
+  }
+  const signature = report.signature;
+  if (
+    signature === null ||
+    typeof signature !== "object" ||
+    typeof signature.kid !== "string" ||
+    signature.kid === "" ||
+    typeof signature.value !== "string" ||
+    signature.value === ""
+  ) {
+    throw new UsageError("report is not signed");
+  }
+  if (signature.alg !== "EdDSA") {
+    throw new UsageError(
+      `citation impact file has an unsupported signature algorithm: ${path}`,
+    );
+  }
+
+  const jwks = await loadJwks(opts.jwks);
+  const kid = opts.kid ?? signature.kid;
+  const jwk = selectKey(jwks.keys, kid);
+  let publicKey: ReturnType<typeof createPublicKey>;
+  try {
+    publicKey = createPublicKey({ key: jwk, format: "jwk" });
+  } catch {
+    throw new UsageError(`JWKS key "${jwk.kid ?? "?"}" is not a usable Ed25519 public key`);
+  }
+
+  const errors: string[] = [];
+  // The signature covers the canonical JSON bytes of the report without its
+  // "signature" field, exactly as produced by signCitationImpact().
+  const signingBytes = Buffer.from(citationImpactSigningBytes(report as Omit<CitationImpactReport, "signature">), "utf8");
+  let signatureValid = true;
+  try {
+    signatureValid = ed25519Verify(
+      null,
+      signingBytes,
+      publicKey,
+      Buffer.from(signature.value, "base64url"),
+    );
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) {
+    errors.push("signature does not verify against this key");
+  }
+  if (typeof report.generated_at !== "string") {
+    errors.push('report has no "generated_at"');
+  }
+  if (typeof report.since !== "string") {
+    errors.push('report has no "since"');
+  }
+  if (
+    report.summary === null ||
+    typeof report.summary !== "object" ||
+    typeof report.summary.executions_affected !== "number"
+  ) {
+    errors.push('report has no "summary.executions_affected"');
+  }
+
+  const num = (value: unknown): number | null =>
+    typeof value === "number" ? value : null;
+  return {
+    valid: signatureValid && errors.length === 0,
+    mode: "citation-impact",
+    generated_at:
+      typeof report.generated_at === "string" ? report.generated_at : null,
+    since: typeof report.since === "string" ? report.since : null,
+    tenant_id:
+      typeof report.tenant_id === "string" ? report.tenant_id : null,
+    executions_checked: num(report.summary?.executions_checked),
+    executions_affected: num(report.summary?.executions_affected),
+    changed: num(report.summary?.chunks?.["changed"]),
+    removed: num(report.summary?.chunks?.["removed"]),
+    algorithm: signature.alg ?? null,
+    kid,
+    signature_valid: signatureValid,
+    verifier: opts.jwks,
+    errors,
+  };
+}
+
+function printCitationImpactText(
+  report: CitationImpactVerifyReport,
+  opts: CliOptions,
+): void {
+  const line = (label: string, value: string): string =>
+    `  ${label.padEnd(14)}${value}`;
+  console.log("ATF citation impact report verification (offline)");
+  console.log("");
+  console.log(line("report:", opts.citationImpact ?? "-"));
+  console.log(line("generated:", report.generated_at ?? "-"));
+  console.log(line("since:", report.since ?? "-"));
+  console.log(line("tenant:", report.tenant_id ?? "(all tenants)"));
+  console.log(
+    line(
+      "executions:",
+      `${report.executions_checked ?? "-"} checked, ${report.executions_affected ?? "-"} affected`,
+    ),
+  );
+  console.log(
+    line("chunks:", `changed=${report.changed ?? "-"} removed=${report.removed ?? "-"}`),
+  );
+  console.log(line("algorithm:", report.algorithm ?? "-"));
+  console.log("");
+  console.log(line("jwks:", report.verifier ?? "-"));
+  console.log(line("kid:", report.kid ?? "-"));
+  console.log(line("signature:", report.signature_valid ? "VALID" : "INVALID"));
+  if (report.errors.length > 0) {
+    console.log("");
+    for (const e of report.errors) console.error(`  ! ${e}`);
+  }
+  console.log("");
+  console.log(`RESULT: ${report.valid ? "VALID" : "INVALID"}`);
+}
+
 interface AuditExportReport {
   valid: boolean;
   mode: "audit-export";
@@ -1351,6 +1531,15 @@ async function main(): Promise<number> {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printReleaseReceiptText(report, opts);
+    }
+    return report.valid ? EXIT_VALID : EXIT_INVALID;
+  }
+  if (opts.mode === "citation-impact") {
+    const report = await runCitationImpact(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printCitationImpactText(report, opts);
     }
     return report.valid ? EXIT_VALID : EXIT_INVALID;
   }

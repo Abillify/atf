@@ -123,6 +123,10 @@ interface ParsedArgs {
   signingKeyFile?: string;
   /** flows release: path the release receipt is written to. */
   out?: string;
+  /** citations impact: start of the window — RFC 3339 or relative "Nd". */
+  since?: string;
+  /** citations impact: restrict the report to one document base ref. */
+  baseRef?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -160,6 +164,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--baseline" && i + 1 < args.length) { result.baseline = args[++i] ?? ""; i++; continue; }
     if (a === "--signing-key-file" && i + 1 < args.length) { result.signingKeyFile = args[++i] ?? ""; i++; continue; }
     if (a === "--out" && i + 1 < args.length) { result.out = args[++i] ?? ""; i++; continue; }
+    if (a === "--since" && i + 1 < args.length) { result.since = args[++i] ?? ""; i++; continue; }
+    if (a === "--base-ref" && i + 1 < args.length) { result.baseRef = args[++i] ?? ""; i++; continue; }
     if (!result.command && !a.startsWith("-")) { result.command = a; i++; continue; }
     if (!a.startsWith("-")) { result.positional.push(a); i++; continue; }
     i++;
@@ -973,6 +979,125 @@ async function cmdPosture(args: ParsedArgs): Promise<number> {
   return report.summary.fail > 0 ? 1 : 0;
 }
 
+/**
+ * citations impact: list past answers whose cited passages changed or
+ * disappeared in a newer document revision. Fetches the signed report from
+ * `GET /monitoring/citation-impact` (the Runtime checks the cited chunks
+ * against Search via CITATION_CHECK_URL). `--since` accepts an RFC 3339
+ * timestamp or a relative window like `90d` (default `90d`). Exit code 2
+ * when affected executions exist, 0 otherwise.
+ */
+async function cmdCitationsImpact(args: ParsedArgs): Promise<number> {
+  const sinceRaw = args.since ?? "90d";
+  let since: string;
+  const relative = /^(\d+)d$/.exec(sinceRaw);
+  if (relative?.[1] !== undefined) {
+    const days = Number(relative[1]);
+    since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  } else {
+    const parsed = new Date(sinceRaw);
+    if (Number.isNaN(parsed.getTime())) {
+      console.error(`${fail} --since must be an RFC 3339 timestamp or "Nd" (e.g. 90d): ${sinceRaw}`);
+      return 1;
+    }
+    since = parsed.toISOString();
+  }
+
+  const params = new URLSearchParams({ since });
+  if (args.baseRef) params.set("base_ref", args.baseRef);
+  const url = `${args.server}/monitoring/citation-impact?${params.toString()}`;
+  const headers: Record<string, string> = {};
+  if (args.token) headers.Authorization = `Bearer ${args.token}`;
+  let resp: Response;
+  try {
+    resp = await fetch(url, { headers });
+  } catch (err) {
+    console.error(`${fail} Could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (!resp.ok) {
+    const body = (await resp.json().catch(() => ({}))) as {
+      error?: { message?: string };
+    };
+    console.error(
+      `${fail} ${url} responded HTTP ${resp.status}${body.error?.message ? `: ${body.error.message}` : ""}`,
+    );
+    return 1;
+  }
+  let report: {
+    generated_at?: string;
+    since?: string;
+    tenant_id?: string | null;
+    summary?: {
+      executions_checked?: number;
+      executions_affected?: number;
+      chunks?: Record<string, number>;
+    };
+    affected?: Array<{
+      execution_id: string;
+      flow_id: string;
+      flow_version?: string | null;
+      created_at?: string;
+      chunks?: Array<{
+        base_ref: string;
+        chunk_id: string;
+        status: string;
+        current_revision?: string;
+      }>;
+    }>;
+    signature?: { kid?: string };
+  };
+  try {
+    report = (await resp.json()) as typeof report;
+  } catch (err) {
+    console.error(`${fail} ${url} did not return a citation impact report: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (typeof report.summary?.executions_affected !== "number") {
+    console.error(`${fail} ${url} returned a malformed citation impact report (missing summary).`);
+    return 1;
+  }
+
+  if (args.out) {
+    try {
+      await Bun.write(args.out, `${JSON.stringify(report, null, 2)}\n`);
+      // Keep stdout pure JSON when --json is set.
+      (args.json ? console.error : console.log)(
+        `${ok} Citation impact report written to ${args.out}`,
+      );
+    } catch (err) {
+      console.error(`${fail} Could not write ${args.out}: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    const summary = report.summary;
+    const chunks = summary?.chunks ?? {};
+    console.log(`${bold("citation impact")} — answers whose cited sources changed\n`);
+    console.log(`  since:      ${report.since ?? since}`);
+    console.log(`  tenant:     ${report.tenant_id ?? "(all tenants)"}`);
+    console.log(`  checked:    ${summary?.executions_checked ?? 0} executions, ${Object.keys(chunks).length > 0 ? Object.entries(chunks).map(([k, v]) => `${k}=${v}`).join(" ") : "no chunks"}`);
+    console.log(`  affected:   ${summary?.executions_affected ?? 0} executions`);
+    if (report.signature?.kid) console.log(`  signed:     EdDSA kid=${report.signature.kid}`);
+    const affected = report.affected ?? [];
+    if (affected.length > 0) {
+      console.log("");
+      for (const a of affected) {
+        console.log(`  ${a.execution_id}  ${a.flow_id}${a.flow_version ? `@${a.flow_version}` : ""}  ${a.created_at ?? ""}`);
+        for (const c of a.chunks ?? []) {
+          console.log(`      ${c.status.padEnd(8)} ${c.base_ref}#${c.chunk_id}${c.current_revision ? ` -> ${c.current_revision}` : ""}`);
+        }
+      }
+    } else {
+      console.log(`\n${ok} No answers cite a changed or removed passage.`);
+    }
+  }
+  return (report.summary?.executions_affected ?? 0) > 0 ? 2 : 0;
+}
+
 /** test: send a message to a flow and stream the response. */
 async function cmdTest(args: ParsedArgs): Promise<number> {
   const [flowId] = args.positional;
@@ -1544,6 +1669,7 @@ ${bold("Commands:")}
   ${bold("rls-setup")} [--confirm]            Onboard Row-Level Security (dry-run unless --confirm)
   ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
   ${bold("flows release")} <flowId>          Run a flow's bench file against a server as a release gate (--flows-dir, --base, --baseline)
+  ${bold("citations impact")}               List past answers whose cited passages changed or disappeared (--since, --base-ref)
 
 ${bold("Options:")}
   --server <url>                    Backend base URL (default: AIPERATOR_SERVER env or http://localhost:3000)
@@ -1558,7 +1684,9 @@ ${bold("Options:")}
   --base <git-ref>                  Fail when the flow changed but metadata.version was not raised vs this ref (flows release)
   --baseline <receipt.json>         Previous release receipt; its pass rate must not be undercut (flows release)
   --signing-key-file <file>         Ed25519 key file used to sign the release receipt (flows release)
-  --out <file>                      Path to write the release receipt to (flows release)
+  --out <file>                      Path to write the release receipt to (flows release) / citation impact report (citations impact)
+  --since <90d|RFC3339>             Start of the citation impact window (citations impact; default: 90d)
+  --base-ref <ref>                  Restrict the citation impact to one document (citations impact)
   --json                            Output raw JSON
   --help, -h                        Show this help
 
@@ -1580,6 +1708,8 @@ ${bold("Examples:")}
   bun run scripts/cli.ts verify-bundle bundle.json --secret my-signing-secret
   bun run scripts/cli.ts flows release my-flow --flows-dir flows --server http://localhost:3000
   bun run scripts/cli.ts flows release my-flow --flows-dir flows --base origin/main --baseline release-receipt.json
+  bun run scripts/cli.ts citations impact --server https://aiperator.example.com --token sk-... --since 30d
+  bun run scripts/cli.ts citations impact --base-ref doc-42 --out citation-impact.json
 `);
 }
 
@@ -1630,6 +1760,17 @@ async function main(): Promise<void> {
         exitCode = await cmdFlowsRelease(args);
       } else {
         console.error(`${fail} Unknown flows subcommand: ${sub ?? "(none)"} — expected "release"`);
+        showHelp();
+        exitCode = 1;
+      }
+      break;
+    }
+    case "citations": {
+      const sub = args.positional.shift();
+      if (sub === "impact") {
+        exitCode = await cmdCitationsImpact(args);
+      } else {
+        console.error(`${fail} Unknown citations subcommand: ${sub ?? "(none)"} — expected "impact"`);
         showHelp();
         exitCode = 1;
       }

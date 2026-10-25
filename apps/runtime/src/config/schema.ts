@@ -579,6 +579,18 @@ export interface AppConfig {
    * stays off with a startup warning. See `compliance/citation-index.ts`.
    */
   citationIndexEnabled?: boolean;
+  /**
+   * Base URL of the Search service used by the citation impact report
+   * (`CITATION_CHECK_URL`, optional). `GET /monitoring/citation-impact`
+   * checks cited chunks against `POST {url}/v2/citations/check`; without it
+   * the route answers 503. See `compliance/citation-impact.ts`.
+   */
+  citationCheckUrl?: string;
+  /**
+   * Optional bearer token sent to the citation check endpoint
+   * (`CITATION_CHECK_TOKEN`, optional).
+   */
+  citationCheckToken?: string;
   optimizerEnabled?: boolean;
   optimizerGeneratorModel?: LlmConfig;
   optimizerJudgeModel?: LlmConfig;
@@ -2118,6 +2130,8 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  CITATION_CHECK_URL: z.string().url().optional(),
+  CITATION_CHECK_TOKEN: z.string().min(1).optional(),
   FLOW_EDITOR_ENABLED: z
     .string()
     .optional()

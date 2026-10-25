@@ -41,6 +41,7 @@ import {
   signReleaseReceipt,
   type FlowReleaseReceipt,
 } from "../apps/runtime/src/eval/flow-release.ts";
+import { signCitationImpact } from "../apps/runtime/src/compliance/citation-impact.ts";
 
 const CLI = join(import.meta.dir, "atf-verify.ts");
 // A fixed 32-byte Ed25519 seed (base64) so the kid is deterministic.
@@ -329,7 +330,7 @@ describe("atf-verify CLI", () => {
     const r1 = await runCli([]);
     expect(r1.exit).toBe(2);
     expect(r1.stderr).toContain(
-      "--receipt, --bundle, --erasure-receipt, --release-receipt or --audit-export is required",
+      "--receipt, --bundle, --erasure-receipt, --release-receipt, --citation-impact or --audit-export is required",
     );
     const a = await makeArtifacts("r-usage");
     const r2 = await runCli(["--receipt", a.receiptPath, "--jwks", "/nope/x"]);
@@ -1108,5 +1109,193 @@ describe("atf-verify --audit-export", () => {
     ]);
     expect(combined.exit).toBe(2);
     expect(combined.stderr).toContain("cannot be combined");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --citation-impact
+// ---------------------------------------------------------------------------
+
+interface CitationImpactArtifacts {
+  dir: string;
+  reportPath: string;
+  jwksPath: string;
+  kid: string;
+  report: ReturnType<typeof signCitationImpact>;
+}
+
+async function makeCitationImpactArtifacts(
+  label: string,
+): Promise<CitationImpactArtifacts> {
+  const dir = await mkdtemp(join(tmpdir(), `atf-verify-ci-${label}-`));
+  const key = parseEvidenceSigningKey(SEED_B64);
+  if (key === undefined) throw new Error("fixture signing key missing");
+  const report = signCitationImpact(
+    {
+      generated_at: "2026-10-20T12:00:00.000Z",
+      since: "2026-07-01T00:00:00.000Z",
+      tenant_id: "acme",
+      summary: {
+        executions_checked: 12,
+        executions_affected: 2,
+        chunks: { current: 9, carried: 0, changed: 1, removed: 1, unknown: 0 },
+      },
+      affected: [
+        {
+          execution_id: "exec-1",
+          flow_id: "flows/test",
+          flow_version: "1.0.0",
+          created_at: "2026-10-01T10:00:00.000Z",
+          chunks: [
+            {
+              base_ref: "doc-a",
+              chunk_id: "c1",
+              status: "changed",
+              current_revision: "7",
+            },
+          ],
+        },
+      ],
+    },
+    key,
+  );
+  const reportPath = join(dir, "citation-impact.json");
+  await writeFile(reportPath, JSON.stringify(report));
+  const jwksPath = join(dir, "jwks.json");
+  await writeFile(
+    jwksPath,
+    JSON.stringify({
+      keys: [{ ...key.jwk, kid: key.kid, alg: "EdDSA", use: "sig" }],
+    }),
+  );
+  return { dir, reportPath, jwksPath, kid: key.kid, report };
+}
+
+describe("atf-verify --citation-impact", () => {
+  it("verifies a valid signed citation impact report (exit 0)", async () => {
+    const a = await makeCitationImpactArtifacts("ok");
+    const r = await runCli([
+      "--citation-impact",
+      a.reportPath,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("RESULT: VALID");
+    expect(r.stdout).toContain("acme");
+    expect(r.stdout).toContain("12 checked, 2 affected");
+  });
+
+  it("emits a JSON report with --json", async () => {
+    const a = await makeCitationImpactArtifacts("json");
+    const r = await runCli([
+      "--citation-impact",
+      a.reportPath,
+      "--jwks",
+      a.jwksPath,
+      "--json",
+    ]);
+    expect(r.exit).toBe(0);
+    const report = JSON.parse(r.stdout) as {
+      valid: boolean;
+      mode: string;
+      generated_at: string;
+      since: string;
+      tenant_id: string | null;
+      executions_checked: number;
+      executions_affected: number;
+      changed: number;
+      removed: number;
+      algorithm: string;
+      kid: string;
+      signature_valid: boolean;
+    };
+    expect(report.valid).toBe(true);
+    expect(report.mode).toBe("citation-impact");
+    expect(report.generated_at).toBe("2026-10-20T12:00:00.000Z");
+    expect(report.since).toBe("2026-07-01T00:00:00.000Z");
+    expect(report.tenant_id).toBe("acme");
+    expect(report.executions_checked).toBe(12);
+    expect(report.executions_affected).toBe(2);
+    expect(report.changed).toBe(1);
+    expect(report.removed).toBe(1);
+    expect(report.algorithm).toBe("EdDSA");
+    expect(report.kid).toBe(a.kid);
+    expect(report.signature_valid).toBe(true);
+  });
+
+  it("fails on a tampered field with stale signature (exit 1)", async () => {
+    const a = await makeCitationImpactArtifacts("tampered");
+    const tampered = JSON.parse(JSON.stringify(a.report)) as {
+      summary: { executions_affected: number };
+    };
+    tampered.summary.executions_affected = 99;
+    const path = join(a.dir, "tampered.json");
+    await writeFile(path, JSON.stringify(tampered));
+    const r = await runCli(["--citation-impact", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(1);
+    expect(r.stdout).toContain("RESULT: INVALID");
+    expect(r.stderr).toContain("signature does not verify against this key");
+  });
+
+  it("rejects an unsigned report (exit 2)", async () => {
+    const a = await makeCitationImpactArtifacts("unsigned");
+    const unsigned = JSON.parse(JSON.stringify(a.report)) as {
+      signature?: unknown;
+    };
+    delete unsigned.signature;
+    const path = join(a.dir, "unsigned.json");
+    await writeFile(path, JSON.stringify(unsigned));
+    const r = await runCli(["--citation-impact", path, "--jwks", a.jwksPath]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain("report is not signed");
+  });
+
+  it("fails with exit 2 for an unknown --kid", async () => {
+    const a = await makeCitationImpactArtifacts("wrongkid");
+    const r = await runCli([
+      "--citation-impact",
+      a.reportPath,
+      "--jwks",
+      a.jwksPath,
+      "--kid",
+      "unknown-kid",
+    ]);
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain('no JWKS key with kid "unknown-kid"');
+  });
+
+  it("rejects mode-flag misuse and bad input (exit 2)", async () => {
+    const a = await makeCitationImpactArtifacts("modes");
+    const both = await runCli([
+      "--citation-impact",
+      a.reportPath,
+      "--bundle",
+      join(a.dir, "bundle.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(both.exit).toBe(2);
+    expect(both.stderr).toContain("cannot be combined");
+
+    const missing = await runCli([
+      "--citation-impact",
+      join(a.dir, "nope.json"),
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(missing.exit).toBe(2);
+    expect(missing.stderr).toContain("cannot read citation impact file");
+
+    const notJson = join(a.dir, "not-json.json");
+    await writeFile(notJson, "hello");
+    const bad = await runCli([
+      "--citation-impact",
+      notJson,
+      "--jwks",
+      a.jwksPath,
+    ]);
+    expect(bad.exit).toBe(2);
+    expect(bad.stderr).toContain("citation impact file is not valid JSON");
   });
 });
