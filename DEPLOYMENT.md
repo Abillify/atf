@@ -546,12 +546,21 @@ offline — no database, no model endpoints, no service startup:
 bun run atf-doctor --service runtime --env-file ./runtime.env
 bun run atf-doctor --service search  --env-file ./search.env
 bun run atf-doctor --service extract --env-file ./extract.env
+bun run atf-doctor --service gate --config-dir ./mcpgate --env-file ./gate.env
 ```
+
+For the Gate, `--config-dir` points at the directory holding `config.yaml` and
+wins over `MCPGATE_CONFIG_DIR` from the env file; without it the env file's
+value (or `./config`) is used. The Gate check is offline: a configuration that
+imports remote MCP servers (`mcpServers`) is parsed from the files directly, so
+the pinning check runs without connecting to any downstream server.
 
 Each service's `loadConfig` runs in its own child process with an environment built **only**
 from the env file plus `PATH` and `HOME`, so a variable exported in the operator's shell can
 never mask a missing one. The Runtime additionally reports the governance posture (evidence
-signing, anchoring, taint, disclosure, …) the same way the startup log does. The env file is a
+signing, anchoring, taint, disclosure, …) the same way the startup log does; the Gate adds
+policy findings for permissive defaults, approver separation, unpinned imported tools, an
+open monitor, and HS256 transaction tokens. The env file is a
 plain `KEY=VALUE` file — `#` comments, optional single or double quotes, no shell expansion —
 and its values are never printed: probe stderr is truncated and any substring equal to an
 env-file value of at least 8 characters is replaced by `***`.

@@ -16,6 +16,7 @@
  *   bun run atf-doctor --service runtime --env-file ./runtime.env [--json]
  *   bun run atf-doctor --service search  --env-file ./search.env
  *   bun run atf-doctor --service extract --env-file ./extract.env
+ *   bun run atf-doctor --service gate    --config-dir ./mcpgate --env-file ./gate.env
  *
  * Output: a `Service | Check | Status | Detail` table (or JSON with
  * `--json`). Values from the env file are never printed; stderr of a failing
@@ -41,7 +42,7 @@ const PROBE_TIMEOUT_MS = 30_000;
 const STDERR_LIMIT = 400;
 const MASK_MIN_LENGTH = 8;
 
-const SERVICES = ["runtime", "search", "extract"] as const;
+const SERVICES = ["runtime", "search", "extract", "gate"] as const;
 type Service = (typeof SERVICES)[number];
 
 /** The service variable each service reads its profile from besides ATF_PROFILE. */
@@ -49,6 +50,7 @@ const SERVICE_PROFILE_VARS: Record<Service, readonly string[]> = {
   runtime: ["APP_ENV"],
   search: ["NODE_ENV"],
   extract: ["NODE_ENV"],
+  gate: ["MCPGATE_ENV", "NODE_ENV"],
 };
 
 const USAGE = `atf-doctor — offline preflight for an environment file
@@ -57,10 +59,13 @@ Usage:
   bun run atf-doctor --service runtime --env-file <file> [--json]
   bun run atf-doctor --service search  --env-file <file> [--json]
   bun run atf-doctor --service extract --env-file <file> [--json]
+  bun run atf-doctor --service gate --config-dir <dir> --env-file <file> [--json]
 
 Options:
-  --service <name>    runtime | search | extract (required)
+  --service <name>    runtime | search | extract | gate (required)
   --env-file <file>   KEY=VALUE file to check (required)
+  --config-dir <dir>  Gate configuration directory (gate only; wins over
+                      MCPGATE_CONFIG_DIR from the env file)
   --json              print the report as JSON instead of a table
   --help, -h          show this help
 
@@ -69,6 +74,7 @@ Exit codes: 0 = no fail, 1 = at least one fail, 2 = usage error.`;
 interface DoctorOptions {
   service: Service;
   envFile: string;
+  configDir?: string;
   json: boolean;
 }
 
@@ -91,6 +97,9 @@ function parseArgs(argv: readonly string[]): DoctorOptions {
       case "--env-file":
         partial.envFile = needValue(arg, argv[++i]);
         break;
+      case "--config-dir":
+        partial.configDir = needValue(arg, argv[++i]);
+        break;
       case "--json":
         partial.json = true;
         break;
@@ -108,7 +117,15 @@ function parseArgs(argv: readonly string[]): DoctorOptions {
     throw new UsageError(`--service must be one of: ${SERVICES.join(", ")}`);
   }
   if (partial.envFile === undefined) throw new UsageError("--env-file is required");
-  return { service: partial.service, envFile: partial.envFile, json: partial.json === true };
+  if (partial.configDir !== undefined && partial.service !== "gate") {
+    throw new UsageError("--config-dir is only supported for --service gate");
+  }
+  return {
+    service: partial.service,
+    envFile: partial.envFile,
+    configDir: partial.configDir,
+    json: partial.json === true,
+  };
 }
 
 /**
@@ -174,13 +191,17 @@ interface ProbeReport {
  * shell environment, so a variable exported in the terminal cannot mask a
  * missing entry in the file.
  */
-export async function runProbe(service: Service, env: Record<string, string>): Promise<ProbeReport> {
+export async function runProbe(
+  service: Service,
+  env: Record<string, string>,
+  configDir?: string,
+): Promise<ProbeReport> {
   const repoRoot = path.resolve(import.meta.dir, "..");
   const appDir = path.join(repoRoot, "apps", service);
   const probePath = path.join(appDir, "scripts", "doctor-probe.ts");
   const started = Date.now();
   const child = Bun.spawn(
-    [process.execPath, "run", "--no-env-file", probePath],
+    [process.execPath, "run", "--no-env-file", probePath, ...(configDir !== undefined ? [configDir] : [])],
     {
       cwd: appDir,
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
@@ -305,7 +326,7 @@ async function main(): Promise<number> {
     return EXIT_USAGE;
   }
   const env = parseEnvFile(readFileSync(opts.envFile, "utf8"));
-  const probe = await runProbe(opts.service, env);
+  const probe = await runProbe(opts.service, env, opts.configDir);
   const rows = buildRows(opts.service, probe, env);
 
   if (opts.json) {

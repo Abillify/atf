@@ -12,6 +12,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { gateDoctorChecks } from "../apps/gate/scripts/doctor-probe.ts";
+import { AppConfigSchema } from "../apps/gate/src/config/schema.ts";
 import {
   buildRows,
   exitCodeForRows,
@@ -28,6 +30,25 @@ function tempFile(name: string, content: string): string {
   writeFileSync(file, content, "utf8");
   return file;
 }
+
+function tempConfigDir(configYaml: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "atf-doctor-gate-"));
+  writeFileSync(path.join(dir, "config.yaml"), configYaml, "utf8");
+  return dir;
+}
+
+const GATE_MINIMAL_YAML = [
+  "server:",
+  "  name: doctor-test-gate",
+  "auth:",
+  "  mode: disabled",
+  "authorization:",
+  "  enabled: false",
+  "tenantIsolation:",
+  "  enabled: false",
+  "tools: []",
+  "",
+].join("\n");
 
 describe("parseEnvFile", () => {
   it("reads KEY=VALUE lines and skips comments and blanks", () => {
@@ -267,5 +288,148 @@ describe("env file end to end", () => {
     expect(Object.keys(env).sort()).toEqual(["EMBED_MODEL", "EMBED_URL", "POSTGRES_URL"]);
     const report = await runProbe("search", env);
     expect(report.configError).toBeNull();
+  }, 60_000);
+});
+
+describe("gate doctor checks", () => {
+  const base = {
+    server: { name: "doctor-test-gate" },
+    auth: { mode: "disabled" },
+    authorization: { enabled: false },
+    tenantIsolation: { enabled: false },
+    tools: [],
+  };
+  const parse = (extra: Record<string, unknown>) =>
+    AppConfigSchema.parse({ ...base, ...extra }) as ReturnType<typeof AppConfigSchema.parse>;
+
+  it("warns on a permissive default effect", () => {
+    const checks = gateDoctorChecks(parse({}), {}, []);
+    expect(checks.some((m) => m.includes('policies.defaultEffect is "allow"'))).toBe(true);
+  });
+
+  it("does not warn when the default effect denies", () => {
+    const checks = gateDoctorChecks(parse({ policies: { defaultEffect: "deny" } }), {}, []);
+    expect(checks.some((m) => m.includes("defaultEffect"))).toBe(false);
+  });
+
+  it("warns on missing approver separation while approvals are configured", () => {
+    const config = parse({
+      policies: { defaultEffect: "deny", rules: [{ effect: "approval", match: { tool: "send_mail" } }] },
+    });
+    const checks = gateDoctorChecks(config, {}, []);
+    expect(checks.some((m) => m.includes("requireDifferentApprover is false"))).toBe(true);
+  });
+
+  it("stays silent on approver separation when enabled or unused", () => {
+    const enabled = parse({
+      policies: {
+        defaultEffect: "deny",
+        rules: [{ effect: "approval", match: {} }],
+        approval: { requireDifferentApprover: true },
+      },
+    });
+    expect(gateDoctorChecks(enabled, {}, []).some((m) => m.includes("requireDifferentApprover"))).toBe(false);
+    const unused = parse({ policies: { defaultEffect: "deny" } });
+    expect(gateDoctorChecks(unused, {}, []).some((m) => m.includes("requireDifferentApprover"))).toBe(false);
+  });
+
+  it("warns on unpinned imported MCP tools", () => {
+    const config = parse({
+      mcpServers: [{ server: { url: "http://127.0.0.1:9999/mcp" }, include: ["read_file", "write_file"], overrides: [{ name: "read_file", pin: "a".repeat(64) }] }],
+    });
+    const checks = gateDoctorChecks(config, {}, []);
+    const pinning = checks.filter((m) => m.includes("imported MCP tools"));
+    expect(pinning).toHaveLength(1);
+    expect(pinning[0]).toContain("write_file");
+    expect(pinning[0]).not.toContain("read_file");
+  });
+
+  it("warns when no imported MCP tool is pinned at all", () => {
+    const config = parse({ mcpServers: [{ server: { url: "http://127.0.0.1:9999/mcp" }, overrides: [] }] });
+    expect(gateDoctorChecks(config, {}, []).some((m) => m.includes("no imported MCP tool"))).toBe(true);
+  });
+
+  it("warns when the monitor admits every IdP user", () => {
+    const config = parse({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://idp.example",
+          clientId: "monitor",
+          clientSecret: "CHANGE_ME_CHANGE_ME",
+          redirectUri: "https://gate.example/monitor/callback",
+          sessionSecret: "CHANGE_ME_CHANGE_ME",
+        },
+      },
+    });
+    expect(gateDoctorChecks(config, {}, []).some((m) => m.includes("requiredGroups is empty"))).toBe(true);
+    const restricted = parse({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://idp.example",
+          clientId: "monitor",
+          clientSecret: "CHANGE_ME_CHANGE_ME",
+          redirectUri: "https://gate.example/monitor/callback",
+          sessionSecret: "CHANGE_ME_CHANGE_ME",
+          requiredGroups: ["ops"],
+        },
+      },
+    });
+    expect(gateDoctorChecks(restricted, {}, []).some((m) => m.includes("requiredGroups"))).toBe(false);
+  });
+
+  it("warns when transaction tokens accept HS256", () => {
+    expect(gateDoctorChecks(parse({}), { MCPGATE_TRANSACTION_HS256_SECRET: "s".repeat(32) }, []).some((m) => m.includes("HS256"))).toBe(true);
+    expect(
+      gateDoctorChecks(parse({}), { MCPGATE_TRANSACTION_ALGORITHMS: "EdDSA,HS256" }, []).some((m) =>
+        m.includes("HS256"),
+      ),
+    ).toBe(true);
+    expect(
+      gateDoctorChecks(parse({}), { MCPGATE_TRANSACTION_ALGORITHMS: "EdDSA" }, []).some((m) => m.includes("HS256")),
+    ).toBe(false);
+  });
+
+  it("skips a check the production gate already reported", () => {
+    const reported = ["governance.defaultEffect is 'allow' and 3 tool(s) declare no requiredScopes"];
+    const checks = gateDoctorChecks(parse({}), {}, reported);
+    expect(checks.some((m) => m.includes("defaultEffect"))).toBe(false);
+  });
+});
+
+describe("gate probe integration", () => {
+  it("loads a minimal config directory and reports the permissive default", async () => {
+    const dir = tempConfigDir(GATE_MINIMAL_YAML);
+    const report = await runProbe("gate", { MCPGATE_ENV: "development" }, dir);
+    expect(report.service).toBe("gate");
+    expect(report.configError).toBeNull();
+    expect(report.fatal).toEqual([]);
+    expect(report.warnings.some((m) => m.includes('policies.defaultEffect is "allow"'))).toBe(true);
+  }, 60_000);
+
+  it("checks unpinned mcpServers imports without the network", async () => {
+    const dir = tempConfigDir(
+      `${GATE_MINIMAL_YAML.replace("tools: []", "")}mcpServers:\n  - server:\n      url: http://127.0.0.1:9999/mcp\n    overrides: []\n`,
+    );
+    const report = await runProbe("gate", { MCPGATE_ENV: "development" }, dir);
+    expect(report.configError).toBeNull();
+    expect(report.warnings.some((m) => m.includes("no imported MCP tool"))).toBe(true);
+  }, 60_000);
+
+  it("reports a missing config file as config error", async () => {
+    const dir = path.join(tmpdir(), "atf-doctor-gate-no-such-dir");
+    const report = await runProbe("gate", { MCPGATE_ENV: "development" }, dir);
+    expect(report.configError).not.toBeNull();
+    expect(report.configError).toContain("not found");
+    const rows = buildRows("gate", report, {});
+    expect(rows[0]?.status).toBe("fail");
+  }, 60_000);
+
+  it("honours MCPGATE_CONFIG_DIR from the env file when no directory is given", async () => {
+    const dir = tempConfigDir(GATE_MINIMAL_YAML);
+    const report = await runProbe("gate", { MCPGATE_ENV: "development", MCPGATE_CONFIG_DIR: dir });
+    expect(report.configError).toBeNull();
+    expect(report.warnings.some((m) => m.includes('policies.defaultEffect is "allow"'))).toBe(true);
   }, 60_000);
 });

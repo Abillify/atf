@@ -61,6 +61,9 @@ releases:
 - **Tooling**: `bun run atf-doctor --service runtime|search|extract --env-file <file>`
   checks an environment file against the production gates and, for the Runtime,
   the governance posture, without starting the service.
+- **Tooling** (`atf-doctor`): `--service gate --config-dir <dir>` checks a Gate
+  configuration, including permissive policy defaults, approver separation, unpinned
+  imported tools and an open monitor.
 
 ### Changed
 
