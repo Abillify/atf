@@ -90,6 +90,10 @@ releases:
 - **Outpost Desktop**: `check:desktop-updater` refuses release builds with the
   placeholder updater key; first tests for the sidecar API client.
 
+- **Docs** (README): a looping recording of a Studio test run (animated WebP,
+  with the WebM source under `docs/media/`).
+- **Docs** (README): a short "Enterprise adoption and engineering" section on
+  Abillify's consulting, integration and support offering.
 - **Examples**: `deploy/examples/flows/06-request-pipeline.yaml`, the flow from
   that recording: transform, classifier, router, parallel fan-out with a
   conditional child, and a risk classifier on the change branch. Runs without

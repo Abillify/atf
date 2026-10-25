@@ -14,6 +14,13 @@
   <a href="sbom.cdx.json"><img alt="SBOM: CycloneDX 1.6" src="https://img.shields.io/badge/SBOM-CycloneDX%201.6-informational"></a>
 </p>
 
+<p align="center">
+  <a href="https://aiperator.dev">Website</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="LICENSING.md">Licensing</a>
+</p>
+
 ---
 
 ATF is a platform for building and operating AI assistants and agents on your own
@@ -132,6 +139,11 @@ exercises their combined lifecycle so a contract break fails in CI rather than a
 Control makes the operational surface visible instead of hiding it behind configuration files:
 flow authoring and diffs, live graph execution, traces, approvals, evaluation runs, canaries,
 security posture, providers, budgets, and compliance evidence share one operator UI.
+
+<p align="center">
+  <a href="docs/media/studio-demo.webm"><img src="docs/media/studio-demo.webp" width="960" alt="ATF Control Studio: a routed flow with a transform, a classifier, a router and a parallel fan-out is selected, a test prompt is run, the answer streams in, and the canvas then marks every executed node with its step number, duration and tokens"></a>
+</p>
+<p align="center"><em>A Studio test run of <a href="deploy/examples/flows/06-request-pipeline.yaml"><code>06-request-pipeline.yaml</code></a> against a deterministic mock model: the answer streams in, then the canvas shows the traced path through the graph. The image loops; the link opens the <a href="docs/media/studio-demo.webm">WebM</a>.</em></p>
 
 <p align="center">
   <img src="apps/control/e2e/visual.spec.ts-snapshots/sidebar-desktop-chromium-linux.png" width="260" alt="ATF Control desktop navigation showing Studio, RAG, evaluation, live graph, traces, approvals, security, flows, assistants, and providers">
@@ -321,6 +333,15 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [docs/EU-AI-ACT.md](docs/EU-AI-ACT.md) | EU AI Act obligations mapped to ATF controls |
 | [docs/runbooks/](docs/runbooks/) | Backup, key rotation, incidents, scaling, Redis outage, transaction-token rotation |
 
+## Enterprise adoption and engineering
+
+[Abillify](https://abillify.me), the team behind ATF, helps organisations build, integrate,
+and operate audit-ready AI platforms on ATF: architecture and deployment design, integration
+with identity providers and existing systems, governance and compliance evidence, custom node
+types and Gate tools, and enterprise support for production operation. Engagements are
+separate from the license; commercial licensing is covered in [LICENSING.md](LICENSING.md).
+Product overview and demos: [aiperator.dev](https://aiperator.dev).
+
 ## License
 
 ATF is source-available under the [Elastic License 2.0](LICENSE). Run it, modify it,
@@ -340,3 +361,4 @@ text, and LGPL/MPL/CC-BY duties are called out per artifact. Trademark terms are
 the code license; see [TRADEMARKS.md](TRADEMARKS.md).
 
 Copyright © 2026 Abillify Technology GmbH. Authorship in [AUTHORS.md](AUTHORS.md).
+Consulting, integration and enterprise support: [abillify.me](https://abillify.me).
