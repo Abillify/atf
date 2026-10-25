@@ -33,6 +33,13 @@ export interface SourceItem {
    * (Drive/Dropbox report paths alongside their IDs).
    */
   displayPath?: string;
+  /**
+   * Per-item access control list supplied by the adapter (e.g. a cloud
+   * source mapping native permissions). It takes precedence over the
+   * source's configured ACL and replaces it entirely; when absent, the
+   * source ACL applies.
+   */
+  acl?: { allowedUsers: string[]; allowedGroups: string[] };
 }
 
 export interface SourceAdapter {

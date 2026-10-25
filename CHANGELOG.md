@@ -29,6 +29,9 @@ releases:
 
 ### Added
 
+- **Outpost**: sources may set `acl.users`/`acl.groups`; documents are ingested
+  with that access list (Extract intersects it with the Outpost token's rights),
+  and an ACL change re-uploads the document.
 - **Eval**: `scripts/eval/retrieval.ts --retrieve` measures `POST /v2/retrieve`
   with the golden set (page recall, MRR, nDCG, latency; figures are not part of
   that response).

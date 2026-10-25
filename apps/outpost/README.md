@@ -36,6 +36,29 @@ For a Google Drive service account, set `auth: service-account`, share the folde
 
 For Dropbox Docker login, use the no-redirect code-paste flow. For Google Drive, copy the complete redirected URL from the browser address bar. A running daemon watches credential files and picks up a new token without a restart.
 
+## Access control
+
+A source can carry a static access control list that the Outpost sends to Extract on every ingest, so documents become visible only to the listed accounts and groups:
+
+```yaml
+sources:
+  - type: local
+    id: hr
+    path: /sources/hr
+    acl:
+      users:
+        - alice@example.com
+      groups:
+        - hr-staff
+        - management
+```
+
+An adapter may also supply a per-document ACL (for example, a cloud drive that exposes sharing information); that per-document list wins over the source's `acl`. Sources without any ACL are ingested without access headers and keep Extract's default visibility.
+
+Extract intersects every access list with the rights of the Outpost token itself: the token can only grant what it has. An Outpost that assigns `hr-staff` must therefore hold that group (or the equivalent permission) itself, otherwise Extract drops it from the list.
+
+When the effective ACL of a document changes — the source list is edited or a per-document list differs — the Outpost re-uploads the document so Extract applies the new access list. Content that did not change is otherwise skipped. Sync states written before this feature carry no ACL digest and are treated as "unknown": they do not trigger a mass re-upload, and the digest is recorded with the next real update.
+
 ## Safe deletion
 
 With `mirrorDelete: true`, the Outpost pauses a deletion when the candidate set is large. Confirm the exact candidate hash with:

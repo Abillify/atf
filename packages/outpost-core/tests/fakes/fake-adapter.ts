@@ -18,6 +18,8 @@ export interface HarnessItem {
   modified?: Date;
   /** Override the derived marker (e.g. to simulate a stale state entry). */
   marker?: string;
+  /** Adapter-supplied per-item access list (passed through to SourceItem). */
+  acl?: { allowedUsers: string[]; allowedGroups: string[] };
 }
 
 /** Deterministic marker for content: `<size>:<sha8>`. */
@@ -72,6 +74,7 @@ export function fakeAdapter(
           size: item.content.byteLength,
           modified: item.modified ?? new Date("2026-01-01T00:00:00Z"),
           marker: item.marker ?? contentMarker(item.content),
+          ...(item.acl !== undefined ? { acl: item.acl } : {}),
         };
         yield sourceItem;
       }

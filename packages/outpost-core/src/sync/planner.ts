@@ -26,11 +26,22 @@ export type PreAction =
 
 /**
  * Skip exactly when a `synced` state exists whose marker equals the current
- * marker; every other case (including `failed`) hashes (7.3, 8.11).
+ * marker; every other case (including `failed`) hashes (7.3, 8.11). When the
+ * effective ACL digest is supplied, a marker match whose stored digest
+ * differs still hashes — an ACL change re-uploads even unchanged content. A
+ * state without a stored digest (written before ACL tracking existed) counts
+ * as "unknown" and never forces a re-upload by itself; the digest lands with
+ * the next real change.
  */
-export function planItem(item: SourceItem, prev: ItemState | undefined): PreAction {
+export function planItem(
+  item: SourceItem,
+  prev: ItemState | undefined,
+  aclDigest?: string,
+): PreAction {
   if (prev !== undefined && prev.status === "synced" && prev.marker === item.marker) {
-    return { kind: "skip" };
+    const aclChanged =
+      prev.aclDigest !== undefined && prev.aclDigest !== aclDigest;
+    if (!aclChanged) return { kind: "skip" };
   }
   return { kind: "hash" };
 }
@@ -56,16 +67,22 @@ export type PostHashAction =
  * Decide what to do once the content hash is known: identical content under a
  * `synced` state only refreshes the marker (7.5); oversized items are rejected;
  * otherwise upload — resumable above the threshold (8.5), and as a new version
- * whenever a state entry for the item already exists (8.2).
+ * whenever a state entry for the item already exists (8.2). When the effective
+ * ACL digest is supplied and differs from a stored one, identical content
+ * still uploads so the new access list reaches Extract; a state without a
+ * stored digest counts as "unknown" and does not force an upload.
  */
 export function planAfterHash(
   item: SourceItem,
   prev: ItemState | undefined,
   sha256: string,
   limits: UploadLimits,
+  aclDigest?: string,
 ): PostHashAction {
   if (prev !== undefined && prev.status === "synced" && prev.sha256 === sha256) {
-    return { kind: "update-marker" };
+    const aclChanged =
+      prev.aclDigest !== undefined && prev.aclDigest !== aclDigest;
+    if (!aclChanged) return { kind: "update-marker" };
   }
   if (item.size > limits.maxUploadBytes) {
     return { kind: "reject-too-large" };

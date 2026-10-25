@@ -49,6 +49,25 @@ export interface RecordedPatch {
   checksumOk: boolean;
 }
 
+/** One ingest/job as the outpost sent it, with the decoded access list. */
+export interface RecordedAclRequest {
+  reference: string;
+  allowedUsers: string[];
+  allowedGroups: string[];
+}
+
+/** Decode a `base64:`-prefixed comma list the way Extract's readListHeader does. */
+function readListHeader(headers: Headers, name: string): string[] {
+  let value = headers.get(name) ?? "";
+  if (value.toLowerCase().startsWith("base64:")) {
+    value = Buffer.from(value.slice("base64:".length), "base64").toString("utf-8");
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
 export type Injection =
   /** fetch rejects before the server sees the request. */
   | { kind: "network-error"; pathIncludes?: string }
@@ -100,6 +119,10 @@ export class FakeExtract {
   readonly documents = new Map<string, Map<string, string>>();
   readonly patches: RecordedPatch[] = [];
   readonly requests: Array<{ method: string; url: string }> = [];
+  /** Every `POST /v1/ingest` with the decoded `X-Allowed-*` lists. */
+  readonly ingests: RecordedAclRequest[] = [];
+  /** Every `POST /v2/jobs` body with its access lists. */
+  readonly jobRequests: RecordedAclRequest[] = [];
   whoamiResponse: WhoamiResponse;
   ingestMode: "sync" | "async";
   ingestSkipped: boolean;
@@ -267,6 +290,11 @@ export class FakeExtract {
     }
     const sha = sha256Hex(bytes);
     const collection = headers.get("x-collection") ?? "default";
+    this.ingests.push({
+      reference,
+      allowedUsers: readListHeader(headers, "x-allowed-users"),
+      allowedGroups: readListHeader(headers, "x-allowed-groups"),
+    });
     if (this.ingestMode === "async") {
       const jobId = `job-${this.nextJobId++}`;
       this.jobs.set(jobId, {
@@ -466,6 +494,15 @@ export class FakeExtract {
       statuses: ["queued", "processing", "completed"],
       reads: 0,
       collection: typeof body["collection"] === "string" ? body["collection"] : "default",
+    });
+    const list = (key: string): string[] => {
+      const raw = body[key];
+      return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+    };
+    this.jobRequests.push({
+      reference,
+      allowedUsers: list("allowedUsers"),
+      allowedGroups: list("allowedGroups"),
     });
     return jsonResponse(201, { jobId, reference, status: "queued", warnings: [] });
   }

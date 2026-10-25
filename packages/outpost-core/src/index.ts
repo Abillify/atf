@@ -332,9 +332,13 @@ export {
 } from "./sync/delete-planner.js";
 export {
   buildIngestHeaders,
+  effectiveAcl,
+  effectiveAclDigest,
+  aclDigest,
   rfc3339Utc,
   sourceLabel,
   toJobRequest,
+  type EffectiveAcl,
 } from "./sync/headers.js";
 export { Semaphore, isAborted } from "./sync/concurrency.js";
 export {

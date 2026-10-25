@@ -43,7 +43,11 @@ import {
 import type { SyncStateStore } from "../state/store.js";
 import type { ItemState } from "../state/schema.js";
 import type { SourceAdapter, SourceItem } from "../sources/types.js";
-import { buildIngestHeaders, toJobRequest } from "./headers.js";
+import {
+  buildIngestHeaders,
+  effectiveAclDigest,
+  toJobRequest,
+} from "./headers.js";
 import { planAfterHash, planItem, type UploadLimits } from "./planner.js";
 import { deriveReference } from "./reference.js";
 import { reduce, type NowIso, type Outcome } from "./reducer.js";
@@ -213,6 +217,7 @@ async function transferDirect(
   sha256: string,
   materialized: Materialized,
   ctx: ItemContext,
+  digest: string | undefined,
 ): Promise<Outcome> {
   const headers = buildIngestHeaders(item, ctx.src, ctx.cfg);
   const source = await readFileBytes(materialized.tempPath);
@@ -225,13 +230,25 @@ async function transferDirect(
     ctx.signal,
   );
   if (result.kind === "ingested") {
-    return { kind: "ingested", status: result.status, sha256, marker: item.marker };
+    return {
+      kind: "ingested",
+      status: result.status,
+      sha256,
+      marker: item.marker,
+      ...(digest !== undefined ? { aclDigest: digest } : {}),
+    };
   }
   // 202: persist the pending job BEFORE polling so a crash keeps the jobId (8.7).
   await applyOutcome(
     item,
     reference,
-    { kind: "accepted", jobId: result.jobId, sha256, marker: item.marker },
+    {
+      kind: "accepted",
+      jobId: result.jobId,
+      sha256,
+      marker: item.marker,
+      ...(digest !== undefined ? { aclDigest: digest } : {}),
+    },
     ctx,
   );
   const job = await pollJob(ctx.client, result.jobId, {
@@ -243,6 +260,7 @@ async function transferDirect(
     jobStatus: terminalJobStatus(job.status),
     sha256,
     marker: item.marker,
+    ...(digest !== undefined ? { aclDigest: digest } : {}),
   };
 }
 
@@ -253,6 +271,7 @@ async function transferResumable(
   sha256: string,
   materialized: Materialized,
   ctx: ItemContext,
+  digest: string | undefined,
 ): Promise<Outcome> {
   // Read the state FRESH per attempt: a previous attempt in this very run may
   // have persisted a session (onSession) that the retry must resume (8.6).
@@ -291,12 +310,19 @@ async function transferResumable(
       jobStatus: terminalJobStatus(job.status),
       sha256,
       marker: item.marker,
+      ...(digest !== undefined ? { aclDigest: digest } : {}),
     };
   }
   await applyOutcome(
     item,
     reference,
-    { kind: "accepted", jobId: job.jobId, sha256, marker: item.marker },
+    {
+      kind: "accepted",
+      jobId: job.jobId,
+      sha256,
+      marker: item.marker,
+      ...(digest !== undefined ? { aclDigest: digest } : {}),
+    },
     ctx,
   );
   const final = await pollJob(ctx.client, job.jobId, {
@@ -308,6 +334,7 @@ async function transferResumable(
     jobStatus: terminalJobStatus(final.status),
     sha256,
     marker: item.marker,
+    ...(digest !== undefined ? { aclDigest: digest } : {}),
   };
 }
 
@@ -323,14 +350,22 @@ async function transferWithRetry(
   mode: "direct" | "resumable",
   materialized: Materialized,
   ctx: ItemContext,
+  digest: string | undefined,
 ): Promise<Outcome> {
   let attempt = 0;
   for (;;) {
     try {
       return await ctx.withPermit(async () =>
         mode === "direct"
-          ? await transferDirect(item, reference, sha256, materialized, ctx)
-          : await transferResumable(item, reference, sha256, materialized, ctx),
+          ? await transferDirect(item, reference, sha256, materialized, ctx, digest)
+          : await transferResumable(
+              item,
+              reference,
+              sha256,
+              materialized,
+              ctx,
+              digest,
+            ),
       );
     } catch (error) {
       if (isAborted(ctx.signal)) throw error;
@@ -375,8 +410,11 @@ export async function processItem(
   if (isAborted(ctx.signal)) throw new Error("run abgebrochen");
   const reference = deriveReference(ctx.src.id, item.quellId);
   const prev = ctx.store.state.items[item.quellId];
+  // Effective ACL of this item (item > source); its digest makes an ACL
+  // change re-upload otherwise unchanged content (undefined = no ACL).
+  const digest = effectiveAclDigest(item, ctx.src);
 
-  const pre = planItem(item, prev);
+  const pre = planItem(item, prev, digest);
   if (pre.kind === "skip") return { kind: "skip" };
 
   let materialized: Materialized;
@@ -401,9 +439,19 @@ export async function processItem(
       await applyOutcome(item, reference, outcome, ctx);
       return { kind: "processed", outcome, isNewVersion: prev !== undefined };
     }
-    const plan = planAfterHash(item, prev, materialized.sha256, ctx.limits);
+    const plan = planAfterHash(
+      item,
+      prev,
+      materialized.sha256,
+      ctx.limits,
+      digest,
+    );
     if (plan.kind === "update-marker") {
-      const outcome: Outcome = { kind: "marker-only", marker: item.marker };
+      const outcome: Outcome = {
+        kind: "marker-only",
+        marker: item.marker,
+        ...(digest !== undefined ? { aclDigest: digest } : {}),
+      };
       await applyOutcome(item, reference, outcome, ctx);
       return { kind: "processed", outcome, isNewVersion: false };
     }
@@ -423,6 +471,7 @@ export async function processItem(
       plan.mode,
       materialized,
       ctx,
+      digest,
     );
     await applyOutcome(item, reference, outcome, ctx);
     return { kind: "processed", outcome, isNewVersion: plan.isNewVersion };

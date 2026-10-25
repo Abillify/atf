@@ -44,6 +44,19 @@ const sourceCommon = {
   metadata: z.record(z.string(), z.string()).optional(),
   allowedUsers: z.array(z.string().min(1)).optional(),
   allowedGroups: z.array(z.string().min(1)).optional(),
+  /**
+   * Per-source access control list sent to Extract on every ingest
+   * (`X-Allowed-Users` / `X-Allowed-Groups`). Takes precedence over the
+   * flat `allowedUsers`/`allowedGroups` fields; an adapter-supplied
+   * `SourceItem.acl` takes precedence over this. Extract intersects the
+   * list with the Outpost token's own rights.
+   */
+  acl: z
+    .object({
+      users: z.array(z.string().min(1)).optional(),
+      groups: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
 };
 
 export const sourceConfigSchema = z.discriminatedUnion("type", [

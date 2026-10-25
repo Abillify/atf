@@ -18,6 +18,12 @@ export const itemStateSchema = z.object({
   reference: z.string().min(1),
   marker: z.string(),
   sha256: z.string().optional(),
+  /**
+   * Digest of the effective ACL last sent for this item. Optional for
+   * backward compatibility: a missing field means "unknown" (state written
+   * before ACL tracking) and never triggers a re-upload by itself.
+   */
+  aclDigest: z.string().optional(),
   size: z.number().int().nonnegative(),
   status: z.enum(["synced", "failed", "pending-job", "deleted-in-source"]),
   jobId: z.string().optional(),

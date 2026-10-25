@@ -13,6 +13,7 @@
  * here round-trips through Extract unchanged (Property 20).
  */
 
+import { createHash } from "node:crypto";
 import { encodeHeaderValue } from "@atf/extract-contract/v1";
 import type { JobRequest } from "@atf/extract-contract/v2";
 import { effectiveCollection } from "../config/validate.js";
@@ -35,6 +36,57 @@ function normalizeList(values: readonly string[] | undefined): string[] {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+/** An access list as it goes to Extract — normalized, non-empty entries. */
+export interface EffectiveAcl {
+  allowedUsers: string[];
+  allowedGroups: string[];
+}
+
+/**
+ * The effective ACL of one item: an adapter-supplied `item.acl` wins over
+ * the source's nested `acl`, which wins over the legacy flat
+ * `allowedUsers`/`allowedGroups`. `undefined` means "no access list" — no
+ * headers are sent and Extract applies its own defaults. An explicitly
+ * empty list (e.g. `item.acl` with no entries) also yields `undefined`
+ * WITHOUT falling through to the lower-precedence source lists.
+ */
+export function effectiveAcl(
+  item: SourceItem,
+  src: SourceConfig,
+): EffectiveAcl | undefined {
+  const pick = (
+    users: readonly string[] | undefined,
+    groups: readonly string[] | undefined,
+  ): EffectiveAcl | undefined => {
+    const allowedUsers = normalizeList(users);
+    const allowedGroups = normalizeList(groups);
+    if (allowedUsers.length === 0 && allowedGroups.length === 0) return undefined;
+    return { allowedUsers, allowedGroups };
+  };
+  if (item.acl !== undefined) return pick(item.acl.allowedUsers, item.acl.allowedGroups);
+  if (src.acl !== undefined) return pick(src.acl.users, src.acl.groups);
+  return pick(src.allowedUsers, src.allowedGroups);
+}
+
+/**
+ * Deterministic digest of an effective ACL — stored in the Sync_State so an
+ * ACL change on an otherwise unchanged document triggers a re-upload. The
+ * encoding is order-sensitive (Extract preserves list order) and covers both
+ * lists in one string. `undefined` for "no ACL"; a missing state field means
+ * "unknown (pre-ACL state)" and never forces a re-upload by itself.
+ */
+export function aclDigest(acl: EffectiveAcl | undefined): string | undefined {
+  if (acl === undefined) return undefined;
+  return createHash("sha256")
+    .update(`users=${acl.allowedUsers.join("\n")}\ngroups=${acl.allowedGroups.join("\n")}`)
+    .digest("hex");
+}
+
+/** Convenience: the digest of the effective ACL of one item. */
+export function effectiveAclDigest(item: SourceItem, src: SourceConfig): string | undefined {
+  return aclDigest(effectiveAcl(item, src));
 }
 
 /** The provenance label `"<type>:<sourceId>"` sent as `X-Source` (8.1). */
@@ -77,13 +129,14 @@ export function buildIngestHeaders(
   if (Object.keys(metadata).length > 0) {
     headers["x-metadata"] = encodeHeaderValue(JSON.stringify(metadata));
   }
-  const allowedUsers = normalizeList(src.allowedUsers);
-  if (allowedUsers.length > 0) {
-    headers["x-allowed-users"] = encodeHeaderValue(allowedUsers.join(","));
-  }
-  const allowedGroups = normalizeList(src.allowedGroups);
-  if (allowedGroups.length > 0) {
-    headers["x-allowed-groups"] = encodeHeaderValue(allowedGroups.join(","));
+  const acl = effectiveAcl(item, src);
+  if (acl !== undefined) {
+    if (acl.allowedUsers.length > 0) {
+      headers["x-allowed-users"] = encodeHeaderValue(acl.allowedUsers.join(","));
+    }
+    if (acl.allowedGroups.length > 0) {
+      headers["x-allowed-groups"] = encodeHeaderValue(acl.allowedGroups.join(","));
+    }
   }
   if (item.link !== undefined && item.link !== "") {
     headers["x-link"] = encodeHeaderValue(truncate(item.link, MAX_LINK_LENGTH));
@@ -104,8 +157,7 @@ export function toJobRequest(
 ): JobRequest {
   const tags = normalizeList(src.tags);
   const metadata = src.metadata ?? {};
-  const allowedUsers = normalizeList(src.allowedUsers);
-  const allowedGroups = normalizeList(src.allowedGroups);
+  const acl = effectiveAcl(item, src);
   const request: JobRequest = {
     reference: deriveReference(src.id, item.quellId),
     sourceSha256: sha256,
@@ -118,8 +170,10 @@ export function toJobRequest(
   };
   if (tags.length > 0) request.tags = tags;
   if (Object.keys(metadata).length > 0) request.metadata = { ...metadata };
-  if (allowedUsers.length > 0) request.allowedUsers = [...allowedUsers];
-  if (allowedGroups.length > 0) request.allowedGroups = [...allowedGroups];
+  if (acl !== undefined) {
+    if (acl.allowedUsers.length > 0) request.allowedUsers = [...acl.allowedUsers];
+    if (acl.allowedGroups.length > 0) request.allowedGroups = [...acl.allowedGroups];
+  }
   if (item.link !== undefined && item.link !== "") {
     request.link = truncate(item.link, MAX_LINK_LENGTH);
   }

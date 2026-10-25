@@ -18,18 +18,32 @@ import type { ItemState } from "../state/schema.js";
 /** The terminal result of processing one item in one run. */
 export type Outcome =
   /** `POST /v1/ingest` answered 200 with `ok` or `skipped` (7.6, 8.8). */
-  | { kind: "ingested"; status: "ok" | "skipped"; sha256: string; marker: string }
+  | {
+      kind: "ingested";
+      status: "ok" | "skipped";
+      sha256: string;
+      marker: string;
+      /** Effective ACL digest sent with this upload (undefined = no ACL). */
+      aclDigest?: string;
+    }
   /** `POST /v1/ingest` answered 202 — a job now processes the upload (8.7). */
-  | { kind: "accepted"; jobId: string; sha256: string; marker: string }
+  | {
+      kind: "accepted";
+      jobId: string;
+      sha256: string;
+      marker: string;
+      aclDigest?: string;
+    }
   /** A polled job reached a terminal status (8.7). */
   | {
       kind: "job-final";
       jobStatus: "completed" | "failed" | "cancelled";
       sha256: string;
       marker: string;
+      aclDigest?: string;
     }
   /** Content unchanged, only the change marker moved (7.5). */
-  | { kind: "marker-only"; marker: string }
+  | { kind: "marker-only"; marker: string; aclDigest?: string }
   /** HTTP 4xx except 401/429 — permanent failure for this item (8.10). */
   | { kind: "client-error"; status: number; message: string }
   /** The source item could not be read (vanished, permissions) (8.10). */
@@ -69,6 +83,7 @@ export function reduce(
         reference,
         marker: outcome.marker,
         sha256: outcome.sha256,
+        aclDigest: outcome.aclDigest,
         status: "synced",
         jobId: undefined,
         pendingUpload: undefined,
@@ -81,6 +96,7 @@ export function reduce(
         reference,
         marker: outcome.marker,
         sha256: outcome.sha256,
+        aclDigest: outcome.aclDigest,
         status: "pending-job",
         jobId: outcome.jobId,
         // The upload itself finished — a pending resumable session is done.
@@ -94,6 +110,7 @@ export function reduce(
           reference,
           marker: outcome.marker,
           sha256: outcome.sha256,
+          aclDigest: outcome.aclDigest,
           status: "synced",
           jobId: undefined,
           pendingUpload: undefined,
@@ -120,6 +137,9 @@ export function reduce(
         ...baseState(prev, reference),
         reference,
         marker: outcome.marker,
+        // The digest travels with the marker refresh so a state that was
+        // "unknown" (pre-ACL) learns the current digest without a re-upload.
+        aclDigest: outcome.aclDigest,
         status: prev?.status ?? "synced",
       };
     case "client-error":
