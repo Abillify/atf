@@ -109,4 +109,6 @@ export type SourceFetch = (
   json(): Promise<unknown>;
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
+  /** Response header lookup (e.g. `Retry-After`); optional for fakes. */
+  header?(name: string): string | undefined;
 }>;

@@ -233,10 +233,11 @@ export class SyncStateStore {
     await this.#append({ op: "delete", quellId });
   }
 
-  /** Record source-level metadata changes (collection, candidateSetHash). */
+  /** Record source-level metadata changes (collection, candidateSetHash, deltaLink). */
   async setMeta(meta: {
     collection?: string;
     candidateSetHash?: string | null;
+    deltaLink?: string | null;
   }): Promise<void> {
     await this.#append({ op: "meta", ...meta });
   }

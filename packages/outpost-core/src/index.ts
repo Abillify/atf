@@ -292,6 +292,12 @@ export {
   type DropboxSourceOptions,
 } from "./sources/dropbox.js";
 export {
+  createSharepointSource,
+  type SharepointDeps,
+  type SharepointSource,
+  type SharepointSourceOptions,
+} from "./sources/sharepoint.js";
+export {
   deriveReference,
   REFERENCE_HASH_LENGTH,
   REFERENCE_SEPARATOR,

@@ -29,6 +29,9 @@ releases:
 
 ### Added
 
+- **Outpost**: `sharepoint` source for SharePoint Online and OneDrive for Business
+  document libraries (Microsoft Graph, client credentials, delta sync);
+  `aclFromPermissions` maps item permissions to the document access list.
 - **Outpost**: sources may set `acl.users`/`acl.groups`; documents are ingested
   with that access list (Extract intersects it with the Outpost token's rights),
   and an ACL change re-uploads the document.

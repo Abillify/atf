@@ -47,7 +47,9 @@ export async function resolveSourceCredential(
   rejectedIds: ReadonlySet<string> = new Set(),
   deps: ResolveDeps = {},
 ): Promise<SourceCredential> {
-  if (src.type === "local" || src.type === "s3") {
+  if (src.type === "local" || src.type === "s3" || src.type === "sharepoint") {
+    // sharepoint authenticates with client credentials from config files —
+    // the adapter owns the flow, no stored OAuth credential applies.
     return { kind: "static" };
   }
 

@@ -52,6 +52,8 @@ export const sourceStateSchema = z.object({
   items: z.record(z.string(), itemStateSchema),
   /** Hash of a delete-candidate set awaiting confirmation (9.11). */
   candidateSetHash: z.string().optional(),
+  /** Incremental-listing token of a delta-capable source (e.g. Graph). */
+  deltaLink: z.string().optional(),
 });
 
 export type SourceState = z.infer<typeof sourceStateSchema>;
@@ -72,6 +74,8 @@ export const journalEntrySchema = z.discriminatedUnion("op", [
     collection: z.string().min(1).optional(),
     /** null removes the stored hash; undefined leaves it unchanged. */
     candidateSetHash: z.string().nullable().optional(),
+    /** null removes the stored delta link; undefined leaves it unchanged. */
+    deltaLink: z.string().nullable().optional(),
   }),
 ]);
 
@@ -95,6 +99,8 @@ export function applyJournalEntry(state: SourceState, entry: JournalEntry): Sour
       if (entry.collection !== undefined) next.collection = entry.collection;
       if (entry.candidateSetHash === null) delete next.candidateSetHash;
       else if (entry.candidateSetHash !== undefined) next.candidateSetHash = entry.candidateSetHash;
+      if (entry.deltaLink === null) delete next.deltaLink;
+      else if (entry.deltaLink !== undefined) next.deltaLink = entry.deltaLink;
       return next;
     }
   }

@@ -92,6 +92,36 @@ export const sourceConfigSchema = z.discriminatedUnion("type", [
     path: z.string().min(1),
     ...sourceCommon,
   }),
+  z
+    .object({
+      type: z.literal("sharepoint"),
+      tenantId: z.string().min(1),
+      clientId: z.string().min(1),
+      /** Path to a file holding the OAuth client secret (never the value). */
+      clientSecretFile: z.string().min(1).optional(),
+      /** Path to a PEM bundle (private key + certificate) as alternative. */
+      certificateFile: z.string().min(1).optional(),
+      /** Direct drive address; alternative to siteUrl + library. */
+      driveId: z.string().min(1).optional(),
+      siteUrl: z.string().min(1).optional(),
+      /** Document library name on the site; needs siteUrl. */
+      library: z.string().min(1).optional(),
+      /** Map native item permissions to the document access list. */
+      aclFromPermissions: z.boolean().default(false),
+      /** Graph group id → ACL group name; unmapped ids pass through. */
+      aclGroupMap: z.record(z.string(), z.string()).optional(),
+      ...sourceCommon,
+    })
+    .refine((s) => (s.clientSecretFile !== undefined) !== (s.certificateFile !== undefined), {
+      message:
+        "sharepoint source: exactly one of clientSecretFile or certificateFile is required",
+    })
+    .refine(
+      (s) => (s.driveId !== undefined) !== (s.siteUrl !== undefined && s.library !== undefined),
+      {
+        message: "sharepoint source: driveId OR siteUrl together with library is required",
+      },
+    ),
 ]);
 
 export const outpostConfigSchema = z.object({

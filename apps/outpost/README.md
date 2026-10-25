@@ -1,6 +1,6 @@
 # ATF Extract Outpost
 
-`@atf/outpost` mirrors local folders, S3, Google Drive and Dropbox into ATF Extract. It runs as a non-root Docker container or as the sidecar of the desktop application.
+`@atf/outpost` mirrors local folders, S3, Google Drive, Dropbox and SharePoint Online / OneDrive for Business into ATF Extract. It runs as a non-root Docker container or as the sidecar of the desktop application.
 
 ## Docker
 
@@ -58,6 +58,32 @@ An adapter may also supply a per-document ACL (for example, a cloud drive that e
 Extract intersects every access list with the rights of the Outpost token itself: the token can only grant what it has. An Outpost that assigns `hr-staff` must therefore hold that group (or the equivalent permission) itself, otherwise Extract drops it from the list.
 
 When the effective ACL of a document changes — the source list is edited or a per-document list differs — the Outpost re-uploads the document so Extract applies the new access list. Content that did not change is otherwise skipped. Sync states written before this feature carry no ACL digest and are treated as "unknown": they do not trigger a mass re-upload, and the digest is recorded with the next real update.
+
+## SharePoint and OneDrive
+
+The `sharepoint` source mirrors a SharePoint Online document library or a OneDrive for Business account through Microsoft Graph. Authentication is OAuth2 client credentials against `https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/token` with the scope `https://graph.microsoft.com/.default`; the app secret (or certificate) is read from a file only and never appears in the configuration itself.
+
+```yaml
+sources:
+  - type: sharepoint
+    id: team-docs
+    tenantId: 11111111-2222-3333-4444-555555555555
+    clientId: 66666666-7777-8888-9999-aaaaaaaaaaaa
+    clientSecretFile: /run/secrets/sharepoint-secret # or certificateFile: /run/secrets/sharepoint-cert.pem
+    siteUrl: https://contoso.sharepoint.com/sites/team
+    library: Shared Documents
+    # Alternatively address the drive directly:
+    # driveId: b!xxxxxxxxxxxxxxxxxxxx
+    aclFromPermissions: true
+    aclGroupMap:
+      graph-group-object-id: team-a
+```
+
+The library is addressed either by `driveId` or by `siteUrl` plus `library` (the drive whose `name` matches). Listing uses the Graph delta endpoint: the first run performs a full scan, every later run reuses the stored delta link, and items reported as deleted are removed from the mirror by the normal deletion rules.
+
+Required Graph **application** permissions: `Sites.Selected` (recommended — grant the app read access to exactly the sites it mirrors, which an administrator does per site) or, as a broader alternative, `Files.Read.All`. When `aclFromPermissions: true` reads item permissions, the app additionally needs `Sites.Read.All` (or `Sites.Selected` with the read right granted on the site).
+
+With `aclFromPermissions: true`, each item's permissions become its access list: users are taken from `grantedToV2.user.email` (falling back to `userPrincipalName`, lowercased) and groups from `grantedToV2.group.id`, mapped through `aclGroupMap` — group ids without a mapping entry are kept unchanged. Sharing links (`link` facets) are never adopted: an item shared only via a link syncs with an empty access list and the Outpost logs a warning.
 
 ## Safe deletion
 

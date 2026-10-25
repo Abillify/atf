@@ -24,6 +24,7 @@ import {
   createDropboxSource,
   createGdriveSource,
   createS3Source,
+  createSharepointSource,
   createTlsAgent,
   EXTRACT_API_TOKEN_KEY,
   EXTRACT_CLIENT_SECRET_KEY,
@@ -278,6 +279,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
       json: () => response.json(),
       text: () => response.text(),
       arrayBuffer: () => response.arrayBuffer(),
+      header: (name: string) => response.headers.get(name) ?? undefined,
     };
   };
 
@@ -352,6 +354,45 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
             ...(src.exclude !== undefined ? { exclude: src.exclude } : {}),
           },
           { fetchImpl: sourceFetch, credential, clientId: appKey },
+        );
+      }
+      case "sharepoint": {
+        // Client credentials from files only — the config object never
+        // carries the secret itself.
+        let clientSecret: string | undefined;
+        let certificatePem: string | undefined;
+        if (src.clientSecretFile !== undefined) {
+          clientSecret = (await fsReadFile(src.clientSecretFile, "utf8")).trim();
+          redactor.register(clientSecret);
+        } else if (src.certificateFile !== undefined) {
+          certificatePem = await fsReadFile(src.certificateFile, "utf8");
+        } else {
+          throw new Error(
+            `sharepoint source ${src.id}: clientSecretFile oder certificateFile fehlt`,
+          );
+        }
+        const store = await openStore(src);
+        return createSharepointSource(
+          {
+            id: src.id,
+            tenantId: src.tenantId,
+            clientId: src.clientId,
+            ...(clientSecret !== undefined && clientSecret !== ""
+              ? { clientSecret }
+              : {}),
+            ...(certificatePem !== undefined ? { certificatePem } : {}),
+            ...(src.driveId !== undefined ? { driveId: src.driveId } : {}),
+            ...(src.siteUrl !== undefined ? { siteUrl: src.siteUrl } : {}),
+            ...(src.library !== undefined ? { library: src.library } : {}),
+            aclFromPermissions: src.aclFromPermissions,
+            ...(src.aclGroupMap !== undefined ? { aclGroupMap: src.aclGroupMap } : {}),
+            ...(src.include !== undefined ? { include: src.include } : {}),
+            ...(src.exclude !== undefined ? { exclude: src.exclude } : {}),
+            ...(store.state.deltaLink !== undefined
+              ? { initialDeltaLink: store.state.deltaLink }
+              : {}),
+          },
+          { fetchImpl: sourceFetch, logger },
         );
       }
     }

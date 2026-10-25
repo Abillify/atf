@@ -113,6 +113,11 @@ interface RotatingAdapter {
   rotatedRefreshToken(): string | undefined;
 }
 
+/** Adapters with incremental listing may expose the next-run link. */
+interface DeltaLinkAdapter {
+  deltaLink(): string | undefined;
+}
+
 export interface RunSourceDeps {
   src: SourceConfig;
   cfg: OutpostConfig;
@@ -323,7 +328,8 @@ export async function runSourceOnce(deps: RunSourceDeps): Promise<RunReport> {
 
   // ── 3. rotated provider tokens back to the store (6.17) ──────────────────
   await persistRotatedToken(adapter, src, deps.credentialStore, logger);
-
+  // ── 3b. incremental-listing link of a complete listing (delta sources) ───
+  await persistDeltaLink(adapter, store, logger);
   // ── 4. interruptions end the run without deletions (7.10, 9.4) ───────────
   if (fatal?.kind === "reauth-required") {
     await flushQuietly(store, logger, src.id);
@@ -564,6 +570,25 @@ async function persistRotatedToken(
     logger.error({
       event: "source.token_rotate_failed",
       sourceId: src.id,
+      error: errorMessage(error),
+    });
+  }
+}
+
+async function persistDeltaLink(
+  adapter: SourceAdapter,
+  store: SyncStateStore,
+  logger: Logger,
+): Promise<void> {
+  const delta = adapter as Partial<DeltaLinkAdapter>;
+  if (typeof delta.deltaLink !== "function") return;
+  const link = delta.deltaLink();
+  if (link === undefined || link === "") return;
+  try {
+    await store.setMeta({ deltaLink: link });
+  } catch (error) {
+    logger.error({
+      event: "state.delta_link_failed",
       error: errorMessage(error),
     });
   }
