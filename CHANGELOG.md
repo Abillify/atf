@@ -29,6 +29,9 @@ releases:
 
 ### Added
 
+- **Search**: `POST /v2/citations/check` tells whether cited chunks are still current,
+  carried over unchanged into the current revision, changed, removed, or unknown to the
+  caller.
 - **Outpost**: `sharepoint` source for SharePoint Online and OneDrive for Business
   document libraries (Microsoft Graph, client credentials, delta sync);
   `aclFromPermissions` maps item permissions to the document access list.

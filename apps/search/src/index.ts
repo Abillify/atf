@@ -71,6 +71,7 @@ import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
 import { createRevisionHandlers } from "./handlers/revisions.js";
 import { createDocumentSourceHandlers } from "./handlers/document-sources.js";
 import { createDocumentDiffHandler } from "./handlers/document-diff-v2.js";
+import { createCitationsCheckHandler } from "./handlers/citations-check-v2.js";
 import { createRevisionStore } from "./revision-store.js";
 import { createRevisionTtlCleaner } from "./revision-ttl-cleaner.js";
 import { createBatchWorker } from "./batch-worker.js";
@@ -780,6 +781,7 @@ export function createApp(
     logger,
   });
   const documentDiffHandler = createDocumentDiffHandler(postgresClient, logger);
+  const citationsCheckHandler = createCitationsCheckHandler(postgresClient, logger);
   const revisionHandlers = createRevisionHandlers(revisionStore, {
     revisionTtlMs: config.revisionTtlMs,
     logger,
@@ -1001,6 +1003,21 @@ export function createApp(
       (typeof req.query["collection"] === "string"
         ? req.query["collection"]
         : undefined) ?? collectionFromHeader(req),
+    { defaultCollection: config.defaultCollection, logger },
+  );
+  // POST /v2/citations/check carries the collection in the JSON body (the
+  // global express.json parser runs before the routes), falling back to
+  // ?collection= and X-Collection like the other read routes.
+  const collectionAccessCitations = createCollectionAccessMiddleware(
+    postgresClient,
+    (req) => {
+      const body = req.body as { collection?: unknown } | undefined;
+      const fromBody =
+        typeof body?.collection === "string" && body.collection !== ""
+          ? body.collection
+          : undefined;
+      return fromBody ?? collectionFromQuery(req) ?? collectionFromHeader(req);
+    },
     { defaultCollection: config.defaultCollection, logger },
   );
   const collectionAccessParam = createCollectionAccessMiddleware(
@@ -1306,6 +1323,14 @@ export function createApp(
     authorizeRead,
     collectionAccessQuery,
     documentDiffHandler,
+  );
+  app.post(
+    "/v2/citations/check",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessCitations,
+    citationsCheckHandler,
   );
 
   // ── v2 asset routes ──────────────────────────────

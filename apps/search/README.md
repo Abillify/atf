@@ -42,6 +42,7 @@ reference. The principal routes are:
 | `POST /v2/search` | v2 retrieval with unit filters, small-to-big expansion, assets and navigation (below) |
 | `/v2/documents/{ref}/revisions/…` | Resumable v2 ingest from Extract (below) |
 | `GET /v2/documents/{ref}/diff` | Unit-level diff of one document between two RFC 3339 instants `from` / `to` (below): `added` / `removed` / `changed` (before/after excerpts, max 300 chars) / `unchanged_count` |
+| `POST /v2/citations/check` | Check up to 500 cited chunks (`base_ref` + `chunk_id` from a search hit) against the revision visible today: `current` / `carried` (content unchanged in the current revision) / `changed` / `removed` / `unknown`, in input order |
 | `PUT`, `GET`, `HEAD /v2/assets/{assetId}` | Revision-bound v2 assets with `thumb` / `preview` / `full` variants |
 | `POST /evaluations/retrieval` | Evaluate retrieval results |
 | `DELETE /delete` | Delete indexed content |
@@ -352,6 +353,17 @@ the content-trust labels like every other read.
 
 Both tools are scoped by the caller's tenant/ACL exactly like `get_pages` — a diff can never
 surface a unit the caller could not retrieve.
+
+**`POST /v2/citations/check`** answers the complementary question "are the chunks I cited back
+then still what a search would return today?". It takes up to 500 `{ base_ref, chunk_id }`
+pairs (the `chunk_id` of a search hit — the v2 `unit_id` or the v1 `chunk_id`) and reports one
+status per pair, in input order: `current` (the chunk belongs to the revision visible today),
+`carried` (superseded, but its exact content exists unchanged in the current revision),
+`changed` (superseded and the content is gone), `removed` (the document has no visible revision
+anymore) and `unknown` (the caller cannot see that chunk at all). Current revisions are
+resolved with the same temporal rule as `valid_at` at check time; each result also carries
+`current_revision` when one is visible. Read-only, same headers and scopes as
+`GET /v2/documents/{ref}/diff`.
 
 ## Retrieval pipeline
 

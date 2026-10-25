@@ -4372,6 +4372,122 @@
         }
       }
     },
+    "/v2/citations/check": {
+      "post": {
+        "tags": [
+          "Revisions v2"
+        ],
+        "operationId": "citationsCheck",
+        "summary": "Check cited chunks against the current document revision",
+        "description": "For each cited chunk (`base_ref` plus the `chunk_id` a search hit carried as evidence — the v1 chunk id or the v2 unit id), report whether it is `current` (part of the revision visible today), `carried` (an older revision, but its exact content exists unchanged in the current revision), `changed` (an older revision, content no longer present), `removed` (the document has no revision visible to the caller today), or `unknown` (no chunk with that id is visible to the caller). The visibility rule for today is the same temporal rule as the document diff with `valid_at = now`; only chunks the caller's ACL admits are ever considered. Results come back in the request's item order.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "collection": {
+                    "type": "string",
+                    "description": "Target collection; falls back to ?collection= or the X-Collection header."
+                  },
+                  "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "base_ref",
+                        "chunk_id"
+                      ],
+                      "properties": {
+                        "base_ref": {
+                          "type": "string"
+                        },
+                        "chunk_id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The verdict for each citation, in input order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "base_ref": {
+                            "type": "string"
+                          },
+                          "chunk_id": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "current",
+                              "carried",
+                              "changed",
+                              "removed",
+                              "unknown"
+                            ]
+                          },
+                          "current_revision": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body (items missing or out of range)"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Not authorized for the tenant/collection"
+          },
+          "503": {
+            "description": "Database unreachable; retry. Codes: `POSTGRES_UNREACHABLE`.",
+            "x-error-codes": [
+              "POSTGRES_UNREACHABLE"
+            ],
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v2/assets/{assetId}": {
       "put": {
         "tags": [

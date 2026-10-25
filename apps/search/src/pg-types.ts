@@ -469,6 +469,29 @@ export interface NavReadOptions {
 }
 
 /**
+ * One cited chunk as loaded for `POST /v2/citations/check`. `id` is the
+ * citation identity the caller knows: the v1 `chunk_id` from the chunk
+ * jsonb, or the v2 `unit_id` a search hit carried as evidence.
+ */
+export interface CitationChunkRow {
+  id: string;
+  base_ref: string;
+  revision_id: string | null;
+  content: string;
+  /** Start of the row's validity interval (RFC 3339; null = fall back to `created`). */
+  valid_from: string | null;
+  /** Row insert time (RFC 3339) — the validity interval's fallback start. */
+  created: string;
+}
+
+/** The revision of one document visible at an instant (citations check). */
+export interface CurrentRevisionRow {
+  base_ref: string;
+  /** The visible revision id; null for unversioned (legacy) content. */
+  revision_id: string | null;
+}
+
+/**
  * Opaque cursor for keyset pagination.
  *
  * The sort key, and therefore the cursor, is **(score DESC, created ASC, id ASC)**
@@ -1028,6 +1051,42 @@ export interface PostgresClient {
   ): Promise<
     PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>
   >;
+
+  /**
+   * Cited chunks by id (`POST /v2/citations/check`): the v1 `chunk_id` or the
+   * v2 `unit_id`, under the caller's ACL, WITHOUT a temporal filter so a chunk
+   * in a superseded revision still resolves. Ids the caller cannot see are
+   * absent from the result.
+   */
+  getChunksByIds(
+    collection: string,
+    scope: AccessScope,
+    chunkIds: string[],
+  ): Promise<PostgresResponse<CitationChunkRow[]>>;
+
+  /**
+   * The revision of each listed document visible at `validAt` (the temporal
+   * rule of `document_diff`), in one query. A base ref with no visible row is
+   * absent — the document has no revision visible at that instant.
+   */
+  getCurrentRevisionsAt(
+    collection: string,
+    scope: AccessScope,
+    baseRefs: string[],
+    validAt: string,
+  ): Promise<PostgresResponse<CurrentRevisionRow[]>>;
+
+  /**
+   * The content of every unit of one document's revision visible at `validAt`
+   * (citations-check content-hash comparison), bounded by the navigation unit
+   * cap.
+   */
+  getCurrentRevisionContents(
+    collection: string,
+    scope: AccessScope,
+    baseRef: string,
+    validAt: string,
+  ): Promise<PostgresResponse<string[]>>;
 
   delete(
     filter: SearchFilter,

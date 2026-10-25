@@ -17,7 +17,7 @@ import { resolveFigureKinds } from "./figure-kinds.js";
 import { SqlParams, buildAccessSql, buildTemporalFilterSql } from "./query-builder.js";
 import { DOCUMENT_ORDER_SQL, NAV_MAX_UNITS, NAV_ROW_SELECT, SOURCE_HEAD_BYTES, SOURCE_HEAD_MAX_BATCHES, clampInt, escapeLikeLiteral, figureCaption, navExcerpt, navRow, normalizePathPrefix, normalizeReference, sourceSha256FromPayloadHead, stripLinks } from "./pg-helpers.js";
 import type { NavRowShape } from "./pg-helpers.js";
-import type { ExpandUnitCoords, ExpandUnitRow, FigureUnitInfo, IdentifierOccurrence, NavReadOptions, NavUnitRow, OutlineEntry, PostgresResponse } from "./pg-types.js";
+import type { CitationChunkRow, CurrentRevisionRow, ExpandUnitCoords, ExpandUnitRow, FigureUnitInfo, IdentifierOccurrence, NavReadOptions, NavUnitRow, OutlineEntry, PostgresResponse } from "./pg-types.js";
 
 import type { PgFactoryCtx } from "./pg-factory-ctx.js";
 
@@ -977,6 +977,172 @@ export function createNavMethods(ctx: PgFactoryCtx) {
           excerpt: navExcerpt(row.content),
         }));
         return { occurrences, total };
+      });
+    },
+
+    /**
+     * Load cited chunks by id for `POST /v2/citations/check` in ONE query.
+     *
+     * A citation id is the v1 `chunk_id` (stored in the `chunk` jsonb) or the
+     * v2 `unit_id` a search hit carried as evidence, so the id predicate
+     * matches either column. There is deliberately NO temporal filter: a cited
+     * chunk may live in a superseded revision and must still resolve so the
+     * caller can classify it (`current` / `carried` / `changed`); a chunk the
+     * caller's ACL hides — or that never existed — simply does not come back
+     * and is reported `unknown`. The ACL clause is the same as search's.
+     */
+    async getChunksByIds(
+      collection: string,
+      scope: AccessScope,
+      chunkIds: string[],
+    ): Promise<PostgresResponse<CitationChunkRow[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
+      }
+      if (chunkIds.length === 0) return { ok: true, result: [] };
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const accessSql = buildAccessSql(p, scope);
+        const idsPh = p.add(chunkIds);
+        const res = await client.query<{
+          id: string | null;
+          base_ref: string;
+          revision_id: string | null;
+          content: string | null;
+          valid_from: Date | string | null;
+          created: Date | string;
+        }>(
+          `SELECT COALESCE(chunk->>'chunk_id', unit_id) AS id,
+                  base_ref, revision_id, content, valid_from, created
+             FROM "${table}"
+            WHERE (chunk->>'chunk_id' = ANY(${idsPh}::text[])
+                   OR unit_id = ANY(${idsPh}::text[]))${accessSql}`,
+          p.values,
+        );
+        const rows: CitationChunkRow[] = [];
+        for (const row of res.rows) {
+          if (row.id === null || row.content === null) continue;
+          rows.push({
+            id: row.id,
+            base_ref: row.base_ref,
+            revision_id: row.revision_id ?? null,
+            content: row.content,
+            valid_from:
+              row.valid_from === null ? null : new Date(row.valid_from).toISOString(),
+            created: new Date(row.created).toISOString(),
+          });
+        }
+        return rows;
+      });
+    },
+
+    /**
+     * The revision of each document visible at `validAt` (the same temporal
+     * rule as `document_diff`), for a set of base refs, in ONE query. A base
+     * ref with no visible row is absent from the result — the caller reads
+     * that as `removed`. All units of one document's visible version share a
+     * `revision_id`, so the first row per base ref is representative; a legacy
+     * (unversioned) document yields a null revision.
+     */
+    async getCurrentRevisionsAt(
+      collection: string,
+      scope: AccessScope,
+      baseRefs: string[],
+      validAt: string,
+    ): Promise<PostgresResponse<CurrentRevisionRow[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
+      }
+      if (baseRefs.length === 0) return { ok: true, result: [] };
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p,
+          table,
+          false,
+          validAt,
+          "",
+          collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refsPh = p.add(baseRefs);
+        const res = await client.query<{
+          base_ref: string;
+          revision_id: string | null;
+        }>(
+          `SELECT base_ref, revision_id
+             FROM "${table}"
+            WHERE base_ref = ANY(${refsPh}::text[])${temporalFilter}${accessSql}`,
+          p.values,
+        );
+        const byRef = new Map<string, CurrentRevisionRow>();
+        for (const row of res.rows) {
+          if (byRef.has(row.base_ref)) continue;
+          byRef.set(row.base_ref, {
+            base_ref: row.base_ref,
+            revision_id: row.revision_id ?? null,
+          });
+        }
+        return [...byRef.values()];
+      });
+    },
+
+    /**
+     * The content of every unit of one document's revision visible at
+     * `validAt`, for the citations-check content-hash comparison. Bounded by
+     * the navigation unit cap. One query per document, never per chunk.
+     */
+    async getCurrentRevisionContents(
+      collection: string,
+      scope: AccessScope,
+      baseRef: string,
+      validAt: string,
+    ): Promise<PostgresResponse<string[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
+      }
+      const ref = normalizeReference(baseRef);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p,
+          table,
+          false,
+          validAt,
+          "",
+          collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        const res = await client.query<{ content: string | null }>(
+          `SELECT content
+             FROM "${table}"
+            WHERE base_ref = ${refPh}${temporalFilter}${accessSql}
+            LIMIT ${p.add(NAV_MAX_UNITS)}`,
+          p.values,
+        );
+        return res.rows.map((row) => row.content ?? "");
       });
     },
   };
