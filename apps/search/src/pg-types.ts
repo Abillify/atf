@@ -412,7 +412,7 @@ export interface FigureUnitInfo {
   bbox: [number, number, number, number] | null;
 }
 
-// ─── v2 navigation tool support (task 3.9) ──────────────────────────────────
+// ─── v2 navigation tool support ──────────────────────────────────
 // The read-only query surface behind the MCP navigation tools (get_outline,
 // get_section, get_pages, get_context, list_figures, get_table, find_identifier,
 // follow_ref). Every method runs under the SAME tenant/ACL + temporal/
@@ -896,7 +896,7 @@ export interface PostgresClient {
   /**
    * The table of contents of one document (task 3.9, Requirement 15.1): its
    * `section` units' heading path + page range + section id, depth-limited and
-   * paginated (design §6.6 — a single huge document's outline). `reference` is
+   * paginated (a single huge document's outline). `reference` is
    * the document base_ref. Ordered by page then section path.
    */
   getOutline(
@@ -936,7 +936,7 @@ export interface PostgresClient {
   ): Promise<PostgresResponse<{ units: NavUnitRow[]; truncated: boolean }>>;
 
   /**
-   * The units overlapping a page range of one document (task 3.9), in reading
+   * The units overlapping a page range of one document, in reading
    * order — used to render pages as Markdown v2 or a summary.
    */
   getPageUnits(
@@ -949,7 +949,7 @@ export interface PostgresClient {
   ): Promise<PostgresResponse<NavUnitRow[]>>;
 
   /**
-   * The reading-order neighbours of a unit (task 3.9): the unit itself plus up
+   * The reading-order neighbours of a unit: the unit itself plus up
    * to `before`/`after` units walked through the `prev_unit_id`/`next_unit_id`
    * graph within the same document.
    */
@@ -987,7 +987,7 @@ export interface PostgresClient {
 
   /**
    * The row-group units of a logical table, reassembled across page boundaries
-   * by `table_id` (task 3.9), in reading order. Bounded by `rows` (row-group
+   * by `table_id`, in reading order. Bounded by `rows` (row-group
    * count) and reporting `truncated`.
    */
   getTableUnits(

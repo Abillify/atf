@@ -4,7 +4,7 @@
 /**
  * ingest-v2.test.ts
  *
- * The v2 wrapper for `POST /v1/ingest` (task 1.14, requirement 17.2).
+ * The v2 wrapper for `POST /v1/ingest`.
  *
  * When a database and a Search target are configured, `/v1/ingest` stores the
  * upload in the source store, creates a v2 job, drives it inline for a small

@@ -6,7 +6,7 @@
  *
  * Returns the OpenAPI 3.1 specification for the ATF Gate (MCP security
  * gateway) as a plain JS object, served unauthenticated at
- * GET /openapi.json (requirement 14.5).
+ * GET /openapi.json.
  *
  * The Gate is an Express app whose HTTP surface is assembled in app.ts from
  * a fixed set of routers (health, RFC 9728 metadata, erasure, metrics,
@@ -18,7 +18,7 @@
  *
  * The committed baseline under docs/openapi/gate.json is regenerated with
  * `bun run openapi:update` and guarded for breaking changes by
- * `bun run openapi:check` (requirement 11.7).
+ * `bun run openapi:check`.
  */
 
 import { version } from "../package.json";

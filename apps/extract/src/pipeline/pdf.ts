@@ -302,7 +302,7 @@ function versionAtLeast(
 
 /**
  * Probe whether the image's `pdftotext` supports `-bbox-layout`, the flag the
- * deterministic page analysis (S2, requirement 7.1) depends on.
+ * deterministic page analysis depends on.
  *
  * `pdftotext -v` prints its version banner on stderr; we parse it and compare
  * against {@link MIN_POPPLER_BBOX_LAYOUT}. A v1-only deployment that never runs
@@ -439,7 +439,7 @@ export async function extractDocumentText(
  * string), `-bbox-layout` gives the *geometry*: an XHTML document with a
  * `<word>` per word carrying `xMin/yMin/xMax/yMax` in page-pixel space, grouped
  * into `<line>` and `<block>`. This is the raw signal the deterministic page
- * analysis (S2, design §5) turns into normalised blocks/lines/words — parsing
+ * analysis turns into normalised blocks/lines/words — parsing
  * lives in `pipeline/bbox-layout.ts`, which is a pure function of the string
  * returned here, so it is testable without poppler.
  *

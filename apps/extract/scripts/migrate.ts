@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Standalone schema migration for the Extract database (requirement 12.4).
+ * Standalone schema migration for the Extract database.
  *
  * Applies every pending migration of the `extract` schema under the same
  * session advisory lock the lazy store initialisation uses

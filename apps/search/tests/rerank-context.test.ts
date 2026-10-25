@@ -117,7 +117,7 @@ describe("buildRerankDocument", () => {
   });
 });
 
-// ─── diversifyResults per-section cap (design §7.1 step 4) ───────────────────
+// ─── diversifyResults per-section cap ───────────────────
 
 describe("diversifyResults — per-section cap", () => {
   it("caps hits per section keeping the highest-scoring ones", () => {

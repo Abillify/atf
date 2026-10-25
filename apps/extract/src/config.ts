@@ -104,7 +104,7 @@ export interface ExtractDatabaseConfig {
   /**
    * MIGRATE_ON_START — apply the extract schema migrations during store init.
    * Unset means: true outside production, false when NODE_ENV=production
-   * (requirement 12.4) — production rollouts run the standalone
+   *  — production rollouts run the standalone
    * `bun run migrate` command as a one-shot Job instead of doing DDL on the
    * boot path of every replica. Optional so existing callers that construct
    * the config by hand keep the previous always-migrate behaviour.
@@ -113,7 +113,7 @@ export interface ExtractDatabaseConfig {
 }
 
 /**
- * The persistent job worker loop (design §9b, requirements 4.4, 4.5, 4.8).
+ * The persistent job worker loop.
  *
  * A worker claims jobs from the `extract.jobs` queue, holds a lease it renews
  * on a heartbeat, and fences every write on the lease epoch so a partitioned
@@ -167,7 +167,7 @@ export interface JobWorkerConfig {
 }
 
 /**
- * Queue lanes and fairness (design §9a.5, requirement 6.6).
+ * Queue lanes and fairness.
  *
  * A 10 000-page plan takes days of vision time; a handful of them claiming
  * every worker would starve the 40-page uploads behind them for just as long.
@@ -190,7 +190,7 @@ export interface JobWorkerConfig {
 export interface QueueLaneConfig {
   /**
    * LARGE_JOB_PAGE_THRESHOLD — a job with STRICTLY MORE than this many pages
-   * runs in the bounded large-job lane (design §9a.5: "over 1,000 pages").
+   * runs in the bounded large-job lane ("over 1,000 pages").
    * Default 1000, so a 1000-page job is still normal and a 1001-page job is
    * large. A job with an unknown (null) page count is treated as normal until
    * `preparing` sizes it.
@@ -198,7 +198,7 @@ export interface QueueLaneConfig {
   largeJobPageThreshold: number;
   /**
    * LARGE_JOB_MAX_CONCURRENCY — the most large-lane jobs leased across the
-   * whole worker fleet at once (design §9a.5: "at most 1–2 parallel jobs").
+   * whole worker fleet at once ("at most 1–2 parallel jobs").
    * Kept small on purpose: a large job saturates the vision model's batch
    * capacity by itself, and the point of the lane is that small documents do
    * not wait days behind big ones. Default 1.
@@ -207,8 +207,7 @@ export interface QueueLaneConfig {
 }
 
 /**
- * The emitter that streams the staged outbox to Search (design §5 S8, §9b.3;
- * task 1.12, requirements 5.7, 6.3).
+ * The emitter that streams the staged outbox to Search.
  *
  * The job runner stages one emit-outbox row per page and one asset-outbox row
  * per crop/page image. The emitter groups those staged pages into batches of
@@ -221,7 +220,7 @@ export interface QueueLaneConfig {
 export interface EmitterConfig {
   /**
    * EMIT_BATCH_PAGES — pages grouped into one NDJSON batch sent to Search.
-   * Default 20 (design §5 S8). Bounds the emitter's memory: it only ever
+   * Default 20. Bounds the emitter's memory: it only ever
    * holds one batch of page records at a time, never the whole document. The
    * value is frozen per job when its first batch is sent, so changing it never
    * re-maps the batches an open revision already holds. A smaller batch does
@@ -240,25 +239,25 @@ export interface EmitterConfig {
   segmentPages: number; // SEGMENT_PAGES (default: 100)
   /**
    * ASSET_UPLOAD_CONCURRENCY — figure/page crops uploaded to Search in
-   * parallel. Default 4 (design §5 S8). Bounded so a document with thousands of
+   * parallel. Default 4. Bounded so a document with thousands of
    * crops cannot open thousands of concurrent PUTs.
    */
   assetUploadConcurrency: number;
   /**
-   * FINALIZE_PASS — run the optional finalize pass at document end (design §5 S7
-   * point 2, requirement 9.6). It is a deterministic, MODEL-FREE correction of
-   * the outline metadata: once the whole document's heading-height distribution
-   * is known, provisionally-mis-levelled unnumbered headings are re-ranked and
-   * the affected `sectionPath` values corrected on `document.end`. Search then
-   * re-embeds ONLY the units whose path changed (the expensive step), leaving
-   * the rest untouched. Numbered / DOCX-style headings are authoritative and are
-   * never moved. Default true; set false to emit the streaming outline as-is.
+   * FINALIZE_PASS — run the optional finalize pass at document end. It is a
+   * deterministic, MODEL-FREE correction of the outline metadata: once the whole
+   * document's heading-height distribution is known, provisionally-mis-levelled
+   * unnumbered headings are re-ranked and the affected `sectionPath` values
+   * corrected on `document.end`. Search then re-embeds ONLY the units whose path
+   * changed (the expensive step), leaving the rest untouched. Numbered /
+   * DOCX-style headings are authoritative and are never moved. Default true; set
+   * false to emit the streaming outline as-is.
    */
   finalizePass: boolean; // FINALIZE_PASS (default: true)
 }
 
 /**
- * The durable, content-addressed source store (design §9a.1, requirement 4.13).
+ * The durable, content-addressed source store.
  *
  * A finished upload — whether it arrived in resumable chunks or was pulled from
  * a `source_url` — is moved here under a path derived from its whole-file
@@ -279,7 +278,7 @@ export interface SourceStoreConfig {
 }
 
 /**
- * Pulling a source from a caller-supplied URL (design §9a.1, requirement 4.13).
+ * Pulling a source from a caller-supplied URL.
  *
  * This is a server-side request forgery primitive in exactly the same way
  * `X-Callback-URL` is, so it reuses the callback controls: link-local and
@@ -301,12 +300,12 @@ export interface SourceUrlConfig {
 }
 
 /**
- * The text-LLM used for the summary hierarchy (design §5 S7 step 5, §9a.2;
- * task 2.7, requirement 9.5). This is the *already-configured* text model the
- * design names `SUMMARY_MODEL`/`HYDE_MODEL` — an OpenAI-compatible chat
- * endpoint (a vLLM in the reference deployment) — not a new model. Extract
- * gets its own `SUMMARY_*` block so the summary pass can run offline over the
- * pages it has just produced.
+ * The text-LLM used for the summary hierarchy. This is the
+ * *already-configured* text model the design names
+ * `SUMMARY_MODEL`/`HYDE_MODEL` — an OpenAI-compatible chat endpoint (a vLLM
+ * in the reference deployment) — not a new model. Extract gets its own
+ * `SUMMARY_*` block so the summary pass can run offline over the pages it has
+ * just produced.
  *
  * The whole block is OPTIONAL: when `SUMMARY_URL` is unset this is `null`, the
  * summary hierarchy is skipped cleanly, and `document.end.summaries` stays
@@ -407,10 +406,10 @@ export interface Config {
   visionReasoningEffort: string | null; // VISION_REASONING_EFFORT
   /**
    * VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces
-   * `response_format: json_schema` on chat completions (task 7.9, requirement
-   * 5.10). Fail-closed like the runtime's model-capability rules: off unless
-   * the operator states the backend supports it. A provider that rejects the
-   * field anyway is handled by the client's fallback, not by failed pages.
+   * `response_format: json_schema` on chat completions. Fail-closed like the
+   * runtime's model-capability rules: off unless the operator states the
+   * backend supports it. A provider that rejects the field anyway is handled
+   * by the client's fallback, not by failed pages.
    */
   visionSupportsJsonSchema: boolean; // VISION_SUPPORTS_JSON_SCHEMA (default: false)
   /** VISION_INPUT_TOKEN_COST — USD per million input tokens, for reporting. */
@@ -433,14 +432,14 @@ export interface Config {
   figureDpi: number; // FIGURE_DPI (default: 300)
   /**
    * FIGURE_PASS2_KINDS — the figure kinds that get a structured Pass-2
-   * transcription (design §5 S5, requirement 8.3/8.6). A figure whose `kind` is
+   * transcription. A figure whose `kind` is
    * outside this set is described only, with no second model call. The default
    * covers every structured kind; `photo`/`diagram`/`other` are never in it.
    */
   figurePass2Kinds: FigureKind[]; // FIGURE_PASS2_KINDS (default: bpmn,flowchart,ui_mask,technical_drawing,chart,table_image)
   /**
    * FIGURE_PASS2_MIN_AREA — the smallest figure, as a fraction of the page
-   * area, that is worth a Pass-2 call (requirement 8.6). A tiny inline icon
+   * area, that is worth a Pass-2 call. A tiny inline icon
    * mis-tagged as a chart is not worth a model call; below this fraction Pass 2
    * is skipped. Default 0.02 (2 % of the page).
    */
@@ -448,22 +447,22 @@ export interface Config {
   /**
    * LABEL_COVERAGE_MIN — the minimum percentage of a figure's `labels` that
    * must appear in its Pass-2 transcription before the transcription is trusted
-   * (requirement 8.4). Below it, Extract emits a warning and retries Pass 2
+   * Below it, Extract emits a warning and retries Pass 2
    * once. Default 60 (per cent).
    */
   labelCoverageMin: number; // LABEL_COVERAGE_MIN (default: 60)
   /**
    * TILE_TARGET_PIXELS — the long edge, in pixels, a single tile of a
-   * large-format page is rendered towards (design §5 S6, task 5.1, requirement
-   * 8.5). Drives both the tile count (page pixels / this) and the per-tile
-   * render DPI, so a bigger value means fewer, sharper tiles. Default 2000, a
-   * touch below the whole-page render target so a plan's tiles are legibly
-   * sharper than the same plan sent as one downscaled image.
+   * large-format page is rendered towards. Drives both the tile count (page
+   * pixels / this) and the per-tile render DPI, so a bigger value means
+   * fewer, sharper tiles. Default 2000, a touch below the whole-page render
+   * target so a plan's tiles are legibly sharper than the same plan sent as
+   * one downscaled image.
    */
   tileTargetPixels: number; // TILE_TARGET_PIXELS (default: 2000)
   /**
    * TILE_OVERLAP_FRACTION — the fraction of a tile's own extent that adjacent
-   * tiles overlap by (design §5 S6, requirement 8.5). The 10 % default is the
+   * tiles overlap by. The 10 % default is the
    * spec value: enough that a symbol or dimension on a seam appears whole in at
    * least one tile, small enough that the merge's overlap-band dedup is cheap.
    * Bounded to [0, 0.5].
@@ -471,25 +470,25 @@ export interface Config {
   tileOverlapFraction: number; // TILE_OVERLAP_FRACTION (default: 0.1)
   /**
    * TILE_MAX_PER_PAGE — hard ceiling on `cols × rows` tiles for one page
-   * (design §5 S6, requirement 8.6, budget guard). A vast A0 plan does not
+   * (budget guard). A vast A0 plan does not
    * spawn hundreds of vision calls; above this the grid is capped, keeping the
    * aspect ratio. Default 16 (a 4×4 grid).
    */
   tileMaxPerPage: number; // TILE_MAX_PER_PAGE (default: 16)
   /**
-   * TEXT_FAST_PATH — enable the deterministic text fast-path (design §5 S3
-   * "Text-Fast-Path", requirement 7.5). When a page classifies as `text` with
-   * no table/figure candidates and usable `-bbox-layout` geometry, Extract
-   * builds its blocks straight from that geometry and does NOT call the vision
-   * model, saving an estimated 40–70 % of vision time on text-heavy documents.
-   * The fidelity check stays active and gates eligibility: any anomaly falls
-   * that page back to the normal vision path. Default true (opt-out), matching
-   * design §13's recommendation ("aktiv, mit Fidelity-Gate").
+   * TEXT_FAST_PATH — enable the deterministic text fast-path
+   * ("Text-Fast-Path"). When a page classifies as `text` with no table/figure
+   * candidates and usable `-bbox-layout` geometry, Extract builds its blocks
+   * straight from that geometry and does NOT call the vision model, saving an
+   * estimated 40–70 % of vision time on text-heavy documents. The fidelity
+   * check stays active and gates eligibility: any anomaly falls that page back
+   * to the normal vision path. Default true (opt-out), matching recommendation
+   * ("aktiv, mit Fidelity-Gate").
    */
   textFastPath: boolean; // TEXT_FAST_PATH (default: true)
   /**
    * TEXT_FAST_PATH_MAX_INK_RATIO — the conservative fidelity gate for the fast
-   * path (requirement 7.5). A `text` page only qualifies when the fraction of
+   * path. A `text` page only qualifies when the fraction of
    * ink OUTSIDE its text blocks is at or below this threshold; more ink than
    * that suggests hidden non-text content (a diagram, a stamp, a scanned
    * overlay) the text layer does not capture, so the page falls back to vision.
@@ -501,7 +500,7 @@ export interface Config {
   textFastPathMaxInkRatio: number; // TEXT_FAST_PATH_MAX_INK_RATIO (default: 0.04)
   /**
    * RENDER_MAX_PIXELS — hard ceiling on the output area of a `POST /v2/render`
-   * response, in pixels (design §9a.1, requirement 14.4). A caller who asks for
+   * response, in pixels. A caller who asks for
    * a large `targetPixels`, or crops a poster-sized page, has the render DPI /
    * resize clamped DOWN to this so a single request cannot allocate a gigapixel
    * buffer. Defaults to the shared render budget (`MAX_RENDER_PIXELS`, ~40 MP)
@@ -511,7 +510,7 @@ export interface Config {
   renderMaxPixels: number; // RENDER_MAX_PIXELS (default: 40000000)
   /**
    * RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render`
-   * (requirement 14.4). Each render spawns a poppler subprocess, so a burst is
+   * Each render spawns a poppler subprocess, so a burst is
    * CPU, not just bytes; the endpoint gets its own limiter on top of auth. A
    * zoom-heavy research session issues many small renders, so the default is
    * higher than the write-path `RATE_LIMIT`. 0 disables it.
@@ -519,14 +518,14 @@ export interface Config {
   renderRateLimit: number; // RENDER_RATE_LIMIT (default: 240, 0=disabled)
   /**
    * MAX_PAGES — refuse documents longer than this. 0 disables the limit.
-   * The default is 500 (requirement 5.8): an unbounded upload occupies the
+   * The default is 500: an unbounded upload occupies the
    * converter and spends model tokens per page without ceiling, so the
    * limit ships ON rather than off.
    */
   maxPages: number; // MAX_PAGES (default: 500, 0=unlimited)
   /**
    * VISION_BUDGET_PAGES_PER_DAY — vision pages a single tenant may spend
-   * across all of its jobs per UTC day (requirement 5.8). Enforced by
+   * across all of its jobs per UTC day. Enforced by
    * `jobs/budget.ts` against a Postgres counter; a job that would cross the
    * limit fails with `BUDGET_EXCEEDED` (design §Budget). 0 disables the
    * daily cap — a warning in production, since the per-job token budget
@@ -552,7 +551,7 @@ export interface Config {
   subprocessTimeoutMs: number; // SUBPROCESS_TIMEOUT_MS (default: 120000, 0=disabled)
   /**
    * SUBPROCESS_MEMORY_LIMIT_MB — `prlimit --as` ceiling applied to each
-   * converter subprocess on Linux (requirement 5.5). 0 disables the wrapper.
+   * converter subprocess on Linux. 0 disables the wrapper.
    *
    * Deliberately off by default: `--as` caps *virtual* address space, which
    * LibreOffice reserves far more generously than it uses, so a value tuned
@@ -563,7 +562,7 @@ export interface Config {
   subprocessMemoryLimitMb: number; // SUBPROCESS_MEMORY_LIMIT_MB (default: 0, 0=disabled)
   /**
    * SUBPROCESS_CPU_LIMIT_S — `prlimit --cpu` ceiling in CPU-seconds, SIGKILL
-   * on breach (requirement 5.5). Unlike the wall-clock timeout this bounds
+   * on breach. Unlike the wall-clock timeout this bounds
    * cumulative CPU across all of the converter's threads, so a process that
    * keeps yielding the CPU cannot stretch a spin indefinitely. It also bounds
    * an orphan: the `libreoffice` launcher execs `soffice.bin`, and a
@@ -574,7 +573,7 @@ export interface Config {
   subprocessCpuLimitSeconds: number; // SUBPROCESS_CPU_LIMIT_S (default: 900, 0=disabled)
   /**
    * CONVERTER_MODE — where the poppler/LibreOffice binaries execute
-   * (requirement 5.7). `isolated` routes every conversion through a
+   * `isolated` routes every conversion through a
    * newline-delimited JSON RPC over a Unix socket to the `extract-converter`
    * sidecar container — no network access, read-only root filesystem,
    * non-root, default (RuntimeDefault) seccomp profile — instead of spawning
@@ -602,7 +601,7 @@ export interface Config {
    */
   converterSocket: string; // CONVERTER_SOCKET (default: /run/atf-converter/converter.sock)
 
-  // ── OCR fallback (requirement 5.11) ───────────────────────────────────────
+  // ── OCR fallback ───────────────────────────────────────
   /**
    * OCR_FALLBACK — what happens to a scanned page (no text layer) when the
    * vision endpoint is down. `off` (default) fails the page for a later retry,
@@ -621,7 +620,7 @@ export interface Config {
    */
   ocrLang: string; // OCR_LANG (default: "deu")
 
-  // ── ZIP guard (requirement 5.1, 5.4) ──────────────────────────────────────
+  // ── ZIP guard ──────────────────────────────────────
   /**
    * ZIP_MAX_ENTRIES — largest entry count a ZIP-based container (XLSX, VSDX,
    * DOCX, PPTX, DOCX embeddings) may declare. Checked against the central
@@ -647,11 +646,11 @@ export interface Config {
   zipMaxRatio: number; // ZIP_MAX_RATIO (default: 100)
   /**
    * MAX_EMBED_DEPTH — how deep an Outlook `.msg` may nest embedded messages
-   * before deeper ones are skipped with a warning (requirement 5.4).
+   * before deeper ones are skipped with a warning.
    */
   maxEmbedDepth: number; // MAX_EMBED_DEPTH (default: 2)
 
-  // ── Parser isolation (requirement 5.2) ────────────────────────────────────
+  // ── Parser isolation ────────────────────────────────────
   /**
    * PARSE_ISOLATED — run the native parsers (BPMN, XLSX, DOCX, VSDX, e-mail)
    * in a Worker thread with a heap ceiling so a pathological document cannot
@@ -673,7 +672,7 @@ export interface Config {
   /**
    * UPLOAD_MEMORY_THRESHOLD_BYTES — a multipart upload larger than this is
    * spooled to a scratch file under `TEMP_DIR/uploads` instead of the heap
-   * (requirement 5.9), so a document waiting for a conversion slot does not
+   * so a document waiting for a conversion slot does not
    * also hold its bytes there. 0 spools every upload. The scratch file is
    * removed when the request finishes; a startup sweep clears what a crashed
    * process left behind.
@@ -771,7 +770,7 @@ export interface Config {
   /**
    * Apply schema migrations during boot (also carried into the database
    * config below). Unset means: true outside production, false when
-   * NODE_ENV=production (requirement 12.4) — production runs the standalone
+   * NODE_ENV=production — production runs the standalone
    * `bun run migrate` command as a one-shot Job instead.
    */
   migrateOnStart: boolean; // MIGRATE_ON_START (default: true, false when NODE_ENV=production)
@@ -781,7 +780,7 @@ export interface Config {
   jobWorker: JobWorkerConfig; // JOB_LEASE_SECONDS, JOB_HEARTBEAT_INTERVAL_MS, …
 
   // ── Queue lanes and fairness ──────────────────────────────────────────────
-  /** Large-job lane threshold and bounded parallelism (requirement 6.6). */
+  /** Large-job lane threshold and bounded parallelism. */
   queueLane: QueueLaneConfig; // LARGE_JOB_PAGE_THRESHOLD, LARGE_JOB_MAX_CONCURRENCY
 
   // ── Emitter ───────────────────────────────────────────────────────────────
@@ -794,9 +793,9 @@ export interface Config {
 
   // ── Summary text-LLM ──────────────────────────────────────────────────────
   /**
-   * The text-LLM for the summary hierarchy (task 2.7). Populated only when
+   * The text-LLM for the summary hierarchy. Populated only when
    * SUMMARY_URL is set; null skips the summary pass and leaves
-   * `document.end.summaries` empty (summaries are optional, design §5 S7).
+   * `document.end.summaries` empty (summaries are optional).
    */
   summary: SummaryConfig | null;
 
@@ -1139,7 +1138,7 @@ export function loadConfig(): Config {
   }
 
   /**
-   * The queue-lane tunables (requirement 6.6). Always parsed with defaults so
+   * The queue-lane tunables. Always parsed with defaults so
    * they are validated at startup even without the database; the claim query
    * only consults them when the worker actually runs. The threshold is a page
    * count (min 1) and the concurrency a small positive integer (min 1) — a cap
@@ -1209,7 +1208,7 @@ export function loadConfig(): Config {
       allowedHosts: parseCsvEnv("SOURCE_URL_ALLOWED_HOSTS").map((host) =>
         host.toLowerCase(),
       ),
-      // 2 GiB, matching the MAX_UPLOAD_BYTES ceiling design §5 S0 allows.
+      // 2 GiB, matching the MAX_UPLOAD_BYTES ceiling allows.
       maxBytes: parseIntEnv("SOURCE_URL_MAX_BYTES", 2_147_483_648, {
         min: 1024,
       }),
@@ -1232,7 +1231,7 @@ export function loadConfig(): Config {
 
   /**
    * The summary text-LLM is opt-in: without SUMMARY_URL the summary hierarchy
-   * (task 2.7) is skipped and `document.end.summaries` stays empty, so a
+   *  is skipped and `document.end.summaries` stays empty, so a
    * deployment that has not configured the text model behaves exactly as before
    * — the job still completes. When the URL is present the model id is required
    * too, so a half-configured endpoint cannot silently produce nothing. The
@@ -1399,7 +1398,7 @@ export function loadConfig(): Config {
   const converterSocket =
     optionalString("CONVERTER_SOCKET") ?? "/run/atf-converter/converter.sock";
 
-  // ── OCR fallback (requirement 5.11) ───────────────────────────────────────
+  // ── OCR fallback ───────────────────────────────────────
   const ocrFallback = parseEnumEnv(
     "OCR_FALLBACK",
     ["off", "tesseract"] as const,
@@ -1408,7 +1407,7 @@ export function loadConfig(): Config {
   const tesseractBin = optionalString("TESSERACT_BIN") ?? "tesseract";
   const ocrLang = optionalString("OCR_LANG") ?? "deu";
 
-  // ── ZIP guard (requirement 5.1, 5.4) ──────────────────────────────────────
+  // ── ZIP guard ──────────────────────────────────────
   const zipMaxEntries = parseIntEnv("ZIP_MAX_ENTRIES", 10_000, { min: 1 });
   const zipMaxTotalBytes = parseIntEnv(
     "ZIP_MAX_TOTAL_BYTES",
@@ -1427,7 +1426,7 @@ export function loadConfig(): Config {
   const zipMaxRatio = parseIntEnv("ZIP_MAX_RATIO", 100, { min: 1 });
   const maxEmbedDepth = parseNonNegIntEnv("MAX_EMBED_DEPTH", 2);
 
-  // ── Parser isolation (requirement 5.2) ────────────────────────────────────
+  // ── Parser isolation ────────────────────────────────────
   const parseIsolated = parseBoolEnv("PARSE_ISOLATED", true);
   const parseMemoryLimitMb = parseIntEnv("PARSE_MEMORY_LIMIT_MB", 512, {
     min: 32,

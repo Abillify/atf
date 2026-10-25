@@ -5,7 +5,7 @@
  * furniture-detector.test.ts
  *
  * Recurring header/footer ("furniture") detection over a rolling window (task
- * 2.2, requirement 7.3 / D10). Driven with synthetic page geometry — a page is
+ * 2.2 / D10). Driven with synthetic page geometry — a page is
  * just a set of lines with normalised boxes, exactly what S2 produces — so no
  * poppler or image is needed.
  *

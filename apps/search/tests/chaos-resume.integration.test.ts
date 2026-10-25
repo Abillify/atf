@@ -4,7 +4,7 @@
 /**
  * chaos-resume.integration.test.ts
  *
- * The receive + index half of the chaos/resume suite (task 1.15, design §9b.4,
+ * The receive + index half of the chaos/resume suite (task 1.15,
  * requirements 18.5, 5.2, 5.4, 5.7) against a REAL PostgreSQL + pgvector.
  *
  * The extract half (apps/extract/tests/chaos-resume.test.ts) proves the
@@ -14,17 +14,16 @@
  *
  *   - a duplicate delivery (a retry after a lost response) is idempotent: the
  *     same batch seq + Content-Digest is a 200 no-op, a different digest is a
- *     409 (requirement 5.2);
+ * 409;
  *   - the embedding worker is decoupled and resumable: an embedding-service
  *     outage returns the batch to `received` with a backoff and commits NO
  *     partial units; a later tick with a healthy embedder finishes it
- *     (requirement 5.4);
  *   - a "Search restart" mid-processing leaves the staged batch claimable again
  *     and reprocessing UPSERTS on the deterministic unit_id, so no duplicate
- *     rows ever appear (requirement 5.4/5.5);
- *   - segment and final commits are idempotent (requirement 5.9);
+ * rows ever appear;
+ * segment and final commits are idempotent;
  *   - no orphaned assets: a committed revision's referenced assets are exactly
- *     those bound to it (requirement 5.7).
+ * those bound to it.
  *
  * The invariant harness mirrors the extract half. `referenceRun` stages a fixed
  * set of batches, processes them with a healthy embedder, and records the
@@ -71,7 +70,7 @@ const FIGURE_PAGE = 2;
 /**
  * A fake embedding client whose `embedBatch` records every input text it was
  * asked to embed. The recorded multiset is the model-mock counter of
- * requirement 4.3/18.5: a resume must never embed a unit that was already
+ * a resume must never embed a unit that was already
  * committed. `fail` models an embedding-service outage — the worker rolls back
  * and defers rather than committing partial units.
  */
@@ -228,7 +227,7 @@ describeIfPg("chaos/resume · receive + index (task 1.15, req 18.5)", () => {
   }
 
   /**
-   * The four invariants of requirement 18.5 for the Search side, checked against
+   * The four invariants.5 for the Search side, checked against
    * a reference run. Duplicate detection is by the unique unit-id count; orphan
    * detection compares the assets referenced by committed units to the set the
    * document declares.
@@ -236,7 +235,7 @@ describeIfPg("chaos/resume · receive + index (task 1.15, req 18.5)", () => {
   function assertInvariants(reference: Fingerprint, chaos: Fingerprint): void {
     // 1. Hash-identical result: the per-unit content (its type + text) is
     //    identical to the undisturbed run, unit for unit. The unit_id itself is
-    //    deliberately anchored to the revision id (task 1.10), so it differs
+    // deliberately anchored to the revision id, so it differs
     //    between two revisions of the same document by design — what must match
     //    is the CONTENT the resume produced, which is the hash-identity req 18.5
     //    asks for. The unit rows are ordered by unit_id, but both runs build the
@@ -328,7 +327,7 @@ describeIfPg("chaos/resume · receive + index (task 1.15, req 18.5)", () => {
     // Model a Search restart that lost the "processed" flip after committing (or
     // a crash that left the batch reclaimable): force the batch back to
     // 'received' and process again. The deterministic unit_id upsert must leave
-    // the row count unchanged (requirement 5.5).
+    // the row count unchanged.
     await pool.query(
       `UPDATE vs_ingest_batches SET status = 'received', next_attempt_at = NULL
         WHERE tenant_id = $1 AND revision_id = $2 AND seq = 0`,

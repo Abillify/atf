@@ -319,7 +319,7 @@ export function createSearchHandler(
       //     opt-in and additive — v1 /search behaviour is unchanged when the
       //     header is absent. When both grouping flags are set, document grouping
       //     wins (they are mutually exclusive views; section grouping is the
-      //     single-document view per design §6).
+      // single-document view).
       const groupBySectionFlag = parseGroupBySectionFlag(
         readHeader(req, "x-group-by-section"),
       );
@@ -721,7 +721,7 @@ export function createSearchHandler(
         );
       }
 
-      // Diversify (task 3.5, design §7.1 step 4): collapse same table/figure to
+      // Diversify: collapse same table/figure to
       // one representative and cap hits per section. Runs after rerank/document
       // grouping so it diversifies the final ranking. Opt-in with the section
       // view; document grouping already collapses to one hit per document, so
@@ -736,7 +736,7 @@ export function createSearchHandler(
         results = results.slice(0, limit);
       }
 
-      // Small-to-big expansion (task 3.6, design §7.1 step 5, Requirement 13.4):
+      // Small-to-big expansion:
       // runs AFTER diversification/limit and BEFORE the response is built, per
       // the pipeline order in Requirement 13.1 (… → diversify → EXPANSION →
       // asset attach). Opt-in via X-Expand; when off, `results` is untouched and
@@ -894,7 +894,7 @@ export async function rerankResultsWithStatus(
   // Feed the reranker CONTEXT-enriched documents (title, section path, unit
   // type + content, capped at 1024 tokens) rather than raw content, so the
   // cross-encoder scores against the same context a reader would see
-  // (Requirements 13.1/13.2, design §7.1 step 3). Legacy v1 rows with no
+  // Legacy v1 rows with no
   // title/section/type degrade to just their content — identical to the
   // previous behaviour, so the fallback/async paths are unaffected.
   const documents = results.map((r) => buildRerankDocument(r));

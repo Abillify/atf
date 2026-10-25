@@ -19,7 +19,7 @@ import { parseGoldenSet } from "../golden-set.ts";
 
 // 1.1.0: added ground-truth extraction annotations (expected table content,
 // figure labels, BPMN nodes/edges) for the Phase-2 extraction-quality metrics
-// (task T2.10, requirement 18.3). Backward-compatible with 1.0.0 readers — the
+// (task T2.10). Backward-compatible with 1.0.0 readers — the
 // `extraction` field is optional.
 // 1.2.0: figure ids now use the extract-contract v1 shape `p<page>-f<n>`.
 // The contract parser (packages/extract-contract/src/v1/parse.ts) rewrites
@@ -146,7 +146,7 @@ wmsTopics.forEach((question, index) => {
 });
 // Requirement-table cell questions for the WMS spec. Each carries the
 // ground-truth requirement table so table-cell accuracy can be scored: a small
-// header + one requirement row per question (task T2.10, requirement 18.3).
+// header + one requirement row per question (task T2.10).
 for (let i = 0; i < 12; i++) {
 	const page = pickPage(100 + i, WMS.pages);
 	const code = `A-${(i + 1).toString().padStart(3, "0")}`;

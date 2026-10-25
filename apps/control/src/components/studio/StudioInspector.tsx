@@ -6,7 +6,7 @@
  * StudioInspector: the right-hand property panel of the Studio canvas:
  * subflow group panel, bulk action bar, boundary panel or
  * NodePropertyPanel (with FlowSettings as the empty state).
- * Req 9.3 (Task 13.4): moved unchanged out of StudioBuilder; the state
+ * Moved unchanged out of StudioBuilder; the state
  * stays in the parent and comes in through props.
  */
 

@@ -4,7 +4,7 @@
 /**
  * jobs/lease.ts
  *
- * The lease and its fencing token (design §9b.2, requirements 4.4, 4.5).
+ * The lease and its fencing token.
  *
  * A worker claims a job and holds a lease: `(lease_holder, lease_epoch,
  * lease_expires_at)`. The claim query bumps the epoch, so at any moment exactly

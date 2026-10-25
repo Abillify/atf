@@ -4,7 +4,7 @@
 /**
  * stage-metrics.test.ts
  *
- * The per-stage Prometheus metrics of the v2 pipeline (requirement 18.1):
+ * The per-stage Prometheus metrics of the v2 pipeline:
  * duration histogram, outcome counter, token counter and the emit backlog
  * gauge, rendered by `HttpMetrics.render()`.
  */

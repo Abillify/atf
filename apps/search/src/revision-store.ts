@@ -4,10 +4,9 @@
 /**
  * revision-store.ts
  *
- * The revision repository backing the v2 ingest hand-off (design §6.1, §9b.3,
- * task 1.9). It owns every query against the staging tables defined in
- * revision-schema.ts (task 1.8): vs_revisions, vs_ingest_batches, vs_segments
- * and vs_document_revisions.
+ * The revision repository backing the v2 ingest hand-off. It owns every query
+ * against the staging tables defined in revision-schema.ts: vs_revisions,
+ * vs_ingest_batches, vs_segments and vs_document_revisions.
  *
  * Scope of THIS module:
  *   - create a staged revision, idempotent on the Idempotency-Key
@@ -349,9 +348,9 @@ const ABORTED_LEFTOVER_GRACE = "5 minutes";
 const UNCOMMITTED: RevisionStatus[] = ["staging", "partial"];
 
 /**
- * The is_latest switch flips at most this many rows per statement (design
- * §9a.3). A 10,000-page document can produce far more unit rows than one UPDATE
- * should hold locks for, so the flip runs in bounded chunks, each in its OWN
+ * The is_latest switch flips at most this many rows per statement. A
+ * 10,000-page document can produce far more unit rows than one UPDATE should
+ * hold locks for, so the flip runs in bounded chunks, each in its OWN
  * transaction under {@link FLIP_STATEMENT_TIMEOUT_MS} (SET LOCAL only applies
  * inside a transaction block).
  */
@@ -443,7 +442,7 @@ export function createRevisionStore(pool: Pool): RevisionStore {
           if (existing.rows[0]) return replay(existing.rows[0]);
         }
         // Visibility default depends on whether this reference already has a
-        // visible version (design §9a.3):
+        // visible version:
         //   - a NEW document defaults to `progressive` so its committed segments
         //     are searchable while the rest is still ingesting;
         //   - a REPLACE of an existing document (a v2 pointer, or legacy v1 rows
@@ -1628,7 +1627,7 @@ async function deleteRevisionRows(
  * thread references, revision pointer) — for every NFC spelling of each root
  * reference. Runs inside the CALLER's transaction; the caller commits.
  *
- * Derived render-cache assets (task 3.8) are vs_assets rows bound to the
+ * Derived render-cache assets are vs_assets rows bound to the
  * document, so the asset deletes here ARE the render-cache invalidation; the
  * in-process embedding cache is cleared by the caller after COMMIT
  * (`onDocumentsDeleted`).

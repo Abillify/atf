@@ -5,7 +5,6 @@
  * Property-based tests for graph-engine.ts
  *
  * Properties 11–13: Graph Cache Idempotency, LLM Fallback Logic, Invalid LLM Provider → Error
- * Validates: Requirements 4.5, 5.3, 5.4, 5.6
  */
 
 import { describe, test, expect } from "bun:test";
@@ -383,7 +382,7 @@ describe("Property 13: Invalid LLM Provider → Error", () => {
   test("buildGraph does not itself validate provider (provider validation is in llm-factory)", () => {
     // Feature: ai-agent-orchestration-platform, Property 13: Invalid LLM Provider → Error
     // buildGraph only compiles the graph structure; provider validation happens
-    // in createLlmProvider() (task 7.1), not in buildGraph.
+    // in createLlmProvider, not in buildGraph.
     // A flow with an unknown provider value in the llm field should still compile
     // without throwing — the error surfaces at execution time.
     const flow: FlowDefinition = {
@@ -409,7 +408,6 @@ describe("Property 13: Invalid LLM Provider → Error", () => {
 // Property 22: Invalid Content Blocks are handled in isolation
 // ---------------------------------------------------------------------------
 // Feature: ai-agent-orchestration-platform, Property 22: Invalid Content Blocks are handled in isolation
-// Validates: Requirements 8.3, 8.5, 8.6
 
 import { processContentBlocks } from "../content-processor.js";
 import type { ContentBlock } from "../../types/openai.js";

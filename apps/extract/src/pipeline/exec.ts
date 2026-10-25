@@ -22,7 +22,7 @@
  * Collapsing both into one error is how "poppler-utils is missing" gets
  * misdiagnosed as "this PDF is corrupt" for an afternoon.
  *
- * Where the binaries *execute* is a second axis (requirement 5.7). By default
+ * Where the binaries *execute* is a second axis. By default
  * they are children of this process; with `CONVERTER_MODE=isolated` every call
  * is forwarded over a Unix socket to the `extract-converter` sidecar, which
  * runs them behind `network_mode: none`, a read-only root filesystem and the
@@ -48,7 +48,7 @@ import {
 } from "../converter/protocol.js";
 
 /**
- * Wall-clock ceiling applied when a caller omits `timeoutMs` (requirement 5.5).
+ * Wall-clock ceiling applied when a caller omits `timeoutMs`.
  * A hung converter would otherwise hold its `PAGE_CONCURRENCY` slot — and the
  * job behind it — indefinitely. Callers pass `SUBPROCESS_TIMEOUT_MS`
  * explicitly; a `0` there is a deliberate, development-only disable that the
@@ -58,7 +58,7 @@ export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 120_000;
 
 /**
  * Kernel-level ceilings applied to every converter subprocess via `prlimit`
- * (requirement 5.5). Both apply only on Linux and only when the `prlimit`
+ * Both apply only on Linux and only when the `prlimit`
  * binary (part of util-linux) is present; elsewhere the container's cgroup
  * limits are the enforcement mechanism and these are inert.
  */
@@ -68,7 +68,7 @@ export interface SubprocessLimits {
    *
    * `--as` caps *virtual* mappings, which LibreOffice reserves generously, so
    * in a container the cgroup memory limit is the preferred ceiling (the "or
-   * cgroup" branch of requirement 5.5); set this on bare-metal Linux where no
+   * cgroup" branch); set this on bare-metal Linux where no
    * cgroup applies.
    */
   memoryLimitMb: number;
@@ -94,8 +94,8 @@ export function configureSubprocessLimits(limits: SubprocessLimits): void {
 }
 
 /**
- * Where {@link run} executes converter binaries (CONVERTER_MODE, requirement
- * 5.7). `isolated` forwards every call to the converter sidecar over
+ * Where {@link run} executes converter binaries (CONVERTER_MODE). `isolated`
+ * forwards every call to the converter sidecar over
  * {@link ConverterTransport.socketPath}.
  */
 export interface ConverterTransport {

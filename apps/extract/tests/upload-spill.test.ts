@@ -4,8 +4,7 @@
 /**
  * upload-spill.test.ts
  *
- * Disk spooling of uploads above the memory threshold (task 7.8, requirement
- * 5.9).
+ * Disk spooling of uploads above the memory threshold.
  *
  * A document that waits in the conversion queue holds its bytes for the whole
  * wait, so an all-heap parser turns a full queue of large uploads into an

@@ -4,7 +4,7 @@
 /**
  * asset-store.ts
  *
- * The v2 AssetStore backing the asset API (design §6.5, task 1.11). It owns
+ * The v2 AssetStore backing the asset API. It owns
  * every query against the `vs_assets` table (defined in revision-schema.ts,
  * task 1.8) and is the swappable storage abstraction Requirement 14.2 asks for:
  *
@@ -124,7 +124,7 @@ export interface HeadAssetResult {
 }
 
 /**
- * The identity + coordinate metadata of an asset's `full` variant (task 3.9).
+ * The identity + coordinate metadata of an asset's `full` variant.
  * Used by the MCP `get_asset` tool to (a) fail closed on a document/figure
  * mismatch before returning bytes, and (b) build the render-cache binding /
  * target for a `region` zoom (page + bbox + revision). ACL-enforced like

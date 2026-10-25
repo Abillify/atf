@@ -13,7 +13,7 @@ import {
 import { overallMrr, pageMetrics, type EvalCase } from "./metrics.ts";
 
 /**
- * Tests for the `--v2` wiring (task 3.10): the normaliser that maps a
+ * Tests for the `--v2` wiring: the normaliser that maps a
  * `POST /v2/search` hit (top-level `pages`, `assets`) back into the v1
  * reference-bearing shape the metrics consume. The normaliser is the only new
  * logic on the v2 path; the request/response plumbing around it is a thin fetch.

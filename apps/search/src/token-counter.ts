@@ -5,7 +5,7 @@
  * token-counter.ts
  *
  * Measures the token count of a string as seen by the embedding model's
- * tokenizer (bge-m3 behind EMBED_URL), so the unit builder (task 3.2) can size
+ * tokenizer (bge-m3 behind EMBED_URL), so the unit builder can size
  * chunks to the 350–500-token target of Requirement 11.2.
  *
  * Token counting is a MEASUREMENT, not a hard dependency. The primary path asks

@@ -12,7 +12,7 @@
  *
  * No `any` at module boundaries.
  *
- * Requirements: 2.x (extends format-only validation with real verification)
+ * X (extends format-only validation with real verification)
  */
 
 import {

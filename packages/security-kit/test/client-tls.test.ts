@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Client-side TLS options for service-to-service fetch (requirement 11.8).
+ * Client-side TLS options for service-to-service fetch.
  *
  * Unit level: no options means no fragment (platform trust store stays in
  * place), unreadable files raise `ClientTlsConfigError`. Integration level

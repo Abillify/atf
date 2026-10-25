@@ -47,7 +47,7 @@ export type SourceKind =
   | "visio"
   /**
    * BPMN 2.0 XML: parsed natively into a `process` transcription, with no
-   * rendering and no model call (design §10.1). The original XML is kept as a
+   * rendering and no model call. The original XML is kept as a
    * `native:` asset.
    */
   | "bpmn"

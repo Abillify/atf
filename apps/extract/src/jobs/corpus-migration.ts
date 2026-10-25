@@ -17,7 +17,7 @@
  * An operator migrating an existing corpus into the v2 pipeline re-ingests each
  * document one at a time, in **`version` mode** so the running system keeps
  * serving the old revision until the new one is fully committed (Search does
- * the atomic `is_latest` switch on commit — design §17). Two properties this
+ * the atomic `is_latest` switch on commit). Two properties this
  * module owns:
  *
  *   1. **Order by usage (Req 17.3).** {@link orderByUsage} sorts the manifest

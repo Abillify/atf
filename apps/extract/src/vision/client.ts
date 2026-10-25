@@ -72,7 +72,7 @@ export interface VisionClientConfig {
   visionReasoningEffort: string | null;
   /**
    * Capability flag: the provider enforces `response_format: json_schema`
-   * (task 7.9, requirement 5.10). Fail-closed — off unless the operator says
+   * Fail-closed — off unless the operator says
    * the backend supports it, mirroring the runtime's model-capability rules.
    * When a request carrying the field is rejected anyway, the client drops it
    * for the rest of the process and continues unstructured.
@@ -105,7 +105,7 @@ export interface AnalyzePageInput {
   image: { buffer: Uint8Array; mimeType: string };
   /**
    * Numbered-heading candidates for this page from the deterministic S2
-   * analysis (design §5 S2/S3, task 2.3). Passed to the Pass-1 prompt as a hint
+   * analysis. Passed to the Pass-1 prompt as a hint
    * so the model confirms the outline rather than reinventing it. Optional: the
    * legacy sync path and a page S2 could not analyse simply omit it.
    */
@@ -121,9 +121,9 @@ export interface AnalyzePageInput {
 }
 
 /**
- * Input to a Pass-2 figure transcription (design §5 S5, task 2.5). The crop is
+ * Input to a Pass-2 figure transcription. The crop is
  * rendered at `FIGURE_DPI` by the caller; `regionText` is the poppler text
- * inside the figure's box (task 2.4). `kind` selects the per-kind system
+ * inside the figure's box. `kind` selects the per-kind system
  * prompt; a kind with no Pass-2 prompt is a caller error (the runner gates on
  * `FIGURE_PASS2_KINDS` before ever calling this).
  */
@@ -134,7 +134,7 @@ export interface AnalyzeFigureInput {
   figureId: string;
   /** The figure's kind; selects the per-kind Pass-2 system prompt. */
   kind: string;
-  /** The verbatim text-layer words inside the figure's box (task 2.4). */
+  /** The verbatim text-layer words inside the figure's box. */
   regionText: string;
   /** The figure's caption, when Pass 1 supplied one. */
   caption?: string | undefined;
@@ -159,7 +159,7 @@ export interface VisionFigureResult {
 export interface VisionClient {
   analyzePage(input: AnalyzePageInput): Promise<VisionPageResult>;
   /**
-   * Run Pass 2 on a single figure crop (design §5 S5, task 2.5). Reuses the
+   * Run Pass 2 on a single figure crop. Reuses the
    * same endpoint, retry axes and budget escalation as {@link analyzePage} —
    * only the messages differ (a per-kind system prompt plus the figure user
    * prompt). Returns the model's raw response for the per-format parser.
@@ -205,7 +205,7 @@ class TransientVisionFailure extends Error {}
 
 /**
  * The provider refused the `response_format: json_schema` field itself
- * (task 7.9). Carries the response body so the fallback log shows what the
+ * Carries the response body so the fallback log shows what the
  * server actually complained about.
  */
 class StructuredOutputRejected extends Error {
@@ -239,7 +239,7 @@ export function createVisionClient(
       ? config.visionMaxTokenVariants
       : [8192];
 
-  // Capability state (task 7.9). Starts from the operator's flag; a provider
+  // Capability state. Starts from the operator's flag; a provider
   // that rejects the field despite the flag flips this off for the rest of the
   // process, so one mis-declared capability costs one wasted request per pass
   // rather than failing every page.
@@ -376,7 +376,7 @@ export function createVisionClient(
       const parsed = await parseCompletion(response, ctx, responseFormat);
       return { ...parsed, extraRequests: 0 };
     } catch (error) {
-      // Transport-level fallback (task 7.9): the provider rejected the
+      // Transport-level fallback: the provider rejected the
       // response_format field itself — a 4xx naming it, which is exactly how
       // vLLM and llama.cpp answer an unsupported structured-output request
       // despite the operator's capability flag. Drop the field for the whole
@@ -459,7 +459,7 @@ export function createVisionClient(
   ): Promise<{ raw: string; usage: VisionUsage }> {
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      // Transport-level fallback (task 7.9): a 4xx that names the structured-
+      // Transport-level fallback: a 4xx that names the structured-
       // output field is the provider saying it cannot do json_schema, however
       // the capability flag was set. Signal that distinctly — requestOnce
       // retries once without the field and turns the capability off for the
@@ -656,7 +656,7 @@ export function createVisionClient(
       },
       PAGE_RESPONSE_FORMAT,
     );
-    // Payload-level fallback (task 7.9): a schema-conforming response is
+    // Payload-level fallback: a schema-conforming response is
     // re-rendered into the tag format so parseVisionPage — placeholder
     // rewriting, renumbering, table detection — consumes it unchanged. A
     // response that is not conforming JSON passes through untouched and the

@@ -67,7 +67,7 @@ function baseName(path: string): string {
 
 /**
  * The OOXML kind of a ZIP package, from its content types. The ZIP guard runs
- * first (requirement 5.1): an embedding that exceeds a limit — a PPTX with no
+ * first: an embedding that exceeds a limit — a PPTX with no
  * native reader of its own, an XLSX whose child job would only reject later —
  * is rejected here rather than passed on. A buffer that is not a package at
  * all still yields `undefined` so the caller keeps its skip-with-warning path.
@@ -180,7 +180,7 @@ function fromOle(
 
 /**
  * The embedded files of a DOCX, in part-name order, with warnings for skipped
- * ones. A ZIP-guard violation (`DOCUMENT_TOO_COMPLEX`, requirement 5.1) — in
+ * ones. A ZIP-guard violation (`DOCUMENT_TOO_COMPLEX`) — in
  * the outer package or in an OOXML embedding, which has no native reader of
  * its own for PPTX — rejects instead of degrading to a warning.
  */
@@ -191,7 +191,7 @@ export function extractDocxEmbeddings(
 	const warnings: string[] = [];
 	let parts: Record<string, Uint8Array>;
 	try {
-    // Checked before any inflation (requirement 5.1); a limit violation
+    // Checked before any inflation; a limit violation
     // throws ExtractError and is re-thrown below, never downgraded.
     assertZipWithinLimits(buffer, limits);
     parts = unzipSync(buffer, {
@@ -215,7 +215,7 @@ export function extractDocxEmbeddings(
 		if (ooxml !== undefined) {
       // A raw OOXML embedding (an embedded PPTX has no native reader of its
       // own; the child job would only guard it later) is checked here so a
-      // bomb never becomes a child job (requirement 5.1).
+      // bomb never becomes a child job.
       assertZipWithinLimits(data, limits);
       sources.push({
         filename: baseName(name),

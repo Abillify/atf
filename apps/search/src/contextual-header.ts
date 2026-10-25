@@ -4,7 +4,7 @@
 /**
  * contextual-header.ts
  *
- * The contextual embedding header (task 3.3, design §6.3 — "Kontextueller
+ * The contextual embedding header (task 3.3 — "Kontextueller
  * Embedding-Header", which REPLACES defect D1).
  *
  * D1 was the old behaviour of concatenating EVERY page summary into one
@@ -86,7 +86,7 @@ export interface BuildHeaderOptions {
   budgetTokens: number;
   /** Fraction of the budget the header may occupy. Default 0.15 (15 %). */
   maxFraction?: number;
-  /** Token counter (task 3.1) used to measure the header against the cap. */
+  /** Token counter used to measure the header against the cap. */
   tokenCounter: HeaderTokenCounter;
   signal?: AbortSignal;
 }
@@ -228,7 +228,7 @@ export interface ApplyHeadersOptions {
   budgetTokens: number;
   /** Fraction of the budget the header may occupy. Default 0.15. */
   maxFraction?: number;
-  /** Token counter (task 3.1) used to measure the header against the cap. */
+  /** Token counter used to measure the header against the cap. */
   tokenCounter: HeaderTokenCounter;
   /** Text-LLM for the per-chunk placement sentence (Req 11.6). Omit to disable. */
   placementLlm?: PlacementLlm | undefined;
@@ -243,7 +243,7 @@ export interface ApplyHeadersOptions {
 const HEADER_TYPES = new Set(["chunk", "table", "figure"]);
 
 /**
- * Prepend the contextual header (task 3.3) to each `chunk`/`table`/`figure`
+ * Prepend the contextual header to each `chunk`/`table`/`figure`
  * unit's `embedInput`, in place. `content` (the stored/FTS text) is never
  * touched. Summary/section/page/document units are skipped — they already are
  * the context, so a header on them would be circular.

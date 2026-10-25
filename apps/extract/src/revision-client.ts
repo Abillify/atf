@@ -4,8 +4,8 @@
 /**
  * revision-client.ts
  *
- * The v2 revision client: the HTTP binding the emitter (task 1.12) uses to
- * stream a job's staged outbox to Search's revision API (design §6.1, §9b.3).
+ * The v2 revision client: the HTTP binding the emitter uses to
+ * stream a job's staged outbox to Search's revision API.
  *
  * The v1 {@link SearchClient} in `search-client.ts` speaks the plain Markdown
  * contract (`POST /ingest`), which stays the transport for the synchronous

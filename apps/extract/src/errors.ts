@@ -57,7 +57,7 @@ export type ExtractErrorCode =
   | "CLIENT_ABORTED"
   /**
    * The tenant's daily vision-page budget (`VISION_BUDGET_PAGES_PER_DAY`,
-   * requirement 5.8) is exhausted. A retry is pointless today — the counter
+   * ) is exhausted. A retry is pointless today — the counter
    * only resets at the next UTC day — so the code is deliberately not in the
    * retryable set.
    */
@@ -206,7 +206,7 @@ export function sourceFetchFailed(
  * A ZIP container (XLSX, VSDX, DOCX, PPTX, DOCX embeddings) whose declared
  * entry count, total or single uncompressed size, or compression ratio exceeds
  * a `ZIP_MAX_*` limit — a ZIP bomb, or a package no honest document is
- * (requirement 5.1). Never retryable: the bytes do not change.
+ * Never retryable: the bytes do not change.
  */
 export function documentTooComplex(
   message: string,
@@ -216,7 +216,7 @@ export function documentTooComplex(
 }
 
 /**
- * The tenant's daily vision-page budget is exhausted (requirement 5.8). The
+ * The tenant's daily vision-page budget is exhausted. The
  * job fails with this code rather than pausing: waiting inside the same day
  * changes nothing, and a `paused(budget)` job would suggest an operator can
  * resume it today. Never retryable.

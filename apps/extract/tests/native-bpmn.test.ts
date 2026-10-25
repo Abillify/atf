@@ -172,7 +172,7 @@ describe("parseBpmn", () => {
   });
 
   it("decodes the five predefined entities and leaves all others raw", () => {
-    // Entity processing is off in the parser (requirement 5.3); the five
+    // Entity processing is off in the parser; the five
     // predefined XML entities are decoded by hand, everything else —
     // named HTML entities, numeric references — stays raw, exactly like
     // the parser default with htmlEntities disabled.

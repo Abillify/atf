@@ -6,7 +6,6 @@
  *
  * The pre-flight check every ZIP-based container (XLSX, VSDX, DOCX, PPTX and
  * the OOXML packages embedded in a DOCX) must pass before it is unpacked
- * (requirement 5.1, design §"ZIP-Guard").
  *
  * ## Why a guard and not just a decompression cap
  *

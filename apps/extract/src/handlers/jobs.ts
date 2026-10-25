@@ -4,12 +4,12 @@
 /**
  * handlers/jobs.ts
  *
- * The v2 Job API (design §5, §9b, requirement 4.10, 4.11, 4.12).
+ * The v2 Job API.
  *
  *   POST /v2/jobs                     create a job from an already-uploaded
  *                                     source; returns the queued job.
  *   GET  /v2/jobs                     list jobs newest-first, paginated, for the
- *                                     overview UI (requirement 18.6); cheap, no
+ * overview UI; cheap, no
  *                                     per-stage progress join.
  *   GET  /v2/jobs/{id}                status with per-stage progress, warnings,
  *                                     cost and an ETA.
@@ -25,13 +25,13 @@
  *                                     on demand via /v2/render.
  *
  * Creation snapshots the config and the pipeline/prompt hash onto the row so a
- * later resume can compare against it (requirement 4.12). All mutations run the
+ * later resume can compare against it. All mutations run the
  * status transition through the state machine, so an illegal move (resuming a
  * completed job, cancelling a failed one) is a clean 409 rather than a corrupt
  * row. Every mutation also REVOKES the lease atomically with the status change
  * (the epoch is bumped, the holder cleared): a worker still running the job
  * fails its next fenced write and stops, so it can never overwrite a
- * `cancelled`/`paused` status or keep spending model calls (requirement 4.5). The router is mounted behind the same auth chain as the other write
+ * `cancelled`/`paused` status or keep spending model calls. The router is mounted behind the same auth chain as the other write
  * routes by `index.ts`; the read scope is applied to GET there too.
  */
 
@@ -146,7 +146,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
       source_sha256: body.sourceSha256,
       status: "queued",
       // Freeze the snapshot: the config that governs this job plus the stand it
-      // was created under, so a resume can compare (requirement 4.12).
+      // was created under, so a resume can compare.
       config: {
         // Normalised window `{from?, to?}` in source page numbers (contract
         // 2.4); the schema already rejected anything that does not parse.
@@ -193,7 +193,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   }
 
   // ── GET /v2/jobs ──────────────────────────────────────────────────────────
-  // The overview list (requirement 18.6): newest-first, paginated. Cheap by
+  // The overview list: newest-first, paginated. Cheap by
   // design — it reads only the `jobs` table and returns each row through
   // `toJobView` WITHOUT the per-stage progress join, so a long list stays a
   // single indexed scan. The detail read (`GET /:id`) is the one that pays for
@@ -315,7 +315,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   /**
    * Read the optional `resume` body: `{ resumePolicy?, restartStage? }` lets an
    * operator answer a pin pause by switching to `continue` or
-   * `restart-stage=<stage>` (requirement 4.12) in the same atomic step.
+   * `restart-stage=<stage>` in the same atomic step.
    */
   function readResumeOptions(req: Request): Pick<OperatorTransition, "resumePolicy" | "configPatch"> {
     const body = (req.body ?? {}) as { resumePolicy?: unknown; restartStage?: unknown };
@@ -390,7 +390,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
 
   // ── POST /v2/jobs/{id}/retry-failed ───────────────────────────────────────
   // Reset the failed page-stage checkpoints to pending and re-queue the job, so
-  // only the failed units are recomputed (requirement 4.10). Units that
+  // only the failed units are recomputed. Units that
   // succeeded keep their checkpoint and are reused without a model call.
   const retryFailedHandler: RequestHandler = (req, res, next) => {
     void retryFailed(req, res).catch(next);
@@ -401,9 +401,9 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
     for (let attempt = 0; attempt < ACTION_RETRIES; attempt++) {
       const row = await store.getJob(id);
       if (row === null) throw notFound(`Job ${id} does not exist`);
-      // A permanent unit failure keeps the job running to completion (design
-      // §9b.1), so retry-failed targets a completed, failed or paused job; a
-      // live or cancelled job is a conflict.
+      // A permanent unit failure keeps the job running to completion, so
+      // retry-failed targets a completed, failed or paused job; a live or
+      // cancelled job is a conflict.
       if (!requeueGuard(row, "retry-failed")) {
         throw conflict(`Cannot retry a job in status ${row.status}; it is still active`);
       }
@@ -427,7 +427,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
 
   // ── POST /v2/jobs/{id}/reparse ────────────────────────────────────────────
   // Re-apply the parser to the persisted model raw responses, WITHOUT any new
-  // model calls (requirement 4.6, 4.10). The staged pipeline (task 1.6) does
+  // model calls. The staged pipeline does
   // the actual reparse; here we flag the job and re-queue it so a worker runs
   // the parse-only path.
   const reparseHandler: RequestHandler = (req, res, next) => {

@@ -13,7 +13,7 @@
  * What is erased, per scope:
  *
  *  - `reference`: every listed reference through the public
- *    `PostgresClient.delete` — the full document cascade (task 4.2) including
+ * `PostgresClient.delete` — the full document cascade including
  *    revisions, batches, segments, assets, identifiers, and identity rows.
  *  - `subject`: every document whose row identifies the subject — the
  *    `allowed_users` ACL column or the configurable metadata field

@@ -13,7 +13,6 @@
  * Property 16: Execution Time Rounding
  * Property 17: Citation Chunk Format
  *
- * Validates: Requirements 1.2, 1.3, 1.4, 1.5, 1.6, 6.1, 6.2, 6.3, 6.4, 6.5
  */
 
 import { describe, test, expect } from "bun:test";
@@ -319,7 +318,7 @@ describe("Property 2: Non-Streaming-Response-Struktur", () => {
 
 describe("Property 3: Request Validation → 400 for Invalid Required Fields", () => {
   /**
-   * The HTTP 400 response is the responsibility of the chat route (task 10.1).
+   * The HTTP 400 response is the responsibility of the chat route.
    * Here we test the structural contract: any invalid-request error object must
    * have `error.message` (string) and `error.type = "invalid_request_error"`.
    * We also validate that sendError produces the correct error chunk format.

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Bypass corpus for `neutralizeHtmlReferences` (requirement 5.7).
+ * Bypass corpus for `neutralizeHtmlReferences`.
  *
  * Every input below is a payload that would make the converter fetch or
  * execute something remote if the sanitizer mis-parsed it. The assertion is

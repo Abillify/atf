@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Static service-token matching with rotation (requirement 11.8).
+ * Static service-token matching with rotation.
  *
  * During a rotation window both the old and the new token are valid; the
  * matcher must accept either, reject everything else, and ignore

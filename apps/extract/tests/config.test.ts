@@ -387,7 +387,7 @@ describe("loadConfig", () => {
     expect(loadTestConfig({ MAX_PAGES: "50" }).maxPages).toBe(50);
   });
 
-  // Task 7.7 (requirement 5.8): the page ceiling ships ON, not off — an
+  // The page ceiling ships ON, not off — an
   // unset MAX_PAGES is 500, so an upload can no longer spend tokens without
   // a bound just because an operator never configured the variable.
   it("defaults MAX_PAGES to 500 (requirement 5.8)", () => {

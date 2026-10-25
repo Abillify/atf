@@ -11,7 +11,7 @@ import { buildXlsxRecords } from "../src/pipeline/native/index.js";
  * Build a minimal XLSX (an OOXML ZIP) directly with fflate, so the test needs
  * no spreadsheet library. The workbook has a header row, values, a formula with
  * a cached result, a shared string and a merged cell — the exact cases
- * requirement 10.2 names (cells, merges, computed values).
+ * names (cells, merges, computed values).
  */
 function buildDataWorkbook(extraParts: Record<string, Uint8Array> = {}): Uint8Array {
   const workbook = `<?xml version="1.0"?>

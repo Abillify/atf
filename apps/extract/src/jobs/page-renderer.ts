@@ -4,8 +4,7 @@
 /**
  * jobs/page-renderer.ts
  *
- * On-demand page rendering from the content-addressed source store (design
- * §9a.1, §9b; task 1.7, requirements 4.2, 6.1).
+ * On-demand page rendering from the content-addressed source store.
  *
  * The v1 pipeline (`pipeline/extract.ts`) renders from an in-memory upload and
  * holds the intermediate PDF in a scratch directory for the life of one
@@ -35,7 +34,7 @@
  * volume's lifecycle — with CONVERTER_MODE=isolated the sidecar mounts the
  * same volume at the same path, so cached paths stay valid across containers.
  * Page IMAGES are deliberately not cached: at render DPI they would be
- * gigabytes for a large document (design §9b).
+ * gigabytes for a large document.
  */
 
 import { createHash } from "node:crypto";
@@ -203,11 +202,11 @@ export interface PageRendererConfig {
   subprocessTimeoutMs: number;
   /**
    * ZIP-container ceilings enforced before any native reader inflates an
-   * OOXML package (ZIP_MAX_*, requirement 5.1). Defaults to
+   * OOXML package (ZIP_MAX_*). Defaults to
    * {@link DEFAULT_ZIP_LIMITS} so a stub config stays valid.
    */
   zipLimits?: ZipLimits;
-  /** MAX_EMBED_DEPTH — nesting ceiling for embedded `.msg` messages (requirement 5.4). */
+  /** MAX_EMBED_DEPTH — nesting ceiling for embedded `.msg` messages. */
   maxEmbedDepth?: number;
   /**
    * DERIVED_PDF_CACHE — reuse the derived PDF (a PDF source's working copy, or
@@ -240,10 +239,10 @@ type PageSource =
  */
 /**
  * A natively-parsed source: contract records produced with no model call and,
- * for BPMN and a chart/image-free XLSX, no rendering either (design §10,
- * requirements 10.1–10.3). Present on a {@link PreparedSource} when the format
- * has a native path; the job runner emits `records` directly instead of driving
- * the vision loop, and uploads `nativeAssets` (the original `.bpmn` XML) as-is.
+ * for BPMN and a chart/image-free XLSX, no rendering either. Present on a
+ * {@link PreparedSource} when the format has a native path; the job runner
+ * emits `records` directly instead of driving the vision loop, and uploads
+ * `nativeAssets` (the original `.bpmn` XML) as-is.
  */
 export interface NativeSource {
   /** Contract page records, already built, in page order. */
@@ -275,18 +274,18 @@ export interface PreparedSource {
    */
   readonly native: NativeSource | null;
   /**
-   * DOCX heading-level hints from the styles (requirement 10.3), keyed by
+   * DOCX heading-level hints from the styles, keyed by
    * normalised heading text. Null for a non-DOCX source or when the styles
    * could not be read. Consumed by the document pass to correct heading levels.
    */
   readonly docxHeadingHints: DocxHeadingHints | null;
   /**
    * Native Visio structure — shape texts and the connector graph, one
-   * transcription per Visio page (requirement 10.4). Null for a non-VSDX
+   * transcription per Visio page. Null for a non-VSDX
    * source or when the package could not be read.
    *
    * Unlike BPMN/XLSX, a VSDX is NOT native-only: the design keeps the
-   * LibreOffice → PDF render for the page image "additionally" (design §10.4), so
+   * LibreOffice → PDF render for the page image "additionally", so
    * `native` above stays null and the source is rendered and driven through the
    * normal PDF path. This field carries the parsed shape/connector structure
    * alongside that render, so the document pass can attach the `process`/
@@ -378,7 +377,7 @@ export interface PageRendererDeps {
   logger: Logger;
   pdfOps?: PdfOps;
   /**
-   * Runs the native parsers off the main thread (requirement 5.2). Defaults
+   * Runs the native parsers off the main thread. Defaults
    * to a direct in-process runner so a stub setup stays valid; the server
    * wires the Worker-backed one from PARSE_ISOLATED.
    */
@@ -515,7 +514,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
   function subprocessOptions(signal: AbortSignal | undefined): RunOptions {
     return {
       // Passed through as configured: a 0 is a deliberate disable, which the
-      // production-readiness gate rejects (requirement 5.5).
+      // production-readiness gate rejects.
       timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };
@@ -709,7 +708,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       );
     }
 
-    // ── BPMN: parse natively, no render, no model (requirement 10.1) ──────
+    // ── BPMN: parse natively, no render, no model ──────
     if (format.kind === "bpmn") {
       const native = await isolated.run(
         { kind: "bpmn", reference, buffer },
@@ -719,7 +718,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     }
 
     // ── XLSX: read cells/merges/values natively; render only when the
-    //    workbook embeds a chart or image (requirement 10.2) ───────────────
+    // workbook embeds a chart or image ───────────────
     if (
       format.mimeType ===
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -749,7 +748,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     }
 
     // ── DOCX: read authoritative heading levels from the styles; the render
-    //    path is unchanged (requirement 10.3) ──────────────────────────────
+    // path is unchanged ──────────────────────────────
     const isDocx =
       format.mimeType ===
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -775,9 +774,9 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     }
 
     // ── VSDX: read shape texts and the connector graph natively, but STILL
-    //    render via LibreOffice below for the page image (design §10.4,
-    //    requirement 10.4: "additionally LibreOffice → PDF for the image"). The
-    //    native structure rides alongside the render as `vsdxStructure`. ─────
+    // render via LibreOffice below for the page image ("additionally
+    // LibreOffice → PDF for the image"). The native structure rides alongside
+    // the render as `vsdxStructure`. ─────
     const vsdxStructure: ParsedVsdx | null =
       format.kind === "visio"
         ? await isolated.run({ kind: "vsdx", buffer, limits: zipLimits }, () =>
@@ -791,7 +790,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       );
     }
 
-    // ── PPTX: no native reader, so the ZIP guard (requirement 5.1) runs here,
+    // ── PPTX: no native reader, so the ZIP guard runs here,
     //    before the LibreOffice conversion inflates the package. XLSX, DOCX
     //    and VSDX are guarded inside their native readers above. ────────────
     if (format.kind === "presentation") {
@@ -845,7 +844,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
             await writeFile(pdfPath, buffer);
           }
         } else if (isLibreOfficeKind(format)) {
-          // Word/Excel/PowerPoint/Visio → PDF via LibreOffice (design §10.4).
+          // Word/Excel/PowerPoint/Visio → PDF via LibreOffice.
           // The conversion result is cached under TEMP_DIR/derived-pdf, keyed
           // by the source content address and the converter identity, so a
           // resume or a second render of the same document skips it (Phase 11).

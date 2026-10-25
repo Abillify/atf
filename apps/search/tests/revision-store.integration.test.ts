@@ -3,7 +3,7 @@
 
 /**
  * Integration tests for the revision store against a REAL PostgreSQL instance
- * (task 1.9). These verify the SQL-level semantics that unit tests cannot:
+ * These verify the SQL-level semantics that unit tests cannot:
  * idempotency-key round-trips, the same-seq/same-digest 200 no-op vs the
  * different-digest 409, staging-before-ack durability, the RevisionState
  * report, idempotent segment/final commits, the 409-with-missing-ranges

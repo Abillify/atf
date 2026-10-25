@@ -13,7 +13,7 @@
  *
  * The tools:
  *   - `get_outline(ref, depth)`      — table of contents (section ids + pages),
- *                                       depth-limited AND paginated (design §6.6);
+ * depth-limited AND paginated;
  *   - `get_section(ref, …, max_chars)` — a section as Markdown v2, size-bounded;
  *   - `get_pages(ref, from, to, …)`   — a page range as Markdown v2 / summary;
  *   - `get_context(unit_id, before, after)` — reading-order neighbours;
@@ -82,9 +82,9 @@ export interface NavigationToolContext {
     startTime: number;
     detail: Record<string, unknown>;
   }) => void;
-  /** The v2 AssetStore, for `get_asset` variant reads + metadata (task 1.11). */
+  /** The v2 AssetStore, for `get_asset` variant reads + metadata. */
   assetStore?: AssetStore | null;
-  /** The render-cache, for `get_asset` region zoom (task 3.8). Null when Extract is not configured. */
+  /** The render-cache, for `get_asset` region zoom. Null when Extract is not configured. */
   renderCache?: RenderCache | null;
 }
 

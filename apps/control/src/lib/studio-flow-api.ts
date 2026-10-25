@@ -324,7 +324,7 @@ export async function validateFlowOnBackend(
 
 /**
  * Formula previews in the variables table: evaluated by the Runtime so the
- * result matches exactly that of a flow run (Task 13.4).
+ * result matches exactly that of a flow run.
  */
 export async function evaluateFlowVariables(
   token: string | undefined,

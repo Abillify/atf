@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Candidate/provider retry loop of the LLM node handler (task 18.1).
+ * Candidate/provider retry loop of the LLM node handler.
  * Extracted verbatim from `llm.ts` (task 18.1, Req 13.6) — behaviour is
  * unchanged.
  */

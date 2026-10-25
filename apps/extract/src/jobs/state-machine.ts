@@ -4,8 +4,7 @@
 /**
  * jobs/state-machine.ts
  *
- * The job lifecycle as an explicit, testable transition table (design §9b,
- * requirements 4.1, 4.8–4.11).
+ * The job lifecycle as an explicit, testable transition table.
  *
  * A persistent job moves through:
  *

@@ -4,16 +4,15 @@
 /**
  * batch-unit-builder.ts
  *
- * The full multi-level index-unit builder for the v2 batch worker (task 3.2).
+ * The full multi-level index-unit builder for the v2 batch worker.
  * It replaces the transitional builder of task 1.10 (chunk + figure only,
  * char-based chunking, tables folded into text).
  *
  * It turns the typed v2 records of a staged NDJSON batch (@atf/extract-contract
  * v2) into the multi-level set of index units search retrieves and expands over
- * (design §6.1, Requirement 11.1):
  *
  *   - `chunk`    — 350–500 token, section-bounded runs of text blocks. Token
- *                  count is measured with the TEI token counter (task 3.1); a
+ * count is measured with the TEI token counter; a
  *                  chunk never spans two different section paths (Req 11.2).
  *   - `table`    — the whole table when it fits the chunk token budget, else
  *                  row-groups that REPEAT the header rows and share a `tableId`
@@ -63,7 +62,7 @@ import { chunkDocument } from "./chunker.js";
 
 // ─── Unit shape ─────────────────────────────────────────────────────────────
 
-/** The unit types the full multi-level builder emits (design §6.1). */
+/** The unit types the full multi-level builder emits. */
 export type UnitType =
   | "chunk"
   | "table"
@@ -90,7 +89,7 @@ export interface IndexUnit {
   sectionId?: string;
   /**
    * Summary of the page(s) this unit covers, carried through from the source
-   * `page` record's own `summary` (task 3.3). The contextual-header pass in the
+   * `page` record's own `summary`. The contextual-header pass in the
    * batch worker uses it as the truncatable tail of a chunk/table/figure's
    * embedding header. Undefined when the page had no summary. It is NOT stored;
    * it only feeds the header build.
@@ -149,7 +148,7 @@ export interface BuildUnitsInput {
   pages: PageRecord[];
   /** The `document.end` record when this batch carries it (trailing batch). */
   documentEnd?: DocumentEndRecord | undefined;
-  /** Token counter (task 3.1) used to size chunks and split tables. */
+  /** Token counter used to size chunks and split tables. */
   tokenCounter: UnitTokenCounter;
   /** Minimum tokens per text chunk before a boundary is preferred. Default 350. */
   minChunkTokens?: number;
@@ -262,7 +261,7 @@ function figureRefsOf(block: Block): string[] {
   return ids;
 }
 
-/** Render a figure's transcription to searchable text (design §4.2). */
+/** Render a figure's transcription to searchable text. */
 function renderTranscription(transcription: Transcription): string {
   switch (transcription.format) {
     case "process": {
@@ -934,7 +933,7 @@ const SECTION_ID_PAGE_SENTINEL = 0;
 
 /**
  * Build `section` / `page` / `document` units from a `document.end` record's
- * summary hierarchy and outline (design §6.1). These carry the summaries the
+ * summary hierarchy and outline. These carry the summaries the
  * doc pass produced; their embed input is the summary text.
  *
  * Parent links:

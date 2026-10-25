@@ -74,7 +74,7 @@ export interface HttpResponse {
   text: string;
 }
 
-/** Build the `User-Agent` value (requirement 14.9). */
+/** Build the `User-Agent` value. */
 export function buildUserAgent(version: string, runtime: Runtime): string {
   return `atf-outpost/${version} (${runtime}; ${platform()}/${arch()})`;
 }

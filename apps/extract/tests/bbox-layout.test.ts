@@ -4,7 +4,7 @@
 /**
  * bbox-layout.test.ts
  *
- * The pure `pdftotext -bbox-layout` XHTML parser (task 2.1, requirement 7.1).
+ * The pure `pdftotext -bbox-layout` XHTML parser.
  *
  * These tests drive the parser off fixture strings, so nothing here needs
  * poppler installed. A single, separately-guarded test shells out to the real

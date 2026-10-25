@@ -670,7 +670,7 @@ export function createApp(
       groupMaxChunksPerDocument: config.groupMaxChunksPerDocument,
     },
   );
-  // Token counter (task 3.1) used by the full multi-level unit builder to size
+  // Token counter used by the full multi-level unit builder to size
   // text chunks to 350–500 tokens and split oversize tables (Req 11.2 / 11.3),
   // and by /v2/search to fit rerank inputs into the reranker's token budget.
   // Degrades to a character heuristic when TEI /tokenize is unavailable.
@@ -757,7 +757,7 @@ export function createApp(
     defaultCollection: config.defaultCollection,
   });
 
-  // ── v2 revision API (design §6.1, task 1.9) ───────────────────────────────
+  // ── v2 revision API ───────────────────────────────
   // A dedicated pool for the revision staging tables keeps the revision store
   // self-contained (it owns its queries) while sharing the same database. The
   // TTL cleaner reaps uncommitted, expired revisions in the background.
@@ -785,7 +785,7 @@ export function createApp(
     logger,
   });
 
-  // ── v2 asset API + AssetStore (design §6.5, task 1.11) ────────────────────
+  // ── v2 asset API + AssetStore ────────────────────
   // Reuses the revision pool (vs_assets lives with the staging tables). The
   // backend is postgres (BYTEA) by default or a filesystem volume; derived
   // thumb/preview variants are generated on PUT so a GET is a pure read.
@@ -795,14 +795,14 @@ export function createApp(
   });
   const v2AssetHandlers = createV2AssetHandlers(assetStore, logger);
 
-  // ── Zoom / full-resolution render-and-cache (task 3.8) ────────────────────
+  // ── Zoom / full-resolution render-and-cache ────────────────────
   // The Search-side capability that, given an asset + region/full + target
   // pixels, returns the cached-or-rendered bytes: it reads the derived asset
   // (ACL-enforced) and, on a miss, has Extract render it via POST /v2/render and
-  // caches the PNG as a `tile`/`page` asset variant (design §9a.1, Req 6.8,
-  // 14.4). Only available when CONVERTER_URL is configured — Search carries no
-  // poppler and must reach Extract to render. Task 3.9's MCP `get_asset(region)`
-  // tool calls `renderCache.getOrRender`.
+  // caches the PNG as a `tile`/`page` asset variant. Only available when
+  // CONVERTER_URL is configured — Search carries no poppler and must reach
+  // Extract to render. MCP `get_asset(region)` tool calls
+  // `renderCache.getOrRender`.
   const renderCache =
     config.converter !== null
       ? createRenderCache({ converter: config.converter, assetStore, logger })
@@ -812,7 +812,7 @@ export function createApp(
     logger,
   });
 
-  // ── v2 batch-processing worker (design §9b.3, task 1.10) ──────────────────
+  // ── v2 batch-processing worker ──────────────────
   // Turns staged NDJSON batches into embedded, upserted index units. Shares the
   // revision pool (same staging tables). The loop is opt-in (BATCH_WORKER); the
   // worker is always constructed so tests can drive it via tick(). intervalMs=0
@@ -933,7 +933,7 @@ export function createApp(
     serviceVersion: config.mcpServiceVersion,
     embeddingModel: config.embedModel,
     embeddingModelRevision: config.embedModelRevision,
-    // Navigation tools (task 3.9): get_asset variant reads via the AssetStore
+    // Navigation tools: get_asset variant reads via the AssetStore
     // and its optional region zoom via the render-cache (null when Extract is
     // not configured, disabling the zoom path only).
     assetStore,
@@ -1040,7 +1040,7 @@ export function createApp(
   // ── Routes ────────────────────────────────────────────────────────────────
   // Unauthenticated, so an orchestrator and API tooling need no credential.
   // /health/live never touches a dependency (process liveness only);
-  // /health/ready gates the load balancer on the database (requirement 12.5);
+  // /health/ready gates the load balancer on the database;
   // /health stays the composite diagnostic probe for back-compat.
   app.get("/health", healthHandler);
   app.get("/health/live", createLivenessHandler());
@@ -1308,7 +1308,7 @@ export function createApp(
     documentDiffHandler,
   );
 
-  // ── v2 asset routes (design §6.5, task 1.11) ──────────────────────────────
+  // ── v2 asset routes ──────────────────────────────
   // PUT gated on write scope; GET/HEAD on read scope. The collection is resolved
   // from ?collection= or X-Collection (collectionAccessAsset), its ACL is loaded
   // into res.locals, and the AssetStore enforces the asset's revision row ACL on
@@ -1412,7 +1412,7 @@ export function createApp(
     collectionAccessHeader,
     searchHandler,
   );
-  // v2 search (task 3.7): a NEW endpoint with the v2 result shape, behind the
+  // v2 search: a NEW endpoint with the v2 result shape, behind the
   // SAME auth / tenant / collection-ACL chain as /search. v1 /search above is
   // untouched (Requirement 13.7).
   app.post(

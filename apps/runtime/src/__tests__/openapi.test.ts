@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Contract tests for the Runtime OpenAPI document (requirement 14.5):
+ * Contract tests for the Runtime OpenAPI document:
  * the served document must be valid OpenAPI 3.1, carry the product version,
  * cover the core planes, and never silently drop routes into a generic tag.
  */

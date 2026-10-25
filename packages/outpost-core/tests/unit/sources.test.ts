@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit tests for the source adapters (task 14.10).
+ * Unit tests for the source adapters.
  *
  * Covered: GDrive export mapping (6.7), S3 endpoint override and
  * addressing (6.5), SigV4 signature, credential resolution (6.4),

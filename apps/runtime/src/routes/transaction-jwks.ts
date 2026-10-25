@@ -22,7 +22,6 @@
  * The route is intentionally unauthenticated: it only ever exposes public
  * key material. Runtime auth middleware guards `/v1/*` and `/mcp` only.
  *
- * Requirements: 7.11
  */
 
 import { Hono } from "hono";

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feindseliger Testkorpus (task 7.11, requirement 5.12).
+ * Feindseliger Testkorpus.
  *
  * One generated corpus of the four bomb classes the requirement names —
  * ZIP bombs, Billion Laughs, pathological PDFs and pixel bombs — run against
@@ -274,7 +274,7 @@ describe("hostile corpus · Billion Laughs (requirement 5.12)", () => {
     const bomb = billionLaughsXml("<root>", "</root>");
     const started = Date.now();
     const parsed = safeXmlParser({}).parse(bomb) as { root?: string };
-    // Entity processing is off (requirement 5.3): the reference survives as
+    // Entity processing is off: the reference survives as
     // literal text instead of expanding to ~10 GiB.
     expect(String(parsed.root ?? "")).toContain("&lol10;");
     expect(JSON.stringify(parsed).length).toBeLessThan(bomb.length + 1024);

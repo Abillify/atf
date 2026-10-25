@@ -5,7 +5,7 @@
  * jobs/budget.ts
  *
  * The concrete token-budget ledger backed by a job's `token_budget` /
- * `tokens_used` / `tokens_reserved` counters (design §9b.2, requirement 4.9).
+ * `tokens_used` / `tokens_reserved` counters.
  *
  * The stage runner reserves a stage's estimate BEFORE the model call and
  * settles it after. The reservation is one SQL statement (`tokens_reserved +
@@ -28,9 +28,9 @@ import type { BudgetLedger } from "./stage-runner.js";
 
 /**
  * The fraction of a job's token budget at which a single early-warning is
- * recorded (design §9, requirement 6.6: "warning at 80 %"). The hard cap at
+ * recorded ("warning at 80 %"). The hard cap at
  * 100 % is the stage runner's budget guard, which parks the job in
- * `paused(reason=budget)` (requirement 4.9); this warning is the heads-up
+ * `paused(reason=budget)`; this warning is the heads-up
  * before that, so an operator can raise the budget before the job stalls.
  */
 export const BUDGET_WARN_FRACTION = 0.8;
@@ -56,7 +56,7 @@ export function budgetWarningLine(used: number, budget: number): string {
  *
  * On the settlement that first carries cumulative `tokens_used` across
  * {@link BUDGET_WARN_FRACTION} of `token_budget`, it records a one-time warning
- * on the job (requirement 6.6). The fire-once guarantee is a marker merged into
+ * on the job. The fire-once guarantee is a marker merged into
  * the job's `config`: the append and the marker are only written when the
  * marker was absent AND this increment is the one that crossed the threshold,
  * so concurrent page stages and later resumes never re-emit it.
@@ -113,7 +113,7 @@ export function createDbBudgetLedger(store: ExtractStore, jobId: string, fence?:
   };
 }
 
-// ─── Tenant daily vision-page budget (task 7.7, requirement 5.8) ─────────────
+// ─── Tenant daily vision-page budget ─────────────
 
 /**
  * The second, independent budget axis: while the ledger above caps ONE job's

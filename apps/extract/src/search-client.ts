@@ -219,7 +219,7 @@ export function createSearchClient(
     };
     // Forward the acting end-user identity exactly like the revision client
     // forwards its ACL headers, so Search derives the caller's access scope
-    // instead of the unrestricted service scope (E2, requirement 9.7).
+    // instead of the unrestricted service scope.
     if (identity?.userId !== undefined && identity.userId !== "") {
       headers["x-user"] = encodeHeaderValue(identity.userId);
     }

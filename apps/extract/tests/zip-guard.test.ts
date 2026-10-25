@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Tests for the ZIP pre-flight guard (requirement 5.1) and the embedded-message
- * depth limit (requirement 5.4). The synthetic-ZIP builder writes central
+ * Tests for the ZIP pre-flight guard and the embedded-message
+ * depth limit. The synthetic-ZIP builder writes central
  * directories whose entries DECLARE sizes without any payload ever being
  * inflated — the exact shape of a ZIP bomb — so the tests stay in the
  * kilobyte range while the guard sees gigabytes.

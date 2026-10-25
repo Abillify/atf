@@ -12,7 +12,6 @@
  *
  * External consumers continue importing from "./routes/chat.js" unchanged.
  *
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 6.7, 18.1, 20.1
  */
 
 import { Hono } from "hono";

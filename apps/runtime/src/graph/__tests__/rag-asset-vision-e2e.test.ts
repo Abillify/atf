@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * End-to-end test for the Phase-4 runtime chain (task 4.6):
+ * End-to-end test for the Phase-4 runtime chain:
  *
  *   question → RAG hit carrying a figure ASSET → the image reaches the vision
  *   model (auto-attached, Req 16.2) OR is inspected on demand via

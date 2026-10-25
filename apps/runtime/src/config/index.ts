@@ -8,7 +8,6 @@
  * (`import { loadConfig, AppConfig, ... } from "./config/index.js"`) continue
  * to work unchanged.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 10.5, 11.5, 20.1
  */
 
 // --- Types & schemas from schema.ts ---

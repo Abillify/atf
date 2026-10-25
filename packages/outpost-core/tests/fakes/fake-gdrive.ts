@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * In-memory Google Drive fake behind a {@link SourceFetch} (task 14.6).
+ * In-memory Google Drive fake behind a {@link SourceFetch}.
  *
  * Serves the Drive v3 `files.list` endpoint with arbitrary page size and
  * `pageToken` pagination, `files/{id}` downloads, `files/{id}/export` for

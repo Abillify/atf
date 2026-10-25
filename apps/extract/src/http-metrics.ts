@@ -38,7 +38,7 @@ const stageBuckets = [
 ];
 
 /**
- * How one execution of a v2 pipeline stage ended (requirement 18.1):
+ * How one execution of a v2 pipeline stage ended:
  *   - `done`: the stage ran and its checkpoint was written;
  *   - `reused`: an existing checkpoint with the same input hash was reused, so
  *     no work (and no model call) happened;
@@ -138,7 +138,7 @@ export class HttpMetrics {
   private queueActive = 0;
   private queueRejected = 0;
 
-  // ── v2 stage metrics (requirement 18.1) ──────────────────────────────────
+  // ── v2 stage metrics ──────────────────────────────────
   private readonly stageDurations = new Map<string, Histogram>();
   /** Keyed `stage|outcome`. */
   private readonly stageOutcomes = new Map<string, number>();
@@ -218,7 +218,7 @@ export class HttpMetrics {
   }
 
   /**
-   * Count a page's processing route (task 2.9, requirement 18.1). The share of
+   * Count a page's processing route. The share of
    * `route="fast-path"` over the total is the "Anteil Fast-Path" — how many
    * pages skipped the vision model via the deterministic text fast-path.
    */

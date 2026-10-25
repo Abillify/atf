@@ -222,7 +222,7 @@ export function createHealthHandler(
 }
 
 /**
- * Liveness probe (requirement 12.5): is the process alive and able to serve?
+ * Liveness probe: is the process alive and able to serve?
  *
  * Checks nothing but the event loop on purpose — restarting a pod because
  * Postgres is slow turns a dependency outage into a full outage, and the
@@ -239,7 +239,7 @@ export function createLivenessHandler(): RequestHandler {
 }
 
 /**
- * Readiness probe (requirement 12.5): can this replica serve traffic?
+ * Readiness probe: can this replica serve traffic?
  *
  * Only the database decides — it is the source of truth for every request
  * path. Model probes (embedding, reranker) stay in the composite `/health`

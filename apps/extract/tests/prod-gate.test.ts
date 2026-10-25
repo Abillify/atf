@@ -267,7 +267,7 @@ describe("checkProductionReadiness", () => {
       expect(report.fatal.join(" ")).not.toContain("REPLICAS");
     });
 
-    // Task 7.7 (requirement 5.8): the daily tenant cap is a warning, not a
+    // The daily tenant cap is a warning, not a
     // fatal — the per-job token budget still caps one job, so disabling the
     // daily axis is a risk call, not a broken deployment (design §Prod-Gate).
     it("warns when the per-tenant daily vision budget is disabled", () => {

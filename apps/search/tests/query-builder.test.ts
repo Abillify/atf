@@ -962,7 +962,7 @@ describe("buildHybridQuery", () => {
     expect(build(10, 0).sql).toContain("FULL OUTER JOIN");
   });
 
-  // SQL-Snapshot (task 6.7): pin the exact emitted SQL for the DEFAULT
+  // SQL-Snapshot: pin the exact emitted SQL for the DEFAULT
   // weights (dense+fts and dense+fts+sparse). Any unintended change to the
   // RRF formula — weight rendering, k handling, missing-zero semantics, join
   // shape — now fails loudly here instead of silently shifting ranking in
@@ -1543,7 +1543,7 @@ describe("temporal version scope", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildTemporalFilterSql — v2 revision visibility gate (task 1.13)
+// buildTemporalFilterSql — v2 revision visibility gate
 // ---------------------------------------------------------------------------
 
 describe("buildTemporalFilterSql — revision visibility (task 1.13)", () => {

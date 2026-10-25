@@ -162,7 +162,7 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("RRF_WEIGHT_SPARSE");
   });
 
-  // Req 4.7 (task 6.9): lexical list ranker. bm25 is parsed here; whether it
+  // Lexical list ranker. bm25 is parsed here; whether it
   // takes effect depends on the BM25 extension detection in postgres-client.
   it("defaults FTS_RANKER to ts_rank_cd and parses bm25", () => {
     delete process.env["FTS_RANKER"];
@@ -176,7 +176,7 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("FTS_RANKER");
   });
 
-  // Req 4.8 (task 6.10): optional relevance threshold + abstention signal.
+  // Optional relevance threshold + abstention signal.
   it("defaults MIN_RERANK_SCORE to null (disabled)", () => {
     delete process.env["MIN_RERANK_SCORE"];
     expect(loadConfig()).toMatchObject({ minRerankScore: null });

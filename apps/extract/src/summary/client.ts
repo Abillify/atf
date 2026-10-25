@@ -4,9 +4,9 @@
 /**
  * summary/client.ts
  *
- * The text-LLM client for the summary hierarchy (design §5 S7 step 5, §9a.2;
- * task 2.7, requirement 9.5). One OpenAI-compatible chat completion per
- * summary — no image, just a system prompt and the text to condense.
+ * The text-LLM client for the summary hierarchy. One OpenAI-compatible chat
+ * completion per summary — no image, just a system prompt and the text to
+ * condense.
  *
  * ## Why its own module and not the vision client
  *

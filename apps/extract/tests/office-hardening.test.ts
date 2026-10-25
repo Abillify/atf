@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * LibreOffice profile hardening (requirement 5.6): the generated
+ * LibreOffice profile hardening: the generated
  * `registrymodifications.xcu` must disable macro execution and the loading of
  * external links, and `convertToPdf` must install it before the binary starts.
  *
@@ -86,7 +86,7 @@ describe("convertToPdf hardening", () => {
 });
 
 /**
- * Reference neutralisation (requirement 5.7): every input below was a proven
+ * Reference neutralisation: every input below was a proven
  * bypass of the old regex rewriter — the tag regex ended at the first `>`, so
  * a quoted `>` or a `/` attribute separator left the URL outside the match,
  * and the CSS scan ran before escapes and character references were resolved.

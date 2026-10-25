@@ -4,8 +4,7 @@
 /**
  * summary/prompts.ts
  *
- * The prompts for the summary hierarchy (design §5 S7 step 5 "Summary-Hierarchie
- * (RAPTOR-light)", §9a.2; task 2.7, requirement 9.5).
+ * The prompts for the summary hierarchy.
  *
  * ## RAPTOR-light: summarise summaries, not raw text
  *
@@ -30,7 +29,7 @@
  * {@link summaryPromptSet} is folded into the snapshot prompt hash alongside
  * `pass1PromptSet`/`pass2PromptSet` (wired in `index.ts`), so a change to any
  * summary prompt trips a pinned job's resume policy rather than silently mixing
- * two prompt versions into one document (requirement 4.12). The version tag
+ * two prompt versions into one document. The version tag
  * covers changes to the *user-prompt structure* (code) that the verbatim system
  * prompts do not.
  */

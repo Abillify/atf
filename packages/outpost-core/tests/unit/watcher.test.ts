@@ -2,9 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit tests for the watcher and the credential trigger (Task 18.7).
+ * Unit tests for the watcher and the credential trigger.
  *
- * **Validates: Requirements 10.2, 6.17**
  *
  * Fake timers: a change event leads to a run within 30 s
  * (debounce 5 s, at the latest 30 s with ongoing events).

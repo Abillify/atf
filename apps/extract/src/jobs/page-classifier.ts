@@ -5,8 +5,7 @@
  * jobs/page-classifier.ts
  *
  * Deterministic page classification and the sharp-backed page-image statistics
- * it needs — the second half of the `analyzed` (S2) stage (design §5 S2; task
- * 2.2, requirement 7.2).
+ * it needs — the second half of the `analyzed` (S2) stage.
  *
  * ## Why this exists
  *
@@ -16,14 +15,14 @@
  * everything after it:
  *
  *   - a `text` page with no table/figure candidates can take the text fast-path
- *     (task 2.9) and skip vision entirely,
- *   - a `drawing` (a plan) is tiled at high DPI (task 5.1) rather than sent as
+ *  and skip vision entirely,
+ * a `drawing` (a plan) is tiled at high DPI rather than sent as
  *     one downscaled image,
  *   - a `scan` (no text layer, mostly ink) must go through vision/OCR,
  *   - a `mixed` page (text plus substantial non-text ink) keeps the full vision
  *     pass.
  *
- * ## The three signals (design §5 S2)
+ * ## The three signals
  *
  *   1. **Text density** — words per unit of page area, from the S2 analysis. A
  *      body-text page is dense; a plan or a scan has few or no text-layer words.
@@ -57,10 +56,10 @@ const POINTS_PER_INCH = 72;
 
 /**
  * A3's long edge in points (420 mm ≈ 16.54 in). A page whose long edge exceeds
- * this is large-format (design §5 S2, requirement 2.7): a plan or a poster,
+ * this is large-format: a plan or a poster,
  * which biases classification toward `drawing`.
  *
- * Exported because the tiling stage (design §5 S6, task 5.1) uses the exact same
+ * Exported because the tiling stage uses the exact same
  * threshold to decide whether a page is large enough to split into overlapping
  * tiles — the two decisions must agree on what "over A3" means.
  */
@@ -151,7 +150,7 @@ function isLargeFormat(size: { widthPt: number; heightPt: number }): boolean {
 
 /**
  * Classify a page as `text | scan | drawing | mixed` from its text density,
- * format and ink ratio (design §5 S2, requirement 7.2). Pure and deterministic.
+ * format and ink ratio. Pure and deterministic.
  *
  * The decision tree, in order:
  *
@@ -233,7 +232,7 @@ export interface RenderedPageFacts {
 }
 
 /**
- * The page's physical size in points (requirement 2.7, design §5 S2/S6). In
+ * The page's physical size in points. In
  * order of authority: the renderer's `pdfinfo` size, the S2 `-bbox-layout`
  * page size, and finally the image pixels converted back at the DPI the image
  * was rendered at (`fallbackDpi` when the renderer did not report one).
@@ -276,7 +275,6 @@ export interface RenderedPageClassificationInput {
 
 /**
  * Classify a rendered page with all three signals the runner can produce
- * (design §5 S2, requirement 7.2):
  *
  *   - word count: the S2 words when the analysis has geometry, else the text
  *     layer's whitespace-separated words (0 for an OCR page);
@@ -315,7 +313,7 @@ export async function classifyRenderedPage(
 
 /**
  * Compute the fraction of dark ("ink") pixels on a rendered page image that lie
- * *outside* every text block (design §5 S2). This is the sharp statistic the
+ * *outside* every text block. This is the sharp statistic the
  * classifier's third signal needs.
  *
  * The page is decoded to greyscale and downscaled so the count is cheap and

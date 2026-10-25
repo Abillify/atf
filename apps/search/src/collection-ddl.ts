@@ -377,10 +377,10 @@ async function ensureStatsTablesLocked(client: PoolClient): Promise<void> {
   `);
 }
 
-// ─── Identifier index table DDL (design §6.4, Requirement 12.2) ───────────────
+// ─── Identifier index table DDL ───────────────
 
 /**
- * The shared identifier occurrence index (design §6.4, Requirement 12.2).
+ * The shared identifier occurrence index.
  *
  * When a query recognises an identifier, Search looks its `value_norm` up here,
  * scoped by tenant + collection, to get the unit ids that carry it verbatim, and
@@ -569,7 +569,7 @@ export const CURRENT_SCHEMA_VERSION = 14;
 
 /**
  * Add the v2 index-unit columns and their indexes to a per-collection table
- * (design §6.2, Requirement 11.5). These are the *filter-relevant* fields kept
+ * These are the *filter-relevant* fields kept
  * as real, indexed columns rather than buried in `metadata` JSONB, so search
  * can filter on them with an index.
  *
@@ -636,7 +636,7 @@ async function ensureUnitColumnsLocked(client: PoolClient, table: string): Promi
   `);
   // A unit id is unique per tenant within a collection; the partial unique index
   // lets legacy rows (unit_id IS NULL) coexist while still enforcing determinism
-  // for v2 units (Requirement 5.5). Upserts (task 1.10) target this key.
+  // for v2 units (Requirement 5.5). Upserts target this key.
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS "${table}_unit_id_key"
       ON "${table}"(tenant_id, unit_id)
@@ -671,7 +671,7 @@ async function ensureUnitColumnsLocked(client: PoolClient, table: string): Promi
     CREATE INDEX IF NOT EXISTS "${table}_document_id_idx"
       ON "${table}"(document_id)
   `);
-  // Relationship-graph columns (task 3.2). parent/prev/next are looked up by id
+  // Relationship-graph columns. parent/prev/next are looked up by id
   // when small-to-big expansion walks the unit graph; table_id groups a table's
   // row-group units. figure_refs is a GIN index so a lookup can find the text
   // units that reference a given figure id.
@@ -882,7 +882,7 @@ export async function ensureCollectionDDL(
         ON "${table}" USING gin(allowed_groups)
     `);
 
-    // v2 index-unit columns as real, indexed columns (design §6.2, Req 11.5).
+    // v2 index-unit columns as real, indexed columns.
     // Nullable + additive so v1 rows are unaffected.
     await ensureUnitColumnsLocked(client, table);
 

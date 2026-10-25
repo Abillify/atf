@@ -9,7 +9,6 @@
  * resume: when a `StreamBuffer` is passed at construction, every frame is
  * recorded into the buffer and prefixed with `id: <seqId>\n`.
  *
- * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6
  */
 
 import type { ToolCallChunk, Citation, StreamError } from "../types/openai.js";
@@ -127,7 +126,6 @@ export class SSEStreamer {
 
   /**
    * Send a single LLM token as a streaming delta chunk.
-   * Requirement 6.1
    *
    * Format:
    * data: {"id":"<id>","object":"chat.completion.chunk","choices":[{"delta":{"content":"<token>"},"index":0}]}\n\n
@@ -174,7 +172,6 @@ export class SSEStreamer {
 
   /**
    * Send a tool-call delta chunk in the OpenAI tool_calls format.
-   * Requirement 6.2
    *
    * Format:
    * data: {"id":"<generated>","object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{...}]},"index":0}]}\n\n
@@ -210,7 +207,6 @@ export class SSEStreamer {
   /**
    * Send a tool-result chunk after a tool invocation completes.
    * `execution_time_seconds` is rounded to 3 decimal places.
-   * Requirement 6.3
    */
   async sendToolResultChunk(result: ToolResultChunk): Promise<void> {
     const roundedTime = Math.round(result.execution_time_seconds * 1000) / 1000;
@@ -226,7 +222,6 @@ export class SSEStreamer {
 
   /**
    * Send a RAG citation as an SSE chunk.
-   * Requirement 6.4
    *
    * Format:
    * data: {"type":"citation","citation":{<citation fields>}}\n\n
@@ -242,7 +237,6 @@ export class SSEStreamer {
   /**
    * Send a structured error chunk followed by nothing — caller must still
    * call `sendDone()` to terminate the stream.
-   * Requirement 6.5
    *
    * Format matches the design's error-chunk specification:
    * {id, object, choices[0].finish_reason="error", error: {message, type, details}}
@@ -272,7 +266,6 @@ export class SSEStreamer {
 
   /**
    * Send the terminal `[DONE]` frame to signal stream completion.
-   * Requirement 6.5, 6.6
    *
    * This is a literal string — NOT a JSON-encoded value.
    */

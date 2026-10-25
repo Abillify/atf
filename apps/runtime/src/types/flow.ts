@@ -237,7 +237,7 @@ export interface ImageInspectionConfig {
   maxAnswerChars?: number;
   /**
    * Enables `inspect_image` to resolve `asset:<id>[#bbox]` references (Req 16.3)
-   * by fetching the asset via the MCP `get_asset` tool (task 3.9). Absent → the
+   * by fetching the asset via the MCP `get_asset` tool. Absent → the
    * tool only resolves inline `img-N` references (unchanged behaviour). The
    * fetched bytes are parked as an `img-N` and inspected via the same vision
    * sub-LLM, so the responder model never receives the base64.

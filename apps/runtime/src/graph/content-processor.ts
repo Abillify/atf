@@ -7,7 +7,6 @@
  * Processes an array of ContentBlocks with full error isolation:
  * a failure in block i emits an error and continues with block i+1.
  *
- * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7
  */
 
 import type { ContentBlock, StreamError } from "../types/openai.js";
@@ -294,7 +293,6 @@ function processFileBlock(
  *
  * A failure in any block never stops the processing of subsequent blocks.
  *
- * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7
  */
 export function processContentBlocks(
   blocks: ContentBlock[],

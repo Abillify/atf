@@ -4,7 +4,7 @@
 /**
  * server.ts
  *
- * The isolated converter (requirement 5.7).
+ * The isolated converter.
  *
  * A minimal RPC server that runs poppler and LibreOffice on behalf of the
  * extract service. It exists so those binaries — the parts of the system that

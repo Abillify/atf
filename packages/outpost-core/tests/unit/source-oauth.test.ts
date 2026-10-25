@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit tests for the cloud source authorization (task 12.9).
+ * Unit tests for the cloud source authorization.
  *
  * Covers: device-flow `invalid_scope` → code-paste fallback (6.15),
  * service-account via `_FILE` without user authorization (6.10), env-name

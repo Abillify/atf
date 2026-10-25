@@ -5,7 +5,7 @@
  * tile-merge.test.ts
  *
  * Merging the per-tile transcriptions of a tiled large-format page — the pure
- * half of S6 (design §5 S6, task 5.1, requirement 8.5).
+ * half of S6.
  *
  * The merge is a pure function of the tiles' transcriptions, so these tests
  * drive it with synthetic transcriptions and assert the overlap-band dedup.

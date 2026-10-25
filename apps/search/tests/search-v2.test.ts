@@ -3,7 +3,7 @@
 
 // apps/search/tests/search-v2.test.ts
 //
-// Handler tests for /v2/search (task 3.7): the v2 hit shape, param/filter
+// Handler tests for /v2/search: the v2 hit shape, param/filter
 // validation, include_assets modes, asset coverage (hit + referenced figures),
 // small-to-big expansion passthrough, and that the v1 /search handler is
 // unchanged. All against a mock PostgresClient — no live DB.

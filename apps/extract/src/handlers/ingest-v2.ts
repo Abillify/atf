@@ -4,7 +4,7 @@
 /**
  * ingest-v2.ts
  *
- * `POST /v1/ingest` — the v2 wrapper (task 1.14, requirement 17.2).
+ * `POST /v1/ingest` — the v2 wrapper.
  *
  * This is what `/v1/ingest` becomes once a deployment has enabled the v2 job
  * model: instead of the ad-hoc convert→forward-Markdown path, the upload is
@@ -189,7 +189,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
 
   return (req, res, next) => {
     // Read outside the async block so the `finally` below can always release a
-    // spooled scratch file (requirement 5.9), whichever path the request took.
+    // spooled scratch file, whichever path the request took.
     let upload: UploadedDocument;
     try {
       upload = readUpload(req);
@@ -227,7 +227,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       // job can always re-render deterministically from the one durable copy.
       //
       // Streamed rather than buffered: this handler never needs the bytes in the
-      // heap, only their hash, so a spooled upload (requirement 5.9) goes
+      // heap, only their hash, so a spooled upload goes
       // disk-to-disk and the scratch file is released right here — the durable
       // copy in the store is all the job worker reads from afterwards.
       const stored = await sourceStore.putStream(upload.createReadStream(), {

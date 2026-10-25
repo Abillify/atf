@@ -4,8 +4,7 @@
 /**
  * jobs/docpass/table-merge.ts
  *
- * Cross-page table merging for the streaming document pass (design §5 S7 step 2,
- * requirement 9.2).
+ * Cross-page table merging for the streaming document pass.
  *
  * ## The problem
  *
@@ -18,10 +17,10 @@
  *
  * ## When two tables merge
  *
- * The Pass-1 model flags the boundary (task 2.3): the tail table on page N is
+ * The Pass-1 model flags the boundary: the tail table on page N is
  * marked `continues`, and a head table on page N+1 may be marked `continuationOf`.
  * But a flag alone is not enough — a page can legitimately start with an
- * unrelated table. So the merge requires a structural match (requirement 9.2):
+ * unrelated table. So the merge requires a structural match:
  *
  *  - **same column count**, and
  *  - **same header, or the continuation has no header** (the classic "header
@@ -38,7 +37,7 @@
  * The only thing carried across a page boundary is the single open table (its
  * id, column count and header) — a small, JSON-serialisable value on
  * `docpass_state`, so a resume knows whether the page it restarts on is a
- * continuation (design §9a.2). Deterministic — no model, no I/O.
+ * continuation. Deterministic — no model, no I/O.
  */
 
 import type { Cell, TableBlock } from "@atf/extract-contract/v2";
@@ -64,7 +63,7 @@ export interface OpenTable {
 /** Header rows carried across a page at most — a header, not a table. */
 const MAX_CARRIED_HEADER_ROWS = 5;
 
-/** The persisted, JSON-serialisable table-merge state (design §9a.2). */
+/** The persisted, JSON-serialisable table-merge state. */
 export interface TableMergeState {
   version: 1;
   /** The table left open (`continues`) by the previous page, or null. */
@@ -155,7 +154,7 @@ export function headerSignature(headerRows: readonly (readonly Cell[])[]): strin
 /**
  * Decide whether a page's first table (`candidate`) is a continuation of the
  * previous page's open table (`open`). Requires the same column count and a
- * matching-or-absent header (requirement 9.2).
+ * matching-or-absent header.
  */
 export function tablesMerge(
   open: OpenTable,
@@ -204,7 +203,7 @@ export interface TableMerger {
 
 /**
  * Create a table merger, optionally rehydrated from persisted state so a resume
- * knows whether its first page is a continuation (design §9a.2). Deterministic.
+ * knows whether its first page is a continuation. Deterministic.
  */
 export function createTableMerger(initial: TableMergeState = emptyTableMergeState()): TableMerger {
   const state = parseTableMergeState(initial);

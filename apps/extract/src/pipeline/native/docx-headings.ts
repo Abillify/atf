@@ -4,8 +4,7 @@
 /**
  * pipeline/native/docx-headings.ts
  *
- * Authoritative heading levels straight from a DOCX's styles (design §10.3,
- * requirement 10.3).
+ * Authoritative heading levels straight from a DOCX's styles.
  *
  * ## Why read the styles at all
  *
@@ -214,10 +213,10 @@ function parseDocumentHeadings(
 
 /**
  * Read heading levels from a DOCX's `word/styles.xml` and `word/document.xml`
- * (requirement 10.3). Never throws — a DOCX that is not a ZIP, or is missing
+ * Never throws — a DOCX that is not a ZIP, or is missing
  * either part, yields an empty result with a warning, so the outline simply
  * falls back to its font-size heuristic — except for a ZIP-guard violation
- * (`DOCUMENT_TOO_COMPLEX`, requirement 5.1), which rejects instead.
+ * (`DOCUMENT_TOO_COMPLEX`), which rejects instead.
  */
 export function parseDocxHeadings(
   buffer: Uint8Array,
@@ -226,7 +225,7 @@ export function parseDocxHeadings(
   const warnings: string[] = [];
   let entries: Record<string, Uint8Array>;
   try {
-    // Checked before any inflation (requirement 5.1); a limit violation
+    // Checked before any inflation; a limit violation
     // throws ExtractError and is re-thrown below, never downgraded.
     assertZipWithinLimits(buffer, limits);
     // Only the two parts we need; skip the rest to keep memory bounded.

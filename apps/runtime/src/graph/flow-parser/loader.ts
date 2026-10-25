@@ -7,7 +7,6 @@
  * Handles file loading (YAML/JSON precedence), chokidar-based hot-reload,
  * and the FlowParserService lifecycle.
  *
- * Requirements: 3.1, 3.2, 3.4, 3.5, 3.10
  */
 
 import * as fs from "node:fs";
@@ -522,7 +521,6 @@ function registerParsedFlow(  raw: unknown,
 
 /**
  * Implementation of FlowParserService.
- * Requirements: 3.1, 3.2, 3.4, 3.5, 3.10
  */
 class FlowParserServiceImpl implements FlowParserService {
   private readonly registry = new FlowRegistryImpl();

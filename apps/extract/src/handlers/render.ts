@@ -5,7 +5,7 @@
  * handlers/render.ts
  *
  * `POST /v2/render` — render a page, or a bbox region of a page, ON DEMAND from
- * the content-addressed source (design §9a.1, requirements 6.8, 14.4).
+ * the content-addressed source.
  *
  * ## Why this route exists
  *
@@ -27,8 +27,8 @@
  *     not just bytes. The route sits behind its own limiter (`RENDER_RATE_LIMIT`)
  *     in addition to auth, so it cannot be used to exhaust the box.
  *
- * poppler stays an external process with `SUBPROCESS_TIMEOUT_MS` (requirement
- * 1.3), so a page that hangs its render turns into a timeout, not a wedged slot.
+ * poppler stays an external process with `SUBPROCESS_TIMEOUT_MS`, so a page that
+ * hangs its render turns into a timeout, not a wedged slot.
  *
  * ## Determinism
  *
@@ -36,7 +36,7 @@
  * output: the source is content-addressed, the DPI is a pure function of the
  * page size and the (clamped) target, and poppler + sharp are deterministic at
  * a fixed DPI. That is what lets Search cache the result and treat a second
- * request as a pure read (design §9a.1 "deterministic intermediate states").
+ * request as a pure read ("deterministic intermediate states").
  */
 
 import sharp from "sharp";
@@ -65,9 +65,9 @@ export interface RenderHandlerConfig {
   renderMaxPixels: number;
   /**
    * The long edge, in pixels, a single tile of a large-format page is planned
-   * towards (TILE_TARGET_PIXELS; design §5 S6, task 5.1). Used to reconstruct
+   * towards (TILE_TARGET_PIXELS). Used to reconstruct
    * the same tile grid the job pipeline produced so a zoom region within a tile
-   * is served from that tile rather than the whole page (requirement 14.4).
+   * is served from that tile rather than the whole page.
    */
   tileTargetPixels: number;
   /** The tile-overlap fraction (TILE_OVERLAP_FRACTION); mirrors the pipeline. */
@@ -258,7 +258,7 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
       // learn it was the first of two renders per request.
       const sizePt = await prepared.pageSizePt(body.page);
       const { widthPt, heightPt } = sizePt;
-      // ── Which tile the zoom region lies in (design §5 S6, requirement 14.4) ──
+      // ── Which tile the zoom region lies in ──
       // Reconstructs the grid the job pipeline planned for this page (a pure
       // function of the true page size) and names the tile that contains the
       // whole region, for `X-Render-Tile`. The region itself is rendered
@@ -385,7 +385,7 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
       res.setHeader("X-Render-Dpi", String(dpi));
       res.setHeader("X-Render-Clamped", clamped ? "1" : "0");
       // `X-Render-Tile` names the large-format tile a zoom region lies in, when
-      // the region falls within one (requirement 14.4). Absent for a
+      // the region falls within one. Absent for a
       // whole-page render or a region that spans a seam / a non-tiled page.
       if (servingTileId !== null) res.setHeader("X-Render-Tile", servingTileId);
       res.setHeader("X-Render-Meta", JSON.stringify(meta));

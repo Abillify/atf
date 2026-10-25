@@ -15,7 +15,6 @@
  *   - Cluster-wide limits (Req. 2.4)  — documented guard at cluster-limits.integration.test.ts
  *   - RLS cross-tenant    (Req. 3.2)  — documented guard at bootstrap/__tests__/verify-rls.test.ts
  *
- * Requirements: 7.3
  */
 
 import { describe, test, expect } from "bun:test";

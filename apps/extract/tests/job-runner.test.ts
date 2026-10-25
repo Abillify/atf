@@ -56,7 +56,7 @@ const SOURCE_SHA = "a".repeat(64);
 const RESUME: ResumeDecision = { action: "continue-pinned", changed: false };
 
 /**
- * A distinct PNG per page, so the render-hash dedup (task 2.2) treats every page
+ * A distinct PNG per page, so the render-hash dedup treats every page
  * as unique and these tests keep their per-page vision semantics. The dedicated
  * dedup test uses intentionally-identical images instead. Cached so a re-render
  * of the same page yields byte-identical bytes (a resume must not "change").
@@ -1569,7 +1569,7 @@ describe("job-runner · native source path (task 2.8)", () => {
   });
 });
 
-// ── MAX_PAGES (requirement 5.8, v2 path) ────────────────────────────────────
+// ── MAX_PAGES (v2 path) ────────────────────────────────────
 
 describe("job-runner · MAX_PAGES refusal (v2)", () => {
   it("fails a vision job over the limit before any model call", async () => {

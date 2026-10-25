@@ -3,7 +3,7 @@
 
 /**
  * Pure, deterministic extraction-quality metrics for the golden-set harness
- * (task T2.10, requirement 18.3).
+ * (task T2.10).
  *
  * Where `metrics.ts` scores *retrieval* — did the right page/figure come back —
  * these score *extraction*: given the ground-truth content of a table, a figure

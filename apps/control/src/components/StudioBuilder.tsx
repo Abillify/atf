@@ -16,7 +16,7 @@
  *
  * Reuses: FlowCanvas, NodePropertyPanel, FlowNodePalette, FlowRunDrawer.
  *
- * Req 9.3 (Task 13.4): all state and logic live in the composition hook
+ * All state and logic live in the composition hook
  * `useStudioBuilder` (hooks/useStudioBuilder.ts) together with
  * useStudioLoad/useStudioHistory/useStudioCopilot; this component only
  * holds props and JSX. Toolbar, problems panel and inspector live under
@@ -42,7 +42,7 @@ import {
 } from "../hooks/useStudioBuilder";
 import { translate } from "../lib/i18n";
 
-// Req 9.3 (Task 13.4): the props types belong to the composition hook.
+// The props types belong to the composition hook.
 export type { StudioBuilderPanels, StudioBuilderProps };
 
 export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
@@ -184,7 +184,7 @@ export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
       runs={runsCtx}
     >
       <div ref={rootRef} className="flex h-full flex-col gap-2 overflow-y-auto">
-        {/* Toolbar — Req 9.3 (Task 13.4): moved unchanged to studio/StudioToolbar. */}
+        {/* Toolbar: moved unchanged to studio/StudioToolbar. */}
         <StudioToolbar
           baseId={base.id}
           flowSource={flow?.source}
@@ -273,7 +273,7 @@ export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
           </div>
         )}
 
-        {/* Problems panel — Req 9.3 (Task 13.4): moved unchanged to
+        {/* Problems panel: moved unchanged to
             studio/StudioProblemsPanel. */}
         {problemsOpen &&
           (totalErrors > 0 ||
@@ -438,7 +438,7 @@ export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
             />
           </div>
 
-          {/* Node/edge property panel — Req 9.3 (Task 13.4): moved unchanged to
+          {/* Node/edge property panel: moved unchanged to
               studio/StudioInspector (bulk/subflow/boundary/node panel
               including ResizeHandle). */}
           <StudioInspector

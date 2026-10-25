@@ -5,7 +5,7 @@
  * page-classifier.test.ts
  *
  * Deterministic page classification `text | scan | drawing | mixed` (task 2.2,
- * requirement 7.2). The classifier itself is a pure function of precomputed
+ * ). The classifier itself is a pure function of precomputed
  * signals, so most cases are driven with synthetic numbers and no image; a
  * separate block exercises the sharp-backed ink-ratio helper against synthetic
  * rasters authored inline (no fixtures).
@@ -151,7 +151,7 @@ describe("computeInkRatioOutsideBlocks", () => {
   });
 });
 
-// ── real page size and the tiling gate (requirement 2.7, design §5 S2/S6) ──
+// ── real page size and the tiling gate ──
 
 describe("resolvePageSizePt / classifyRenderedPage / tiling gate", async () => {
   const { resolvePageSizePt, classifyRenderedPage } = await import("../src/jobs/page-classifier.js");

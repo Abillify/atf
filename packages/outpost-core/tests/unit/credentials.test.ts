@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit cases for the Credential_Store (task 8.5): file mode `0600`
+ * Unit cases for the Credential_Store: file mode `0600`
  * (requirements 6.16, 12.6), atomic writes, error reporting without a
  * plaintext fallback (15.4), Docker secret mounts, and the `fs.watch`
  * change callback (6.17).

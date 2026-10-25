@@ -171,7 +171,7 @@ const OCCURRENCES: Occurrence[] = [
 		label: "Gate MCP service-block expectation",
 		expected: 1,
 	},
-	// Helm charts (task 16.4): the appVersion of the umbrella chart and every
+	// Helm charts: the appVersion of the umbrella chart and every
 	// subchart tracks the product version, so image tags default to it. The
 	// chart `version` itself follows the product version too — helm upgrades
 	// key off it — and the dependency constraints that pin the subcharts (in

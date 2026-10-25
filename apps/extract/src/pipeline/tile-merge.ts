@@ -5,8 +5,7 @@
  * pipeline/tile-merge.ts
  *
  * Merge the per-tile transcriptions of a tiled large-format page into one page
- * transcription — the pure half of stage **S6 "tiled"** (design §5 S6, task
- * 5.1, requirement 8.5).
+ * transcription — the pure half of stage **S6 "tiled"**.
  *
  * ## Why this exists
  *
@@ -46,7 +45,7 @@ export interface TileContribution {
 }
 
 /**
- * Merge per-tile transcriptions into one page transcription (design §5 S6). The
+ * Merge per-tile transcriptions into one page transcription. The
  * tiles are taken in the order given (the tiling grid emits row-major order).
  *
  * Returns a single {@link Transcription}:

@@ -4,8 +4,7 @@
 /**
  * tiling.test.ts
  *
- * Deterministic tile geometry — the pure half of S6 (design §5 S6, task 5.1,
- * requirements 8.5, 14.4).
+ * Deterministic tile geometry — the pure half of S6.
  *
  * The grid, DPI, overlap and tile selection are pure functions of the page size
  * and the tiling options, so these tests drive them with synthetic sizes and no

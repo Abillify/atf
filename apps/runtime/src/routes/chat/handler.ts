@@ -7,7 +7,6 @@
  * Contains request parsing, validation, RequestContext building, boundary node
  * utilities (request/response visualisation), and the variable overview.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 18.1, 20.1
  */
 
 import type { ChatCompletionRequest, TokenUsage } from "../../types/openai.js";

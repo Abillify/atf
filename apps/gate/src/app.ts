@@ -369,7 +369,6 @@ export async function buildApp(
   // ── OpenAPI documents (never rate-limited, no credential) ───────────────────
   // Served before rate limiting so tooling (Swagger UI, codegen, the
   // openapi:check compat gate) can fetch the contract without a token
-  // (requirement 14.5).
   app.get("/openapi.json", (req, res) => {
     res.json(buildOpenApiSpec(resolveOpenApiServerUrl(req)));
   });

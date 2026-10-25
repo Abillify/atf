@@ -3,7 +3,7 @@
 
 // apps/search/tests/search-v2-response.test.ts
 //
-// Pure tests for the v2 response shaper (task 3.7): the hit shape, asset
+// Pure tests for the v2 response shaper: the hit shape, asset
 // coverage/modes, navigation, pages, and section_path extraction. No DB.
 
 import { describe, it, expect } from "vitest";

@@ -13,7 +13,6 @@
  * - If NEITHER is configured AND APP_ENV=production: reject (safe default)
  * - If a plugin fails verification: log security event, skip it
  *
- * Requirements: 4.1, 4.2
  */
 
 import * as crypto from "node:crypto";

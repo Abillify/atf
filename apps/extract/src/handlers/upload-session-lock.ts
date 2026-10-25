@@ -5,7 +5,6 @@
  * upload-session-lock.ts
  *
  * Serialisation of chunk appends to one resumable upload session
- * (requirement 4.14).
  *
  * Two PATCH requests for the same session must never both write at the
  * confirmed offset. Two layers make that hold:

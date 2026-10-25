@@ -7,7 +7,6 @@
  * Contains the SSE streaming path (stream: true), the idempotent replay
  * renderer, and the non-streaming response assembly.
  *
- * Requirements: 1.1, 1.2, 1.5, 18.1, 20.1
  */
 
 import type { Context } from "hono";

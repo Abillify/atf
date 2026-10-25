@@ -11,7 +11,7 @@
  * (Requirement 1.6).
  *
  * The backend is injectable ({@link WatchBackendFactory}) so tests work
- * without real file-system events (Task 18.7).
+ * without real file-system events.
  */
 
 import { fsWatchBackend } from "./watch-backends.js";

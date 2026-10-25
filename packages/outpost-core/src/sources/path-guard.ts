@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Path containment guard (requirement 15.5).
+ * Path containment guard.
  *
  * Every path that leaves the source root must resolve — via `realpath` — to
  * a location inside `realpath(root)`. This defeats `..` segments, absolute

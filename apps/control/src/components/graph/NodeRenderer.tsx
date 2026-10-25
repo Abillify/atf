@@ -14,7 +14,6 @@
  *   - sequence badge
  *   - duration bar (timeline mode only)
  *
- * Requirements: 11.2
  */
 
 import type React from "react";

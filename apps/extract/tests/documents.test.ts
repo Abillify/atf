@@ -134,7 +134,6 @@ const indexKey = (collection: string, reference: string): string =>
 // ── Property 27: idempotency of erasure by reference ───────────────────────
 
 // Feature: extract-outpost, Property 27: idempotency of erasure by reference (Extract)
-// **Validates: Requirements 9.3, 9.7, 9.9**
 describe("Property 27: delete by reference is idempotent", () => {
   // Path-parameter-safe reference alphabet; the handler trims, so a reference
   // equal to its trimmed form keeps the model (and the seeded index) exact.
@@ -213,7 +212,6 @@ describe("Property 27: delete by reference is idempotent", () => {
 // ── Property 40: scope requirement for erasures ────────────────────────────
 
 // Feature: extract-outpost, Property 40: scope requirement for erasures (Extract)
-// **Validates: Requirements 9.8**
 describe("Property 40: delete requires the extract.delete scope", () => {
   const token = "d".repeat(40);
   // Scopes that do NOT grant delete. `extract.admin` is excluded on purpose:
@@ -314,7 +312,7 @@ describe("Property 40: delete requires the extract.delete scope", () => {
   });
 });
 
-// ── Unit: error taxonomy and cancel-before-delete (task 3.6) ───────────────
+// ── Unit: error taxonomy and cancel-before-delete ───────────────
 
 describe("DELETE /v2/documents/{reference} · error cases", () => {
   const token = "e".repeat(40);

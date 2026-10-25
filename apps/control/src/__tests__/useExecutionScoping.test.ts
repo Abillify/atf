@@ -7,7 +7,6 @@
  * Focuses on the scoping memo: displayEvents must be filtered to the
  * currently effective execution_id.
  *
- * Requirements: 11.1
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";

@@ -16,7 +16,7 @@ import type { PoolClient } from "pg";
 import type { ChunkInfo, DocumentPoint, NavUnitRow, SearchCursor } from "./pg-types.js";
 
 /**
- * Derive a figure caption from a figure unit's stored content (task 3.7). A
+ * Derive a figure caption from a figure unit's stored content. A
  * figure unit's content is `caption\ndescription\ntranscription…` (see
  * batch-unit-builder `renderFigureText`), so the first non-empty line is the
  * caption. Trimmed and length-bounded so a runaway description cannot bloat the
@@ -29,7 +29,7 @@ export function figureCaption(content: string | null | undefined): string | null
   return firstLine.length > 300 ? firstLine.slice(0, 300) : firstLine;
 }
 
-// ─── v2 navigation query helpers (task 3.9) ─────────────────────────────────
+// ─── v2 navigation query helpers ─────────────────────────────────
 
 /** Clamp an optional integer to `[min, max]`, falling back to `fallback`. */
 export function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -399,7 +399,7 @@ export function stripNullBytes(text: string): string {
  *
  * A committed revision (status='committed') is fully visible and is NOT tagged.
  * The page span is the merged min–max of the revision's committed segments,
- * formatted like "1–2750" (en dash), matching design §9a.3.
+ * formatted like "1–2750" (en dash).
  */
 export async function annotatePartialRevisions(
   client: PoolClient,

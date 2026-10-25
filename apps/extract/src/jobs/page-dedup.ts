@@ -5,7 +5,7 @@
  * jobs/page-dedup.ts
  *
  * Page deduplication by render hash — reuse an identical page's vision result
- * instead of calling the model again (design §5 S2; task 2.2, requirement 7.4).
+ * instead of calling the model again.
  *
  * ## Why this exists
  *
@@ -13,11 +13,10 @@
  * a boilerplate legal page, the same "intentionally left blank" filler, a
  * repeated cover on a bound plan set. Each of those is byte-for-byte the same
  * rendered image, and paying for a vision call per copy is pure waste — on a
- * large scanned corpus it is a meaningful fraction of the bill (design §12:
- * page dedup is one of the levers that makes 10 000-page jobs affordable). If
- * two pages render identically, their vision result must be identical too, so
- * the second (and every later) copy can reuse the first's result with no model
- * call (requirement 7.4).
+ * large scanned corpus it is a meaningful fraction of the bill (page dedup is
+ * one the levers that makes -page jobs affordable). If two pages render
+ * identically, their vision result must be identical too, so the second (and
+ * every later) copy can reuse the first's result with no model call.
  *
  * ## The render hash
  *

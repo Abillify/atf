@@ -4,7 +4,7 @@
 /**
  * reembed-decision.test.ts
  *
- * The pure selective re-embedding decision core (task 5.4, requirement 9.6).
+ * The pure selective re-embedding decision core.
  * These tests exercise {@link shouldReembed} and {@link parseStoredVector} in
  * isolation — no database, no embedding model — so the branch that governs
  * whether the expensive embed call runs is nailed down directly. The batched DB

@@ -4,8 +4,7 @@
 /**
  * pipeline/markdown-blocks.ts
  *
- * Deterministic Pass-1 Markdown → typed v2 blocks (design §4 block model, §5
- * S3/S7; requirements 8.1, 9.1, 9.2).
+ * Deterministic Pass-1 Markdown → typed v2 blocks (block model, S3/S7).
  *
  * The Pass-1 vision model returns the page body as Markdown with embedded HTML
  * tables and `![figure_<id>]` placeholders. Emitting that verbatim as ONE
@@ -52,7 +51,7 @@ export const MARKDOWN_BLOCKS_VERSION = "1.0.0";
 
 /**
  * The marker a continuation table carries in `continuationOf` until the
- * document pass resolves it to the predecessor's `tableId` (requirement 9.2).
+ * document pass resolves it to the predecessor's `tableId`.
  */
 export const CONTINUATION_MARKER = "previous";
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure-logic tests for the full multi-level unit builder (task 3.2). These need
+ * Pure-logic tests for the full multi-level unit builder. These need
  * no database: they pin what the batch worker turns v2 records into —
  *
  *   - chunk units are 350–500 tokens (via a stubbed token counter) and never

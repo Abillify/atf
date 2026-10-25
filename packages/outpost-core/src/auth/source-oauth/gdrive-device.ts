@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Optional Google Drive device flow (requirement 6.15).
+ * Optional Google Drive device flow.
  *
  * Only used when `deviceFlow: true` is configured. Google currently rejects
  * the `drive.readonly` scope on the device endpoint (`invalid_scope`); the

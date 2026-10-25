@@ -4,8 +4,7 @@
 /**
  * jobs/docpass/outline.ts
  *
- * The outline stack for the streaming document pass (design §5 S7 step 1,
- * requirement 9.1).
+ * The outline stack for the streaming document pass.
  *
  * ## What it does
  *
@@ -22,9 +21,9 @@
  *  1. **Numbering.** A heading numbered `4.2.1` is unambiguously level 3 — the
  *     dot count IS the depth. When a heading carries numbering, that wins,
  *     because it is the author's own explicit hierarchy (from DOCX styles or the
- *     text itself, design §5 S2/S7).
+ * text itself).
  *  2. **Line height.** For an unnumbered heading, the relative font size (the
- *     line-height proxy from `-bbox-layout`, design §5 S2) orders it: a bigger
+ * line-height proxy from `-bbox-layout`) orders it: a bigger
  *     heading is shallower. We map observed heights to levels by remembering the
  *     distinct heading heights seen so far, largest = level 1.
  *
@@ -44,7 +43,7 @@
  * The whole thing is a small, JSON-serialisable value ({@link OutlineState}):
  * the open stack and the height→level memory. It is persisted on `docpass_state`
  * so a resume rebuilds the exact stack rather than re-deriving it from page 1
- * (design §9a.2). Deterministic — no model, no I/O.
+ * Deterministic — no model, no I/O.
  */
 
 import type { HeadingBlock, OutlineNode } from "@atf/extract-contract/v2";
@@ -52,7 +51,7 @@ import type { HeadingBlock, OutlineNode } from "@atf/extract-contract/v2";
 /**
  * Where a heading's level came from, in priority order. Authoritative sources
  * (`hint`, `numbering`) are the author's own answer and are never revisited by
- * the finalize pass (design §5 S7 point 2, requirement 9.6); a `height` level is
+ * the finalize pass; a `height` level is
  * a provisional guess from the font-size proxy and CAN move once the whole
  * document's height distribution is known.
  */
@@ -72,7 +71,7 @@ export interface OpenHeading {
   pageStart: number;
   /**
    * The observed line height for an unnumbered heading, or undefined when there
-   * was no font-size signal. Kept so the finalize pass (requirement 9.6) can
+   * was no font-size signal. Kept so the finalize pass can
    * re-rank the height→level mapping once every heading's height is known.
    */
   lineHeight?: number;
@@ -95,7 +94,7 @@ export interface ClosedOutlineNode extends OutlineNode {
   levelSource?: LevelSource;
 }
 
-/** The persisted, JSON-serialisable outline state (design §9a.2). */
+/** The persisted, JSON-serialisable outline state. */
 export interface OutlineState {
   version: 1;
   /** The currently-open heading stack, outermost first. */
@@ -197,7 +196,7 @@ export interface OutlineStack {
 
 /**
  * Authoritative heading levels keyed by normalised heading text, from a source
- * that declares them (DOCX styles, design §10.3, requirement 10.3). When a
+ * that declares them (DOCX styles). When a
  * heading's text is in this map its level is taken from here, ahead of both the
  * numbering and the line-height signals, because it is the author's own answer.
  */
@@ -210,11 +209,11 @@ function headingKey(text: string): string {
 
 /**
  * Create an outline stack, optionally rehydrated from persisted state so a
- * resume continues the same hierarchy (design §9a.2). Deterministic.
+ * resume continues the same hierarchy. Deterministic.
  *
- * `hints` supplies authoritative heading levels (DOCX styles, requirement
- * 10.3): a heading whose text is in the map uses that level directly, so the
- * outline reflects the document's own hierarchy rather than a font-size guess.
+ * `hints` supplies authoritative heading levels (DOCX styles): a heading whose
+ * text is in the map uses that level directly, so the outline reflects the
+ * document's own hierarchy rather than a font-size guess.
  */
 export function createOutlineStack(
   initial: OutlineState = emptyOutlineState(),
@@ -253,12 +252,12 @@ export function createOutlineStack(
     page: number,
     lineHeight?: number,
   ): { level: number; sectionId: string; closed: ClosedOutlineNode[] } {
-    // Authoritative DOCX style level first (requirement 10.3), then the
+    // Authoritative DOCX style level first, then the
     // numbering's dot-count, then the font-size proxy.
     const hintLevel = hints.get(headingKey(heading.text));
     const numLevel = numberingLevel(heading.numbering);
     const level = hintLevel ?? numLevel ?? levelFromHeight(lineHeight);
-    // Remember WHERE the level came from so the finalize pass (requirement 9.6)
+    // Remember WHERE the level came from so the finalize pass
     // only re-ranks the provisional font-size guesses and leaves the author's
     // own hierarchy (DOCX styles, numbering) untouched.
     const levelSource: LevelSource =
@@ -266,7 +265,7 @@ export function createOutlineStack(
 
     // Pop every open heading at level >= this one: they have ended here. Each
     // popped heading is a CLOSED section — the "section ended" event the summary
-    // hierarchy (task 2.7, requirement 9.5) triggers on. Return them (deepest
+    // hierarchy triggers on. Return them (deepest
     // first, mirroring the pop order) alongside the new section's id/level.
     const closedNow: ClosedOutlineNode[] = [];
     while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= level) {
@@ -390,14 +389,14 @@ export interface FinalizedOutline {
   /**
    * Every section whose corrected `sectionPath` differs from its provisional
    * one, keyed by `sectionId`. Search re-embeds exactly the units whose path is
-   * in here and leaves the rest untouched (requirement 9.6). Empty when the
+   * in here and leaves the rest untouched. Empty when the
    * finalize pass changed nothing.
    */
   changes: SectionPathChange[];
 }
 
 /**
- * The finalize pass (design §5 S7 point 2, requirement 9.6): a deterministic,
+ * The finalize pass: a deterministic,
  * MODEL-FREE correction of the outline metadata once the whole document is
  * known.
  *
@@ -423,7 +422,7 @@ export interface FinalizedOutline {
  *  4. reports each section whose path actually moved.
  *
  * It is a pure function of its input: no model, no I/O, no clock — so a resume
- * that re-runs it produces byte-identical output (requirement 4.7).
+ * that re-runs it produces byte-identical output.
  */
 export function finalizeOutlineNodes(nodes: readonly OutlineNode[]): FinalizedOutline {
   // Recover the finalize metadata each node carries internally.

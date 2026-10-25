@@ -4,8 +4,7 @@
 /**
  * uploads.ts
  *
- * The resumable, chunked upload protocol for v2 sources (design §9a.1,
- * requirements 4.13, 4.14, 6.2).
+ * The resumable, chunked upload protocol for v2 sources.
  *
  * A 10 000-page source is multiple gigabytes, and a single POST of that over a
  * flaky link is a coin toss that costs the whole transfer when it lands tails.

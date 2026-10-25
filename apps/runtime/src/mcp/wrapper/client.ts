@@ -8,7 +8,6 @@
  * on session expiry, per-caller token sessions for forwardAuthToken servers,
  * and error detection helpers.
  *
- * Requirements: 7.1, 7.6
  */
 
 import crypto from "node:crypto";
@@ -289,7 +288,6 @@ export interface McpWrapperService {
   }>;
   /**
    * Calls a tool on the given MCP server, injecting Protected Parameters from ctx.
-   * Requirements: 7.4, 7.5, 7.6
    */
   callTool(
     serverName: string,
@@ -815,7 +813,6 @@ export class McpWrapper implements McpWrapperService {
    * (single-flight per server, exponential backoff after failures) instead of
    * failing with "not found"; only unconfigured servers report
    * `MCP server not found: <name> (not configured)`.
-   * Requirements: 7.1
    */
   async connect(config: McpServerConfig): Promise<void> {
     // Build (or drop) the per-server token exchanger before anything else, so a
@@ -1296,7 +1293,6 @@ export class McpWrapper implements McpWrapperService {
    * If the server returns a 404 (session expired) or a transport-level
    * connection error (server restarted / process died), the session is
    * re-initialised and the request is retried once.
-   * Requirements: 7.1
    */
   async listTools(
     serverName: string,
@@ -1618,7 +1614,6 @@ export class McpWrapper implements McpWrapperService {
   /**
    * Fetches the tool schema, removes Protected Parameters, computes and stores
    * a SHA-256 checksum of the *original* schema, and returns the filtered schema.
-   * Requirements: 7.2, 7.3, 7.7
    */
   async getFilteredToolSchema(
     serverName: string,
@@ -2020,7 +2015,6 @@ export class McpWrapper implements McpWrapperService {
    * Session reconnection and retries are permitted only for tools that advertise
    * `readOnlyHint` or `idempotentHint`. Missing metadata fails safe: one attempt.
    * One stable invocation/idempotency ID is sent in MCP `_meta` across retries.
-   * Requirements: 7.4, 7.5, 7.6
    */
   async callTool(
     serverName: string,
@@ -2071,7 +2065,7 @@ export class McpWrapper implements McpWrapperService {
     // This ensures that even if the LLM injects protected parameter keys
     // (user_token, user_email, client_id, or server-specific injectedParams)
     // into args, they are removed before forwarding. Only system-injected
-    // values are used. (Requirements: 4.3)
+    // values are used.
     const buildEnhancedArgs = (
       declaredParams?: ReadonlySet<string>,
     ): Record<string, unknown> => {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Deterministic corpus builder for the retrieval eval (task 6.11).
+ * Deterministic corpus builder for the retrieval eval.
  *
  * The golden set (`golden-set.v1.json`) annotates *where* an answer lives
  * (page / figure / cell) but ships no binaries. This builder synthesises an

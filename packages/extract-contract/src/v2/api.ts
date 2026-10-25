@@ -355,7 +355,7 @@ export const jobSchema = z.object({
 export type Job = z.infer<typeof jobSchema>;
 
 /**
- * Request body of `POST /v2/render` (design §9a.1, requirements 6.8, 14.4).
+ * Request body of `POST /v2/render`.
  *
  * A full page image, or a bbox region of it, rendered ON DEMAND from the
  * content-addressed source — never pre-stored. `bbox`, when present, is a

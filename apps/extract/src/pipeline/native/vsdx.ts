@@ -6,7 +6,7 @@
  *
  * A native Visio reader: a `.vsdx` in, one contract transcription per Visio page
  * out — a `process` graph when the drawing has connectors, a plain shape-text
- * `markdown` diagram when it does not (design §10.4, requirement 10.4). No model
+ * `markdown` diagram when it does not. No model
  * call: the shape text and the connector graph are read directly from the OOXML
  * package.
  *
@@ -57,7 +57,7 @@
  *
  * A `.vsdx` is an OPC ZIP package, like XLSX. The repo already unzips with
  * `fflate` (MIT) and reads XML with `fast-xml-parser` (both existing
- * dependencies, requirement 1.2); no Visio-specific library is added.
+ * dependencies); no Visio-specific library is added.
  */
 
 import type { Transcription } from "@atf/extract-contract/v2";
@@ -105,7 +105,7 @@ export interface VsdxPage {
 		| Extract<Transcription, { format: "markdown" }>;
 	/**
 	 * Which figure the page maps to: a connected page is a `flowchart`, a
-	 * shape-only page is a `diagram` (requirement 10.4, "process bzw. diagram").
+	 * shape-only page is a `diagram` ("process bzw. diagram").
 	 */
 	figureKind: "flowchart" | "diagram";
 }
@@ -479,7 +479,7 @@ function normalizePagePart(target: string): string {
 }
 
 /**
- * Read a `.vsdx` into one transcription per Visio page (requirement 10.4).
+ * Read a `.vsdx` into one transcription per Visio page.
  * Never throws — a package that fails to unzip or has no readable pages yields
  * an empty result with a warning, and the caller still renders the drawing via
  * LibreOffice for the picture.
@@ -488,7 +488,7 @@ export function parseVsdx(buffer: Uint8Array, limits?: ZipLimits): ParsedVsdx {
   const warnings: string[] = [];
   let entries: Record<string, Uint8Array>;
   try {
-    // Checked before any inflation (requirement 5.1); a limit violation
+    // Checked before any inflation; a limit violation
     // throws ExtractError and is re-thrown below, never downgraded.
     assertZipWithinLimits(buffer, limits);
     entries = unzipSync(buffer, {

@@ -12,7 +12,6 @@
  * The gate is intentionally strict: one oversized chunk is enough to fail so that
  * regressions are caught per-bundle rather than hidden by an average.
  *
- * Requirement: 19.1, 19.2
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";

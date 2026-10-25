@@ -89,7 +89,6 @@ function isHttpsPage(): boolean {
  * dashboard on every single chunk. The snapshot reference is stable between
  * flushes; `events` is always the last `maxEvents` events in input order.
  *
- * Requirements: 9.1, 9.7
  */
 export function useMonitoringEvents(
   options?: UseMonitoringEventsOptions,

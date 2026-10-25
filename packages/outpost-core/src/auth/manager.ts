@@ -13,7 +13,7 @@
  * `logout()` deletes exactly {@link EXTRACT_AUTH_KEYS} plus the in-memory
  * cache; `source:*` keys (cloud refresh tokens) are never touched (3.5, 3.9).
  * Stopping runs and flushing state belong to the scheduler's logout sequence
- * (task 18.1), not here.
+ * not here.
  */
 
 import type { Logger } from "pino";
@@ -29,7 +29,7 @@ import { clientCredentialsToken } from "./client-credentials.js";
 import { AuthError, type FetchLike } from "./idp.js";
 import type { AuthMethod } from "./select.js";
 
-/** The provider interface consumed by the HTTP client (task 10). */
+/** The provider interface consumed by the HTTP client. */
 export interface TokenProvider {
   /** Current access token; renews proactively when it expires within 60 s. */
   getAccessToken(now: number): Promise<string>;

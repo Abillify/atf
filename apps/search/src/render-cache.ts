@@ -4,8 +4,7 @@
 /**
  * render-cache.ts
  *
- * The Search-side zoom / full-resolution render-and-cache capability (design
- * §9a.1, requirements 6.8, 14.4, 14.5).
+ * The Search-side zoom / full-resolution render-and-cache capability.
  *
  * Search deliberately carries no poppler: rendering a page or a bbox region at
  * full resolution needs LibreOffice/poppler and a document-parser attack
@@ -29,7 +28,7 @@
  * ## What lives here vs. task 3.9
  *
  * This is the render+cache primitive. The MCP `get_asset(variant, region)` tool
- * (task 3.9) is the caller: it resolves the acting scope and the target asset,
+ *  is the caller: it resolves the acting scope and the target asset,
  * then invokes {@link RenderCache.getOrRender} and streams the bytes. The HTTP
  * `GET /v2/assets/{id}` render-on-miss wiring, if added, calls the same
  * function. Keeping the capability here means both surfaces share one cache key,

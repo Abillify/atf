@@ -13,7 +13,6 @@
  * (503 SERVICE_UNAVAILABLE / QUEUE_FULL) rather than propagating as an opaque
  * internal error.
  *
- * Requirements: 5.2, 5.3
  */
 
 import type { FlowSpanManager } from "./spans.js";

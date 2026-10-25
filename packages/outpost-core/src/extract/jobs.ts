@@ -22,7 +22,7 @@ import {
 import type { ExtractHttpClient } from "../http/client.js";
 import { apiErrorCode, apiErrorMessage, ExtractApiError } from "./api-error.js";
 
-/** Initial poll interval (requirement 8.7). */
+/** Initial poll interval. */
 export const POLL_INITIAL_MS = 2_000;
 /** Upper bound for the poll interval. */
 export const POLL_MAX_MS = 30_000;

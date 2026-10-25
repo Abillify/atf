@@ -38,7 +38,6 @@
  *
  * No `any` at module boundaries.
  *
- * Requirements: 3.8, 3.9
  */
 
 export type ConditionContext = Record<string, unknown>;

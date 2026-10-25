@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Merging of file configuration and environment (requirement 1.2).
+ * Merging of file configuration and environment.
  *
  * `mergeConfig` is pure: given the parsed file object and the environment, the
  * environment wins *per key* — a key the environment sets replaces the file
@@ -13,7 +13,7 @@
  * The environment speaks flat `OUTPOST_*` names; `envToConfig` translates them
  * into the nested shape of the file format so both sources merge uniformly.
  * Secrets are not part of this mapping — they live in the CredentialStore
- * (requirement 1.10) — except the public per-provider OAuth client ids, which
+ *  — except the public per-provider OAuth client ids, which
  * are not secrets and may be set either way.
  */
 
@@ -91,7 +91,7 @@ export interface EnvMapEntry {
  * Flat `OUTPOST_*` names → nested config paths. `OUTPOST_SOURCES` accepts a
  * JSON array in the file format; sources are otherwise configured in the file.
  * `OUTPOST_SOURCE_<ID>_*` variables are *not* config here — they carry secrets
- * resolved by `resolveSecretEnv`/`resolveSourceCredential` (task 12.5).
+ * resolved by `resolveSecretEnv`/`resolveSourceCredential`.
  */
 export const ENV_MAP: ReadonlyArray<EnvMapEntry> = [
   { name: "OUTPOST_EXTRACT_URL", path: ["extractUrl"], kind: "url", parse: (v) => v },

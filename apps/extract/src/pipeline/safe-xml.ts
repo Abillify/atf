@@ -5,7 +5,7 @@
  * pipeline/safe-xml.ts
  *
  * One place to configure every `fast-xml-parser` instance in the service
- * (requirement 5.3): entity processing is switched off, so a user document
+ * entity processing is switched off, so a user document
  * cannot expand internal entities while parsing — the XXE and Billion-Laughs
  * class of attacks. Every parser in `pipeline/` and `pipeline/native/` is
  * built through {@link safeXmlParser}; a bare `new XMLParser` outside this
@@ -43,7 +43,7 @@ function decodePredefined(value: string): string {
 }
 
 /**
- * An `XMLParser` with entity processing disabled (requirement 5.3) and the
+ * An `XMLParser` with entity processing disabled and the
  * five predefined entities decoded in the value processors so ordinary
  * document text is unaffected. All other options are the caller's.
  */

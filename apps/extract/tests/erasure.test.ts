@@ -251,7 +251,7 @@ describe("POST /v1/erasure · subject scope", () => {
 			status: "ok",
 			erased: 2,
 		});
-		// Search's own results are merged verbatim (requirement 2.12).
+		// Search's own results are merged verbatim.
 		expect(byStore.get("search.documents")?.status).toBe("ok");
 		expect(sources.removed.sort()).toEqual(["a".repeat(64), otherDigest]);
 		expect(search.eraseCalls).toHaveLength(1);

@@ -4,7 +4,6 @@
 /**
  * Monitoring types for the frontend dashboard.
  * Mirrors the NodeExecutionEvent from the backend.
- * Requirements: 9.3, 9.4, 9.5
  */
 
 /**

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * OpenAPI compatibility guard (requirement 11.7, task 17.3).
+ * OpenAPI compatibility guard.
  *
  * Every service that publishes an OpenAPI document has a committed baseline
  * under `docs/openapi/`. The document is generated from the same builder the
@@ -25,7 +25,7 @@
  * it is not itself a breaking change.
  *
  * All four API services (runtime, gate, search, extract) publish documents
- * under /openapi.json (requirement 14.5) and are covered by this check.
+ * under /openapi.json and are covered by this check.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";

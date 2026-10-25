@@ -4,7 +4,7 @@
 /**
  * budget.test.ts
  *
- * Unit tests for the DB-backed token-budget ledger (task 5.2, requirement 6.6).
+ * Unit tests for the DB-backed token-budget ledger.
  *
  * The ledger's `consume` records a ONE-TIME warning when cumulative
  * `tokens_used` first crosses 80 % of `token_budget` — the heads-up before the
@@ -113,7 +113,7 @@ describe("createDbBudgetLedger · 80 % budget warning (requirement 6.6)", () => 
   });
 });
 
-// Task 7.7 (requirement 5.8): the per-tenant, per-UTC-day VLM page ledger.
+// The per-tenant, per-UTC-day VLM page ledger.
 // Same fake store as above — the ledger's contract is the counter, the
 // refusal, and the sticky exhaustion, none of which need Postgres.
 describe("createTenantDailyPageBudget (task 7.7, requirement 5.8)", () => {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Standalone schema migration for the Runtime database (requirement 12.4).
+ * Standalone schema migration for the Runtime database.
  *
  * Applies every pending migration under the same session advisory lock the
  * startup path uses (`src/db/migrator.ts`), so running this while replicas

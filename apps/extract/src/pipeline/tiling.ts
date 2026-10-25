@@ -5,7 +5,7 @@
  * pipeline/tiling.ts
  *
  * Deterministic tile geometry for large-format pages — the pure half of stage
- * **S6 "tiled"** (design §5 S6, task 5.1, requirements 8.5, 14.4).
+ * **S6 "tiled"**.
  *
  * ## Why this exists
  *
@@ -15,8 +15,7 @@
  * model can read. So S6 splits such a page into an N×M grid of overlapping
  * tiles, transcribes each tile against its own region, and merges the results
  * (`tile-merge.ts`). The tiles are also stored as `tile` assets and become the
- * substrate the research zoom serves from (design §5 S6 "basis for the
- * zoom").
+ * substrate the research zoom serves from ("basis for the zoom").
  *
  * ## What is deterministic here
  *
@@ -62,7 +61,7 @@ const POINTS_PER_INCH = 72;
  * This is only used to size the grid (how many tiles across a page's inches):
  * it maps the pixel target to a physical tile edge so the tile count is a
  * function of the page's physical size, not of a render DPI. 150 DPI is the
- * "overview at model DPI" reference from design §5 S6, a touch below the
+ * "overview at model DPI", a touch below the
  * whole-page render target so an A0 plan yields a handful of tiles rather than
  * a single downscaled image. The tiles are then RENDERED sharper (see
  * {@link tileDpi}); this constant never bounds the render resolution.
@@ -119,7 +118,7 @@ export interface TileGrid {
 }
 
 /**
- * True when a page should be tiled (design §5 S6, requirement 8.5): it is
+ * True when a page should be tiled: it is
  * classified as a `drawing`, or its long edge exceeds A3. Pure and matches the
  * classifier's own large-format threshold so the two never disagree.
  */
@@ -138,7 +137,7 @@ function edgesInInches(size: PageSizePt): { longIn: number; shortIn: number } | 
 }
 
 /**
- * Plan the tile grid for a page (design §5 S6, task 5.1). Deterministic: the
+ * Plan the tile grid for a page. Deterministic: the
  * same page size and options always yield the same grid.
  *
  * A page that fits under the tile target in both dimensions — or has an
@@ -166,7 +165,7 @@ export function planTiles(size: PageSizePt, options: TilingOptions): TileGrid {
 
   // How many tiles each axis wants so a tile's long edge lands near the target.
   // A tile's target physical edge is `tileTargetPixels` at a nominal reference
-  // DPI (TILE_REFERENCE_DPI): the "overview at model DPI" scale of design §5
+  // DPI (TILE_REFERENCE_DPI): the "overview at model DPI" scale
   // S6. The number of columns tracks the page width, rows the height; a page
   // whose edge is under one tile edge stays at 1 on that axis. The actual
   // render DPI is chosen separately in `tileDpi` so tiles are sharper than the
@@ -282,11 +281,11 @@ function clamp01(value: number): number {
 }
 
 /**
- * Choose the tile a zoom region should be served from (design §5 S6, task 5.1,
- * requirement 14.4: "zoom preferably via tiles"). Given a requested region
- * and a tile grid, returns the SMALLEST tile whose bbox fully contains the
- * region, or `null` when no single tile contains it (the region spans a seam,
- * or the grid is a single full-page tile). Pure.
+ * Choose the tile a zoom region should be served from ("zoom preferably via
+ * tiles"). Given a requested region and a tile grid, returns the SMALLEST
+ * tile whose bbox fully contains the region, or `null` when no single tile
+ * contains it (the region spans a seam, or the grid is a single full-page
+ * tile). Pure.
  *
  * A hit means the render can be served from that one tile's region — a small,
  * already-sharp crop — instead of re-rendering the whole large-format page,

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Static service-token matching with rotation support (requirement 11.8).
+ * Static service-token matching with rotation support.
  *
  * A service accepts its configured `API_TOKEN` plus, during a rotation window,
  * a second token (`API_TOKEN_NEXT`). Both are valid simultaneously so the

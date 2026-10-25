@@ -4,14 +4,14 @@
 /**
  * handlers/search-v2.ts
  *
- * The `/v2/search` handler (task 3.7, design §7.1/§7.2, Requirements 13.3/13.5).
+ * The `/v2/search` handler.
  *
  * This is a NEW endpoint that orchestrates the full v2 retrieval pipeline over
  * the SAME building blocks the v1 `/search` uses — it does NOT re-implement RRF,
  * rerank, diversify or expansion, and it does NOT change v1 behaviour
  * (Requirement 13.7). The v1 handler and its response are untouched.
  *
- * Pipeline (design §7.1):
+ * Pipeline:
  *   1. analyse the query — recognise identifiers; an explicit `identifier`
  *      filter is folded into the query text AND passed explicitly to the
  *      identifier list;
@@ -20,11 +20,11 @@
  *      of exact `vs_identifiers` hits and `ts_ident` lexical matches; hybrid
  *      only), honouring tenant/ACL/temporal + the v2 unit filters. The v1
  *      handlers never set the option, so their ranking is unchanged;
- *   3. rerank with context — `rerankResultsWithStatus` (task 3.5), inputs
+ * 3. rerank with context — `rerankResultsWithStatus`, inputs
  *      trimmed by the optional tokenizer (`fitRerankInputs`);
- *   4. diversify — `diversifyResults` (task 3.5), then `group_by`
+ * 4. diversify — `diversifyResults`, then `group_by`
  *      (`groupResultsV2`: none | document | section);
- *   5. small-to-big expansion — `attachExpansions` (task 3.6);
+ * 5. small-to-big expansion — `attachExpansions`;
  *   6. attach assets + shape the v2 response — `shapeHitV2` (this task).
  *
  * Request shape: a JSON body (the `/v2/*` document routes are JSON; a JSON body

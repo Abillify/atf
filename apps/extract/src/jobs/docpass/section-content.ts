@@ -4,9 +4,8 @@
 /**
  * jobs/docpass/section-content.ts
  *
- * The section-content accumulator for the summary hierarchy (design §5 S7
- * step 5 "Summary-Hierarchie (RAPTOR-light)", §9a.2; task 2.7, requirement
- * 9.5).
+ * The section-content accumulator for the summary hierarchy.
+ * step 5 "Summary-Hierarchie (RAPTOR-light)", §9a.2).
  *
  * ## What it accumulates
  *
@@ -27,7 +26,7 @@
  * The whole thing is a small JSON-serialisable value persisted on
  * `docpass_state`, exactly like the outline/identifier/table states, so a
  * resume rehydrates the same accumulation and produces byte-identical summary
- * inputs (requirement 4.7). Deterministic — no model, no I/O.
+ * inputs. Deterministic — no model, no I/O.
  */
 
 /** Per-section accumulated content, keyed by section id. */

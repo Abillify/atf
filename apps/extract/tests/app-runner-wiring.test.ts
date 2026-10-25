@@ -5,8 +5,8 @@
  * app-runner-wiring.test.ts
  *
  * `createApp` wires the v2 job runner with the deterministic S2 page analyzer
- * (design §5 S2, requirement 7.1) and the shared metrics registry
- * (requirement 18.1). Before this, `createPageAnalyzer` was only ever called
+ *  and the shared metrics registry
+ * Before this, `createPageAnalyzer` was only ever called
  * from tests, so production pages got no heading hints, no fast path, no
  * region text and no furniture.
  */

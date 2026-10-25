@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * HTTP-level tests for the v2 revision routes (task 1.9). These exercise the
+ * HTTP-level tests for the v2 revision routes. These exercise the
  * handlers through a real Express app with a fake RevisionStore, so they pin:
  *   - route wiring and path-param parsing (ref/rev/seq/n)
  *   - the Idempotency-Key / Content-Digest headers reaching the store

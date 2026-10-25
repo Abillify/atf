@@ -5,7 +5,7 @@
  * page-analyzer.test.ts
  *
  * The deterministic per-page analysis stage — `analyzed` (S2) (task 2.1,
- * requirement 7.1). Driven with injected poppler ops so no binary is spawned;
+ * ). Driven with injected poppler ops so no binary is spawned;
  * one separately-guarded test shells out to the real `pdftotext -bbox-layout`
  * only when poppler is installed, to prove the wrapper and parser agree with
  * what poppler emits.

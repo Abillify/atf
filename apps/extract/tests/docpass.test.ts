@@ -4,10 +4,9 @@
 /**
  * docpass.test.ts
  *
- * The streaming document pass (design §5 S7, §9a.2; task 2.6, requirements 9.1,
- * 9.2, 9.3, 9.4, 4.7). Driven with synthetic page records + analyses — exactly
- * what S2/S3 produce — so no poppler, image or model is needed. The pass is a
- * pure state machine, so the tests assert its outputs directly.
+ * The streaming document pass. Driven with synthetic page records + analyses —
+ * exactly what S2/S3 produce — so no poppler, image or model is needed. The
+ * pass is a pure state machine, so the tests assert its outputs directly.
  *
  * Covers:
  *  - outline stack assigns a correct sectionPath across pages (level pop/push),
@@ -20,7 +19,7 @@
  *  - identifier extraction finds each regex class with correct occurrences
  *  - docpass_state round-trips: process pages 1..k, resume from the persisted
  *    state, continue k+1..n, and assert an identical result to a non-interrupted
- *    run (requirement 4.7)
+ * run
  */
 
 import { describe, expect, it } from "vitest";
@@ -216,7 +215,7 @@ describe("outline stack — sectionPath", () => {
   });
 });
 
-// ── finalize pass (task 5.4, requirement 9.6) ───────────────────────────────
+// ── finalize pass ───────────────────────────────
 
 describe("finalize pass — outline metadata correction", () => {
   /** A heading arriving with its title on a line of the given height. */

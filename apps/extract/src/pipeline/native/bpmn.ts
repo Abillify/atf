@@ -5,8 +5,7 @@
  * pipeline/native/bpmn.ts
  *
  * A deterministic BPMN 2.0 parser: `.bpmn` XML in, a contract `process`
- * transcription out, with no rendering and no model call (design §10.1,
- * requirement 10.1).
+ * transcription out, with no rendering and no model call.
  *
  * ## Why native, not vision
  *
@@ -240,7 +239,7 @@ function toSteps(nodes: ProcessNode[], edges: ProcessEdge[]): string[] {
  * unparseable or non-BPMN input yields an empty process with a warning.
  *
  * The one rejection: a document with a DOCTYPE declaration throws
- * `ExtractError("DOCUMENT_TOO_COMPLEX")` (requirement 5.3). Entity processing
+ * `ExtractError("DOCUMENT_TOO_COMPLEX")`. Entity processing
  * is off in the parser, so a DOCTYPE can do nothing — but legitimate BPMN
  * never carries one, and refusing it keeps the attack surface closed even if
  * a future parser change re-enables entities.

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Optional TLS termination for the service HTTP servers (requirement 11.8).
+ * Optional TLS termination for the service HTTP servers.
  *
  * A real HTTPS server is started from ephemeral certificates generated with
  * `openssl` into a temp directory: plain TLS must serve, mTLS must reject a

@@ -12,7 +12,6 @@
  * The fallback values only apply where CSS variables cannot be resolved
  * (SSR, jsdom); in the browser all colors come from the tokens.
  *
- * Requirements: 9.8 (design tokens instead of fixed colors)
  */
 
 import { useEffect, useState } from "react";

@@ -4,8 +4,7 @@
 /**
  * pipeline/text-fast-path.ts
  *
- * The deterministic text fast-path (design §5 S3 "Text-Fast-Path"; task 2.9,
- * requirements 7.5, 18.1).
+ * The deterministic text fast-path ("Text-Fast-Path").
  *
  * ## Why this exists
  *
@@ -26,7 +25,7 @@
  * The job runner wires them into the `vision1` stage: when a page qualifies it
  * builds the blocks here and skips {@link ../vision/client.VisionClient.analyzePage}.
  *
- * ## The gate is the control (requirement 7.5)
+ * ## The gate is the control
  *
  * The fidelity check stays active on the fast path — but because the blocks are
  * the text layer verbatim, comparing them against themselves is trivially
@@ -77,9 +76,9 @@ import { checkTextFidelity, type TextFidelityResult } from "./text-fidelity.js";
 export interface FastPathGateInput {
   /** Is the fast path enabled at all (TEXT_FAST_PATH)? */
   enabled: boolean;
-  /** The deterministic page classification (task 2.2). */
+  /** The deterministic page classification. */
   classification: Classification;
-  /** The S2 geometry for the page (task 2.1). */
+  /** The S2 geometry for the page. */
   analysis: PageAnalysis;
   /** The ink-outside-blocks ceiling (TEXT_FAST_PATH_MAX_INK_RATIO). */
   maxInkRatio: number;
@@ -100,9 +99,9 @@ export type FastPathDecision =
     };
 
 /**
- * Decide whether a page takes the deterministic text fast-path (requirement
- * 7.5). Pure and conservative: any doubt returns `eligible: false` with a
- * reason, and the caller runs the normal vision path for that page.
+ * Decide whether a page takes the deterministic text fast-path. Pure and
+ * conservative: any doubt returns `eligible: false` with a reason, and the
+ * caller runs the normal vision path for that page.
  */
 export function fastPathEligibility(input: FastPathGateInput): FastPathDecision {
   const { enabled, classification, analysis, maxInkRatio } = input;
@@ -180,9 +179,9 @@ function headingFor(
 
 /**
  * Build deterministic v2 blocks for a page straight from its S2 geometry
- * (design §5 S3 Text-Fast-Path). Every block carries `source: "text-layer"`,
+ * (Text-Fast-Path). Every block carries `source: "text-layer"`,
  * the page number and its normalised bbox; `sectionPath` is left for the
- * document pass (task 2.6) to fill.
+ * document pass to fill.
  *
  * Mapping, per analyzed block:
  *   - a block whose single line is a numbered heading → a `heading` block with
@@ -280,7 +279,7 @@ function blockFor(
  * paragraph text, and list items one per line. Because the blocks were built
  * from the text layer verbatim, this reproduces (a superset of) the risky
  * tokens the text layer carried, so {@link checkTextFidelity} passes — which is
- * the point of keeping the check wired on the fast path (requirement 7.5).
+ * the point of keeping the check wired on the fast path.
  */
 export function fastPathMarkdown(blocks: readonly Block[]): string {
   const parts: string[] = [];
@@ -307,7 +306,7 @@ export function fastPathMarkdown(blocks: readonly Block[]): string {
 }
 
 /**
- * Run the text-fidelity check for a fast-path page (requirement 7.5): compare
+ * Run the text-fidelity check for a fast-path page: compare
  * the raw text layer against the rendered markdown of the deterministic blocks.
  * Kept as a named helper so the runner records exactly the same fidelity metric
  * it records for a vision page, and the "check stays active" requirement is
@@ -319,7 +318,7 @@ export function checkFastPathFidelity(rawText: string, blocks: readonly Block[])
 
 /**
  * The share of the text layer's words the fast-path blocks must reproduce
- * (requirement 7.5). The blocks come from the same poppler text layer as the
+ * The blocks come from the same poppler text layer as the
  * raw text, so anything below this means the geometry lost content (text
  * outside every block, a dropped run) and the page must go through vision.
  */
@@ -353,7 +352,7 @@ function coverageTokens(text: string): string[] {
 
 /**
  * Check that the fast-path blocks cover the raw text layer word for word
- * (requirement 7.5). The risky-token fidelity check only looks at numbers and
+ * The risky-token fidelity check only looks at numbers and
  * identifiers; this complements it with plain-word coverage, so a page whose
  * geometry silently dropped a sentence cannot take the fast path.
  */
@@ -388,9 +387,9 @@ export interface FastPathCandidates {
 }
 
 /**
- * Detect table and figure candidates on a would-be fast-path page (requirement
- * 7.5: "no table/figure candidates"). The ink-outside-blocks gate
- * catches raster/vector graphics; this catches what it cannot:
+ * Detect table and figure candidates on a would-be fast-path page ("no
+ * table/figure candidates"). The ink-outside-blocks gate catches raster/vector
+ * graphics; this catches what it cannot:
  *
  *   - a *text* table (a table whose cells are real text, so its ink lies inside
  *     the text blocks): several lines whose words are separated by wide

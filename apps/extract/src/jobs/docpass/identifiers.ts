@@ -4,8 +4,7 @@
 /**
  * jobs/docpass/identifiers.ts
  *
- * Identifier extraction for the streaming document pass (design §5 S7 step 4,
- * requirement 9.4).
+ * Identifier extraction for the streaming document pass.
  *
  * ## What an "identifier" is, and why it is indexed
  *
@@ -15,7 +14,7 @@
  * field label. These are exactly the tokens the German stemming FTS mangles and
  * a dense embedding blurs, so the design keeps a dedicated identifier index: for
  * each distinct identifier, the list of places it occurs (block, page). Search
- * later turns that into the third RRF list (task 3.4). Here, in the document
+ * later turns that into the third RRF list. Here, in the document
  * pass, we only *find* them and record the occurrences.
  *
  * ## Configurable regex classes
@@ -36,7 +35,7 @@
  * document pass replayable byte-for-byte on a resume.
  */
 
-/** One named, testable regex class (design §5 S7: "konfigurierbare Regex-Klassen"). */
+/** One named, testable regex class ("konfigurierbare Regex-Klassen"). */
 export interface IdentifierClass {
   /** The `kind` stamped on every occurrence this class finds. */
   kind: string;
@@ -63,7 +62,7 @@ export interface IdentifierRecord {
 }
 
 /**
- * The built-in identifier classes (design §5 S7 step 4, requirement 9.4).
+ * The built-in identifier classes.
  *
  * Ordered most-specific first so a broader class never steals a span a specific
  * class should own. Each pattern is deliberately conservative: it matches the
@@ -213,7 +212,7 @@ export interface IdentifierIndex {
   observe(text: string, page: number, blockId?: string): void;
   /** The accumulated index in insertion order, deduplicated. */
   entries(): IdentifierRecord[];
-  /** The serialisable state to persist after a page (design §9a.2). */
+  /** The serialisable state to persist after a page. */
   snapshot(): IdentifierIndexState;
 }
 
@@ -259,7 +258,7 @@ export function parseIdentifierState(value: unknown): IdentifierIndexState {
 
 /**
  * Create an identifier index, optionally rehydrated from persisted state so a
- * resume continues the same accumulation (design §9a.2). Deterministic.
+ * resume continues the same accumulation. Deterministic.
  */
 export function createIdentifierIndex(
   initial: IdentifierIndexState = emptyIdentifierState(),

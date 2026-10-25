@@ -112,7 +112,7 @@ function committedRevisionSql(alias: string): string {
  * Build the same parameterized temporal scope for every retrieval branch.
  *
  * The "latest only" predicate (no `validAt`) is the v2 revision-visibility gate
- * (task 1.13): a row is visible iff
+ * a row is visible iff
  *   - it is a LEGACY row (revision_id IS NULL) that is is_latest = TRUE — v1
  *     ingest and non-revision data keep working unchanged; OR
  *   - it belongs to the revision the per-document pointer
@@ -206,7 +206,7 @@ function buildFilterSql(
 
 /**
  * v2 unit-column filter (task 3.7, Requirement 13.3). Emits index-backed
- * predicates on the REAL unit columns (task 1.8) rather than the metadata JSON:
+ * predicates on the REAL unit columns rather than the metadata JSON:
  *
  *   unit_type    — exact match
  *   figure_kind  — the stored kinds the value names (figure-kinds.ts)
@@ -1151,7 +1151,7 @@ export function buildHybridQuery(
   // sparse, both identifier branches) multiplied its cost by the list count.
   // The default latest-only path keeps its predicates INLINE: that is the
   // shape the partial `*_vector_latest_hnsw_idx` index scan depends on, and
-  // the EXPLAIN test (task 6.8) pins it.
+  // the EXPLAIN test pins it.
   const temporalActive = validAt !== undefined || includeAllVersions;
   const visibleCTE = temporalActive
     ? `

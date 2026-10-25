@@ -4,8 +4,7 @@
 /**
  * jobs/snapshot.ts
  *
- * The configuration snapshot and the `resume_policy` comparison (design §9b.2,
- * requirement 4.12).
+ * The configuration snapshot and the `resume_policy` comparison.
  *
  * When a job is created we freeze two things onto the row: a snapshot of the
  * config that governs its extraction, and the pipeline and prompt hashes that
@@ -102,17 +101,17 @@ export type ResumeDecision =
   | { action: "restart-stage"; changed: true; fromStage: string };
 
 /**
- * A short, stable key of a stand, folded into every stage `input_hash`
- * (design §9b.2: the input hash covers source, page, relevant configuration AND
- * the prompt hash). A changed pipeline or prompt stand therefore changes every
- * hash, which is what lets `resume_policy` decide per stage what is reused.
+ * A short, stable key of a stand, folded into every stage `input_hash` (the
+ * input hash covers source, page, relevant configuration AND the prompt hash).
+ * A changed pipeline or prompt stand therefore changes every hash, which is
+ * what lets `resume_policy` decide per stage what is reused.
  */
 export function standKey(stand: PipelineSnapshot): string {
   return hashObject({ p: stand.pipelineHash, q: stand.promptHash }).slice(0, 32);
 }
 
 /**
- * The per-page stage order `restart-stage=<stage>` refers to (design §9b.2):
+ * The per-page stage order `restart-stage=<stage>` refers to:
  * render/vision1 → crops → figure2 → tiled → emitted → docpass. S2 (`analyzed`)
  * and S4 (`refined`) are folded into `vision1`, `vision2` is the figure pass
  * (`figure2`), and the summary stages belong to the document pass.

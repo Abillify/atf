@@ -5,8 +5,7 @@
  * bbox-snap.ts
  *
  * Deterministic figure-bbox refinement — stage **S4 "refined"** in the per-page
- * sequence `analyzed(S2) → vision1(S3) → refined(S4) → …` (design §5 S4; task
- * 2.4, requirement 8.2).
+ * sequence `analyzed(S2) → vision1(S3) → refined(S4) → …`.
  *
  * ## Why this exists
  *
@@ -23,7 +22,7 @@
  *
  * For vector BPMN, vector plans and text-layer PDFs those words ARE the labels
  * at no model cost — the highest-value lever against the "wrong/empty figure
- * text" defect (design §5 S4, D2). They land on the v2 `figure` block as
+ * text" defect. They land on the v2 `figure` block as
  * {@link SnapResult.regionText} and {@link SnapResult.labels}.
  *
  * ## The algorithm ({@link snapFigureBBox})
@@ -44,7 +43,7 @@
  * Every step degrades gracefully: no image → skip the ink trim; no S2 geometry
  * (a scan, or poppler without `-bbox-layout`) → skip alignment and leave
  * `regionText`/`labels` undefined. The function never throws and never fails a
- * page (requirement 8.2, design §5 S4 "graceful degradation").
+ * page ("graceful degradation").
  *
  * ## Purity
  *
@@ -59,7 +58,7 @@ import sharp from "sharp";
 import type { BBox } from "@atf/extract-contract/v2";
 import type { AnalyzedBlock, AnalyzedLine, AnalyzedWord, PageAnalysis } from "./bbox-layout.js";
 
-/** Fraction of each side to grow the Pass-1 box by before trimming (design §5 S4). */
+/** Fraction of each side to grow the Pass-1 box by before trimming. */
 export const EXPAND_FRACTION = 0.03;
 
 /**
@@ -166,7 +165,7 @@ function centreInside(word: AnalyzedWord, box: BBox): boolean {
  * the input box unchanged — the ink trim only ever shrinks, and never to zero.
  *
  * Never throws: any sharp/decoding failure returns the input box, so a page is
- * never failed over an unreadable image (requirement 8.2).
+ * never failed over an unreadable image.
  *
  * @param bbox   The (expanded) normalised box to trim.
  * @param image  The rendered page image bytes and pixel dimensions.

@@ -11,7 +11,7 @@
  * later phases diff against.
  *
  * With `--v2` the same golden questions are run against Search's `POST
- * /v2/search` (task 3.7) instead, exercising the full Phase-3 retrieval pipeline
+ * /v2/search` instead, exercising the full Phase-3 retrieval pipeline
  * (identifier RRF, rerank-with-context, diversification, small-to-big
  * expansion). The v2 hit shape (top-level `pages`, `assets`) is normalised back
  * to the same reference-bearing shape the v1 path uses, so the metrics and the
@@ -38,7 +38,7 @@
  *     [--retrieve] \
  *     [--extractions <captured-extractions.json>]
  *
- * Extraction-quality metrics (task T2.10, requirement 18.3) — table-cell
+ * Extraction-quality metrics (task T2.10) — table-cell
  * accuracy, label-coverage and BPMN node/edge recall — are scored offline
  * against the golden set's ground-truth annotations. Supply the produced
  * extraction output per question id with `--extractions`; without it those
@@ -101,7 +101,7 @@ interface SearchHit {
 	score?: number;
 }
 
-// ─── Minimal shape of a `/v2/search` hit we depend on (task 3.7) ──────────────
+// ─── Minimal shape of a `/v2/search` hit we depend on ──────────────
 
 /** A v2 asset reference on a hit (`shapeHitV2`, Requirement 13.5). */
 interface SearchAssetV2 {
@@ -112,7 +112,7 @@ interface SearchAssetV2 {
 }
 
 /**
- * The subset of a `/v2/search` hit (`SearchHitV2`, design §7.2) the harness
+ * The subset of a `/v2/search` hit (`SearchHitV2`) the harness
  * reads. Page info is top-level (`pages`), not under `evidence`; a figure hit is
  * an `asset` with `relation:"hit"` and a `figure_id`. `evidence` is passed
  * through by the v2 shaper and kept only as a fallback.
@@ -204,7 +204,7 @@ export interface Args {
   cutoffs: number[];
   out: string;
   label: string;
-  /** Target `POST /v2/search` (task 3.7) instead of the v1 `POST /search`. */
+  /** Target `POST /v2/search` instead of the v1 `POST /search`. */
   v2: boolean;
   /**
    * Target `POST /v2/retrieve` (answer-ready retrieval) instead of the search
@@ -222,7 +222,7 @@ export interface Args {
   minPageRecall?: number;
   minFigureRecall?: number;
   /**
-   * Retrieval-mode ablation (task 6.11, requirement 4.10): `dense`, `hybrid`
+   * Retrieval-mode ablation: `dense`, `hybrid`
    * or `fts`. Sent as `X-Search-Mode` on v1; mapped to the `hybrid` body flag
    * on v2 (`dense` → `hybrid:false`, which is the closest v2 equivalent).
    */
@@ -231,7 +231,7 @@ export interface Args {
   rerank: boolean;
   /** Enable HyDE query expansion (`X-Hyde: true` / v2 body `hyde`). */
   hyde: boolean;
-  /** Threshold file (task 6.11): regression below any floor fails the run. */
+  /** Threshold file: regression below any floor fails the run. */
   thresholds?: string;
   /**
    * Abstention score gate: a question counts as answered only when a top-k hit
@@ -450,7 +450,7 @@ async function runSearchV1(
     "X-Max-Results": String(maxResults),
   };
   if (args.token) headers.Authorization = `Bearer ${args.token}`;
-  // Ablation knobs (task 6.11): the Search API validates X-Search-Mode and
+  // Ablation knobs: the Search API validates X-Search-Mode and
   // takes precedence over the legacy X-Hybrid header.
   if (args.searchMode !== undefined) headers["X-Search-Mode"] = args.searchMode;
   if (args.rerank) headers["X-Rerank"] = "true";
@@ -471,7 +471,7 @@ async function runSearchV1(
 }
 
 /**
- * v2 `POST /v2/search` (task 3.7): JSON body, `X-Collection` header. Exercises
+ * v2 `POST /v2/search`: JSON body, `X-Collection` header. Exercises
  * the full Phase-3 pipeline (identifier RRF, rerank-with-context, diversify,
  * expansion). The v2 hits are normalised back to the v1 {@link SearchHit} shape
  * so the metrics are identical and directly comparable.
@@ -568,13 +568,13 @@ interface Report {
     mode: "live" | "offline";
     /** Which endpoint the run targeted: v1 `/search`, v2 `/v2/search` or v2 `/v2/retrieve`. */
     endpoint: "v1" | "v2" | "retrieve";
-    /** Ablation configuration of this run (task 6.11, requirement 4.10). */
+    /** Ablation configuration of this run. */
     search_mode?: "dense" | "hybrid" | "fts";
     rerank?: boolean;
     hyde?: boolean;
   };
   /**
-   * Query latency percentiles in milliseconds (requirement 4.10). Measured
+   * Query latency percentiles in milliseconds. Measured
    * client-side around the search call in live mode; absent offline.
    */
   latency?: { p50_ms: number; p95_ms: number; samples: number };
@@ -596,7 +596,7 @@ interface Report {
   /** Score gate used for abstention, or null when any hit counts as an answer. */
   abstention_min_score: number | null;
   /**
-   * Extraction-quality metrics (task T2.10, requirement 18.3). Scored offline
+   * Extraction-quality metrics (task T2.10). Scored offline
    * against the golden set's ground-truth annotations when a `--extractions`
    * capture is supplied; otherwise `extraction.pending` is true and the metrics
    * are 0 (no produced output to score).

@@ -4,7 +4,7 @@
 /**
  * pipeline/ocr.ts
  *
- * The optional Tesseract OCR fallback (task 7.10, requirement 5.11).
+ * The optional Tesseract OCR fallback.
  *
  * ## What it is for
  *

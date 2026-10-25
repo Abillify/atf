@@ -4,7 +4,7 @@
 /**
  * v2/render.ts
  *
- * Markdown view v2 (design §4.4).
+ * Markdown view v2.
  *
  * In v1, Markdown was the transport. In v2 it is only a *view*: the records are
  * the truth, and `renderMarkdown` derives a human/LLM-readable rendering from

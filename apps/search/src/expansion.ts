@@ -4,7 +4,7 @@
 /**
  * expansion.ts
  *
- * Small-to-big expansion (task 3.6, Requirement 13.4, design §7.1 step 5).
+ * Small-to-big expansion.
  *
  * A search hit is a small, precise unit (a chunk, a table row-group, a figure).
  * For grounding, the consumer often wants more surrounding context than the hit
@@ -25,7 +25,7 @@
  */
 
 /**
- * The expansion modes exposed by `expand` (design §7.2, Req 13.4). `document`
+ * The expansion modes exposed by `expand`. `document`
  * returns the hit's whole document in reading order — for an e-mail, the whole
  * thread chronologically.
  */

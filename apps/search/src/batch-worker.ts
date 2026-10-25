@@ -4,8 +4,8 @@
 /**
  * batch-worker.ts
  *
- * The v2 batch-processing worker (design §9b.3, task 1.10). It is the missing
- * piece between the revision store (task 1.9), which stages NDJSON page batches
+ * The v2 batch-processing worker. It is the missing
+ * piece between the revision store, which stages NDJSON page batches
  * as `status='received'`, and a searchable index: it claims a staged batch,
  * turns its v2 blocks into index units, embeds them, upserts them, and marks
  * the batch `processed` — at which point `getRevisionState` surfaces the
@@ -27,10 +27,10 @@
  *
  * Determinism (Requirement 5.5):
  *   - Units carry a deterministic `unit_id` (see batch-unit-builder.ts) and are
- *     upserted on the `(tenant_id, unit_id)` partial unique index (task 1.8),
+ * upserted on the `(tenant_id, unit_id)` partial unique index,
  *     so reprocessing the same batch replaces in place and never duplicates.
  *
- * Scope: this uses the FULL multi-level unit builder (task 3.2): chunk / table /
+ * Scope: this uses the FULL multi-level unit builder: chunk / table /
  * figure units from page records, and section / page / document summary units
  * from a trailing `document.end` batch. The contextual header is task 3.3.
  * Visibility (Requirements 5.11, 6.4, 6.5): right before the upserts the worker
@@ -130,7 +130,7 @@ export interface BatchWorkerOptions {
    */
   leaseMs?: number;
   /**
-   * Token counter (task 3.1) used to size text chunks to 350–500 tokens and to
+   * Token counter used to size text chunks to 350–500 tokens and to
    * split oversize tables into row-groups (Requirements 11.2 / 11.3). When
    * omitted the builder uses a character heuristic (~4 chars/token) so ingest
    * still works without a configured TEI `/tokenize` endpoint.
@@ -289,8 +289,7 @@ export function createBatchWorker(
   }
 
   /**
-   * Resolve a vector for every unit, embedding only those that need it (task
-   * 5.4, requirement 9.6).
+   * Resolve a vector for every unit, embedding only those that need it.
    *
    * Batch-loads the stored `section_path`, `content` and `vector` for the
    * incoming unit ids in one query, then for each unit asks {@link shouldReembed}
@@ -367,7 +366,7 @@ export function createBatchWorker(
     batch: ClaimedBatchRow,
   ): Promise<TickOutcome> {
     // Parse the staged NDJSON payload into page records. A staged batch already
-    // validated at PUT time (task 1.9), so a parse failure here is a permanent
+    // validated at PUT time, so a parse failure here is a permanent
     // corruption, not a transient error: mark it processed-empty rather than
     // spinning on it forever.
     let pages: PageRecord[];
@@ -377,7 +376,7 @@ export function createBatchWorker(
     try {
       const records = decodeRecords((batch.payload ?? Buffer.alloc(0)).toString("utf-8"));
       pages = records.filter(isPage);
-      // The emitter (task 2.7) sends `document.end` as a trailing batch. When a
+      // The emitter sends `document.end` as a trailing batch. When a
       // batch carries it, the builder emits the section/page/document summary
       // units from its summaries + outline; a page batch has none and only
       // yields chunk/table/figure units.
@@ -428,7 +427,7 @@ export function createBatchWorker(
       return { kind: "empty", revisionId: batch.revision_id, seq: batch.seq };
     }
 
-    // Prepend the contextual header (task 3.3) to each chunk/table/figure unit's
+    // Prepend the contextual header to each chunk/table/figure unit's
     // embed input BEFORE embedding, so the vector reflects the header. The
     // header goes on embedInput only, never `content`/FTS. When CONTEXTUAL_CHUNK_LLM
     // is on and a summary client is present, a per-chunk placement sentence is
@@ -451,7 +450,7 @@ export function createBatchWorker(
         ),
     });
 
-    // Selective re-embedding (task 5.4, requirement 9.6). Before embedding, look
+    // Selective re-embedding. Before embedding, look
     // up each incoming unit's currently-stored section_path + content + vector
     // (batched). A unit whose section_path AND content are unchanged reuses its
     // stored vector and its embed call is SKIPPED — the metadata fix from the
@@ -796,7 +795,7 @@ interface StoredUnitRow {
 
 /**
  * Batch-load the currently-stored `section_path`, `content` and `vector` for a
- * set of incoming unit ids, keyed by `unit_id` (task 5.4, requirement 9.6). One
+ * set of incoming unit ids, keyed by `unit_id`. One
  * query for the whole batch — the lookup that lets the worker skip the embed
  * call for units whose path and content are unchanged. The vector is read as
  * text (`vector::text`) so a reused embedding round-trips through the same
@@ -900,7 +899,7 @@ async function loadFtsLanguage(client: PoolClient, table: string): Promise<strin
 
 /**
  * Upsert a single unit into the per-collection table on the (tenant_id, unit_id)
- * partial unique index (task 1.8). A deterministic `reference` derived from the
+ * partial unique index. A deterministic `reference` derived from the
  * unit id keeps the (tenant_id, reference) unique index consistent with the unit
  * key, so both a reference collision and a unit_id collision resolve to the same
  * row on reprocessing (Requirement 5.5).
@@ -1030,7 +1029,7 @@ async function upsertUnit(
 
 /**
  * The metadata JSONB stored on a unit row. The filter-relevant fields live in
- * real columns (design §6.2); this mirror carries the same coordinates plus the
+ * real columns; this mirror carries the same coordinates plus the
  * relationship graph so a result row is self-describing without a column join.
  * The Extract provenance of the revision (Requirement 18.2) rides along as
  * `extract_contract` / `extract_pipeline_version` / `extract_prompt_hash` so two

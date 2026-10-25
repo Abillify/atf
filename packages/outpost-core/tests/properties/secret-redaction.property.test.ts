@@ -32,7 +32,6 @@ const nestedWithSecret = (secret: string, depth: number): Record<string, unknown
 };
 
 // Feature: extract-outpost, Property 6: no disclosure of secrets
-// **Validates: Requirements 1.10, 4.6**
 describe("Property 6: no secret disclosure", () => {
   it("secrets never appear in the serialized configuration", async () => {
     await fc.assert(
@@ -43,7 +42,7 @@ describe("Property 6: no secret disclosure", () => {
         async (apiToken, clientSecret, sourceId) => {
           // A config object with secrets smuggled in under plausible names:
           // validation must strip them, and the serialized file must not
-          // contain them (requirement 1.10 — secrets live only in the store).
+          // contain them (secrets live only the store).
           const result = validateConfig({
             extractUrl: "https://extract.example.com",
             collection: "documents",

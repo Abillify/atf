@@ -8,7 +8,7 @@
  * hosting model passes an `asset:<id>[#bbox]` reference (or a bare asset id)
  * taken from its own search results, the engine fetches the bytes through the
  * MCP `get_asset` tool — inheriting its tenant/collection/row ACL and
- * fail-closed behaviour (task 3.9) — parks them in the run's media store, and
+ * fail-closed behaviour — parks them in the run's media store, and
  * the tool hands the model a markdown image with a short-lived media URL
  * (`<MEDIA_BASE_URL>/v1/media/<id>.<ext>`) to paste into the answer. The
  * answer therefore shows the original picture without the model ever seeing

@@ -14,11 +14,11 @@
  *
  * ## Fencing
  *
- * Every write a worker issues is fenced on its lease (design §9b.2,
- * requirement 4.5). Writes to the `jobs` row itself carry the fence in their
- * `WHERE` clause (`lease_holder = … AND lease_epoch = …`), so the check and the
- * write are one statement. Writes to the child tables (stages, docpass state,
- * outboxes) run inside a transaction that first takes a row lock on the job via
+ * Every write a worker issues is fenced on its lease. Writes to the `jobs` row
+ * itself carry the fence in their `WHERE` clause (`lease_holder = … AND
+ * lease_epoch = …`), so the check and the write are one statement. Writes to
+ * the child tables (stages, docpass state, outboxes) run inside a transaction
+ * that first takes a row lock on the job via
  * {@link fenceCheckQuery}; an operator action or a takeover that bumps the epoch
  * either commits before (the check then fails) or waits for the transaction.
  */
@@ -138,7 +138,7 @@ export function getJobQuery(id: string): Query {
 }
 
 /**
- * List jobs for the overview UI (requirement 18.6), newest first, paginated.
+ * List jobs for the overview UI, newest first, paginated.
  *
  * Deliberately cheap: it reads only the `jobs` table — no join onto the
  * per-page `*_stages` tables — so a list of hundreds of jobs stays a single
@@ -201,7 +201,7 @@ export function sourceDigestsByReferenceQuery(
 
 /**
  * The non-terminal jobs of one reference in one collection (extract-outpost E2,
- * requirement 9.3). A delete must cancel these first: a job still emitting
+ * ). A delete must cancel these first: a job still emitting
  * would re-create the document in Search right after the delete removed it.
  *
  * "Non-terminal" is the state machine's vocabulary — `completed`, `failed` and
@@ -270,7 +270,7 @@ export function consumeJobTokensQuery(
 }
 
 /**
- * Atomically reserve `tokens` against the job's budget (requirement 4.9). The
+ * Atomically reserve `tokens` against the job's budget. The
  * reservation only succeeds while `token_budget - tokens_used - tokens_reserved
  * >= tokens`; the comparison and the increment are one statement, so two
  * concurrent pages can never both pass a check the budget only covers once. A
@@ -292,7 +292,7 @@ export function reserveJobTokensQuery(id: string, tokens: number): Query {
 
 /**
  * Atomically add `pages` to a tenant's vision-page counter for one UTC day
- * (task 7.7, requirement 5.8) and return the new total — or no row when the
+ *  and return the new total — or no row when the
  * increment would cross `limit`. The comparison and the increment are one
  * statement (`INSERT … ON CONFLICT DO UPDATE … WHERE … RETURNING`), so
  * concurrent page stages across jobs and worker instances cannot together
@@ -490,7 +490,7 @@ export function patchJobConfigQuery(
 /**
  * Append a warning to a job's `warnings` array without disturbing any other
  * field. Used when a unit fails permanently: the unit is marked `failed` and
- * the job records the warning but keeps going (requirement 4.10). The append is
+ * the job records the warning but keeps going. The append is
  * done in SQL (`warnings || $2`) so concurrent stage failures do not clobber
  * each other's warnings the way a read-modify-write would.
  */
@@ -515,7 +515,7 @@ export function appendJobWarningQuery(
  * and making it immediately due. This is an operator action, so instead of
  * passing the fence it REVOKES the lease: the epoch is bumped and the holder
  * cleared in the same statement, so a worker still running the job fails its
- * next fenced write with a lost lease and stops (requirement 4.5).
+ * next fenced write with a lost lease and stops.
  */
 export function requeueJobQuery(id: string): Query {
 	return {
@@ -577,12 +577,12 @@ export function operatorTransitionQuery(
 
 /**
  * Claim the next runnable job for a worker, with a fresh lease, honouring the
- * large-job lane cap (design §9b/§9a.5, requirements 4.4, 4.5, 4.8, 6.6).
+ * large-job lane cap.
  *
  * `SELECT … FOR UPDATE SKIP LOCKED` lets many workers poll the same queue
  * without blocking each other. A job is runnable when it is `queued` and due
  * (`next_attempt_at <= now`), when it is `paused` with `auto_resume` armed (a
- * dependency outage whose backoff has elapsed — requirement 4.8) and due, or
+ * dependency outage whose backoff has elapsed) and due, or
  * when its lease has expired (crash takeover). An auto-resumed job is moved back
  * to `queued` by the claim itself so the worker walks it through `preparing`.
  * The lease epoch is bumped on claim so a resurrected zombie worker fails the
@@ -673,7 +673,7 @@ export function claimNextJobQuery(
  * Extend a held lease, but only if the caller still owns the current epoch.
  * The fencing guard (`lease_epoch = $3`) means a heartbeat from a worker that
  * has already been superseded is a no-op (0 rows), which the caller reads as
- * "you lost the lease" (requirement 4.5).
+ * "you lost the lease".
  */
 export function heartbeatJobQuery(
 	id: string,
@@ -698,7 +698,6 @@ export function heartbeatJobQuery(
 /**
  * Look up a stage checkpoint by its natural key. The `input_hash` is compared
  * by the caller so a resume can decide reuse-vs-recompute without a model call
- * (requirement 4.3).
  */
 export function getStageQuery(unit: StageUnit, key: StageKey): Query {
 	const cols = STAGE_KEY_COLUMNS[unit];
@@ -712,7 +711,7 @@ export function getStageQuery(unit: StageUnit, key: StageKey): Query {
 /**
  * Upsert a stage checkpoint. On conflict of the natural key the result is
  * overwritten and `attempts` incremented, so a retry after a transient failure
- * records the new attempt count and outcome in place (requirement 4.2).
+ * records the new attempt count and outcome in place.
  */
 export function upsertStageQuery(unit: StageUnit, row: StageUpsert): Query {
 	const keyCols = STAGE_KEY_COLUMNS[unit];
@@ -832,7 +831,7 @@ export function resetPageStagesForPagesQuery(
 
 /**
  * Move every `failed` unit of one stage table back to `pending` and return the
- * pages they belong to (retry-failed, requirement 4.10). The output — including
+ * pages they belong to (retry-failed). The output — including
  * a persisted raw model response — is kept, so a unit whose raw response
  * survived can still be re-parsed.
  */
@@ -848,7 +847,7 @@ export function retryFailedStagesQuery(unit: StageUnit, jobId: string): Query {
 }
 
 /**
- * The DB-backed ordered page scheduler (design §9b, requirement 6.1).
+ * The DB-backed ordered page scheduler.
  *
  * Returns the next `limit` page numbers of `[firstPage..pageCount]` (a job
  * with a `pages` window starts at `firstPage`, else 1) that are NOT yet
@@ -940,7 +939,7 @@ export function finishedPageCountQuery(
 
 // ─── docpass_state ─────────────────────────────────────────────────────────
 
-/** Persist the streaming document-pass state after page N (requirement 4.7). */
+/** Persist the streaming document-pass state after page N. */
 export function upsertDocpassStateQuery(
 	jobId: string,
 	page: number,
@@ -982,7 +981,7 @@ export function deleteDocpassStateFromQuery(
 // ─── outboxes ────────────────────────────────────────────────────────────
 
 /**
- * Stage an emit batch as `pending` before it is sent (design §9b.3).
+ * Stage an emit batch as `pending` before it is sent.
  *
  * Re-staging the same seq is idempotent: an identical digest is a no-op, and a
  * row that Search has already acknowledged is never touched. A row that is
@@ -1028,7 +1027,7 @@ export function insertEmitOutboxQuery(row: {
 }
 
 /**
- * Replace an emit-outbox row's payload and digest in place (design §5 S7).
+ * Replace an emit-outbox row's payload and digest in place.
  *
  * The document pass enriches a page's staged record — sectionPath, refs,
  * merged tableId, furniture — after the concurrent per-page stages staged the

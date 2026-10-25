@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the v2 batch-processing worker (task 1.10) against a
+ * Integration tests for the v2 batch-processing worker against a
  * REAL PostgreSQL + pgvector instance. Unit tests cannot verify the properties
  * that matter here — they are all SQL semantics:
  *
@@ -59,7 +59,7 @@ function fakeEmbeddingClient(opts: { fail?: boolean } = {}): EmbeddingClient {
 /**
  * A fake embedding client that COUNTS how many inputs it embedded, so a test
  * can assert the selective re-embed path skipped the embed call (task 5.4,
- * requirement 9.6). `embedded` is the total number of unit inputs sent to the
+ * ). `embedded` is the total number of unit inputs sent to the
  * model across all calls.
  */
 function countingEmbeddingClient(): EmbeddingClient & { embedded: number; calls: number } {
@@ -676,7 +676,7 @@ describeIfPg("batch worker · real postgres", () => {
     expect(recordedUnitIds.rows.every((r) => chunkUnitIds.has(r.unit_id))).toBe(true);
   });
 
-  // ── task 5.4 / requirement 9.6: selective re-embedding ─────────────────────
+  // ── /: selective re-embedding ─────────────────────
 
   /** Stage a one-page batch whose single paragraph carries `text`. */
   async function stageParagraph(reference: string, text: string): Promise<string> {

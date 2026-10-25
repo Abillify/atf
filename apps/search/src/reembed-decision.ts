@@ -4,8 +4,8 @@
 /**
  * reembed-decision.ts
  *
- * The selective re-embedding decision (task 5.4, design §5 S7 point 2,
- * requirement 9.6: "…only re-embed units whose heading path has
+ * The selective re-embedding decision (task 5.4,
+ * "…only re-embed units whose heading path has
  * changed").
  *
  * ## Why this exists

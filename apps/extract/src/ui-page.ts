@@ -73,7 +73,7 @@ export interface UiPageOptions {
   ingestEnabled: boolean;
   /**
    * Whether the Document Intelligence v2 surface is shown: the Jobs overview
-   * (requirement 18.6), the "Neuer Job" tab and the page preview. Only when the
+   * the "Neuer Job" tab and the page preview. Only when the
    * v2 job store is configured, which is what `/ui/jobs`, `/ui/uploads` and
    * `/ui/render` depend on.
    */
@@ -708,7 +708,7 @@ input[type="number"] { max-width: 160px; }
 .coll-spinner::before { content: ''; width: 18px; height: 18px; border-radius: 50%; border: 2px solid #2d3748; border-top-color: #6366f1; animation: hzspin 0.7s linear infinite; flex-shrink: 0; }
 @keyframes hzspin { to { transform: rotate(360deg); } }
 
-/* ── Jobs overview (requirement 18.6) ──────────────────────────────────────── */
+/* ── Jobs overview ──────────────────────────────────────── */
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .jobs-list { display: flex; flex-direction: column; gap: 0.6rem; }
 .job-item { border: 1px solid #2d3748; border-radius: 10px; overflow: hidden; background: #141824; }
@@ -1956,7 +1956,7 @@ const JS = `
   var healthDeep = $("health-deep");
   if (healthDeep) healthDeep.addEventListener("change", loadHealth);
 
-  // ── Jobs tab (requirement 18.6) ──────────────────────────────────────────────
+  // ── Jobs tab ──────────────────────────────────────────────
   // The overview list + per-job detail with per-stage progress, identity,
   // warnings, cost and remaining time, the operator actions and the page
   // preview. The shared job helpers live above, next to the queue engine.

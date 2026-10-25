@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Post-stream processing and error handling of one LLM attempt (task 18.1).
+ * Post-stream processing and error handling of one LLM attempt.
  * Extracted verbatim from `llm.ts` (task 18.1, Req 13.6) — behaviour is
  * unchanged.
  */

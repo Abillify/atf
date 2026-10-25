@@ -228,12 +228,12 @@ export interface McpHandlerOptions {
   embeddingModel?: string;
   embeddingModelRevision?: string;
   /**
-   * The v2 AssetStore (task 1.11), for the navigation `get_asset` tool's
+   * The v2 AssetStore, for the navigation `get_asset` tool's
    * variant reads + metadata (fail-closed). Null/omitted disables `get_asset`.
    */
   assetStore?: import("../asset-store.js").AssetStore | null;
   /**
-   * The render-cache (task 3.8), for `get_asset`'s optional `region` zoom.
+   * The render-cache, for `get_asset`'s optional `region` zoom.
    * Null/omitted (Extract not configured) disables the region zoom path only.
    */
   renderCache?: import("../render-cache.js").RenderCache | null;
@@ -447,7 +447,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
   registerIngestTools(toolCtx);
   registerCatalogTools(toolCtx);
 
-  // ── v2 document-navigation tools (task 3.9) ────────────────────────────────
+  // ── v2 document-navigation tools ────────────────────────────────
   // Registered onto the SAME server so they inherit the one registration
   // boundary above (auth/scope/idempotency). Additive: the tools above are
   // untouched. `get_asset` uses the AssetStore + render-cache when configured.

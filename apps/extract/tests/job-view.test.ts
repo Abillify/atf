@@ -5,7 +5,7 @@
  * job-view.test.ts
  *
  * The JobRow → Job translation and its derived fields: per-stage progress and
- * the remaining-time estimate (task 5.2, requirement 4.11). The ETA is a
+ * the remaining-time estimate. The ETA is a
  * throughput-based `remaining × perUnit` estimate measured from the first stage
  * checkpoint, so a job that sat queued for a long time before processing does
  * not report an inflated remaining time.

@@ -38,7 +38,7 @@ import { run, type RunOptions } from "./exec.js";
 
 /**
  * A LibreOffice user profile with macros and external content switched off
- * (requirement 5.6), written as `user/registrymodifications.xcu` before the
+ * written as `user/registrymodifications.xcu` before the
  * first start so the very first document conversion already runs hardened.
  *
  * The settings mirror Tools ▸ Options ▸ Security, verified against the
@@ -112,7 +112,7 @@ export async function convertToPdf(
   await mkdir(outputDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
   // Macros and linked content off before the first document touches this
-  // profile (requirement 5.6).
+  // profile.
   await writeHardenedProfile(profileDir);
 
   // The filename is generated, never taken from the upload: it reaches a process
@@ -730,7 +730,7 @@ const LIBREOFFICE_KINDS = new Set<SupportedFormat["kind"]>([
   "visio",
 ]);
 
-/** True when a format is converted to PDF by LibreOffice (design §10.4). */
+/** True when a format is converted to PDF by LibreOffice. */
 export function isLibreOfficeKind(format: SupportedFormat): boolean {
   return LIBREOFFICE_KINDS.has(format.kind);
 }
@@ -740,7 +740,7 @@ export function isLibreOfficeKind(format: SupportedFormat): boolean {
  *
  * PPTX and VSDX join Word/Excel here: LibreOffice lays each out to PDF and the
  * normal PDF pipeline takes over, so a presentation gets page images and a
- * Visio drawing gets its shape text with no bespoke renderer (design §10.4).
+ * Visio drawing gets its shape text with no bespoke renderer.
  */
 export function officeExtensionFor(format: SupportedFormat): string {
   if (!isLibreOfficeKind(format)) {

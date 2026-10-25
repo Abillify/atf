@@ -5,7 +5,7 @@
  * jobs/throughput-tuning.ts
  *
  * The PURE core of the `PAGE_CONCURRENCY` throughput-tuning tool (task 5.3,
- * requirement 6.7). No I/O lives here — every function is a deterministic
+ * ). No I/O lives here — every function is a deterministic
  * transform so the whole thing is unit-testable offline, with no vLLM/GPU
  * cluster in reach. The thin executable that actually drives real jobs and
  * scrapes a live vLLM `/metrics` endpoint is `scripts/throughput-sweep.ts`; it

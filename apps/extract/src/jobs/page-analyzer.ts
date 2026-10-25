@@ -5,8 +5,7 @@
  * jobs/page-analyzer.ts
  *
  * The deterministic per-page analysis stage — `analyzed` (S2) in the per-page
- * stage sequence `analyzed → vision1 → refined → …` (design §5 S2, §9b; task
- * 2.1, requirement 7.1).
+ * stage sequence `analyzed → vision1 → refined → …`.
  *
  * ## What S2 is
  *
@@ -28,7 +27,7 @@
  *
  * S2 is deterministic — no model, so it costs nothing but CPU — but it is still
  * modelled as a {@link StageRunner} stage so a resume reuses it by `input_hash`
- * exactly like every other stage (design §9b): its output is addressed by
+ * exactly like every other stage: its output is addressed by
  * `(job, page, "analyzed", input_hash)` and a crash between S2 and vision does
  * not re-run poppler. The stage declares **no budget** (it calls no model) and
  * persists `raw: null` (there is nothing to `reparse` — the analysis IS the
@@ -123,7 +122,7 @@ export function createPageAnalyzer(deps: PageAnalyzerDeps): PageAnalyzer {
   function runOptions(signal: AbortSignal | undefined): RunOptions {
     return {
       // Passed through as configured: a 0 is a deliberate disable, which the
-      // production-readiness gate rejects (requirement 5.5).
+      // production-readiness gate rejects.
       timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };

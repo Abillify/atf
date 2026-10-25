@@ -12,7 +12,7 @@
  * the very first request (the root layout reads the cookie; the provider
  * takes over after hydration and on changes).
  *
- * Decision (Task 13.6): an in-house thin layer instead of a library. Control
+ * Decision: an in-house thin layer instead of a library. Control
  * only needs two static languages without plural/gender rules; a library
  * (e.g. next-intl) would mean a routing rework (locale prefixes) or
  * client-only translation, with no added value at this scope.

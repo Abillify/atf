@@ -4,14 +4,14 @@
 /**
  * jobs/worker.ts
  *
- * The job worker loop (design §9b, requirements 4.1, 4.4, 4.5, 4.8, 4.12).
+ * The job worker loop.
  *
  * A worker polls the queue with `claimNextJob`, which does a `FOR UPDATE SKIP
  * LOCKED` claim and bumps the lease epoch — so many workers share one queue
  * without stepping on each other, and a job whose lease has expired (its worker
  * crashed) is taken over by whoever claims it next. The claim also picks up a
  * `paused(dependency)` job once its auto-resume backoff has elapsed
- * (requirement 4.8); budget, manual and pin pauses wait for an operator.
+ * budget, manual and pin pauses wait for an operator.
  *
  * The claimed lease is fenced: every persistent write passes the lease token to
  * the store, which refuses it in SQL once the epoch moved on (a takeover, or an
@@ -57,9 +57,9 @@ export interface WorkerConfig {
   /** The current pipeline/prompt stand, compared against each job's snapshot. */
   currentSnapshot: PipelineSnapshot;
   /**
-   * Pages above which a job runs in the bounded large-job lane (requirement
-   * 6.6). Passed to `claimNextJob` so the claim query lanes the job; a job with
-   * an unknown page count is treated as normal until `preparing` sizes it.
+   * Pages above which a job runs in the bounded large-job lane. Passed to
+   * `claimNextJob` so the claim query lanes the job; a job with an unknown page
+   * count is treated as normal until `preparing` sizes it.
    */
   largeJobPageThreshold: number;
   /**

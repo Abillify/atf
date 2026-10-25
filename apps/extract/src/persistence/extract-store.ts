@@ -108,13 +108,13 @@ export interface ExtractStore {
   getJob(id: string): Promise<JobRow | null>;
   /**
    * List jobs newest-first for the overview UI, paginated with `limit`/`offset`
-   * (requirement 18.6). Reads only the `jobs` table — no per-stage join — so the
+   * Reads only the `jobs` table — no per-stage join — so the
    * list stays cheap regardless of the page count of each job.
    */
   listJobs(limit: number, offset: number): Promise<JobRow[]>;
   /**
    * The non-terminal jobs of one reference in one collection (extract-outpost
-   * E2, requirement 9.3). `DELETE /v2/documents/{reference}` cancels these
+   * E2). `DELETE /v2/documents/{reference}` cancels these
    * before deleting in Search, so a still-running emit cannot re-create the
    * document right after the delete. `includeNullCollection` matches jobs whose
    * row carries no collection (they belong to the instance default).
@@ -216,7 +216,7 @@ export interface ExtractStore {
   ): Promise<JobRow | null>;
   /**
    * Atomically add `pages` to a tenant's vision-page counter for one UTC day
-   * (task 7.7, requirement 5.8). Returns the new total, or null when the
+   * Returns the new total, or null when the
    * increment would cross `limit` — the counter is then unchanged.
    */
   consumeVisionDailyPages(
@@ -248,7 +248,7 @@ export interface ExtractStore {
     transition: OperatorTransition,
   ): Promise<JobRow | null>;
   /**
-   * retry-failed (requirement 4.10), in one transaction: move every failed
+   * retry-failed, in one transaction: move every failed
    * unit back to `pending`, reset the crop/emit checkpoints of the affected
    * pages and the document pass from the first affected page on, start a new
    * emit generation, and re-queue the job with a lease revocation. Returns null
@@ -265,7 +265,7 @@ export interface ExtractStore {
   ): Promise<{ job: JobRow; reset: number } | null>;
   /**
    * Claim the next runnable job with a fresh lease, honouring the large-job
-   * lane cap (requirement 6.6). A job with more than `largeJobPageThreshold`
+   * lane cap. A job with more than `largeJobPageThreshold`
    * pages runs in the large lane; no more than `largeJobMaxConcurrency` large
    * jobs are ever leased at once across the fleet, so a worker at the cap falls
    * through to the next normal job. An unsized job (null page count) is treated
@@ -294,7 +294,7 @@ export interface ExtractStore {
   ): Promise<PageStageRow>;
   /**
    * Persist a successful stage checkpoint and settle its token reservation in
-   * ONE transaction (requirement 4.9), so the result and its cost are recorded
+   * ONE transaction, so the result and its cost are recorded
    * together or not at all. Returns the checkpoint and, when a settlement was
    * applied, the updated job row.
    */
@@ -322,7 +322,7 @@ export interface ExtractStore {
    * (`firstPage` defaults to 1; a job with a `pages` window starts later), in
    * strict ascending order, keyed off the `cursorStage` checkpoint. A page with any
    * unit in a transient-failure backoff is not due. The LIMIT bounds the result
-   * so the scheduler never materialises a full-document array (requirement 6.1).
+   * so the scheduler never materialises a full-document array.
    */
   nextRunnablePages(
     jobId: string,

@@ -11,7 +11,6 @@
  *   - Picks the definition that matches the displayed run by flow_id first,
  *     then by node-ID overlap as a fallback.
  *
- * Requirements: 11.1, 11.3
  */
 
 import { useState, useEffect } from "react";

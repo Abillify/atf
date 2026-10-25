@@ -634,7 +634,7 @@ export function registerSearchTool(opts: McpToolContext): void {
             ? { truncated: true, omitted_chunks: r.omitted_chunks }
             : {}),
           ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
-          // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
+          // v2 hit fields, only in v2 mode so legacy output is unchanged.
           ...(v2
             ? {
                 ...(v2.unit_id ? { unit_id: v2.unit_id } : {}),

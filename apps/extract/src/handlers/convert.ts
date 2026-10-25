@@ -187,7 +187,7 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
   ): Promise<ExtractResult> {
     return queue.submit(async () => {
       // Materialise *inside* the queue slot: an upload spooled to disk
-      // (requirement 5.9) must not occupy the heap while it waits behind other
+      //  must not occupy the heap while it waits behind other
       // documents — that wait is exactly what the spool exists to survive.
       const buffer = await parsed.upload.readBuffer();
       try {

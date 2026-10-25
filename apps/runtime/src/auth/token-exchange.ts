@@ -4,7 +4,7 @@
 /**
  * OAuth 2.0 Token Exchange (RFC 8693) — re-export from `@atf/security-kit`.
  *
- * The implementation lives in the shared security kit (Task 9.11) so the
+ * The implementation lives in the shared security kit so the
  * gateway's `mcp-proxy-tool` and the runtime's MCP wrapper exchange against the
  * same IdP contract instead of maintaining two copies. This module keeps the
  * historical import path (`../auth/token-exchange.js`) stable for the wrapper,

@@ -58,7 +58,7 @@ export class HttpMetrics {
   private readonly errors = new Map<string, number>();
   private readonly durations = new Map<string, Histogram>();
   private inFlight = 0;
-  // v2 batch processing (requirement 18.1).
+  // v2 batch processing.
   private readonly batchTicks = new Map<BatchTickOutcome, number>();
   private readonly batchDuration: Histogram = { buckets: Array(batchBuckets.length).fill(0), count: 0, sum: 0 };
   private batchUnits = 0;

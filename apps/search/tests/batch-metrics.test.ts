@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Batch-processing metrics of the v2 batch worker (requirement 18.1), as
+ * Batch-processing metrics of the v2 batch worker, as
  * rendered by `HttpMetrics.render()`. The worker loop wires `recordBatchTick`
  * / `setBatchBacklog`; this test covers the registry contract only.
  */

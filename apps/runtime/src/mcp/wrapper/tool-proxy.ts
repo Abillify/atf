@@ -7,7 +7,6 @@
  * Handles tool call proxying (including Protected Parameter stripping/injection),
  * retry logic, and injectedParams template resolution.
  *
- * Requirements: 7.4, 7.5, 7.6
  */
 
 import type { RequestContext } from "../../types/monitoring.js";
@@ -76,7 +75,6 @@ export interface ToolResult {
  * waits `delayMs` before the next attempt. After all attempts are exhausted it
  * throws an Error whose message includes the server name and attempt count.
  *
- * Requirements: 7.6
  */
 /** Opaque abort read — see the call site in `withRetry` for why it is a function. */
 function isAborted(signal: AbortSignal | undefined): boolean {
@@ -205,7 +203,6 @@ export async function withRetry<T>(
  *
  * Pure function — does not mutate the input args object.
  *
- * Requirements: 4.3
  */
 export function stripProtectedParams(
   args: Record<string, unknown>,
@@ -229,7 +226,6 @@ export function stripProtectedParams(
  * Mapping: ssoToken → user_token, userEmail → user_email, clientId → client_id
  * Pure function — does not mutate args.
  *
- * Requirements: 7.4, 7.5 (Property 19)
  */
 export function injectProtectedParams(
   args: Record<string, unknown>,

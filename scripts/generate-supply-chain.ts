@@ -1233,7 +1233,7 @@ async function loadComponents(
 }
 
 // Fallback files for license branches a crate manifest declares but whose
-// crates.io archive ships no matching text (Task 14.4).
+// crates.io archive ships no matching text.
 // Apache-2.0 is deliberately missing here: the canonical text is injected
 // centrally for all ecosystems.
 const RUST_DECLARED_FALLBACK_FILES = new Map<string, string>([

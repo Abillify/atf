@@ -98,7 +98,7 @@ export type JobReadDecision = "allow" | "not-found" | "forbidden";
  * Why `not-found` rather than `forbidden` for someone else's job: a 403 on a
  * guessed UUID confirms the job *exists*, which leaks other tenants' job ids
  * and activity. The router answers both `not-found` and a genuinely missing id
- * with the byte-identical 404 (requirement 8.14).
+ * with the byte-identical 404.
  *
  * A tenant-less instance normalises both sides to the same configured default,
  * so "both undefined" comparing equal is what makes single-tenant deployments

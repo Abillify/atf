@@ -38,7 +38,7 @@ import { egressFetch } from "../security/egress.js";
 
 /**
  * One asset attached to a v2 search hit (via `include_assets`). Mirrors the
- * `assets[]` entries of the `/v2/search` response (design §7.2): a figure with
+ * `assets[]` entries of the `/v2/search` response: a figure with
  * its classified `figureKind`, `caption`, `page`, `bbox`, and the variant URLs
  * (`thumbUrl` for the thumbnail, `url` for the ACL-checked full/preview asset).
  * All fields but `assetId` are optional so a partial ref (no thumbnail) still
@@ -1187,7 +1187,7 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       typeof item.asset_url === "string" && item.asset_url.trim() !== ""
         ? item.asset_url
         : undefined;
-    // v2 hit provenance (design §7.2): top-level `section_path` breadcrumb,
+    // v2 hit provenance: top-level `section_path` breadcrumb,
     // `pages` numbers, the hit's `figure_kind`/`caption`, and the `assets[]`
     // array from `include_assets`. Read from the item first, then evidence, so
     // both response shapes parse. Undefined for legacy hits.

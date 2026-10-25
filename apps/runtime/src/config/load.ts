@@ -8,7 +8,6 @@
  * (via the EnvSchema from ./schema.ts), and exits with code 1 on any
  * validation failure (listing all invalid/missing variable names on stderr).
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 10.5, 11.5
  */
 
 import { z } from "zod";

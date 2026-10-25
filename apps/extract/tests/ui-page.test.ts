@@ -8,7 +8,7 @@
  * step, so there is nothing to bundle-test; instead we assert the HTML string
  * carries the structure and the accessibility affordances the tabs depend on.
  *
- * The Jobs tab (task 4.5, requirement 18.6) is the focus: it must appear only
+ * The Jobs tab is the focus: it must appear only
  * when the v2 job store is configured, render an accessible tab/panel pair, and
  * expose the live region and progressbar/keyboard affordances the client script
  * populates.

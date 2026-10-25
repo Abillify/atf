@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Dual-runtime proof for the client TLS fragment (requirement 11.8): Node's
+ * Dual-runtime proof for the client TLS fragment: Node's
  * global fetch consumes the undici `dispatcher` key that
  * `createClientTlsInit` produces, so a self-signed HTTPS server becomes
  * reachable only once the CA is configured. Runs under `node --test`

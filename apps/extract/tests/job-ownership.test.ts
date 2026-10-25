@@ -80,7 +80,6 @@ async function buildApp(
 // ── Property 39: read access to jobs (E3), the pure rule ──────────────────
 
 // Feature: extract-outpost, Property 39: read access to jobs (E3)
-// **Validates: Requirements 8.7, 8.13, 8.14**
 describe("Property 39: canReadJob", () => {
   const subjectArb = fc.constantFrom(undefined, "anna", "bob");
   const tenantArb = fc.constantFrom(undefined, "tenant-a", "tenant-b");
@@ -210,7 +209,7 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
     // Indistinguishable from a job id that was never created: same status,
     // same code, same message template. (The message echoes the *requested*
     // id, which the caller already has; nothing in the response reveals that
-    // the row exists — requirement 8.14.)
+    // the row exists.)
     const missing = await request(baseUrl)
       .get("/v2/jobs/00000000-0000-4000-8000-999999999999")
       .set("Authorization", `Bearer ${token}`)

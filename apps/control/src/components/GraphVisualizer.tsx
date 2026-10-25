@@ -14,7 +14,6 @@
  * All heavy logic lives in the submodules; this file wires them together and
  * owns the React Flow canvas.
  *
- * Requirements: 11.1, 11.2
  */
 
 import { useMemo, useState, useCallback, useEffect } from "react";

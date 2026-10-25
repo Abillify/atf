@@ -4,7 +4,6 @@
 /**
  * Unit tests for GraphLayoutEngine.
  *
- * Requirements: 11.1, 11.2
  */
 
 import { describe, test, expect } from "vitest";

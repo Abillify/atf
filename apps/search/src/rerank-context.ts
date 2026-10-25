@@ -3,10 +3,9 @@
 
 // apps/search/src/rerank-context.ts
 //
-// Retrieval v2 — rerank-with-context and diversification (task 3.5).
+// Retrieval v2 — rerank-with-context and diversification.
 //
 // Three pure, side-effect-free helpers used by the v2 retrieval pipeline
-// (design §7.1 steps 3–4, Requirements 13.1/13.2/13.6):
 //
 //   buildRerankDocument(result, maxTokens)
 //     Assembles the string handed to the cross-encoder reranker from the hit's
@@ -16,19 +15,19 @@
 //
 //   diversifyResults(results, opts)
 //     Collapses duplicate table / figure hits into one representative and caps
-//     the number of hits per section (design §7.1 step 4). Purely reorders /
+// the number of hits per section. Purely reorders /
 //     drops; never mutates its inputs.
 //
 //   groupResultsBySection(results)
 //     Groups (already diversified) hits by section path for `group_by: section`
-//     over a single large document (Requirement 13.6, design §6/§7.1). Modelled
+// over a single large document. Modelled
 //     on groupResultsByDocument in handlers/search.ts.
 //
 // Why a CHARACTER cap rather than the async token counter
 // ───────────────────────────────────────────────────────
 // The rerank input cap is a guard-rail, not an exact budget: the reranker itself
 // truncates internally, and the goal is only to keep one document from flooding
-// the cross-encoder's context. Wiring the async TEI /tokenize counter (task 3.1)
+// the cross-encoder's context. Wiring the async TEI /tokenize counter
 // into the synchronous, per-document rerank path — which already runs inside a
 // hot request — would add an HTTP round-trip (or a large batch call) purely to
 // trim a soft limit. We therefore approximate with the same ~4-chars-per-token
@@ -55,7 +54,7 @@ export const RERANK_MAX_TOKENS = 1024;
 /** Characters per token used for the char-based approximation (see file header). */
 export const CHARS_PER_TOKEN = 4;
 
-/** Default per-section cap for diversification (design §7.1 step 4, "at most n"). */
+/** Default per-section cap for diversification ("at most n"). */
 export const DEFAULT_SECTION_CAP = 3;
 
 // ─── Context extraction ─────────────────────────────────────────────────────
@@ -204,7 +203,7 @@ function diversifyDocumentKey(r: SearchResult, includeAllVersions: boolean): str
 }
 
 /**
- * Diversify a ranked result list (design §7.1 step 4).
+ * Diversify a ranked result list.
  *
  * Two independent passes, applied in this order:
  *

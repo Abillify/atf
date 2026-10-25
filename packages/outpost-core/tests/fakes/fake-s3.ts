@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * In-memory S3 fake behind a {@link SourceFetch} (task 14.6).
+ * In-memory S3 fake behind a {@link SourceFetch}.
  *
  * Serves `ListObjectsV2` with an arbitrary page size and real
  * `ContinuationToken` pagination, plain object GETs, and fault injection for

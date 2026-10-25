@@ -8,7 +8,6 @@
  * input guardrail evaluation, BYOK resolution, idempotency management,
  * canary/AB routing, async job dispatch, and the post-execution finalize logic.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 18.1, 20.1
  */
 
 import { isStudioTestModel } from "../../graph/flow-registry-studio.js";

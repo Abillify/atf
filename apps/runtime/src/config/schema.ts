@@ -13,7 +13,6 @@
  * schema cannot be meaningfully split without introducing fragile cross-file
  * composition that would hurt readability and maintainability.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 10.5, 11.5
  */
 
 import { z } from "zod";
@@ -359,10 +358,10 @@ export interface AppConfig {
   databaseUrl?: string;
   databasePoolMax?: number;
   /**
-   * Effective value of MIGRATE_ON_START — `loadConfig()` always fills it
-   * (requirement 12.4: true outside production, false in production unless
-   * set explicitly). Optional like the other database fields so hand-built
-   * test configs stay valid; boot code treats it through `loadConfig()`.
+   * Effective value of MIGRATE_ON_START — `loadConfig` always fills it
+   * (true outside production, false production unless set explicitly).
+   * Optional like the other database fields so hand-built test configs
+   * stay valid; boot code treats it through `loadConfig`.
    */
   migrateOnStart?: boolean;
   tenantRlsEnabled?: boolean;
@@ -381,8 +380,6 @@ export interface AppConfig {
   embeddingCacheMaxEntries?: number;
   embeddingCacheTtlSeconds?: number;
   routerQualityHalfLifeMs?: number;
-  /** TTL (ms) of the cached Search `collection_stats` capabilities used to
-   * hide navigation tools a collection cannot serve; 0 disables hiding. */
   collectionCapabilityTtlMs?: number;
   retentionEnabled?: boolean;
   retentionSweepIntervalMs?: number;
@@ -1345,7 +1342,7 @@ export const EnvSchema = z.object({
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(1000).default(10),
   /**
    * Apply schema migrations during boot. Unset means: true outside
-   * production, false when APP_ENV=production (requirement 12.4) — a
+   * production, false when APP_ENV=production — a
    * production rollout runs the standalone `bun run migrate` command as a
    * one-shot Job instead of doing DDL on the boot path of every replica.
    * The effective default is computed in `load.ts` from APP_ENV.

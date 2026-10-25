@@ -5,7 +5,7 @@
  * jobs/job-runner.ts
  *
  * The real {@link JobRunner}: the v1 per-page pipeline ported onto stages and a
- * DB-backed ordered scheduler (design §9b; task 1.7, requirements 4.2, 6.1).
+ * DB-backed ordered scheduler.
  *
  * ## What it does
  *
@@ -17,10 +17,10 @@
  * unfinished page numbers (`nextRunnablePages`, LIMIT `PAGE_CONCURRENCY`), runs
  * those pages concurrently through their stages, and loops. The store's `LIMIT`
  * is what keeps memory flat: the runner never holds more than `PAGE_CONCURRENCY`
- * pages, and never builds a full-document array (requirement 6.1).
+ * pages, and never builds a full-document array.
  *
  * Each page runs the same work v1 did, now as {@link StageRunner} stages so a
- * resume reuses completed checkpoints without a model call (requirement 4.2):
+ * resume reuses completed checkpoints without a model call:
  *
  *   render   deterministic — rasterise the page and read its text layer
  *   vision1  the one model call — summary, figures, body Markdown
@@ -189,13 +189,13 @@ import type { EmitOutcome } from "./emitter.js";
 export const RENDER_STAGE = "render";
 export const VISION1_STAGE = "vision1";
 export const CROPS_STAGE = "crops";
-/** The per-figure Pass-2 stage (design §5 S5, task 2.5); keyed per figure. */
+/** The per-figure Pass-2 stage; keyed per figure. */
 export const FIGURE2_STAGE = "figure2";
 
-/** The per-tile transcription stage (design §5 S6, task 5.1); keyed per tile. */
+/** The per-tile transcription stage; keyed per tile. */
 export const TILED_STAGE = "tiled";
 /**
- * The strictly-ordered streaming document pass (design §5 S7, §9a.2; task 2.6).
+ * The strictly-ordered streaming document pass.
  * Runs AFTER the concurrent per-page stages, walking pages 1..N in order and
  * carrying the running state persisted in `docpass_state`.
  */
@@ -228,7 +228,7 @@ export interface JobRunnerConfig {
   renderDpi: number;
   /**
    * FIGURE_DPI — the resolution a figure crop is re-rendered at for Pass 2
-   * (design §5 S5, task 2.5). The crop shown to the Pass-2 model is rendered at
+   * The crop shown to the Pass-2 model is rendered at
    * this DPI, higher than the model-resolution page, so small labels stay
    * legible.
    */
@@ -248,18 +248,18 @@ export interface JobRunnerConfig {
   labelCoverageMin: number;
   /**
    * The long edge, in pixels, a single tile of a large-format page is rendered
-   * towards (TILE_TARGET_PIXELS; design §5 S6, task 5.1). Drives the tile count
+   * towards (TILE_TARGET_PIXELS). Drives the tile count
    * and per-tile DPI. Default 2000 when omitted.
    */
   tileTargetPixels?: number;
   /**
    * The fraction a tile's own extent adjacent tiles overlap by
-   * (TILE_OVERLAP_FRACTION; requirement 8.5). Default 0.1 (10 %) when omitted.
+   * (TILE_OVERLAP_FRACTION). Default 0.1 (10 %) when omitted.
    */
   tileOverlapFraction?: number;
   /**
    * Hard ceiling on `cols × rows` tiles for one page (TILE_MAX_PER_PAGE; budget
-   * guard, requirement 8.6). Default 16 when omitted.
+   * guard). Default 16 when omitted.
    */
   tileMaxPerPage?: number;
   /**
@@ -269,7 +269,7 @@ export interface JobRunnerConfig {
   renderMaxPixels?: number;
   /**
    * Enable the deterministic text fast-path (TEXT_FAST_PATH; task 2.9,
-   * requirement 7.5). When true, a `text` page with no table/figure candidates
+   * ). When true, a `text` page with no table/figure candidates
    * and usable S2 geometry builds its blocks from that geometry with no vision
    * call. Default off when omitted, so a runner constructed without this config
    * behaves exactly as before this task.
@@ -277,38 +277,38 @@ export interface JobRunnerConfig {
   textFastPath?: boolean;
   /**
    * The ink-outside-blocks ceiling for fast-path eligibility
-   * (TEXT_FAST_PATH_MAX_INK_RATIO; requirement 7.5). A `text` page qualifies
+   * (TEXT_FAST_PATH_MAX_INK_RATIO). A `text` page qualifies
    * only when its ink outside the text blocks is at or below this fraction.
    * Default 0.04 when omitted.
    */
   textFastPathMaxInkRatio?: number;
   /**
-   * The summary text-LLM model id (task 2.7), folded into a summary stage's
+   * The summary text-LLM model id, folded into a summary stage's
    * input hash so a model change recomputes. Undefined when SUMMARY_URL is not
    * configured (the summary pass is then skipped).
    */
   summaryModel?: string | undefined;
   /**
    * Rough per-summary output-token estimate for the budget guard before a
-   * summary model call (task 2.7). Default 512 when omitted.
+   * summary model call. Default 512 when omitted.
    */
   summaryTokenEstimate?: number | undefined;
   /**
-   * JOB_MAX_TRANSIENT_WAIT_MS (requirement 4.8): how long a run keeps retrying
+   * JOB_MAX_TRANSIENT_WAIT_MS: how long a run keeps retrying
    * a transiently failing dependency (vision, text LLM, Search) in place, with
    * backoff, before it hands the job back as `paused(dependency)` with an
    * auto-resume instant. Default 0: pause on the first transient stall.
    */
   maxTransientWaitMs?: number;
   /**
-   * VISION_BUDGET_PAGES_PER_DAY (task 7.7, requirement 5.8): VLM pages the
+   * VISION_BUDGET_PAGES_PER_DAY: VLM pages the
    * job's tenant may spend per UTC day across all its jobs. 0 (default when
    * omitted) disables the cap. Only consulted for a job with an attributable
    * tenant; over the cap the run fails with `BUDGET_EXCEEDED`.
    */
   visionBudgetPagesPerDay?: number;
   /**
-   * MAX_PAGES (requirement 5.8): the ceiling on the pages a single job may
+   * MAX_PAGES: the ceiling on the pages a single job may
    * process. The v1 extractor refuses an over-long document before any model
    * call; the v2 runner must apply the same ceiling, or a job whose token
    * budget is unset (and a job with no attributable tenant, which the daily
@@ -326,22 +326,22 @@ export interface JobRunnerDeps {
   config: JobRunnerConfig;
   logger: Logger;
   /**
-   * The deterministic S2 page analyzer (task 2.1). Optional: when present, the
+   * The deterministic S2 page analyzer. Optional: when present, the
    * runner analyses each page's geometry and feeds the numbered-heading
-   * candidates to the Pass-1 prompt (task 2.3, requirement 8.1/9.2). Absent in a
+   * candidates to the Pass-1 prompt. Absent in a
    * deployment or test that has not wired S2 — the page then falls through to
    * vision with no hints, exactly as before this task.
    */
   analyzer?: PageAnalyzer | null;
   /**
-   * The outbox emitter (task 1.12). Optional: a deployment without Search runs
+   * The outbox emitter. Optional: a deployment without Search runs
    * processing → emitting and completes without sending anything, exactly as
    * before this task. When present, the runner invokes it in the `emitting`
    * phase, streaming the staged outbox to Search and reconciling on resume.
    */
   emitter?: Emitter | null;
   /**
-   * The text-LLM client for the summary hierarchy (task 2.7, requirement 9.5).
+   * The text-LLM client for the summary hierarchy.
    * Optional: a deployment without `SUMMARY_URL` passes `null`, the summary pass
    * is skipped cleanly and `document.end.summaries` stays empty — the job still
    * completes. When present, the document pass produces section summaries as
@@ -351,7 +351,7 @@ export interface JobRunnerDeps {
    */
   summaryClient?: SummaryClient | null;
   /**
-   * Observability hooks (task 2.9, requirement 18.1). Optional so the runner is
+   * Observability hooks. Optional so the runner is
    * testable with a no-op. `recordFastPath` counts each page's route — the
    * deterministic text fast-path or the vision path — which `/metrics` exposes
    * as the "Anteil Fast-Path" share. `recordTextFidelity` keeps the fast-path
@@ -372,7 +372,7 @@ export interface JobRunnerDeps {
    */
   sourceStore?: SourceStore | null;
   /**
-   * The Tesseract OCR fallback (task 7.10, requirement 5.11). Optional: when
+   * The Tesseract OCR fallback. Optional: when
    * absent or disabled (`OCR_FALLBACK=off`, the default), a VLM outage fails a
    * scanned page for a later retry exactly as before. When enabled, the runner
    * recognises the page image with Tesseract instead and records a warning on
@@ -442,14 +442,14 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** The observability surface the runner records against (task 2.9). */
+/** The observability surface the runner records against. */
 export interface RunnerMetrics {
   /** Count a page's route: the deterministic fast path, or the vision path. */
   recordFastPath(route: "fast-path" | "vision"): void;
   /** Record a text-fidelity check outcome for a page. */
   recordTextFidelity(options: { flagged: boolean; missingTokens: number }): void;
   /**
-   * Record one stage execution (requirement 18.1): outcome, duration and model
+   * Record one stage execution: outcome, duration and model
    * tokens. Optional so a metrics stub without it still type-checks; the
    * production wiring passes the shared {@link import("../http-metrics.js").HttpMetrics}.
    */
@@ -482,7 +482,7 @@ interface VisionStageParsed {
     id: string;
     description: string;
     /**
-     * The model-supplied figure kind (task 2.3). Optional so a checkpoint
+     * The model-supplied figure kind. Optional so a checkpoint
      * written before this field existed still loads; `buildPageRecord` falls
      * back to `"other"`.
      */
@@ -499,11 +499,11 @@ interface VisionStageParsed {
     snappedBbox?: BoundingBox | undefined;
     /**
      * The verbatim words of the text layer inside the snapped bbox (task 2.4,
-     * requirement 8.2). Undefined for a scan or a container without
+     * ). Undefined for a scan or a container without
      * `-bbox-layout` geometry.
      */
     regionText?: string | undefined;
-    /** `regionText` deduplicated and normalised (task 2.4). */
+    /** `regionText` deduplicated and normalised. */
     labels?: string[] | undefined;
     /**
      * The structured Pass-2 transcription (task 2.5, S5). Filled by the
@@ -515,10 +515,9 @@ interface VisionStageParsed {
     transcription?: Transcription | undefined;
   }>;
   /**
-   * Tables the model flagged as crossing a page boundary (task 2.3, requirement
-   * 9.2). Carried on the checkpoint so the document pass (task 2.6) can merge
-   * them. Optional so a checkpoint written before this field existed still
-   * loads.
+   * Tables the model flagged as crossing a page boundary. Carried on the
+   * checkpoint so the document pass can merge them. Optional so a checkpoint
+   * written before this field existed still loads.
    */
   tables?: Array<{ index: number; continues: boolean; continuationOf: boolean }>;
   warnings: string[];
@@ -529,36 +528,36 @@ interface VisionStageParsed {
   imageWidth: number;
   imageHeight: number;
   /**
-   * The deterministic page class (task 2.2). Persisted on the vision checkpoint
+   * The deterministic page class. Persisted on the vision checkpoint
    * so a checkpoint reuse (resume or a render-hash duplicate) keeps the same
    * classification without re-running the classifier.
    */
   pageClass?: PageClass;
   /**
-   * The page's render hash (task 2.2, requirement 7.4). Persisted so a later
+   * The page's render hash. Persisted so a later
    * identical page can reuse this page's vision result instead of calling the
    * model again. `null` when the image could not be hashed.
    */
   renderHash?: string | null;
   /**
    * True when this page took the deterministic text fast-path (task 2.9,
-   * requirement 7.5): its blocks were built from the S2 geometry with NO vision
+   * ): its blocks were built from the S2 geometry with NO vision
    * call, so `usage` is all-zero. Persisted so a resume replays the page from
    * its checkpoint with no model call, exactly like a vision page. Optional so
    * a checkpoint written before this field existed still loads.
    */
   fastPath?: boolean;
   /**
-   * The deterministic blocks built from the S2 geometry on the fast path (task
-   * 2.9). Present only when `fastPath` is true; `buildPageRecord` emits these
+   * The deterministic blocks built from the S2 geometry on the fast path.
+   * Present only when `fastPath` is true; `buildPageRecord` emits these
    * verbatim instead of deriving a paragraph from the (empty) vision markdown.
    */
   fastPathBlocks?: Block[];
   /**
-   * The previous-page context actually handed to the Pass-1 prompt (design §5
-   * S3), and its hash. `null` when the page ran without context (first page,
-   * page N−1 not finished yet, fast path, or a dedup copy). Recorded on the
-   * checkpoint so the input that shaped the model's answer is auditable; see
+   * The previous-page context actually handed to the Pass-1 prompt, and its
+   * hash. `null` when the page ran without context (first page, page N−1 not
+   * finished yet, fast path, or a dedup copy). Recorded on the checkpoint so
+   * the input that shaped the model's answer is auditable; see
    * {@link prevPageContextFor} for why it is deliberately NOT part of the
    * vision1 input hash.
    */
@@ -566,20 +565,20 @@ interface VisionStageParsed {
   prevPageContextHash?: string | null;
   /**
    * The page this page's vision result was copied from by the render-hash
-   * dedup (requirement 7.4). Set only on a duplicate; Pass 2 and tiling then
+   * dedup. Set only on a duplicate; Pass 2 and tiling then
    * copy the source page's `figure2`/`tiled` results instead of calling the
    * model again.
    */
   dedupOf?: number;
   /**
-   * The result of the large-format tiling stage (design §5 S6, task 5.1,
-   * requirement 8.5). Present only for a page that was split into overlapping
-   * tiles (`drawing` class or over-A3): it carries the merged per-tile
-   * transcription and the `tile:` asset refs, which `buildPageRecord` emits as
-   * a page-spanning `technical_drawing` figure block with `tiles[]`. Absent for
-   * a normal (single-tile) page. Filled by `runTilePass` after the figure Pass
-   * 2 stage; persisted only implicitly via the per-tile `tiled` checkpoints, so
-   * a resume replays each tile with no model call and re-merges deterministically.
+   * The result of the large-format tiling stage. Present only for a page that was
+   * split into overlapping tiles (`drawing` class or over-A3): it carries the
+   * merged per-tile transcription and the `tile:` asset refs, which
+   * `buildPageRecord` emits as a page-spanning `technical_drawing` figure block
+   * with `tiles[]`. Absent for a normal (single-tile) page. Filled by
+   * `runTilePass` after the figure Pass 2 stage; persisted only implicitly via the
+   * per-tile `tiled` checkpoints, so a resume replays each tile with no model call
+   * and re-merges deterministically.
    */
   tiled?: {
     /** The merged, overlap-deduplicated transcription of the whole plan. */
@@ -721,7 +720,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       reparseRequested || cfg[REPARSE_APPLIED_FLAG] === true;
     const policy = reusePolicyFor(ctx.resume);
 
-    // resume_policy (requirement 4.12): continue reuses every finished
+    // resume_policy: continue reuses every finished
     // checkpoint whatever its hash; restart-stage reuses the ones before the
     // restart stage; a reparse reuses the (re-parsed) model checkpoints so the
     // rebuilt downstream never calls a model for a unit that already has one.
@@ -737,7 +736,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       stand: scope().stand,
       reuseDoneRegardlessOfHash: reuse,
       signal: abort.signal,
-      // Every stage execution feeds the per-stage metrics (requirement 18.1).
+      // Every stage execution feeds the per-stage metrics.
       ...(recordStage !== undefined
         ? {
             onStage: (observation: StageExecution) =>
@@ -754,7 +753,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       job.token_budget !== null
         ? createDbBudgetLedger(store, job.id, fence)
         : unlimitedBudget;
-    // The tenant/day axis (task 7.7, requirement 5.8): independent of the
+    // The tenant/day axis: independent of the
     // per-job token ledger above, this caps how many VLM pages the owning
     // tenant may spend today across ALL its jobs. A job without a tenant is
     // uncapped — there is no tenant to attribute the spend to.
@@ -857,7 +856,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       }
     }
 
-    // ── native path: BPMN / chart-free XLSX (design §10, no model) ────────
+    // ── native path: BPMN / chart-free XLSX (no model) ────────
     if (prepared.native !== null) {
       try {
         if (reparseRequested) {
@@ -901,7 +900,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       const firstPage = window.first;
       const pageCount = window.last;
       const pageTotal = window.count;
-      // MAX_PAGES (requirement 5.8): the same ceiling the v1 extractor applies
+      // MAX_PAGES: the same ceiling the v1 extractor applies
       // before any model call. Without it a v2 job whose token budget is unset
       // — and a job with no attributable tenant, which the daily budget leaves
       // uncapped — drives vision over every page of an over-long document with
@@ -937,7 +936,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // ── processing: drive pages through stages in order ─────────────────
       await store.setJobStatus(job.id, "processing", null, fence);
 
-      // ── reparse (requirement 4.6): re-apply the parsers to every persisted
+      // ── reparse: re-apply the parsers to every persisted
       //    raw response, then rebuild the downstream — no model call ───────
       if (reparseRequested) {
         const reparsed = await reparseCheckpoints({
@@ -967,7 +966,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         );
       }
 
-      // ── restart-stage (requirement 4.12): recompute from the restart stage
+      // ── restart-stage: recompute from the restart stage
       //    on for every page. Applied once per stand; the marker makes a
       //    resume of an interrupted restart continue instead of starting over.
       if (policy.restartFrom !== null) {
@@ -994,7 +993,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         }
       }
 
-      // Render-hash dedup registry for this run (task 2.2, requirement 7.4).
+      // Render-hash dedup registry for this run.
       const dedup = createDedupRegistry();
 
       const outcome = await drivePages({
@@ -1344,9 +1343,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
   /**
    * Wait for `retryAt` when it falls within the run's transient-wait budget
-   * (requirement 4.8: retry with backoff first, pause only after
-   * JOB_MAX_TRANSIENT_WAIT), else return the `paused(dependency)` outcome with
-   * the auto-resume instant.
+   * (retry with backoff first, pause only after JOB_MAX_TRANSIENT_WAIT), else
+   * return the `paused(dependency)` outcome with the auto-resume instant.
    */
   async function waitOrPause(
     stall: { since: number | null },
@@ -1443,7 +1441,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
   /**
    * Drive a natively-parsed source (BPMN, chart-free XLSX): no vision, no
-   * rendering, no document pass (design §10). The contract records were already
+   * rendering, no document pass. The contract records were already
    * built during `prepare`. This stages one emit-outbox row per record and one
    * asset-outbox row per referenced asset (in page order, all fenced), then runs
    * the emitting phase directly. `native:` asset bytes (the original `.bpmn`
@@ -1467,7 +1465,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         "The pages selection is ignored for a native source; every record is staged",
       );
     }
-    // MAX_PAGES (requirement 5.8): the same ceiling as the vision path, so a
+    // MAX_PAGES: the same ceiling as the vision path, so a
     // native source (a many-sheet XLSX, a large BPMN set) cannot stage an
     // unbounded emit outbox either. A native record is one page here.
     if (
@@ -1764,7 +1762,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * re-rendering the crop from the prepared source. The page comes from the
    * outbox row's `page` column and the bbox from THAT page's staged record — a
    * single-row lookup, cached for a handful of pages — so the loader never
-   * loads every page payload (requirement 6.1). Only a legacy row without a
+   * loads every page payload. Only a legacy row without a
    * page falls back to a one-time index over the staged records.
    */
   function createCropLoader(deps: {
@@ -1844,8 +1842,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         if (entry === undefined) return null;
         try {
           // A figure crop OR a tile: both are a bbox region re-rendered from the
-          // source (design §5 S6 — tile bytes are not stored, they reproduce on
-          // demand exactly like a figure crop).
+          // source (tile bytes are not stored, they reproduce on demand exactly
+          // like a figure crop).
           if (
             (entry.kind === "figure" || entry.kind === "tile") &&
             entry.bbox !== undefined &&
@@ -1891,7 +1889,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   /**
-   * The reparse pass (requirement 4.6): walk the document in page windows and
+   * The reparse pass: walk the document in page windows and
    * re-apply the current parsers to every persisted raw response — Pass 1
    * (`vision1`, re-snapping figure bboxes deterministically from a re-render),
    * Pass 2 (`figure2`) and tiles (`tiled`) — WITHOUT any model call. Units that
@@ -2120,8 +2118,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   /**
-   * The strictly-ordered streaming document pass (design §5 S7, §9a.2; task
-   * 2.6, requirements 9.1–9.4, 4.7).
+   * The strictly-ordered streaming document pass.
    *
    * ## Why a separate ordered phase
    *
@@ -2154,7 +2151,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     stageRunner: StageRunner;
     budget: BudgetLedger;
     summaryGenerator: SummaryGenerator | null;
-    /** DOCX authoritative heading levels (requirement 10.3), or null. */
+    /** DOCX authoritative heading levels, or null. */
     headingLevelHints: ReadonlyMap<string, number> | null;
   }): Promise<JobRunOutcome> {
     const {
@@ -2167,7 +2164,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     } = args;
     const { fence, stand } = scope();
 
-    // Rehydrate the running state from the last finished page (design §9a.2).
+    // Rehydrate the running state from the last finished page.
     const persisted = await store.latestDocpassState(job.id);
     const initial: DocpassState = parseDocpassState(persisted?.state ?? null);
     const pass = createDocumentPass(
@@ -2239,7 +2236,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           : null;
       const applied = pass.applyPage(record, analysis, nextRecord);
 
-      // ── Summary hierarchy (task 2.7, requirement 9.5) ─────────────────
+      // ── Summary hierarchy ─────────────────
       // A section that closed on this page gets its summary now. A text-LLM
       // outage pauses the job on dependency, a budget exhaustion on budget.
       // Nothing of this page is committed before the summaries succeed, so the
@@ -2255,7 +2252,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       }
 
       // Enriched payload + state after this page + docpass checkpoint: one
-      // transaction (requirement 4.7), so the resume point and the enriched
+      // transaction, so the resume point and the enriched
       // record can never disagree.
       await store.commitDocpassPage(
         job.id,
@@ -2491,12 +2488,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         settled.delete(page);
         if (result.status === "fulfilled") {
           if (result.value.budgetExceeded === true) {
-            // The tenant's daily vision-page budget is exhausted (requirement
-            // 5.8). Design §Budget: the job FAILS rather than pauses — a
-            // paused(budget) job would suggest an operator could resume it
-            // today, but the counter only resets at the next UTC day. The
-            // worker records the cause (which names BUDGET_EXCEEDED) as a job
-            // warning and transitions to failed.
+            // The tenant's daily vision-page budget is exhausted. Design
+            // §Budget: the job FAILS rather than pauses — a paused(budget)
+            // job would suggest an operator could resume it today, but the
+            // counter only resets at the next UTC day. The worker records the
+            // cause (which names BUDGET_EXCEEDED) as a job warning and
+            // transitions to failed.
             return {
               status: "failed",
               error: tenantDailyBudgetFailureMessage(
@@ -2664,7 +2661,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     paused: boolean;
     /**
      * True when this page's vision model call pushed the tenant over its
-     * daily page budget (task 7.7, requirement 5.8). The page's own
+     * daily page budget. The page's own
      * checkpoint is persisted — only the JOB fails, so a later manual retry
      * after the day rolls over reuses this page without a model call.
      */
@@ -2720,7 +2717,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
     // Source, page, render DPI, model, the fast-path knobs that decide whether
     // the page is built without the model, and (via stageHash) the run's
-    // pipeline/prompt stand — so a changed prompt recomputes (design §9b.2).
+    // pipeline/prompt stand — so a changed prompt recomputes.
     const visionInputHash = stageHash([
       job.source_sha256,
       page,
@@ -2733,7 +2730,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // Set only when the page actually reached the vision model: a fast-path
     // page, a render-hash dedup reuse, or a checkpoint replay runs no model
     // call and must not be charged against the tenant's daily page budget
-    // (task 7.7, requirement 5.8). The closure flag is the reliable signal —
+    // The closure flag is the reliable signal —
     // the persisted checkpoint cannot tell a reuse copy from a fresh call.
     let modelCalled = false;
     let visionParsed: VisionStageParsed;
@@ -2764,7 +2761,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           }
           pageImage = rendered.image;
 
-          // ── render-hash dedup (task 2.2, requirement 7.4) ──────────────
+          // ── render-hash dedup ──────────────
           // If an already-processed page rendered identically, reuse its vision
           // result verbatim instead of calling the model again. The reuse is a
           // deterministic copy of the source page's persisted vision checkpoint
@@ -2788,7 +2785,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             // same window); fall through to a fresh, correct vision call.
           }
 
-          // ── S2 heading candidates as a Pass-1 hint (task 2.3) ──────────
+          // ── S2 heading candidates as a Pass-1 hint ──────────
           // Best-effort and order-independent: the analyzer never throws (it
           // degrades to an empty analysis), so a page with no text layer or a
           // container without `-bbox-layout` simply passes no hints. The
@@ -2801,7 +2798,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             text: c.text,
           }));
 
-          // ── S2 classification (task 2.2, requirement 7.2) ─────────────
+          // ── S2 classification ─────────────
           // The real page size in points (never pixels) and the ink outside
           // the S2 text blocks drive the class, which in turn gates the fast
           // path and the tiling stage.
@@ -2838,17 +2835,17 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             }
           }
 
-          // ── previous-page context (design §5 S3) ───────────────────────
+          // ── previous-page context ───────────────────────
           const prev = await prevPageContextFor(job, page);
 
           // This page takes the vision path (either the fast path was disabled
           // / ineligible, or there was no S2 analysis). Count the route so the
-          // "Anteil Fast-Path" share (requirement 18.1) reflects it.
+          // "Anteil Fast-Path" share reflects it.
           metrics?.recordFastPath("vision");
           modelCalled = true;
           let response: VisionPageResult;
-          // Set when the Tesseract fallback produced this page's text (task
-          // 7.10); drives the warning and `usedOcr` on the checkpoint.
+          // Set when the Tesseract fallback produced this page's text;
+          // drives the warning and `usedOcr` on the checkpoint.
           let ocrFallback = false;
           try {
             response = await vision.analyzePage({
@@ -2866,7 +2863,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               ...(prev.context !== null ? { prevPage: prev.context } : {}),
             });
           } catch (error) {
-            // ── Tesseract OCR fallback (task 7.10, requirement 5.11) ───────
+            // ── Tesseract OCR fallback ───────
             // A VLM outage must not cost a scanned page its content: with
             // OCR_FALLBACK=tesseract, recognise the rendered page image with
             // Tesseract instead and record a warning on the page. The gate is
@@ -2916,7 +2913,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             };
           }
           const parsed = parseVisionPage(response.raw, page);
-          // ── S4 deterministic refinement (task 2.4, requirement 8.2) ────
+          // ── S4 deterministic refinement ────
           // Snap each figure bbox to the ink + text blocks and pull the
           // text-layer words inside it. Folded into the vision1 checkpoint
           // (not a separate stage) because it consumes exactly what this stage
@@ -2961,7 +2958,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           };
         },
       });
-      // Tenant daily vision-page budget (task 7.7, requirement 5.8): charge
+      // Tenant daily vision-page budget: charge
       // exactly the pages that took a real model call. The check runs
       // OUTSIDE runStage on purpose — a tenant-budget exhaustion is not a
       // stage failure, and reporting it through the stage would either
@@ -3100,7 +3097,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // ── tiling (S6): split a large-format page into overlapping tiles ─────
     // A `drawing` page or a sheet over A3 is transcribed tile-by-tile at a
     // higher effective resolution and the results merged, with each tile stored
-    // as a `tile` asset (design §5 S6, task 5.1, requirement 8.5). A normal page
+    // as a `tile` asset. A normal page
     // is a single tile and is left untouched. Budget exhaustion pauses the job
     // cleanly, exactly like the figure Pass-2 path above.
     try {
@@ -3126,7 +3123,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       throw err;
     }
 
-    // ── fast-path page summary (requirement 7.5, design §5 S3) ────────────
+    // ── fast-path page summary ────────────
     // A fast-path page made no vision call, so it has no Pass-1 summary. When
     // the text-LLM is configured, it gets one as its own checkpointed,
     // budget-gated stage; without it the page simply carries none.
@@ -3181,7 +3178,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
   /**
    * Reuse an already-processed identical page's vision result (task 2.2,
-   * requirement 7.4). Loads the source page's `vision1` checkpoint; when it is
+   * ). Loads the source page's `vision1` checkpoint; when it is
    * `done` with a persisted raw response, returns a stage result that carries
    * the source's raw + parsed but re-anchored to this page's size/image
    * dimensions (so crops and the record use this page's own geometry, which is
@@ -3249,7 +3246,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
   /**
    * The finished result of a dedup source page's per-figure / per-tile stage
-   * (requirement 7.4), or `null` when it is not `done` yet (e.g. still in
+   * or `null` when it is not `done` yet (e.g. still in
    * flight in the same window) — the caller then runs the stage normally. The
    * raw response is carried along so a `reparse` of the copy still works.
    */
@@ -3282,7 +3279,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    *      ({@link detectFastPathCandidates}: column-aligned lines, captions);
    *   3. the built blocks cover the text layer's words
    *      ({@link checkFastPathCoverage});
-   *   4. the fidelity check (requirement 7.5) does not flag — a flagged check
+   * 4. the fidelity check does not flag — a flagged check
    *      falls back to vision instead of emitting a divergent page.
    *
    * Records the fidelity outcome and, on success, the fast-path route. Never
@@ -3329,7 +3326,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         return null;
       }
 
-      // The fidelity check stays active (requirement 7.5) and is binding: a
+      // The fidelity check stays active and is binding: a
       // flagged divergence between blocks and text layer falls back to vision.
       const fidelity = checkFastPathFidelity(rendered.rawText, blocks);
       metrics?.recordTextFidelity({ flagged: fidelity.flagged, missingTokens: fidelity.missing.length });
@@ -3397,9 +3394,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   /**
-   * The previous-page context for page N's Pass-1 prompt (design §5 S3, ≤300
-   * tokens): the headings of page N−1 (from its blocks) and the header row of a
-   * table page N−1 left open (`continues`).
+   * The previous-page context for page N's Pass-1 prompt (≤ tokens): the
+   * headings of page N−1 (from its blocks) and the header row of a table page
+   * N−1 left open (`continues`).
    *
    * ## Why this is resume-idempotent without being in the input hash
    *
@@ -3446,7 +3443,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   /**
-   * The page summary of a fast-path page (requirement 7.5): a fast-path page
+   * The page summary of a fast-path page: a fast-path page
    * made no vision call and so has no Pass-1 summary. When the text-LLM is
    * configured it is produced as its own checkpointed, budget-gated stage
    * `summary:page` over the page's block text; a resume reuses the checkpoint
@@ -3556,7 +3553,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // model and the snapped bbox. A resume with the same stand reuses the
       // checkpoint; a changed bbox (a re-run S4) recomputes.
       // The run's pipeline/prompt stand and the coverage threshold (it decides
-      // the retry) are part of the input too (design §9b.2).
+      // the retry) are part of the input too.
       const inputHash = stageHash([
         "figure2",
         job.source_sha256,
@@ -3571,7 +3568,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
       type Figure2Parsed = { transcription: Transcription; coverage: number; warnings: string[] };
 
-      // ── dedup (requirement 7.4): a duplicate page copies the source page's
+      // ── dedup: a duplicate page copies the source page's
       //    finished Pass-2 result for the same figure — no model call, no
       //    budget. Figures are re-id'd in order, so ordinal n maps to n.
       const sourceCopy =
@@ -3636,7 +3633,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           const warnings = [...parsed.warnings];
           let coverage = labelCoverage(labels, parsed.transcription);
 
-          // Label-coverage check with a single retry (requirement 8.4).
+          // Label-coverage check with a single retry.
           const threshold = config.labelCoverageMin / 100;
           if (labels.length > 0 && coverage < threshold) {
             warnings.push(
@@ -3694,14 +3691,14 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   /**
-   * Run the large-format tiling stage (S6) for a page (design §5 S6, task 5.1,
-   * requirements 8.5, 14.4). A page classified as `drawing`, or whose long edge
-   * exceeds A3, is split into an N×M grid of overlapping tiles; each tile gets
-   * its own checkpointed `tiled` stage that renders the tile crop, transcribes
-   * it with the technical-drawing prompt, and is stored as a `tile` asset. The
-   * per-tile transcriptions are merged (overlap deduplicated) and written onto
-   * `visionParsed.tiled` so `buildPageRecord` emits a page-spanning
-   * `technical_drawing` figure block with `tiles[]`.
+   * Run the large-format tiling stage (S6) for a page. A page classified as
+   * `drawing`, or whose long edge exceeds A3, is split into an N×M grid of
+   * overlapping tiles; each tile gets its own checkpointed `tiled` stage that
+   * renders the tile crop, transcribes it with the technical-drawing prompt,
+   * and is stored as a `tile` asset. The per-tile transcriptions are merged
+   * (overlap deduplicated) and written onto `visionParsed.tiled` so
+   * `buildPageRecord` emits a page-spanning `technical_drawing` figure block
+   * with `tiles[]`.
    *
    * Mirrors {@link runFigurePass2}: one checkpoint per tile keyed on
    * `(job, page, tile_id, tiled)` with an input hash that pins source, page,
@@ -3775,7 +3772,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
       type TileParsed = { transcription: Transcription; warnings: string[] };
 
-      // ── dedup (requirement 7.4): a duplicate page has the identical grid;
+      // ── dedup: a duplicate page has the identical grid;
       //    copy the source page's finished transcription of the same tile.
       const sourceCopy =
         visionParsed.dedupOf !== undefined
@@ -3836,7 +3833,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
       // Every tile is an addressable `tile` asset regardless of whether its
       // transcription succeeded — the bytes reproduce on demand from the source
-      // and the asset is what the research zoom serves from (requirement 14.4).
+      // and the asset is what the research zoom serves from.
       await lease_guardStageTileAsset(job, page, assetId);
       assetIds.push(assetId);
       tileRefs.push({ tileId: `p${page}-${tile.tileId}`, assetId, bbox: tile.bbox });
@@ -3876,7 +3873,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       const assetId = buildAssetId(job.reference, figureLocalId(figure.id));
       let crop: FigureCrop | null = null;
       if (pageImage !== null) {
-        // Prefer the S4-snapped bbox (task 2.4) so the crop reflects the refined
+        // Prefer the S4-snapped bbox so the crop reflects the refined
         // region; fall back to the raw Pass-1 bbox, then the full page.
         const snapped = isCroppable(figure.snappedBbox) ? figure.snappedBbox : undefined;
         const bbox = snapped ?? (isCroppable(figure.bbox) ? figure.bbox : ([0, 0, 1, 1] as BoundingBox));
@@ -3946,7 +3943,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   /**
    * Stage the page's emit-outbox row (fenced; one page per row, the emitter
    * batches). The payload records the pipeline/prompt stand the page's Pass-1
-   * result came from (requirement 4.12): under `resume_policy=continue` a
+   * result came from: under `resume_policy=continue` a
    * document mixes stands, and this is where each page's stand is auditable.
    * The staged record is the page's BASE record; the document pass enriches it.
    */
@@ -3977,7 +3974,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 const TRUNCATION_WARNING =
   "Die Modellantwort war auch beim größten Token-Budget abgeschnitten; der Seiteninhalt ist unvollständig.";
 
-/** Recorded on a page whose text came from the Tesseract fallback (task 7.10). */
+/** Recorded on a page whose text came from the Tesseract fallback. */
 const OCR_FALLBACK_WARNING =
   "Das Vision-Modell war nicht erreichbar; der Text dieser Seite wurde stattdessen mit Tesseract-OCR erkannt und ist möglicherweise unvollständig.";
 
@@ -4021,10 +4018,10 @@ function bboxArea(bbox: BoundingBox): number {
 }
 
 /**
- * Decide whether a figure gets Pass 2 (task 2.5, requirement 8.6). A figure
+ * Decide whether a figure gets Pass 2. A figure
  * runs Pass 2 only when its kind is in `FIGURE_PASS2_KINDS`, it has a usable
  * bbox, and that bbox covers at least `minArea` of the page. The Pass-2 crop
- * uses the S4-snapped bbox when present (task 2.4), falling back to the raw
+ * uses the S4-snapped bbox when present, falling back to the raw
  * Pass-1 bbox. Returns the bbox to crop when Pass 2 should run.
  */
 function pass2Gate(
@@ -4055,10 +4052,10 @@ function pageAssetId(reference: string, page: number): string {
 }
 
 /**
- * S4 deterministic refinement of the Pass-1 figures (task 2.4, requirement
- * 8.2). For each figure with a usable bbox, snap the box to the ink and the
- * adjacent text blocks and collect the text-layer words inside it as
- * `regionText`/`labels`; a figure without a box is passed through untouched.
+ * S4 deterministic refinement of the Pass-1 figures. For each figure with a
+ * usable bbox, snap the box to the ink and the adjacent text blocks and
+ * collect the text-layer words inside it as `regionText`/`labels`; a figure
+ * without a box is passed through untouched.
  *
  * This is deliberately folded onto the `vision1` checkpoint rather than being a
  * separate `refined` stage. S4 is deterministic and its only inputs are the
@@ -4127,7 +4124,7 @@ function buildPageRecord(
   for (const figure of parsed.figures) {
     figureOrdinal += 1;
     const assetId = buildAssetId(reference, figureLocalId(figure.id));
-    // Prefer the S4-snapped bbox (task 2.4) for the emitted block and asset so
+    // Prefer the S4-snapped bbox for the emitted block and asset so
     // consumers see the refined region; fall back to the raw Pass-1 bbox, then
     // the full page.
     const resolvedBbox = isCroppable(figure.snappedBbox)
@@ -4142,13 +4139,13 @@ function buildPageRecord(
       page,
       type: "figure",
       figureId: figure.id,
-      // The model-supplied kind (task 2.3); falls back to "other" for a
+      // The model-supplied kind; falls back to "other" for a
       // checkpoint written before this field existed.
       kind: figure.kind ?? "other",
       ...(figure.caption !== undefined ? { caption: figure.caption } : {}),
       description: figure.description,
       // The verbatim text-layer words inside the snapped bbox and their
-      // deduplicated labels (task 2.4, requirement 8.2). Absent for a scan or a
+      // deduplicated labels. Absent for a scan or a
       // container without `-bbox-layout` geometry.
       ...(figure.regionText !== undefined ? { regionText: figure.regionText } : {}),
       ...(figure.labels !== undefined && figure.labels.length > 0 ? { labels: figure.labels } : {}),
@@ -4192,12 +4189,12 @@ function buildPageRecord(
   }
 
   // ── tiling (S6): a page-spanning drawing figure with its tiles ───────────
-  // A large-format page that was tiled (design §5 S6, task 5.1) emits one
-  // `technical_drawing` figure covering the whole page. It carries the merged,
-  // overlap-deduplicated transcription and the `tiles[]` refs; each tile is a
-  // `tile` asset addressable by its own bbox for the research zoom (requirement
-  // 14.4). The tile bytes are not stored — they reproduce on demand from the
-  // content-addressed source, exactly like a figure crop.
+  // A large-format page that was tiled emits one `technical_drawing` figure
+  // covering the whole page. It carries the merged, overlap-deduplicated
+  // transcription and the `tiles[]` refs; each tile is a `tile` asset
+  // addressable by its own bbox for the research zoom. The tile bytes are not
+  // stored — they reproduce on demand from the content-addressed source,
+  // exactly like a figure crop.
   if (parsed.tiled !== undefined && parsed.tiled.tiles.length > 0) {
     figureOrdinal += 1;
     const wholePage = toBBox([0, 0, 1, 1] as BoundingBox);
@@ -4248,7 +4245,7 @@ function buildPageRecord(
     type: "page",
     page,
     size: { wPt: parsed.size.wPt, hPt: parsed.size.hPt },
-    // The deterministic page class (task 2.2, requirement 7.2). Falls back to
+    // The deterministic page class. Falls back to
     // the v1 heuristic for a checkpoint written before this field existed.
     class: parsed.pageClass ?? (parsed.usedOcr ? "scan" : "text"),
     ...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
@@ -4256,7 +4253,7 @@ function buildPageRecord(
     assets,
     warnings,
     // `fastPath` records that the page took the deterministic text fast-path
-    // (task 2.9); a consumer and the eval harness read it as the per-page
+    // a consumer and the eval harness read it as the per-page
     // fast-path signal alongside the /metrics counter.
     fidelity: { ocr: parsed.usedOcr, ...(parsed.fastPath === true ? { fastPath: true } : {}) },
   };

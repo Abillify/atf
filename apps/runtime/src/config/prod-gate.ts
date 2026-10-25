@@ -5,7 +5,6 @@
  * Production-readiness gate: validates that a loaded config is safe for
  * production deployment.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 2.2, 2.3, 3.1
  */
 
 import { profileShadowWarning, resolveOperationalProfile } from "@atf/security-kit";

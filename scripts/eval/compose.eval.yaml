@@ -11,7 +11,7 @@
 # and ingested through the v1 /ingest endpoint (scripts/eval/ingest-corpus.ts);
 # the contextual-header ablation ingests the same corpus through the v2 revision
 # API, which is the only path that runs the batch worker — and only the batch
-# worker applies the contextual embedding header (task 3.3).
+# worker applies the contextual embedding header.
 #
 # Usage (from the repository root):
 #   docker compose -f scripts/eval/compose.eval.yaml up --build -d --wait

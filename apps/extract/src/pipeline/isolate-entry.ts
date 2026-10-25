@@ -4,7 +4,7 @@
 /**
  * pipeline/isolate-entry.ts
  *
- * The child side of `isolate.ts` (requirement 5.2): it receives one parse task
+ * The child side of `isolate.ts`: it receives one parse task
  * over the Worker/fork channel, runs it against the native parsers, and posts
  * the structured-cloneable result back. An `ExtractError` is serialised by
  * name — `instanceof` does not survive the process boundary — and revived by

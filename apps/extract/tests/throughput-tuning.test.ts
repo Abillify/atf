@@ -5,7 +5,7 @@
  * throughput-tuning.test.ts
  *
  * Unit + property tests for the PURE core of the PAGE_CONCURRENCY tuning tool
- * (task 5.3, requirement 6.7): the sweep planner, the vLLM `/metrics` parser,
+ * the sweep planner, the vLLM `/metrics` parser,
  * the per-setting throughput/latency derivation, the saturation-knee
  * recommender, and the CSV/Markdown formatters. Everything here runs offline —
  * no cluster, no network — which is exactly the guarantee the tool must uphold.

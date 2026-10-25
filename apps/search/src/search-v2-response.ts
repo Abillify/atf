@@ -4,7 +4,7 @@
 /**
  * search-v2-response.ts
  *
- * The v2 response shaper (task 3.7, design §7.2, Requirements 13.3/13.5). PURE:
+ * The v2 response shaper. PURE:
  * no DB, no I/O. Given an already-ranked/diversified/expanded {@link
  * SearchResult} (the output of the retrieval pipeline) plus the resolved figure
  * metadata for the figures it references, it produces the v2 hit shape:
@@ -49,10 +49,10 @@ import type { FigureUnitInfo } from "./postgres-client.js";
 import type { ExpandedSearchResult } from "./handlers/expand-results.js";
 import type { ResultGroupInfo } from "./rerank-context.js";
 
-/** `include_assets` depth (design §7.2, Requirement 13.3). */
+/** `include_assets` depth. */
 export type IncludeAssets = "none" | "refs" | "thumbnails";
 
-/** `granularity` — which unit level a hit is preferred at (design §7.2). */
+/** `granularity` — which unit level a hit is preferred at. */
 export type Granularity = "chunk" | "section" | "page" | "document";
 
 /** A v2 asset reference on a hit (Requirement 13.5). */
@@ -72,11 +72,11 @@ export interface AssetRef {
 	url?: string;
 }
 
-/** Navigation links from the relationship graph (task 3.2, design §7.2). */
+/** Navigation links from the relationship graph. */
 export interface Navigation {
-	/** Previous unit in reading order (design §7.2 name). */
+	/** Previous unit in reading order (name). */
 	prev?: string;
-	/** Next unit in reading order (design §7.2 name). */
+	/** Next unit in reading order (name). */
 	next?: string;
 	prev_unit_id?: string;
 	next_unit_id?: string;
@@ -84,7 +84,7 @@ export interface Navigation {
 	section_id?: string;
 }
 
-/** The v2 search hit (design §7.2). */
+/** The v2 search hit. */
 export interface SearchHitV2 {
 	score: number;
 	unit_id?: string;
@@ -297,7 +297,7 @@ export interface ShapeHitOptions {
 
 /**
  * The hit's evidence with `block_ids` filled from the unit's mirrored metadata
- * when the chunk evidence lacks them (design §7.2 `evidence.block_ids`).
+ * when the chunk evidence lacks them (`evidence.block_ids`).
  */
 export function evidenceOf(
 	result: SearchResult,
@@ -338,7 +338,7 @@ export function evidenceOf(
   return withFigure(base);
 }
 
-/** Shape a single pipeline result into the v2 hit (design §7.2). */
+/** Shape a single pipeline result into the v2 hit. */
 export function shapeHitV2(
 	result: ExpandedSearchResult & { group?: ResultGroupInfo },
 	opts: ShapeHitOptions,

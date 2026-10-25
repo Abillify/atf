@@ -6,7 +6,7 @@
  *
  * The `JobRow` (snake_case DB shape) → `Job` (camelCase wire contract)
  * translation at the API boundary, plus the derived status fields the contract
- * asks for: per-stage progress, cost and an ETA (requirement 4.11).
+ * asks for: per-stage progress, cost and an ETA.
  *
  * The DB layer is snake_case because it maps 1:1 onto the table; the contract
  * is camelCase because it is the shared wire type. Keeping the translation in
@@ -18,7 +18,7 @@ import type { Job, StageProgress } from "@atf/extract-contract/v2";
 import type { JobRow, PageStageRow, StageStatus } from "../persistence/types.js";
 import { identityOf } from "./identity.js";
 
-/** The per-page stages, in pipeline order (design §9b.2). */
+/** The per-page stages, in pipeline order. */
 export const PAGE_STAGES = [
   "analyzed",
   "vision1",
@@ -70,9 +70,9 @@ export function computeProgress(
 }
 
 /**
- * Estimate the remaining seconds for a job (requirement 4.11, the
- * "remaining-time estimate"). Returns null when there is not enough signal yet (no
- * measured stage throughput, no progress, or the job is not running).
+ * Estimate the remaining seconds for a job (the "remaining-time estimate").
+ * Returns null when there is not enough signal yet (no measured stage throughput,
+ * no progress, or the job is not running).
  *
  * The heuristic mirrors the convert-handler's `remainingPages * pageMs`, but
  * derives `pageMs` from the actual measured throughput of the *completed* stage

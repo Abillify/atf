@@ -4,7 +4,7 @@
 /**
  * protocol.ts
  *
- * The converter RPC wire format (requirement 5.7).
+ * The converter RPC wire format.
  *
  * One JSON object per line, in both directions: the client sends a
  * {@link ConverterRequest}, the server answers with exactly one

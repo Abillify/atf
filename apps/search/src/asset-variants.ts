@@ -4,9 +4,9 @@
 /**
  * asset-variants.ts
  *
- * Server-side derived-variant generation for the v2 AssetStore (design §6.5,
- * §4.3, Requirement 14.1). The `full` variant is the original bytes as
- * uploaded; two smaller variants are derived with sharp/libvips:
+ * Server-side derived-variant generation for the v2 AssetStore. The `full`
+ * variant is the original bytes as uploaded; two smaller variants are
+ * derived with sharp/libvips:
  *
  *   - `thumb`   — the longest edge fits within 512 px
  *   - `preview` — the longest edge fits within 1568 px

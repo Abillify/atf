@@ -296,7 +296,7 @@ export function createNavMethods(ctx: PgFactoryCtx) {
       });
     },
 
-    // ── v2 navigation reads (task 3.9) ──────────────────────────────────────
+    // ── v2 navigation reads ──────────────────────────────────────
     // These mirror expandUnit/lookupFigureUnits: every read is gated by the
     // SAME buildTemporalFilterSql (current-revision pointer) + buildAccessSql
     // (tenant/ACL) predicates as search, and scoped to one document by base_ref

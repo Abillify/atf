@@ -9,7 +9,6 @@
  * and the editor, so a node looks identical whether it's being edited or
  * watched live.
  *
- * Requirements: 11.2
  */
 
 import type { NodeType } from "../../types/flow";

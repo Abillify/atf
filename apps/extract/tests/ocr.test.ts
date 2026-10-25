@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * pipeline/ocr.ts (task 7.10, requirement 5.11): the Tesseract fallback client.
+ * pipeline/ocr.ts: the Tesseract fallback client.
  * The spawn itself goes through the mocked `exec.run`, so these tests cover the
  * client contract — the disabled switch, the file handoff, the size ceiling —
  * without a Tesseract binary on the machine.

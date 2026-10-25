@@ -1,4 +1,4 @@
-# Deterministic OpenAI-compatible chat mock for the retrieval eval stack (task 6.11).
+# Deterministic OpenAI-compatible chat mock for the retrieval eval stack.
 #
 # Serves ONLY the chat-completions surface the Search HyDE expansion needs
 # (HYDE_URL). Embeddings and reranking are served by real TEI models in

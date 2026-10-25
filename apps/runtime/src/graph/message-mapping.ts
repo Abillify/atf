@@ -14,7 +14,6 @@
  * focused on orchestration while these stateless, individually-testable
  * transforms live on their own. No `any` at module boundaries.
  *
- * Requirements: 8.1–8.7 (multimodal preservation).
  */
 
 import crypto from "node:crypto";

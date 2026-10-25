@@ -5,7 +5,7 @@
 /**
  * StudioProblemsPanel: validation problems of the canvas with
  * "Fix with Copilot" actions.
- * Req 9.3 (Task 13.4): moved unchanged out of StudioBuilder.
+ * Moved unchanged out of StudioBuilder.
  */
 
 import type React from "react";

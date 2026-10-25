@@ -4,8 +4,8 @@
 /**
  * source-url.test.ts
  *
- * Unit tests for the SSRF controls of the `source_url` pull (requirement 4.13)
- * and the Postgres upload-offset committer (requirement 4.14):
+ * Unit tests for the SSRF controls of the `source_url` pull
+ * and the Postgres upload-offset committer:
  *
  *   - address classification (private, loopback, link-local, ULA, CGNAT,
  *     metadata, unspecified, IPv4-mapped/embedded IPv6);

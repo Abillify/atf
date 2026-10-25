@@ -10,7 +10,6 @@
  * Reads the lcov file (coverage/lcov.info) and computes the aggregated line
  * coverage per core module path. Exit code 1 when the threshold is missed.
  *
- * Requirement: 7.2
  */
 
 import { readFileSync, existsSync } from "node:fs";

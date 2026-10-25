@@ -4,7 +4,7 @@
 /**
  * revision-client.test.ts
  *
- * The v2 revision client (task 1.12): the HTTP binding the emitter uses to
+ * The v2 revision client: the HTTP binding the emitter uses to
  * stream to Search's revision API. These tests exercise the request framing and
  * the transient/permanent error classification the emitter relies on to decide
  * between a retry-and-reconcile pause and a job failure. `fetch` is stubbed, so

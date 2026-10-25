@@ -4,7 +4,7 @@
 /**
  * handlers/revisions.ts
  *
- * The v2 revision API (design §6.1, §9b.3, task 1.9). Routes are mounted behind
+ * The v2 revision API. Routes are mounted behind
  * the same auth / scope / tenant / collection-ACL chain as /ingest, so by the
  * time a handler runs the request already carries a verified AccessScope in
  * `res.locals.accessScope` (with a tenant) and a checked collection ACL. Each

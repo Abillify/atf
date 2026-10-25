@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * In-memory Dropbox fake behind a {@link SourceFetch} (task 14.6).
+ * In-memory Dropbox fake behind a {@link SourceFetch}.
  *
  * Serves `files/list_folder` (recursive) with cursor pagination,
  * `files/download` via the `Dropbox-API-Arg` header, and the OAuth token

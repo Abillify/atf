@@ -235,7 +235,7 @@ export interface RecordingSearchClient extends SearchClient {
     collection: string;
     identity: { userId?: string; userGroups?: readonly string[] } | undefined;
   }>;
-  /** Recorded `erase` calls, in order (task 4.6, requirement 2.12). */
+  /** Recorded `erase` calls, in order. */
   eraseCalls: Array<{
     request: import("@atf/erasure-contract").ErasureRequest;
     identity: { userId?: string; userGroups?: readonly string[] } | undefined;

@@ -14,7 +14,7 @@
  * - `401` from this route means the credential is rejected, full stop.
  * - A missing `extract.ingest` scope in the answer is a configuration error.
  * - `features.deleteByReference` plus the `extract.delete` scope decide whether
- *   mirror-delete can work at all (requirement 9.10 checks this up front).
+ * mirror-delete can work at all (checks this up front).
  * - `limits.maxUploadBytes` lets a client reject an oversized file without
  *   transferring it.
  *

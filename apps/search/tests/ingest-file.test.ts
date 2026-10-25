@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Tests for the binary-document route (task 1.14).
+ * Tests for the binary-document route.
  *
  * The route no longer proxies Markdown into the local ingest path. It uploads
  * the source to Extract's content-addressed store (open → patch → complete) and

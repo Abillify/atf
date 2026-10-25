@@ -8,7 +8,6 @@
  * executions. Each flow execution receives a parent span, and every node
  * transition creates a child span with relevant attributes.
  *
- * Requirements: 5.1
  */
 
 import type { Tracer, Span, SpanContext } from "../../observability/tracing.js";

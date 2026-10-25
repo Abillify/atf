@@ -4,7 +4,7 @@
 /**
  * converter-rpc.test.ts
  *
- * The isolated-converter transport (requirement 5.7): the framing, the request
+ * The isolated-converter transport: the framing, the request
  * validation, and a real round trip over a real Unix socket against the real
  * server, so the error taxonomy is proven to survive the container boundary —
  * a missing binary must arrive as CONVERTER_UNAVAILABLE, not as a generic

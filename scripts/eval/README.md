@@ -7,8 +7,7 @@ SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 A golden set plus an eval harness that measures Search retrieval quality on the
 page and figure level. It produces the machine-comparable baseline that every
-later phase of the Document Intelligence v2 plan diffs against
-(`_Requirements: 18.3, 18.4_`).
+later phase of the Document Intelligence v2 plan diffs against.
 
 ## What it measures
 
@@ -309,7 +308,7 @@ bun run eval:retrieval -- --collection <name> \
 Optional release gates fail the process when a floor is not met:
 `--min-page-recall 0.7 --min-figure-recall 0.5`.
 
-## The eval stack (task 6.11)
+## The eval stack
 
 `compose.eval.yaml` is the eval-only stack: Search + Extract + a **real**
 TEI-CPU embedding model (`BAAI/bge-m3`, multilingual, 1024 dims) + a **real**
@@ -350,7 +349,7 @@ docker compose -f scripts/eval/compose.eval.yaml down --volumes
 and figure annotations; `ingest-corpus.ts` indexes it through v1 `POST /ingest`
 (with chunking, so page/figure evidence is produced) or, with `--v2`, through
 the v2 revision API — the only path that runs the batch worker, which is what
-applies the contextual embedding header (task 3.3). Collection names may only
+applies the contextual embedding header. Collection names may only
 contain letters, digits and underscores (`golden_ctx`, not `golden-ctx`).
 
 The CI job `eval` in `.github/workflows/ci.yml` runs exactly this stack, the

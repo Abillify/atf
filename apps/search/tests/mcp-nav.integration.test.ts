@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the v2 navigation query methods (task 3.9) against a
+ * Integration tests for the v2 navigation query methods against a
  * REAL PostgreSQL + pgvector instance. They verify the SQL-level behaviour the
  * handler tests cannot: the outline/section/page/context/table/identifier
  * reads over the real indexed unit columns + vs_identifiers, all under the

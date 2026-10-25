@@ -9,7 +9,6 @@
  * monitoring/metrics require auth. The platform starts safe by default and
  * operators explicitly relax what they need.
  *
- * Requirements: 3.3
  */
 
 import type { AppConfig } from "./schema.js";

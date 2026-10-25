@@ -4,12 +4,12 @@
 /**
  * scale-10k.integration.test.ts
  *
- * The Search-side half of the 10,000-page scaling proof (task 1.16, design
- * §9a.3, requirements 6.4, 6.5, 6.9) against a REAL PostgreSQL + pgvector
- * instance. Where `revision-visibility.integration.test.ts` proves the SQL
- * SEMANTICS on a couple of rows, this proves they hold AT SCALE — a revision
- * with 10,000 page-units spanning many segments and more than two 5,000-row
- * flip batches:
+ * The Search-side half of the 10,000-page scaling proof against a REAL
+ * PostgreSQL + pgvector instance. Where
+ * `revision-visibility.integration.test.ts` proves the SQL SEMANTICS on a
+ * couple of rows, this proves they hold AT SCALE — a revision with 10,000
+ * page-units spanning many segments and more than two 5,000-row flip
+ * batches:
  *
  *   - PROGRESSIVE visibility (6.4): after committing the FIRST segment of a
  *     10,000-page progressive revision, a page in that segment is searchable

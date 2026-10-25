@@ -74,7 +74,7 @@ export interface CallbackConfig {
 /**
  * Addresses that are never a legitimate target for a caller-supplied URL.
  *
- * Exported so the `source_url` pull (task 1.4) refuses exactly the same set:
+ * Exported so the `source_url` pull refuses exactly the same set:
  * the SSRF surface of "the server fetches an address the caller chose" is the
  * same whether the address is a callback or a source, so the control must be
  * the same too.

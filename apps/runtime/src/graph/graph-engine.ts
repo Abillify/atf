@@ -11,7 +11,6 @@
  *
  * External consumers continue importing from "./graph-engine.js" unchanged.
  *
- * Requirements: 1.1, 1.2, 1.4, 1.5, 20.1
  */
 
 // ---------------------------------------------------------------------------

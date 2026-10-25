@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Standalone schema migration for the Search database (requirement 12.4).
+ * Standalone schema migration for the Search database.
  *
  * Applies every pending global and per-collection migration under the same
  * session advisory lock the startup path uses (`src/migrations.ts`), so

@@ -1258,7 +1258,6 @@ export type ValidationResult =
  * 3. Edge source/target reference check (all IDs must exist in nodes)
  * 4. Conditions syntax validity (non-empty string check)
  *
- * Requirements: 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9
  */
 export function validateFlowDefinition(raw: unknown): ValidationResult {
 	// Step 1: Zod schema validation

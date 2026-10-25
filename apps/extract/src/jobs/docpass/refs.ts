@@ -5,7 +5,6 @@
  * jobs/docpass/refs.ts
  *
  * Cross-reference and caption resolution for the streaming document pass
- * (design §5 S7 step 3, requirement 9.3).
  *
  * ## What a "ref" is
  *
@@ -93,7 +92,7 @@ interface RefPattern {
 }
 
 /**
- * The reference phrasings (design §5 S7 step 3, requirement 9.3). Ordered so a
+ * The reference phrasings. Ordered so a
  * specific phrasing ("Kapitel 4.2") is tried before a bare "siehe 4.2".
  */
 const REF_PATTERNS: readonly RefPattern[] = [

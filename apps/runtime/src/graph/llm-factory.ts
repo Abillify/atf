@@ -8,7 +8,6 @@
  * central `AppConfig`. All API keys and base URLs are sourced exclusively from
  * `AppConfig` — never hardcoded.
  *
- * Requirements: 5.1, 5.2, 5.5, 5.6, 5.7
  */
 
 import { createOpenAI } from "@ai-sdk/openai";

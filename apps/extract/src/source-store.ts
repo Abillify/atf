@@ -4,8 +4,7 @@
 /**
  * source-store.ts
  *
- * The durable, content-addressed store for source documents (design §9a.1,
- * requirement 4.13).
+ * The durable, content-addressed store for source documents.
  *
  * A finished upload — whether it streamed in as resumable chunks or was pulled
  * from a `source_url` — is committed here under a path derived from its
@@ -59,7 +58,7 @@ export interface StoredSource {
  *
  * An interface rather than a bare class so a later object-store backing (S3,
  * MinIO) can be dropped in without touching the upload handler, mirroring how
- * `AssetStore` (task 1.11) is shaped.
+ * `AssetStore` is shaped.
  */
 export interface SourceStore {
   /** True when a source with this digest is already stored. */
@@ -85,7 +84,7 @@ export interface SourceStore {
     options?: { expected?: Sha256Hex; maxBytes?: number },
   ): Promise<StoredSource>;
   /**
-   * Remove a stored source (DSAR erasure, requirement 2.7). Returns true when
+   * Remove a stored source (DSAR erasure). Returns true when
    * a file was deleted, false when nothing was stored under the digest. The
    * caller is responsible for only calling this once no job row references
    * the digest any more — the store itself is content-addressed and has no

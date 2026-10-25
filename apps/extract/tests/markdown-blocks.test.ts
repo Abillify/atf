@@ -4,10 +4,10 @@
 /**
  * markdown-blocks.test.ts
  *
- * The deterministic Pass-1 Markdown → typed v2 block parser (design §4, §5 S3;
- * requirements 8.1, 9.1, 9.2): headings with numbering, lists, HTML tables
- * with rowspan/colspan and continuation flags, figure positions in the reading
- * order, code, and contract validity of every produced block.
+ * The deterministic Pass-1 Markdown → typed v2 block parser: headings with
+ * numbering, lists, HTML tables with rowspan/colspan and continuation flags,
+ * figure positions in the reading order, code, and contract validity of every
+ * produced block.
  */
 
 import { describe, expect, it } from "vitest";

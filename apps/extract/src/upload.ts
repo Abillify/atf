@@ -20,7 +20,7 @@
  * is the one thing both shapes agree on.
  *
  * Buffering: memory up to `UPLOAD_MEMORY_THRESHOLD_BYTES`, disk above it
- * (requirement 5.9). A document that waits in the conversion queue holds its
+ * A document that waits in the conversion queue holds its
  * bytes for the whole wait, and a queue of 32 fifty-megabyte uploads is an
  * out-of-memory event with a 202 already sent — so above the threshold the
  * upload is spooled to a scratch file under `TEMP_DIR/uploads` and only read
@@ -64,7 +64,7 @@ const UPLOAD_SCRATCH_SUBDIR = "uploads";
  * The document bytes, wherever they currently are.
  *
  * Deliberately an accessor shape rather than a plain buffer: an upload spooled
- * to disk (requirement 5.9) must not be pulled into the heap by merely reading
+ * to disk must not be pulled into the heap by merely reading
  * the metadata, so callers that only store the bytes use `createReadStream()`
  * and callers that convert call `readBuffer()` once a queue slot is free.
  */
@@ -156,7 +156,7 @@ function spooledUpload(
 
 /**
  * Multer storage that buffers in memory up to `thresholdBytes` and spools the
- * rest to a scratch file (requirement 5.9).
+ * rest to a scratch file.
  *
  * The prefix is kept in memory and written out when the threshold is crossed,
  * so a small upload never touches the filesystem at all. The file is created

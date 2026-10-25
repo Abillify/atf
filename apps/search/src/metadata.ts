@@ -157,7 +157,7 @@ export function parseMetadataHeader(metadataHeader: string | undefined): ParseRe
  * {@link SearchFilter} (task 3.7, Requirement 13.3). Unlike {@link FILTER_V2}
  * (which filters the `metadata` JSONB), these predicates target the REAL indexed
  * unit columns added by task 1.8 (`unit_type`, `figure_kind`, `page_start`/
- * `page_end`, `section_path text[]`), so filtering is index-backed (design §6.2).
+ * `page_end`, `section_path text[]`), so filtering is index-backed.
  * A symbol key keeps the filter out of the plain JSON `metadata @>` path and out
  * of any serialization, exactly like FILTER_V2.
  */

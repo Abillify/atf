@@ -73,7 +73,7 @@ const ATTACH_EMBEDDED_MSG = 5;
 
 /**
  * How deep an Outlook `.msg` may nest embedded messages before deeper ones
- * are skipped with a warning (MAX_EMBED_DEPTH, requirement 5.4). A nesting
+ * are skipped with a warning (MAX_EMBED_DEPTH). A nesting
  * bomb — an .msg containing itself recursively — would otherwise recurse
  * until the stack or memory gives out.
  */
@@ -103,7 +103,7 @@ class PropertyBag {
     charset: () => string | undefined,
   ) {
     // Plain assignments, not parameter properties: the isolate child
-    // (requirement 5.2) loads this file under Node's type-stripping,
+    //  loads this file under Node's type-stripping,
     // which rejects `private readonly x` in a constructor signature.
     this.storage = storage;
     this.charset = charset;
@@ -185,7 +185,7 @@ function isMessageStorage(storage: CfbEntry): boolean {
 /**
  * Parse an Outlook `.msg`. Never throws; a malformed file yields warnings and
  * an empty message. `maxEmbedDepth` bounds the nesting of embedded messages
- * (MAX_EMBED_DEPTH, requirement 5.4); deeper ones are skipped with a warning.
+ * (MAX_EMBED_DEPTH); deeper ones are skipped with a warning.
  */
 export function parseMsg(
 	buffer: Uint8Array,

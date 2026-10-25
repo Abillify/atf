@@ -5,7 +5,7 @@
  * ingest-file.ts
  *
  * `POST /ingest-file` — accept a binary document and hand it to `@atf/extract`
- * as a v2 job (task 1.14, requirement 17.2).
+ * as a v2 job.
  *
  * ## Why Search does not convert documents itself
  *

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * exec.ts subprocess hardening (requirement 5.5): the mandatory timeout, the
+ * exec.ts subprocess hardening: the mandatory timeout, the
  * explicit development-only disable, and the `prlimit` wrapper shape.
  */
 
@@ -65,7 +65,7 @@ describe("run timeout (requirement 5.5)", () => {
   }, 15_000);
 
   it("the default timeout is a positive wall-clock ceiling", () => {
-    // The value a caller gets when it omits timeoutMs; requirement 5.5 forbids
+    // The value a caller gets when it omits timeoutMs forbids
     // an unbounded subprocess, and the production gate refuses a configured 0.
     expect(DEFAULT_SUBPROCESS_TIMEOUT_MS).toBeGreaterThan(0);
   });

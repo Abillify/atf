@@ -4,7 +4,7 @@
 /**
  * Asset identity across v1 and v2.
  *
- * The load-bearing property (design §4.3, Requirement 3.4): a figure's asset id
+ * The load-bearing property: a figure's asset id
  * is IDENTICAL to v1, so re-extracting an existing corpus under v2 keeps every
  * previously uploaded crop valid. The new page/tile/native local ids are
  * derived through the same hash with a prefix.

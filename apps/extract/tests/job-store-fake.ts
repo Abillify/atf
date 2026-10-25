@@ -59,7 +59,7 @@ export interface FakeJobStore extends ExtractStore {
    * `method` throws `error` BEFORE it has any effect (a crash between writes).
    */
   failNext(method: keyof ExtractStore, error?: Error, skip?: number): void;
-  /** The tenant daily vision-page counter for one UTC day (task 7.7). */
+  /** The tenant daily vision-page counter for one UTC day. */
   peekVisionDailyUsage(tenantId: string, day: string): number;
 }
 
@@ -84,10 +84,10 @@ export function createFakeJobStore(): FakeJobStore {
   const assetOutbox = new Map<string, AssetOutboxRow>();
   // docpass_state rows keyed by `${jobId}|${page}`.
   const docpass = new Map<string, DocpassStateRow>();
-  // Tenant daily vision-page counters keyed by `${tenantId}|${day}` (task 7.7).
+  // Tenant daily vision-page counters keyed by `${tenantId}|${day}`.
   const visionDailyUsage = new Map<string, number>();
   const faults = new Map<string, { error: Error; skip: number }>();
-  // Upload sessions and the erasure ledger (task 4.6): minimal models of the
+  // Upload sessions and the erasure ledger: minimal models of the
   // real tables, faithful to the claim/transition protocol including expiry.
   const uploads = new Map<
     string,
@@ -986,7 +986,7 @@ export function createFakeJobStore(): FakeJobStore {
     updateUploadOffset: unsupported,
     advanceUploadOffset: unsupported,
 
-    // ── erasure (task 4.6) ────────────────────────────────────────────────
+    // ── erasure ────────────────────────────────────────────────
     async erasureJobTargets(filter) {
       return targetedJobs(filter).map(targetRow);
     },

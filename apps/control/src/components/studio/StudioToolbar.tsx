@@ -4,7 +4,7 @@
 
 /**
  * StudioToolbar: the toolbar above the Studio canvas.
- * Req 9.3 (Task 13.4): moved unchanged out of StudioBuilder; the state
+ * Moved unchanged out of StudioBuilder; the state
  * stays in the parent and comes in through props.
  */
 

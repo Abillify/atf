@@ -4,9 +4,9 @@
 /**
  * job-runner-v2-pipeline.test.ts
  *
- * The v2 per-page pipeline behaviours closed after the Phase-2 audit (design
- * §4, §5 S2–S7; requirements 7, 8, 9, 18.1), driven against the in-memory fake
- * store with stub render/vision/analyzer — no poppler, no model, no database:
+ * The v2 per-page pipeline behaviours closed after the Phase-2 audit (S2–S7),
+ * driven against the in-memory fake store with stub render/vision/analyzer —
+ * no poppler, no model, no database:
  *
  *  - Pass-1 Markdown becomes typed blocks (headings, tables with cells,
  *    figures at their reading-order position) and the document pass merges a
@@ -330,7 +330,7 @@ describe("job-runner · previous-page context (design §5 S3)", () => {
   });
 });
 
-// ── text fast-path fallbacks and page summary (requirement 7.5) ──────────
+// ── text fast-path fallbacks and page summary ──────────
 
 /** Clean `text`-page geometry from a heading and a paragraph text. */
 function geometry(page: number, heading: string, paragraph: string, options: { columns?: boolean } = {}): PageAnalysis {
@@ -523,7 +523,7 @@ describe("job-runner · text fast-path fallbacks (requirement 7.5)", () => {
   });
 });
 
-// ── dedup reuses Pass 2 (requirement 7.4) ────────────────────────────────
+// ── dedup reuses Pass 2 ────────────────────────────────
 
 describe("job-runner · render-hash duplicate reuses Pass 2", () => {
   it("copies the source page's figure2 result without a second Pass-2 call", async () => {
@@ -564,7 +564,7 @@ describe("job-runner · render-hash duplicate reuses Pass 2", () => {
   });
 });
 
-// ── stage metrics (requirement 18.1) ─────────────────────────────────────
+// ── stage metrics ─────────────────────────────────────
 
 describe("job-runner · stage metrics", () => {
   it("reports every stage execution, and reuse on resume", async () => {

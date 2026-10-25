@@ -147,7 +147,7 @@ export interface AppOverrides {
   logger?: Logger;
   vision?: VisionClient;
   /**
-   * The text-LLM client for the summary hierarchy (task 2.7). Injected in tests
+   * The text-LLM client for the summary hierarchy. Injected in tests
    * to observe/stub summary calls; in production it is built from `SUMMARY_URL`
    * when configured, else null (the summary pass is skipped). `null` explicitly
    * disables it even when the env is set.
@@ -180,7 +180,7 @@ export interface AppOverrides {
    */
   jobEvents?: JobEventBus;
   /**
-   * The outbox emitter (task 1.12) the job runner uses in its `emitting` phase.
+   * The outbox emitter the job runner uses in its `emitting` phase.
    * Injected in tests to observe the send/reconcile against a fake Search;
    * defaults to one built from the Search target when configured, or null.
    */
@@ -402,7 +402,7 @@ export function createApp(
       logger,
     );
 
-  // The summary text-LLM client (task 2.7). Only built when SUMMARY_URL is
+  // The summary text-LLM client. Only built when SUMMARY_URL is
   // configured; null skips the summary hierarchy so a deployment without the
   // text model still completes jobs with empty `document.end.summaries`.
   const summaryClient: SummaryClient | null =
@@ -527,7 +527,7 @@ export function createApp(
   });
   // Deleting a document is its own destructive permission, separate from
   // ingest — the same reasoning that keeps `convert` and `ingest` apart
-  // (extract-outpost E2, requirement 9.8).
+  // (extract-outpost E2).
   const requireDelete = createRequireScope("extract.delete", {
     authzEnabled: config.authzEnabled,
   });
@@ -557,7 +557,7 @@ export function createApp(
   });
 
   // `POST /v2/render` gets its own limiter: each render spawns a poppler
-  // subprocess, so a zoom burst is CPU, not just bytes (requirement 14.4). A
+  // subprocess, so a zoom burst is CPU, not just bytes. A
   // research session issues many small renders, so its default budget is higher
   // than the write-path limiter above.
   const renderRateLimiter = createRateLimiter({
@@ -599,7 +599,7 @@ export function createApp(
   // available, but is only reached through the upload routes.
   let worker: JobWorker | null = null;
   // Hoisted so the browser BFF (`/ui/jobs`) can reuse the exact same router as
-  // the machine API (`/v2/jobs`): the job overview UI (requirement 18.6) fetches
+  // the machine API (`/v2/jobs`): the job overview UI fetches
   // and drives jobs through the session-cookie path, not a bearer token.
   let jobsRouter: Router | null = null;
   // Hoisted for the same reason: the "Neuer Job" tab uploads sources through
@@ -618,9 +618,9 @@ export function createApp(
     createFilesystemSourceStore(config.sourceStore.dir);
 
   // The native parsers run in a Worker thread with a heap ceiling so a
-  // pathological document cannot take the service down with it (requirement
-  // 5.2): the main thread keeps serving /health and lease heartbeats while a
-  // parse runs. One runner serves both page renderers below.
+  // pathological document cannot take the service down with it: the main
+  // thread keeps serving /health and lease heartbeats while a parse runs.
+  // One runner serves both page renderers below.
   const isolatedRunner = createIsolatedRunner({
     enabled: config.parseIsolated,
     maxOldGenerationSizeMb: config.parseMemoryLimitMb,
@@ -632,7 +632,7 @@ export function createApp(
   // shared. It resolves the source from the store, converts office→PDF and
   // renders with the SAME poppler/sharp helpers the job pipeline uses, which is
   // what makes an on-demand render byte-identical to a pipeline render and lets
-  // Search cache the result (design §9a.1, requirements 6.8, 14.4).
+  // Search cache the result.
   const renderPageRenderer = createPageRenderer({
     config: {
       renderDpi: config.renderDpi,
@@ -741,7 +741,7 @@ export function createApp(
   // Unauthenticated, so an orchestrator and API tooling need no credential.
   // /health/live never touches a dependency (process liveness only);
   // /health/ready gates the load balancer on the converter binaries and the
-  // vision endpoint (requirement 12.5); /health stays the composite
+  // vision endpoint; /health stays the composite
   // diagnostic probe for back-compat.
   app.get("/health", healthHandler);
   app.get("/health/live", createLivenessHandler());
@@ -840,9 +840,9 @@ export function createApp(
     convertHandler,
   );
 
-  // ── v2 on-demand render (task 3.8) ────────────────────────────────────────
+  // ── v2 on-demand render ────────────────────────────────────────
   // Render a page or a bbox region from a stored source on demand — full
-  // resolution is never pre-stored (requirement 6.8). Its own rate limiter
+  // resolution is never pre-stored. Its own rate limiter
   // (poppler is CPU) sits ahead of the shared auth chain; rendering derives a
   // read-only image from a stored source, so it is gated on the read scope
   // (extract.admin), the same scope a job status read uses. The JSON body is
@@ -891,7 +891,7 @@ export function createApp(
     // Needs BOTH halves: the store to cancel the reference's active jobs and a
     // Search target to delete in. `requireDelete` runs before either happens,
     // so a caller without `extract.delete` never cancels a job or reaches
-    // Search (requirement 9.8). The mount condition is exactly what
+    // Search. The mount condition is exactly what
     // `whoami.features.deleteByReference` reports.
     if (searchClient !== null) {
       const documentsRouter = createDocumentsRouter({
@@ -980,7 +980,7 @@ export function createApp(
     );
 
     // ── v2 job worker ─────────────────────────────────────────────────────
-    // The worker drives claimed jobs through the staged pipeline (task 1.7):
+    // The worker drives claimed jobs through the staged pipeline:
     // it renders pages from the source store on demand, runs render/vision/
     // parse/crops as checkpointed stages via a DB-backed ordered scheduler, and
     // publishes job/stage events onto the bus that feeds SSE and the callback.
@@ -1011,7 +1011,7 @@ export function createApp(
       isolated: isolatedRunner,
     });
     // The emitter streams the staged outbox to Search's revision API and
-    // reconciles on resume (task 1.12). It is only built when a Search target is
+    // reconciles on resume. It is only built when a Search target is
     // configured; without one the runner still processes and reaches `emitting`
     // but sends nothing.
     // One revision client serves the emitter and the source identification
@@ -1058,12 +1058,12 @@ export function createApp(
                 visionModel: config.visionModel,
                 renderDpi: config.renderDpi,
               },
-              // `extract_emit_outbox_pending` (requirement 18.1).
+              // `extract_emit_outbox_pending`.
               metrics,
               logger,
             })
           : null;
-    // The deterministic S2 page analyzer (design §5 S2, requirement 7.1):
+    // The deterministic S2 page analyzer:
     // `pdftotext -bbox-layout` per page with the same poppler binaries and
     // subprocess timeout as the renderer. The `-bbox-layout` capability is
     // probed once per process (memoised); without it every page analysis is
@@ -1123,19 +1123,19 @@ export function createApp(
         // The budget estimate mirrors the summary output budget; a summary call
         // is far cheaper than a vision page, so it reuses the same guard shape.
         summaryTokenEstimate: config.summary?.maxTokens ?? 512,
-        // JOB_MAX_TRANSIENT_WAIT_MS (requirement 4.8): retry a dependency outage
+        // JOB_MAX_TRANSIENT_WAIT_MS: retry a dependency outage
         // in place with backoff before pausing on dependency with auto-resume.
         maxTransientWaitMs: config.jobWorker.maxTransientWaitMs,
-        // VISION_BUDGET_PAGES_PER_DAY (task 7.7, requirement 5.8): the tenant
+        // VISION_BUDGET_PAGES_PER_DAY: the tenant
         // daily VLM-page cap; 0 disables it (the prod gate warns about that).
         visionBudgetPagesPerDay: config.visionBudgetPagesPerDay,
-        // MAX_PAGES (requirement 5.8): the same per-document ceiling the v1
+        // MAX_PAGES: the same per-document ceiling the v1
         // extractor applies, enforced in the v2 runner before any model call.
         maxPages: config.maxPages,
       },
       emitter,
       identifier: sourceIdentifier,
-      // OCR_FALLBACK=tesseract (task 7.10, requirement 5.11): on a VLM outage,
+      // OCR_FALLBACK=tesseract: on a VLM outage,
       // a scanned page's text comes from Tesseract with a warning instead of
       // failing the page for a retry. Disabled (the default) unless configured.
       ocr: createOcrClient(config),
@@ -1144,7 +1144,7 @@ export function createApp(
       summaryClient,
       // The shared metrics registry: the fast-path route and fidelity counters
       // ("Anteil Fast-Path") and the per-stage duration/outcome/token series
-      // (requirement 18.1), all exposed on `/metrics`.
+      // all exposed on `/metrics`.
       metrics,
       logger,
     });
@@ -1165,7 +1165,7 @@ export function createApp(
     if (overrides.startWorker === true) worker.start();
   }
 
-  // ── Ingest handler selection (task 1.14) ──────────────────────────────────
+  // ── Ingest handler selection ──────────────────────────────────
   // With BOTH a database and a Search target, `/v1/ingest` is a wrapper around
   // the v2 job + emitter: it stores the upload in the source store, creates a
   // job, drives it inline for a small document (so the historical synchronous
@@ -1241,7 +1241,7 @@ export function createApp(
     );
   }
 
-  // ── Job overview (requirement 18.6) ───────────────────────────────────────
+  // ── Job overview ───────────────────────────────────────
   // The Jobs tab in the operator console reaches the very same job router as
   // `/v2/jobs`, but through the cookie-authenticated BFF: a browser must not
   // hold a bearer token. Reads (list + detail) need the read scope; the
@@ -1432,11 +1432,11 @@ async function main(): Promise<void> {
     "Production-readiness gate passed",
   );
 
-  // Kernel-level memory/CPU ceilings for converter subprocesses (requirement
-  // 5.5). Applied process-wide here rather than in `createApp` so the settings
-  // are a startup concern and the test harness, which builds apps directly,
-  // keeps the inert default. On non-Linux platforms, or where `prlimit` is
-  // absent, this is a no-op and the container's cgroup limits apply instead.
+  // Kernel-level memory/CPU ceilings for converter subprocesses. Applied
+  // process-wide here rather than in `createApp` so the settings are a startup
+  // concern and the test harness, which builds apps directly, keeps the inert
+  // default. On non-Linux platforms, or where `prlimit` is absent, this is a
+  // no-op and the container's cgroup limits apply instead.
   configureSubprocessLimits({
     memoryLimitMb: config.subprocessMemoryLimitMb,
     cpuLimitSeconds: config.subprocessCpuLimitSeconds,
@@ -1480,11 +1480,11 @@ async function main(): Promise<void> {
 
   // Nothing can have spooled an upload before this point, so this is the only
   // moment a scratch file left by a crashed previous process can be reaped
-  // safely (requirement 5.9).
+  // safely.
   await sweepUploadScratch(config.tempDir, logger);
 
   // Probe the poppler `-bbox-layout` capability once at startup and log it, so
-  // the deterministic page analysis (S2, requirement 7.1) requirement is
+  // the deterministic page analysis requirement is
   // visible in the boot log. It is *reported*, never fatal: a v1-only
   // deployment that never runs the analyzed stage still starts cleanly — a
   // missing capability only degrades S2 (pages fall through to vision).

@@ -4,8 +4,8 @@
 /**
  * bbox-layout.ts
  *
- * Deterministic page geometry from poppler's `pdftotext -bbox-layout` (design
- * §5 S2 "Deterministische Seitenanalyse"; requirement 7.1).
+ * Deterministic page geometry from poppler's `pdftotext -bbox-layout`
+ * ("Deterministische Seitenanalyse").
  *
  * ## Why this exists
  *
@@ -80,9 +80,9 @@ export interface AnalyzedLine {
   /** Concatenated word text, single-spaced. */
   text: string;
   /**
-   * Line height in normalised units (`y2 - y1`). A proxy for font size (design
-   * §5 S2): a larger line height is a larger font, which is the signal a
-   * heading is set apart from body text.
+   * Line height in normalised units (`y2 - y1`). A proxy for font size: a
+   * larger line height is a larger font, which is the signal a heading is set
+   * apart from body text.
    */
   height: number;
 }
@@ -95,7 +95,7 @@ export interface AnalyzedBlock {
   text: string;
 }
 
-/** A heading candidate surfaced from a numbered line (design §5 S2/S3). */
+/** A heading candidate surfaced from a numbered line. */
 export interface HeadingCandidate {
   /** The full line text, e.g. `2.1 Anmeldung`. */
   text: string;
@@ -121,7 +121,7 @@ export interface PageAnalysis {
 }
 
 /**
- * A numbered-heading pattern (design §5 S2): a line that begins with `1`,
+ * A numbered-heading pattern: a line that begins with `1`,
  * `2.1`, `3.4.2` and so on, followed by whitespace and then some text. The
  * trailing text requirement keeps a bare figure number ("2.1" alone, or a page
  * number) from being mistaken for a heading.
@@ -336,7 +336,7 @@ function parsePage(node: unknown, pageNumber: number): PageAnalysis {
 
 /**
  * Flag lines whose text begins with a numbering pattern as heading candidates
- * (design §5 S2). These are *hints* for the Pass-1 prompt (task 2.3), not a
+ * These are *hints* for the Pass-1 prompt, not a
  * decision — the model still confirms structure — so the bar is deliberately
  * low: a numbered prefix followed by text.
  */

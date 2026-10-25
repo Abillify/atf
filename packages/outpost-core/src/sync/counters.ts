@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Run counters (requirement 11.1).
+ * Run counters.
  *
  * Every processed item (i.e. every item that passed the include/exclude
  * filter and reached a terminal outcome in this run) falls into EXACTLY one

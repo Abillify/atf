@@ -256,7 +256,7 @@ function buildRagSourceNode(
 		args.path_prefix = source.pathPrefix;
 	if (typeof source.hyde === "boolean") args.hyde = source.hyde;
 	// v2 retrieval params (Req 16.1): forwarded verbatim to vectorsearch's
-	// `search` tool (task 3.9), which runs the v2 pipeline. `includeAssets` maps
+	// `search` tool, which runs the v2 pipeline. `includeAssets` maps
 	// to the tool's snake_case `include_assets`; `expand`/`granularity` share the
 	// name. Omitted when the source does not declare them, so a legacy source's
 	// args are byte-for-byte unchanged.
@@ -881,7 +881,7 @@ export function createParallelNodeHandler(
 					/* ignore client disconnect */
 				}
 				const evidenceLine = (c: RagChunk): string => {
-					// v2 pages: prefer the explicit `pages` array (design §7.2), else the
+					// v2 pages: prefer the explicit `pages` array, else the
 					// inclusive pageStart/pageEnd range carried by legacy evidence.
 					const page =
 						c.pages !== undefined && c.pages.length > 0

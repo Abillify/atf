@@ -66,10 +66,10 @@ export interface ParsedVisionFigure {
   id: string;
   /** The id the model used, kept so placeholder rewriting can find it. */
   modelId: string;
-  /** 2–3 sentence summary of the figure (design §5 S3, requirement 8.1). */
+  /** 2–3 sentence summary of the figure. */
   description: string;
   /**
-   * The figure's kind (design §5 S3). Drives which structured transcription
+   * The figure's kind. Drives which structured transcription
    * Pass 2 produces. Defaults to `"other"` when the model omitted it or gave a
    * value outside the contract enum.
    */
@@ -81,10 +81,10 @@ export interface ParsedVisionFigure {
 }
 
 /**
- * A table the model marked as spanning a page boundary (design §5 S3,
- * requirement 9.2). The parser does not restructure the table — it stays as HTML
- * in {@link ParsedVisionPage.markdown} — it only surfaces the continuation flags
- * so the document pass (task 2.6) knows which tables to merge.
+ * A table the model marked as spanning a page boundary. The parser does not
+ * restructure the table — it stays as HTML in {@link ParsedVisionPage.markdown}
+ * — it only surfaces the continuation flags so the document pass knows which
+ * tables to merge.
  */
 export interface ParsedVisionTable {
   /** Zero-based index of the `<table>` in the page body, in reading order. */
@@ -331,7 +331,7 @@ function attrIsTrue(rawAttrs: string, names: readonly string[]): boolean {
 
 /**
  * Scan the body for `<table>` elements the model flagged as spanning a page
- * boundary (design §5 S3, requirement 9.2). Reads only the opening tags — the
+ * boundary. Reads only the opening tags — the
  * table content is left untouched in the body — and reports one entry per table
  * that carries a continuation attribute. Tables with neither flag are omitted,
  * so an ordinary single-page table produces nothing.
@@ -779,10 +779,9 @@ export function parseTranscription(kind: string, raw: string): ParsedTranscripti
 
 /**
  * The fraction of `labels` (0–1) that appear, case-insensitively and
- * whitespace-normalised, somewhere in a transcription's flattened text (design
- * §5 S5, requirement 8.4). An empty label set is fully covered (1) — there is
- * nothing to miss — so a figure with no text layer never triggers a spurious
- * low-coverage retry.
+ * whitespace-normalised, somewhere in a transcription's flattened text. An
+ * empty label set is fully covered (1) — there is nothing to miss — so a
+ * figure with no text layer never triggers a spurious low-coverage retry.
  */
 export function labelCoverage(labels: readonly string[], transcription: Transcription): number {
   const normalisedLabels = labels

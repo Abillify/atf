@@ -545,7 +545,7 @@ export async function setupLlmTools(params: {
     // MCP wrapper is available, thread a `fetchAsset` hook that fetches the
     // asset's bytes via the configured server's `get_asset` tool. The call
     // runs with the caller's request context, so it inherits get_asset's
-    // ACL + fail-closed behaviour (task 3.9); `agent-tools.ts` stays decoupled
+    // ACL + fail-closed behaviour; `agent-tools.ts` stays decoupled
     // from the MCP client. Absent config/wrapper → the hook is omitted and
     // `asset:` references are simply not resolvable.
     const assetSource = imageInspection.assetSource;

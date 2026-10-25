@@ -20,7 +20,7 @@
  *
  * Search answers a delete of an unknown reference with `deleted: 0`, not an
  * error. Requirement 9.9 wants a client to be able to tell "this reference was
- * never here" apart from "it was here and is gone now" — and requirement 9.3
+ * never here" apart from "it was here and is gone now" — and
  * wants the *Outpost* to treat both as success. So Extract reports `0` as
  * `404 NOT_FOUND` (honest about state) and the Outpost maps `200` and `404`
  * alike to "deleted", which keeps the mirror-delete loop idempotent across
@@ -141,7 +141,7 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
     }
 
     // 1. Cancel the active jobs of this reference/collection so no in-flight
-    //    emit re-creates the document after the delete (requirement 9.3).
+    // emit re-creates the document after the delete.
     //    A row without a collection belongs to the instance default — the same
     //    collection this request targets when X-Collection was omitted.
     const active = await store.listActiveJobsByReference(
@@ -178,7 +178,7 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
         );
       }
     }
-    // 2. Delete in Search under the caller's access scope (requirement 9.7).
+    // 2. Delete in Search under the caller's access scope.
     const principal = getPrincipal(req);
     const identity = hasIdentity(principal)
       ? {

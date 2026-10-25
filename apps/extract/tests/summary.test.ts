@@ -4,8 +4,7 @@
 /**
  * summary.test.ts
  *
- * The summary hierarchy (design §5 S7 step 5 "Summary-Hierarchie
- * (RAPTOR-light)", §9a.2; task 2.7, requirement 9.5).
+ * The summary hierarchy.
  *
  * Covers:
  *  - a section that closes produces exactly ONE section summary, from the

@@ -30,7 +30,7 @@ export type OutboxStatus = "pending" | "sent" | "acked" | "failed";
 
 /**
  * The lease fencing token a worker presents with every persistent write
- * (design §9b.2, requirement 4.5). The store executes a fenced write only when
+ * The store executes a fenced write only when
  * `extract.jobs` still carries `lease_holder = holder AND lease_epoch = epoch`,
  * checked in SQL inside the same transaction as the write — so the check and
  * the act cannot be separated by a takeover or an operator action.
@@ -64,7 +64,7 @@ export class LeaseLostError extends Error {
 }
 
 /**
- * Token accounting folded into a checkpoint transaction (requirement 4.9): the
+ * Token accounting folded into a checkpoint transaction: the
  * reservation taken before the model call is released and the actual spend is
  * booked in the same transaction that persists the stage result, so a crash
  * can never record the checkpoint without its cost (or vice versa).
@@ -109,7 +109,7 @@ export interface OperatorTransition {
 
 /**
  * A row in `extract.jobs`. `snake_case` throughout because it maps 1:1 onto the
- * table; the API layer (task 1.5) is responsible for translating to the
+ * table; the API layer is responsible for translating to the
  * camelCase `Job` contract type.
  */
 export interface JobRow {
@@ -281,7 +281,7 @@ export interface UploadRow {
   updated_at: Date;
 }
 
-/** A job row selected by an erasure target filter (task 4.6). */
+/** A job row selected by an erasure target filter. */
 export interface ErasureJobTargetRow {
 	id: string;
 	reference: string;
@@ -314,7 +314,7 @@ export type ErasureClaimResult<Result = unknown> =
 	| { kind: "in_flight"; record: ErasureLedgerRecord<Result> }
 	| { kind: "terminal"; record: ErasureLedgerRecord<Result> };
 
-/** One chunk append to a resumable upload session (requirement 4.14). */
+/** One chunk append to a resumable upload session. */
 export interface UploadAppend {
   uploadId: string;
   /** The confirmed offset the chunk was validated against. */

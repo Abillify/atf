@@ -129,7 +129,7 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
   // One row per persistent job. Carries the config snapshot, the pipeline and
   // prompt hashes the resume policy compares against, the token budget/usage
   // counters, and the lease fields (holder, epoch, expiry, heartbeat) that make
-  // takeover and fencing possible (requirement 4.1, 4.4, 4.5).
+  // takeover and fencing possible.
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.jobs (
       id                UUID        PRIMARY KEY,
@@ -162,7 +162,7 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
   `);
   // Worker fetch: claim the next runnable job by status, ordered so due,
   // high-priority, oldest jobs come first. Used with SELECT … FOR UPDATE
-  // SKIP LOCKED (requirement 4.4).
+  // SKIP LOCKED.
   await client.query(`
     CREATE INDEX IF NOT EXISTS jobs_status_idx
       ON ${EXTRACT_SCHEMA}.jobs (status)
@@ -184,8 +184,8 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
 
   // ── page_stages ─────────────────────────────────────────────────────────
   // Checkpoint per (job, page, stage). `input_hash` addresses the result so a
-  // resume with an identical hash reuses it without a model call (requirement
-  // 4.2, 4.3). `output` holds the stage result / persisted model raw response.
+  // resume with an identical hash reuses it without a model call. `output`
+  // holds the stage result / persisted model raw response.
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.page_stages (
       job_id          UUID        NOT NULL REFERENCES ${EXTRACT_SCHEMA}.jobs(id) ON DELETE CASCADE,
@@ -281,7 +281,7 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
   `);
 
   // ── docpass_state ─────────────────────────────────────────────────────────
-  // The streaming document-pass state persisted AFTER page N (design §9b.2).
+  // The streaming document-pass state persisted AFTER page N.
   // One row per (job, page); a resume restores from the last finished page.
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.docpass_state (
@@ -353,7 +353,7 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
 
   // ── uploads ─────────────────────────────────────────────────────────────
   // Resumable upload sessions. `received_offset` is the last confirmed byte so
-  // a PATCH/HEAD can resume after an abort (requirement 4.14).
+  // a PATCH/HEAD can resume after an abort.
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.uploads (
       upload_id       UUID        PRIMARY KEY,
@@ -375,7 +375,7 @@ async function createInitialSchema(client: MigrationClient): Promise<void> {
 // ─── Schema (version 2) ─────────────────────────────────────────────────────
 
 /**
- * Resume hardening (design §9b, requirements 4.5, 4.8, 4.9, 5.7):
+ * Resume hardening:
  *
  *   - `jobs.tokens_reserved` — atomic budget reservations for in-flight model
  *     calls, so concurrent pages cannot overdraw `token_budget`.
@@ -467,7 +467,7 @@ async function addErasureLedger(client: MigrationClient): Promise<void> {
 }
 
 /**
- * Task 7.7 (requirement 5.8): the per-tenant daily vision-page counter.
+ * The per-tenant daily vision-page counter.
  *
  * One row per (tenant, UTC day); the spend is a single atomic upsert
  * (`INSERT … ON CONFLICT DO UPDATE … RETURNING`), so concurrent page stages

@@ -4,16 +4,15 @@
 /**
  * chaos-resume.test.ts
  *
- * The extraction + emit half of the chaos/resume suite (task 1.15, design
- * §9b.4, requirements 18.5, 4.3, 4.4, 5.2, 5.4, 5.7). Its job is to prove the
- * central resumability invariant of design §9b:
+ * The extraction + emit half of the chaos/resume suite. Its job is to prove
+ * the central resumability invariant:
  *
  *   **Every unit of work that was once completed and persisted is never redone,
  *   and a run interrupted at ANY point and resumed produces a result identical
  *   to an undisturbed run.**
  *
- * The harness drives the REAL job runner (task 1.7) and the REAL outbox emitter
- * (task 1.12) against the in-memory fake ExtractStore, a counting vision mock,
+ * The harness drives the REAL job runner and the REAL outbox emitter
+ *  against the in-memory fake ExtractStore, a counting vision mock,
  * and a fault-aware fake Search revision server that models the accept/stage/
  * commit state a real Search exposes. No poppler, no model, no database, no
  * HTTP — every fault is injected through the fakes, so production code is
@@ -42,7 +41,7 @@
  *
  * ## Fault-injection points and scenarios
  *
- * Fault points span the whole handover, matching design §9b.4:
+ * Fault points span the whole handover:
  *   before/after each processing stage (render/vision/parse via the vision call),
  *   before/after send (emitter PUT batch), before/after receive+embedding (the
  *   fake Search accept), before/after commit (segment/final).
@@ -100,7 +99,7 @@ const PAGE_IMAGE: PageImage = { buffer: TINY_PNG, mimeType: "image/png", width: 
 
 /**
  * A vision client that records every page it is asked to analyse. The recorded
- * `calls` array is the model-mock counter of requirement 4.3: a resume that
+ * `calls` array is the model-mock counter: a resume that
  * reuses checkpoints must never grow it. Its output is deterministic per page,
  * so a re-run (were one to happen) would produce byte-identical records — which
  * is exactly why a duplicate call would NOT change the unit hashes, and why the
@@ -185,7 +184,7 @@ function fakeRenderer(prepared: PreparedSource): PageRenderer {
 
 /**
  * The enumerated fault-injection points, one small toggle the harness arms
- * before a run. They span the whole path design §9b.4 requires an abort at:
+ * before a run. They span the whole path requires an abort at:
  * the processing stages (render/vision), the send, the receive+embed (accept),
  * and the two commits.
  */
@@ -198,7 +197,7 @@ type FaultPoint =
   | "before-segment-commit" // a segment commit throws
   | "before-final-commit"; // the final commit throws
 
-/** The scenarios of design §9b.4, each a way a fault manifests. */
+/** The scenarios, each a way a fault manifests. */
 type Scenario =
   | "kill-9" // drop the worker mid-run; a fresh worker takes over the lease
   | "network-error" // the request never reached a definitive answer
@@ -534,7 +533,7 @@ async function referenceRun(): Promise<RunFingerprint> {
  *
  *   - kill-9: after the first processing pass the "worker" is dropped; the fake
  *     store's lease is expired and a FRESH worker claims the job (new epoch),
- *     exactly as the real takeover path (requirement 4.4). Its runner then
+ * exactly as the real takeover path. Its runner then
  *     resumes at the first unfinished page, reusing every done checkpoint.
  *   - the send/accept/commit scenarios: the emitter's first pass throws at the
  *     armed point and returns `transient`; the armed fault is one-shot, so the
@@ -664,7 +663,7 @@ function faultyVision(inner: CountingVision, fault: ArmedFault): FaultyVision {
 // ── the assertions ───────────────────────────────────────────────────────────
 
 /**
- * The four invariants of requirement 18.5, checked against the reference. This
+ * The four invariants, checked against the reference. This
  * is the heart of the suite: every chaos run must satisfy all four.
  */
 function assertInvariants(reference: RunFingerprint, chaos: RunFingerprint): void {
@@ -673,7 +672,7 @@ function assertInvariants(reference: RunFingerprint, chaos: RunFingerprint): voi
   expect(chaos.units.map((u) => u.contentHash)).toEqual(reference.units.map((u) => u.contentHash));
 
   // 2. No duplicate model calls: the chaos run called the model no more than the
-  //    reference did (a resume reuses checkpoints — requirement 4.3). Each page
+  // reference did (a resume reuses checkpoints). Each page
   //    is analysed at most once.
   expect(chaos.modelCalls.length).toBeLessThanOrEqual(reference.modelCalls.length);
   const seen = new Set<number>();
@@ -688,7 +687,7 @@ function assertInvariants(reference: RunFingerprint, chaos: RunFingerprint): voi
 
   // 4. No orphaned assets: the set of stored assets equals exactly the set the
   //    committed document references — no extra (orphan) and none missing
-  //    (requirement 5.7). Since a committed run stores precisely the referenced
+  // Since a committed run stores precisely the referenced
   //    page images and figure crops, equality with the expected set proves both
   //    directions at once.
   const expected = [...expectedAssetIds()].sort();
@@ -762,12 +761,11 @@ describe("chaos/resume · extraction + emit (task 1.15, req 18.5)", () => {
 // ── pin vs continue on a version change ──────────────────────────────────────
 
 /**
- * The `resume_policy` half of the scenario list (requirement 4.12, design
- * §9b.2). When a deployment changes the pipeline/prompt stand mid-job, a `pin`
- * job pauses and waits; a `continue` job proceeds under the new stand. These
- * assert the DECISION the worker's resume logic makes (`decideResume`), which is
- * what gates whether a resume runs at all — the recorded "used stand" per page
- * follows from that decision.
+ * The `resume_policy` half of the scenario list. When a deployment changes the
+ * pipeline/prompt stand mid-job, a `pin` job pauses and waits; a `continue` job
+ * proceeds under the new stand. These assert the DECISION the worker's resume
+ * logic makes (`decideResume`), which is what gates whether a resume runs at all
+ * — the recorded "used stand" per page follows from that decision.
  */
 describe("chaos/resume · version change with pin vs continue (req 4.12)", () => {
   const snapshot: PipelineSnapshot = { pipelineHash: "pipe-1", promptHash: "prompt-1" };

@@ -128,7 +128,7 @@ export function validateConfig(
   }
 
   // Two source ids that collapse to the same `OUTPOST_SOURCE_<ID>_*` name
-  // would read each other's secrets (requirement 6.10).
+  // would read each other's secrets.
   const envIds = new Map<string, string>();
   for (const src of cfg.sources) {
     const envId = sourceEnvId(src.id);

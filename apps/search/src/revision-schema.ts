@@ -4,12 +4,12 @@
 /**
  * revision-schema.ts
  *
- * DDL and typed row shapes for the v2 ingest staging tables (design §6.1,
- * §6.5, §9a.3) and the asset table that replaces `vs_document_assets`.
+ * DDL and typed row shapes for the v2 ingest staging tables and the asset
+ * table that replaces `vs_document_assets`.
  *
- * This module is schema-only. The revision API (task 1.9), the batch worker
- * (task 1.10), the asset API / AssetStore (task 1.11) and the atomic `is_latest`
- * switch (task 1.13) build on the tables and row shapes defined here; none of
+ * This module is schema-only. The revision API, the batch worker
+ * the asset API / AssetStore and the atomic `is_latest`
+ * switch build on the tables and row shapes defined here; none of
  * that business logic lives in this file.
  *
  * These are *global* tables (tenant + collection scoped by column, like
@@ -22,7 +22,7 @@
  * (RevisionStatus, Visibility, BatchStatus, AssetRef kind, variants, FigureKind,
  * unit_type). Extending a vocabulary there should be a code change, never a
  * schema migration. The columns are still real + indexed so filtering is
- * indexable (design §6.2, Requirement 11.5).
+ * indexable.
  */
 
 import type { PoolClient } from "pg";
@@ -35,15 +35,15 @@ import type {
 
 // ─── Table names ──────────────────────────────────────────────────────────────
 
-/** Staged revisions per document (design §6.1). */
+/** Staged revisions per document. */
 export const VS_REVISIONS_TABLE = "vs_revisions";
-/** Staged NDJSON page batches awaiting the embedding worker (design §9b.3). */
+/** Staged NDJSON page batches awaiting the embedding worker. */
 export const VS_INGEST_BATCHES_TABLE = "vs_ingest_batches";
-/** Committed segment ranges per revision (design §9a). */
+/** Committed segment ranges per revision. */
 export const VS_SEGMENTS_TABLE = "vs_segments";
-/** Per-document pointer to the currently-visible revision (design §9a.3). */
+/** Per-document pointer to the currently-visible revision. */
 export const VS_DOCUMENT_REVISIONS_TABLE = "vs_document_revisions";
-/** Asset table that replaces vs_document_assets (design §6.5, Requirement 14). */
+/** Asset table that replaces vs_document_assets. */
 export const VS_ASSETS_TABLE = "vs_assets";
 /** Every ingested source file per document: dedup fingerprints and claims. */
 export const VS_DOCUMENT_SOURCES_TABLE = "vs_document_sources";
@@ -57,7 +57,7 @@ export const VS_DOCUMENT_GROUPS_TABLE = "vs_document_groups";
 /**
  * A staged revision. `is_latest` is NOT stored here — the current-revision
  * pointer lives in {@link DocumentRevisionPointerRow} so the final commit can
- * flip a single row atomically (design §9a.3). A revision only *becomes* latest
+ * flip a single row atomically. A revision only *becomes* latest
  * via that pointer.
  */
 export interface RevisionRow {
@@ -141,10 +141,10 @@ export interface SegmentRow {
 }
 
 /**
- * The per-document revision pointer (design §9a.3). Exactly one row per
+ * The per-document revision pointer. Exactly one row per
  * (tenant, collection, reference) names the revision that search filters on, so
  * two revisions of one document are never visible at once. The atomic switch
- * (task 1.13) updates this pointer.
+ *  updates this pointer.
  */
 export interface DocumentRevisionPointerRow {
   tenant_id: string;
@@ -156,7 +156,7 @@ export interface DocumentRevisionPointerRow {
 }
 
 /**
- * An asset bound to a revision (design §6.5). Replaces vs_document_assets;
+ * An asset bound to a revision. Replaces vs_document_assets;
  * legacy figure assets are backfilled with kind='figure' and a null revision_id.
  */
 export interface AssetRow {
@@ -385,7 +385,7 @@ async function ensureRevisionTablesLocked(client: PoolClient): Promise<void> {
       ADD COLUMN IF NOT EXISTS lease_token TEXT,
       ADD COLUMN IF NOT EXISTS attempts    INTEGER NOT NULL DEFAULT 0
   `);
-  // The SKIP LOCKED worker (task 1.10) claims batches by status, oldest first.
+  // The SKIP LOCKED worker claims batches by status, oldest first.
   await client.query(`
     CREATE INDEX IF NOT EXISTS idx_vs_ingest_batches_worker
       ON ${VS_INGEST_BATCHES_TABLE}(status, next_attempt_at, created)
@@ -413,7 +413,7 @@ async function ensureRevisionTablesLocked(client: PoolClient): Promise<void> {
       ON ${VS_SEGMENTS_TABLE}(tenant_id, collection, revision_id)
   `);
 
-  // ── vs_document_revisions (per-document pointer, design §9a.3) ───────────────
+  // ── vs_document_revisions (per-document pointer) ───────────────
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${VS_DOCUMENT_REVISIONS_TABLE} (
       tenant_id           TEXT NOT NULL,

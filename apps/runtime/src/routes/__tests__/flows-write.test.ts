@@ -4,7 +4,7 @@
 /**
  * Tests for POST/PUT /flows/write — file-based write-path security.
  *
- * Requirements: 22.1 (RBAC), 22.2 (path traversal), 22.3 (schema validation),
+ * (RBAC), 22.2 (path traversal), 22.3 (schema validation),
  * 22.4 (atomic write — no partial file on failure).
  */
 

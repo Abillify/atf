@@ -33,11 +33,11 @@
  * the rule, and the prompt says so explicitly — a text layer linearises a table
  * into a jumbled sequence and loses every merge, so there the image wins.
  *
- * ## What changed for v2 (design §5 S3, task 2.3)
+ * ## What changed for v2
  *
  * Four deliberate changes over the v1 prompt, each versioned into
  * {@link PAGE_PROMPT_VERSION} so a change trips the resume policy via the prompt
- * hash (task 2.3, requirement 8.1/9.2):
+ * hash:
  *
  *  - **Figures carry `kind` and `caption`** and their free-text description
  *    shrinks to 2–3 sentences. The `kind` drives which structured transcription
@@ -47,7 +47,7 @@
  *    asked to reinvent the outline from the image alone.
  *  - **Tables are marked `continues`/`continuationOf`** when they run off the
  *    bottom of the page or begin as the tail of the previous page's table, so
- *    the document pass (task 2.6) can merge them under one `tableId`.
+ * the document pass can merge them under one `tableId`.
  *  - **The "do not transcribe figure content into the body" rule is dropped.**
  *    Structured figure content is captured by later passes into the figure
  *    block; forbidding it in the body is no longer needed.
@@ -144,7 +144,7 @@ Füge niemals Gedankengänge, Entschuldigungen oder Meta-Anmerkungen hinzu. Erfi
 export const NO_TEXT_LAYER_MARKER = "[Keine Textschicht vorhanden — bitte vollständig aus dem BILD transkribieren]";
 
 /**
- * A heading candidate S2 surfaced for this page (design §5 S2/S3). The shape is
+ * A heading candidate S2 surfaced for this page. The shape is
  * kept local — a `{ numbering, text }` pair is all the prompt needs — so the
  * prompt module does not depend on the geometry module.
  */
@@ -156,7 +156,7 @@ export interface PromptHeadingCandidate {
 }
 
 /**
- * Bounded context carried over from the previous page (design §5 S3).
+ * Bounded context carried over from the previous page.
  *
  * A page in the middle of a section or a multi-page table needs to know the
  * heading chain in force and the last table header, but not the whole document.
@@ -171,10 +171,10 @@ export interface PrevPageContext {
 }
 
 /**
- * Token budget for the previous-page context section (design §5 S3: "etwa 300
- * Token"). Enforced by a word-based approximation — a token is roughly 0.75
- * words for German prose, so the word cap is set a little below the token cap to
- * stay under it with margin.
+ * Token budget for the previous-page context section ("etwa 300 Token").
+ * Enforced by a word-based approximation — a token is roughly 0.75 words for
+ * German prose, so the word cap is set a little below the token cap to stay
+ * under it with margin.
  */
 export const PREV_PAGE_CONTEXT_TOKEN_BUDGET = 300;
 
@@ -188,7 +188,7 @@ export interface PageUserPromptInput {
   pageCount: number;
   /** Text layer for this page; empty for a scanned page. */
   rawText: string;
-  /** Numbered-heading candidates for this page from S2 (design §5 S2/S3). */
+  /** Numbered-heading candidates for this page from S2. */
   headingCandidates?: readonly PromptHeadingCandidate[] | undefined;
   /** Bounded context from the previous page (heading chain, last table header). */
   prevPage?: PrevPageContext | undefined;
@@ -280,7 +280,7 @@ Analysiere das angehängte BILD dieser Seite und erzeuge die Abschnitte <summary
 
 /**
  * The Pass-1 prompt set, keyed for the snapshot prompt hash (task 2.3,
- * requirement 4.12 wiring in `jobs/snapshot.ts`).
+ * wiring in `jobs/snapshot.ts`).
  *
  * The system prompt is included verbatim (its text is the behaviour), plus the
  * version tag so a change to the *user-prompt structure* — which is code, not a
@@ -301,13 +301,13 @@ export function pass1PromptSet(): Record<string, string> {
  * prompts.ts — Pass 2 (S5)
  *
  * Pass 1 turns a whole page into structure; Pass 2 turns one *figure* into a
- * structured, verbatim transcription in the format its kind implies (design §5
- * S5, requirement 8.3). The division of labour is the same as Pass 1 and worth
- * repeating in every prompt because it is the single biggest source of error:
- * the `regionText` (the poppler words inside the figure's box, task 2.4) is
- * authoritative for *wording* — labels, field names, part numbers — and the
- * high-resolution crop is authoritative for *structure* — which node points at
- * which, which field sits in which area.
+ * structured, verbatim transcription in the format its kind implies. The
+ * division of labour is the same as Pass 1 and worth repeating in every prompt
+ * because it is the single biggest source of error: the `regionText` (the
+ * poppler words inside the figure's box) is authoritative for *wording* —
+ * labels, field names, part numbers — and the high-resolution crop is
+ * authoritative for *structure* — which node points at which, which field sits
+ * in which area.
  *
  * ## Why per-kind system prompts and not one prompt with a `kind` variable
  *
@@ -440,7 +440,7 @@ export function pass2SystemPrompt(kind: string): string | undefined {
 export interface FigureUserPromptInput {
   /** The figure's kind, for a one-line reminder in the prompt. */
   kind: string;
-  /** The verbatim text-layer words inside the figure's box (task 2.4). */
+  /** The verbatim text-layer words inside the figure's box. */
   regionText: string;
   /** The figure's caption, when Pass 1 supplied one. */
   caption?: string | undefined;

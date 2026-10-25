@@ -5,7 +5,7 @@
  * pipeline/native/index.ts
  *
  * Native parsers that turn a source into contract records WITHOUT a model call
- * and, where possible, without rendering (design §10, requirements 10.1–10.3).
+ * and, where possible, without rendering.
  *
  * Three native paths land here:
  *
@@ -74,11 +74,11 @@ export interface NativeRecords {
 }
 
 /**
- * Build the single-page record for a BPMN source (requirement 10.1).
+ * Build the single-page record for a BPMN source.
  *
  * The page carries one `figure` block of kind `bpmn` whose transcription is the
  * deterministically parsed process graph; there is no page image, and the
- * original `.bpmn` XML is stored as a `native:` asset (design §4.3). No model
+ * original `.bpmn` XML is stored as a `native:` asset. No model
  * is ever called.
  */
 export function buildBpmnRecords(
@@ -163,7 +163,7 @@ export function buildBpmnRecords(
 }
 
 /**
- * Build native page records for a Visio drawing (requirement 10.4).
+ * Build native page records for a Visio drawing.
  *
  * Each Visio page becomes one page record carrying a single `figure` block:
  * a `flowchart` figure with a `process` transcription when the page has
@@ -175,7 +175,7 @@ export function buildBpmnRecords(
  * Unlike {@link buildBpmnRecords}, a Visio drawing still benefits from the
  * picture, so each page also references a `page` asset: the design keeps the
  * LibreOffice → PDF render for the image *in addition to* this native structure
- * (design §10.4, "additionally LibreOffice → PDF for the image"). This builder
+ * ("additionally LibreOffice → PDF for the image"). This builder
  * produces the structured half; the caller wires the render alongside it.
  */
 export function buildVsdxRecords(
@@ -209,7 +209,7 @@ export function buildVsdxRecords(
 		};
 
 		const assets: AssetRef[] = [
-			// The LibreOffice-rendered page image (design §10.4) attaches here.
+			// The LibreOffice-rendered page image attaches here.
 			{
 				assetId: buildAssetId(reference, pageLocalId(page)),
 				kind: "page",
@@ -290,7 +290,7 @@ function toContractCell(cell: XlsxCell): Cell {
 }
 
 /**
- * Build native table records for an XLSX workbook (requirement 10.2). Returns
+ * Build native table records for an XLSX workbook. Returns
  * one page per worksheet, each carrying a single `table` block, together with
  * the render decision. When {@link ParsedXlsx.needsRender} is true the caller
  * renders the workbook instead (the tables here are then not used); when false
@@ -355,7 +355,6 @@ export function buildXlsxRecords(
 /**
  * A heading-level hint keyed by normalised heading text, for the document pass
  * to override its font-size guess with the DOCX's authoritative levels
- * (requirement 10.3).
  */
 export interface DocxHeadingHints {
 	/** Normalised heading text → level (1..9). */
@@ -370,7 +369,7 @@ export function normalizeHeadingKey(text: string): string {
 }
 
 /**
- * Extract DOCX heading-level hints from a `.docx` buffer (requirement 10.3).
+ * Extract DOCX heading-level hints from a `.docx` buffer.
  * The render path is unchanged; these hints AUGMENT the outline built during
  * the document pass.
  */

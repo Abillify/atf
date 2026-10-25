@@ -4,8 +4,7 @@
 /**
  * jobs/docpass/document-pass.ts
  *
- * The streaming document pass (design §5 S7, §9a.2; task 2.6, requirements 9.1,
- * 9.2, 9.3, 9.4, 4.7).
+ * The streaming document pass.
  *
  * ## What it is
  *
@@ -33,7 +32,7 @@
  * persisting the snapshot to `docpass_state`; a resume rehydrates from the last
  * persisted page and continues. Because the state is the *only* thing carried
  * and it is fully serialised after each page, an interrupted-then-resumed run
- * produces byte-identical output to an uninterrupted one (requirement 4.7).
+ * produces byte-identical output to an uninterrupted one.
  *
  * ## Determinism
  *
@@ -107,7 +106,7 @@ import {
 
 /**
  * The full, JSON-serialisable running state persisted after each page on
- * `docpass_state` (design §9a.2, requirement 4.7). Every sub-state is itself
+ * `docpass_state`. Every sub-state is itself
  * serialisable and versioned, so a resume rehydrates the exact same pass.
  */
 export interface DocpassState {
@@ -119,7 +118,7 @@ export interface DocpassState {
   refs: RefRegistry;
   /**
    * The per-section content accumulator for the summary hierarchy (task 2.7,
-   * requirement 9.5). Holds each open section's page summaries and block text
+   * ). Holds each open section's page summaries and block text
    * until the section closes and its summary is produced.
    */
   sectionContent: SectionContentState;
@@ -207,13 +206,13 @@ function parseRefRegistry(value: unknown): RefRegistry {
 
 /** Optional tuning for the pass. */
 export interface DocumentPassConfig {
-  /** Override / extend the identifier regex classes (design §5 S7). */
+  /** Override / extend the identifier regex classes. */
   identifierClasses?: readonly IdentifierClass[];
   /** Override the furniture rolling-window tunables. */
   furnitureWindow?: RollingWindowConfig;
   /**
    * Authoritative heading levels keyed by normalised heading text (DOCX styles,
-   * requirement 10.3). A heading in this map takes its level from here, ahead of
+   * ). A heading in this map takes its level from here, ahead of
    * numbering and line height.
    */
   headingLevelHints?: ReadonlyMap<string, number>;
@@ -225,7 +224,7 @@ export interface AppliedPage {
   /** The furniture recognised on this page (also placed on the record). */
   furniture: Furniture | null;
   /**
-   * The sections that CLOSED on this page (task 2.7, requirement 9.5). A
+   * The sections that CLOSED on this page. A
    * section closes when a sibling/ancestor heading opens; each closed section is
    * the "section ended" event the summary generator turns into an
    * abschnitts-summary. Deepest-first, mirroring the outline pop order. Empty on
@@ -250,7 +249,7 @@ export interface DocumentPass {
   /** The serialisable running state to persist after the applied page. */
   snapshot(): DocpassState;
   /**
-   * The summary-generation input for a closed section (task 2.7): the Pass-1
+   * The summary-generation input for a closed section: the Pass-1
    * summaries of the section's pages plus its own block text, bounded
    * (RAPTOR-light). Empty string when the section has no accumulated content.
    */
@@ -259,7 +258,7 @@ export interface DocumentPass {
   releaseSection(sectionId: string): void;
   /** The Pass-1 summary of a page, for chapter/document rollups. */
   pageSummary(page: number): string | undefined;
-  /** Append a produced summary node to the running state (task 2.7). */
+  /** Append a produced summary node to the running state. */
   addSummary(node: SummaryNode): void;
   /** True when a summary for this scope+id was already produced (resume guard). */
   hasSummary(scope: SummaryNode["scope"], id: string): boolean;
@@ -268,7 +267,7 @@ export interface DocumentPass {
   /** The finished outline for `document.end` (closes all open headings). */
   outline(lastPage: number): OutlineNode[];
   /**
-   * The finalize pass (task 5.4, requirement 9.6): the finished outline with
+   * The finalize pass: the finished outline with
    * provisional heading levels corrected once the whole document's height
    * distribution is known, plus the list of sections whose `sectionPath`
    * changed so Search re-embeds exactly those. Deterministic and model-free —
@@ -277,7 +276,7 @@ export interface DocumentPass {
    */
   finalizeOutline(lastPage: number): FinalizedOutline;
   /**
-   * The sections still open at document end (task 2.7): the outline nodes with
+   * The sections still open at document end: the outline nodes with
    * their final page ranges. The summary generator produces a section summary
    * for each of these too, since they never got a close event.
    */
@@ -292,7 +291,7 @@ export interface DocumentPass {
 
 /**
  * Create a streaming document pass, optionally rehydrated from persisted state
- * so a resume continues the exact same pass (design §9a.2). Deterministic.
+ * so a resume continues the exact same pass. Deterministic.
  */
 export function createDocumentPass(
   initial: DocpassState = emptyDocpassState(),
@@ -333,7 +332,7 @@ export function createDocumentPass(
   }
 
   function applyPage(record: PageRecord, analysis?: PageAnalysis | null, next?: PageRecord | null): AppliedPage {
-    // ── Furniture (task 2.2) ──────────────────────────────────────────────
+    // ── Furniture ──────────────────────────────────────────────
     // Feed the page's geometry to the rolling-window detector; the recognised
     // header/footer/pageLabel is placed on the record. When no analysis is
     // available the detector sees no bands and yields null.
@@ -376,7 +375,7 @@ export function createDocumentPass(
       }
     });
 
-    // Record this page's Pass-1 summary for the summary hierarchy (task 2.7):
+    // Record this page's Pass-1 summary for the summary hierarchy:
     // it is the RAPTOR-light bottom layer that section/chapter/document
     // summaries roll up from.
     if (record.summary !== undefined) sectionContent.observePageSummary(record.page, record.summary);
@@ -393,7 +392,7 @@ export function createDocumentPass(
           record.page,
           headingHeight(block, analysis),
         );
-        // Each popped heading is a closed section (task 2.7): the "section
+        // Each popped heading is a closed section: the "section
         // ended" event the summary generator triggers on. Collect them in order.
         closedSections.push(...closed);
         // Register the heading numbering so "Kapitel x.y" resolves.
@@ -428,7 +427,7 @@ export function createDocumentPass(
         }
         identifierIndex.observe(text, record.page, block.id);
         // Accumulate the block's text under the deepest open section, so the
-        // section's summary input is ready when it closes (task 2.7). A block
+        // section's summary input is ready when it closes. A block
         // with no open section (a preamble before any heading) is not tagged.
         const sectionIds = outlineStack.currentSectionIds();
         const deepest = sectionIds[sectionIds.length - 1];

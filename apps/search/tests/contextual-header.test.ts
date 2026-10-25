@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure-logic tests for the contextual embedding header (task 3.3, design §6.3,
+ * Pure-logic tests for the contextual embedding header (task 3.3,
  * Requirements 11.4 / 11.6). No database, no network: a stubbed token counter
  * drives the 15 % cap deterministically.
  *

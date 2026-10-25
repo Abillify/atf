@@ -93,7 +93,7 @@ export interface HealthHandlerDeps {
   /** Injectable for tests, which must not spawn processes. */
   probeBinary?: HealthProbe;
   /**
-   * The `pdftotext -bbox-layout` capability probe (requirement 7.1), injectable
+   * The `pdftotext -bbox-layout` capability probe, injectable
    * so tests need not spawn poppler. Defaults to the real probe.
    */
   probeBboxLayout?: (tools: PopplerTools) => Promise<{
@@ -197,7 +197,7 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
       );
 
       // The `-bbox-layout` capability the deterministic page analysis (S2)
-      // depends on (requirement 7.1). Probed once and cached for the process,
+      // depends on. Probed once and cached for the process,
       // re-probed on `?deep=1`. It is *reported*, never fatal: a v1-only
       // deployment that never runs the analyzed stage does not need it, so a
       // missing capability degrades S2 (page falls through to vision) rather
@@ -278,7 +278,7 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
 }
 
 /**
- * Liveness probe (requirement 12.5): is the process alive and able to serve?
+ * Liveness probe: is the process alive and able to serve?
  *
  * Checks nothing but the event loop on purpose — restarting a container
  * because the vision model is slow turns a dependency outage into a full
@@ -305,7 +305,7 @@ export interface ReadinessHandlerDeps {
 }
 
 /**
- * Readiness probe (requirement 12.5): can this replica do its job?
+ * Readiness probe: can this replica do its job?
  *
  * The gate mirrors the fatal part of `/health` — the poppler binaries and the
  * vision endpoint — and nothing else: LibreOffice absence degrades only

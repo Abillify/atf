@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Dual-runtime smoke test (task 1.3): the security-kit must run unchanged
+ * Dual-runtime smoke test: the security-kit must run unchanged
  * under Bun AND Node 26 (native type-stripping, `node --test`). This file
  * uses only node:test/node:assert and imports the TypeScript sources
  * directly, so it proves the sources are erasable and Node-compatible —

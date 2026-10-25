@@ -4,8 +4,7 @@
 /**
  * identifier.ts
  *
- * Search-side identifier normalization and recognition (design §6.4, task 3.4,
- * Requirements 12.1–12.3).
+ * Search-side identifier normalization and recognition.
  *
  * ## Why Search needs its own copy
  *

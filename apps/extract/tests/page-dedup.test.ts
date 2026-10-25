@@ -4,7 +4,7 @@
 /**
  * page-dedup.test.ts
  *
- * Render-hash page deduplication (task 2.2, requirement 7.4). The registry is a
+ * Render-hash page deduplication. The registry is a
  * pure in-memory decision; the hash helper is exercised against synthetic
  * rasters authored inline (no fixtures).
  *

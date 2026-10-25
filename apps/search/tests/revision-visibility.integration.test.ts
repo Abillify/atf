@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the v2 revision visibility model (task 1.13) against a
+ * Integration tests for the v2 revision visibility model against a
  * REAL PostgreSQL + pgvector instance. These verify the SQL-level semantics that
  * unit tests cannot:
  *

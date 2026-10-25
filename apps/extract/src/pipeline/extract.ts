@@ -120,7 +120,7 @@ export interface ExtractorConfig {
   subprocessTimeoutMs: number;
   /**
    * Pre-flight ceilings for ZIP containers (DOCX, XLSX, PPTX, VSDX), checked
-   * before the LibreOffice conversion inflates them (requirement 5.1).
+   * before the LibreOffice conversion inflates them.
    * Defaults to {@link DEFAULT_ZIP_LIMITS}.
    */
   zipLimits?: ZipLimits;
@@ -221,7 +221,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
   function subprocessOptions(signal: AbortSignal | undefined): RunOptions {
     return {
       // Passed through as configured: a 0 is a deliberate disable, which the
-      // production-readiness gate rejects (requirement 5.5).
+      // production-readiness gate rejects.
       timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };
@@ -247,7 +247,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     }
 
     // Every ZIP container (DOCX, XLSX, PPTX, VSDX) is checked against the
-    // central directory BEFORE the conversion inflates it (requirement 5.1).
+    // central directory BEFORE the conversion inflates it.
     // Outside the try below on purpose: a limit violation is a 422 rejection,
     // not a conversion failure, and no catch block may turn it into one.
     if (format.family === "zip") {

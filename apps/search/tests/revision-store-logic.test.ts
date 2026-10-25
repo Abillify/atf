@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Pure-logic tests for the revision store's building blocks (task 1.9): the
+ * Pure-logic tests for the revision store's building blocks: the
  * Content-Digest normalisation, page-range algebra used to compute missing
  * ranges on commit, contract validation of an NDJSON batch, and referenced-
  * asset collection. These need no database — they pin the semantics the SQL

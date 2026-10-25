@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit cases for the configuration module (task 7.7): the Mirror_Delete
+ * Unit cases for the configuration module: the Mirror_Delete
  * default, a per-source collection override, and — the reason `validateConfig`
  * returns a list instead of throwing — several problems reported at once.
  */
@@ -132,7 +132,7 @@ describe("collected error messages", () => {
   });
 
   it("ignores a secret-shaped key instead of failing on it", () => {
-    // The schema knows no secret fields (requirement 1.10); a stray key must
+    // The schema knows no secret fields; a stray key must
     // not become part of the config object.
     const result = validateConfig({
       ...MINIMAL,

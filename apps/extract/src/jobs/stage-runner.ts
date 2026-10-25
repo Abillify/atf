@@ -4,8 +4,7 @@
 /**
  * jobs/stage-runner.ts
  *
- * The stage-execution primitive (design §4.2 S2–S8, §9b.2; requirements 4.2,
- * 4.3, 4.6, 4.9, 4.10, 4.12).
+ * The stage-execution primitive (S8).
  *
  * A "stage" is one unit of work on one unit of a document — render/text/vision/
  * parse on a page, pass-2 on a figure, transcription of a tile. Every stage
@@ -18,10 +17,10 @@
  *
  *   1. **Checkpoint reuse by input_hash** — `runStage` looks up the existing
  *      checkpoint first. A `done` row with the SAME `input_hash` is returned
- *      verbatim, and `fn` is never called (no model call, requirement 4.3). A
+ * verbatim, and `fn` is never called (no model call). A
  *      run under `resume_policy=continue` / `restart-stage` may additionally
  *      reuse a `done` row whatever its hash, per stage, via
- *      {@link StageRunnerDeps.reuseDoneRegardlessOfHash} (requirement 4.12).
+ * {@link StageRunnerDeps.reuseDoneRegardlessOfHash}.
  *      A permanently `failed` row is replayed as failed, not recomputed — only
  *      `retry-failed` (which resets it to `pending`) runs it again.
  *
@@ -33,7 +32,7 @@
  *      {@link TransientStageError} (retry with backoff; the checkpoint stays
  *      retryable with `next_attempt_at` set) or {@link PermanentStageError}
  *      (the unit is marked `failed` with a warning and the job keeps going,
- *      requirement 4.10). An unclassified throw is transient — unless a model
+ * ). An unclassified throw is transient — unless a model
  *      response was already received in this attempt, in which case the fault
  *      lies in deterministic post-processing, retrying would repeat the paid
  *      call, and the unit is failed permanently with the response kept.
@@ -44,12 +43,12 @@
  *      runner's model clients call {@link recordModelResponse}), so a stage that
  *      FAILS after the model answered still persists the raw response.
  *      {@link StageRunner.reparse} re-applies a fixed parser to it with ZERO
- *      model calls (requirement 4.6).
+ * model calls.
  *
  *   5. **Atomic budget reservation** — before a stage that calls a model runs
  *      `fn`, its estimate is reserved atomically against the job's budget. An
  *      insufficient budget raises {@link BudgetExhaustedError} before any call
- *      (requirement 4.9). After the call the reservation is released and the
+ * After the call the reservation is released and the
  *      actual spend booked — in the same transaction as the checkpoint write
  *      when the ledger supports it, so a crash never separates result and cost.
  *
@@ -88,7 +87,7 @@ export interface StageOutput<Parsed = unknown, Raw = unknown> {
   /** The parsed, structured result of the stage. */
   parsed: Parsed;
   /**
-   * The pipeline/prompt stand that produced this output (requirement 4.12).
+   * The pipeline/prompt stand that produced this output.
    * Under `resume_policy=continue` a document mixes stands; this records which
    * one each unit came from.
    */
@@ -109,7 +108,7 @@ export function isStageOutput(value: unknown): value is StageOutput {
 
 /** A stage whose work reached a permanent, unit-level failure. */
 export class PermanentStageError extends Error {
-  /** A human-facing warning recorded on the job (requirement 4.10). */
+  /** A human-facing warning recorded on the job. */
   readonly warning: string;
   /**
    * The raw model response, when the failure happened after the model
@@ -323,7 +322,7 @@ export interface StageRunnerDeps {
   /** Aborted when the lease is lost; no stage starts after that. */
   signal?: AbortSignal;
   /**
-   * Observability hook (requirement 18.1), called once per stage execution
+   * Observability hook, called once per stage execution
    * that reached an outcome: `reused` (a checkpoint was replayed, `fn` not
    * run), `done`, `failed_transient` or `failed_permanent`, with the wall-clock
    * duration of the execution and the model tokens it consumed. Not called for
@@ -515,7 +514,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
       return { row: existing, parsed: undefined as Parsed, reused: true };
     }
 
-    // ── 2. Backoff (requirement 4.8) ──────────────────────────────────────
+    // ── 2. Backoff ──────────────────────────────────────
     if (
       existing !== null &&
       existing.status === "failed" &&
@@ -525,7 +524,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
       throw new StageNotDueError(new Date(existing.next_attempt_at));
     }
 
-    // ── 3. Budget reservation BEFORE the model call (requirement 4.9) ────
+    // ── 3. Budget reservation BEFORE the model call ────
     const reserved = await reserve(budget, key);
 
     // A model stage confirms the lease right before it spends a call (one
@@ -629,7 +628,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
       throw err instanceof TransientStageError ? err : new TransientStageError(errorMessage(err), err);
     }
 
-    // ── 5. Persist the checkpoint: raw beside parsed (requirement 4.6) ────
+    // ── 5. Persist the checkpoint: raw beside parsed ────
     const output: StageOutput<Parsed, Raw> = {
       raw: work.raw,
       parsed: work.parsed,

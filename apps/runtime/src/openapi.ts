@@ -5,7 +5,7 @@
  * openapi.ts
  *
  * Returns the OpenAPI 3.1 specification for the ATF Runtime as a plain JS
- * object, served unauthenticated at GET /openapi.json (requirement 14.5).
+ * object, served unauthenticated at GET /openapi.json.
  *
  * The path inventory is parsed from the real router tree at request time
  * (see route-catalog.ts), so the published document cannot drift from the
@@ -15,7 +15,7 @@
  *
  * The committed baseline under docs/openapi/runtime.json is regenerated with
  * `bun run openapi:update` and guarded for breaking changes by
- * `bun run openapi:check` (requirement 11.7).
+ * `bun run openapi:check`.
  */
 
 import { version } from "../package.json";

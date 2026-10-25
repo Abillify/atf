@@ -241,7 +241,7 @@ describe("collection DDL", () => {
       {} as never,
     );
     const all = queries.join("\n");
-    // filter-relevant fields become real columns (design §6.2, Req 11.5)
+    // filter-relevant fields become real columns
     for (const col of [
       "unit_id",
       "unit_type",

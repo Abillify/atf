@@ -11,7 +11,6 @@
  * Both functions are pure (same input → same output) and carry no React imports,
  * which makes them straightforward to unit-test.
  *
- * Requirements: 11.2
  */
 
 import dagre from "@dagrejs/dagre";

@@ -7,7 +7,7 @@
  * Runs the native parsers (BPMN, XLSX, DOCX, VSDX, e-mail — the code that
  * inflates ZIP containers and parses hostile XML) in a Worker thread with a
  * heap ceiling, so a pathological document kills the parser, not the service
- * (requirement 5.2): the main thread keeps answering `/health` and lease
+ * the main thread keeps answering `/health` and lease
  * heartbeats while a parse runs.
  *
  * The task travels as a plain structured-cloneable object; the result is one
@@ -124,7 +124,7 @@ export function createDirectIsolatedRunner(): IsolatedRunner {
 }
 
 /**
- * Create the isolated parser runner (requirement 5.2). One short-lived Worker
+ * Create the isolated parser runner. One short-lived Worker
  * per task: parsers run once per document, so pooling would trade a clean
  * heap for a leaked one.
  */
@@ -189,7 +189,7 @@ function resolveEntryUrl(): URL {
     if (existsSync(fileURLToPath(url))) return url;
   }
   // Nothing found: let the Worker constructor fail; the caller degrades to
-  // in-process parsing with a warning (requirement 5.2 degraded).
+  // in-process parsing with a warning (degraded).
   return new URL("./isolate-entry.ts", import.meta.url);
 }
 

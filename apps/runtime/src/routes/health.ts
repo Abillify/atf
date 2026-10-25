@@ -25,7 +25,6 @@
  *   - The legacy /health endpoint always returns 200 so existing integrations
  *     are not broken.
  *
- * Requirements: 10.6
  */
 
 import { Hono } from "hono";

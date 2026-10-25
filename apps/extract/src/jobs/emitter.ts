@@ -6,7 +6,6 @@
  *
  * The outbox emitter: it streams a job's staged pages and crops to Search's
  * revision API and reconciles the local outbox against the server on resume
- * (design §5 S8, §9b.3; task 1.12, requirements 5.1, 5.2, 5.7, 5.9, 6.3).
  *
  * ## The outbox is the source of truth, the server is the checkpoint
  *
@@ -22,12 +21,12 @@
  *   2. Reconcile. GET the revision state and mark every already-accepted batch
  *      and every already-present asset `acked` locally — and move a batch the
  *      server does NOT hold back to `pending` — so the send phase sends exactly
- *      the missing parts: no duplicates, no loss (requirement 5.7).
+ * the missing parts: no duplicates, no loss.
  *   3. Send batches. Group the staged pages into batches of `EMIT_BATCH_PAGES`
  *      (the first batch carries the `document.begin` record), encode each to NDJSON,
  *      compute the Content-Digest, and PUT at the batch seq. Search answers a
  *      replay of the same seq+digest with `noop`; a DIFFERENT digest at an
- *      accepted seq is a `409` (requirement 5.2), surfaced as `conflict` so the
+ * accepted seq is a `409`, surfaced as `conflict` so the
  *      runner can start a new emit generation rather than pause forever.
  *   4. Upload assets with bounded concurrency (`ASSET_UPLOAD_CONCURRENCY`). Each
  *      asset is idempotent on its checksum; a present asset is skipped.
@@ -36,7 +35,7 @@
  *      are acknowledged, while later batches are still being sent, so the first
  *      pages are searchable long before the document is complete — then the
  *      final commit. A final commit rejected with `409`
- *      (batches missing, requirement 5.9) triggers a reconcile-and-resend round
+ * (batches missing) triggers a reconcile-and-resend round
  *      and a re-commit instead of an endless pause.
  *
  * ## Memory stays flat
@@ -118,10 +117,9 @@ export interface EmitterConfig {
   /** Assets uploaded to Search in parallel. */
   assetUploadConcurrency: number;
   /**
-   * Run the optional finalize pass on `document.end` (task 5.4, requirement
-   * 9.6): a deterministic, model-free correction of the outline metadata once
-   * the whole document is known. When false the streaming outline is emitted
-   * as-is.
+   * Run the optional finalize pass on `document.end`: a deterministic,
+   * model-free correction of the outline metadata once the whole document is
+   * known. When false the streaming outline is emitted as-is.
    */
   finalizePass: boolean;
   /**
@@ -164,7 +162,7 @@ export interface EmitterDeps {
   config: EmitterConfig;
   logger: Logger;
   /**
-   * Observability (requirement 18.1): the hand-over backlog gauge, set to the
+   * Observability: the hand-over backlog gauge, set to the
    * number of this job's emit-outbox rows not yet acknowledged by Search after
    * each reconcile/send pass. Optional; absent in tests without metrics.
    */
@@ -688,7 +686,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     let summaries: SummaryNode[] = [];
     if (persisted !== null) {
       const pass = createDocumentPass(parseDocpassState(persisted.state));
-      // The optional finalize pass (task 5.4, requirement 9.6) corrects the
+      // The optional finalize pass corrects the
       // outline metadata once the whole document is known — deterministic and
       // model-free.
       if (config.finalizePass) {
@@ -752,7 +750,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
         visionModel: config.visionModel,
         ocr: false,
         dpi: config.renderDpi,
-        // The stand Search stamps onto every unit (requirement 18.2): the
+        // The stand Search stamps onto every unit: the
         // contract id, the job's frozen pipeline hash and prompt hash. The
         // job's own snapshot wins; the deployment's current stand is the
         // fallback for a job created without one.

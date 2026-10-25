@@ -4,8 +4,7 @@
 /**
  * summary/generator.ts
  *
- * The summary-hierarchy generator (design §5 S7 step 5 "Summary-Hierarchie
- * (RAPTOR-light)", §9a.2; task 2.7, requirement 9.5).
+ * The summary-hierarchy generator.
  *
  * ## What it produces, and when
  *
@@ -32,7 +31,7 @@
  * at `summary:chapter:<sectionId>` and the document summary at
  * `summary:document`, both on the last page. A resume reuses a completed
  * checkpoint with the SAME input hash and never re-calls the text-LLM
- * (requirement 4.3); the produced {@link SummaryNode} is re-added to the pass
+ * the produced {@link SummaryNode} is re-added to the pass
  * from the checkpoint so it still lands on `document.end.summaries`.
  *
  * ## Optional and outage-tolerant
@@ -80,9 +79,9 @@ export interface SummaryGeneratorDeps {
 /** The generator's surface, driven by the ordered document pass. */
 export interface SummaryGenerator {
   /**
-   * Produce section summaries for the sections that closed on a page (task
-   * 2.7). Each is a checkpointed stage; a resume reuses it without a model call.
-   * The produced node is added to the pass so it lands on `document.end`.
+   * Produce section summaries for the sections that closed on a page. Each is a
+   * checkpointed stage; a resume reuses it without a model call. The produced
+   * node is added to the pass so it lands on `document.end`.
    */
   onSectionsClosed(closed: readonly ClosedOutlineNode[], pass: DocumentPass): Promise<void>;
   /**

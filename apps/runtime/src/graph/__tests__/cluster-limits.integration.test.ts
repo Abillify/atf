@@ -13,7 +13,6 @@
  * Tests marked with `.skipIf` can run against real Redis/Postgres when the
  * corresponding env vars are set (REDIS_URL / DATABASE_URL) — wired in Task 14.4.
  *
- * Requirements: 2.4, 7.3
  */
 
 import { describe, test, expect } from "bun:test";

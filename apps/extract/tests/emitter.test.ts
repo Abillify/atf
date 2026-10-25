@@ -325,7 +325,7 @@ describe("emitter · batches recorded pending → sent → acked", () => {
 
     expect(outcome).toEqual({ status: "committed", revisionId: "rev-fixed" });
     // 5 pages / 2 per batch → page batch seqs 0,1,2, then the trailing
-    // document.end batch at seq 3 (task 2.7), all sent in order.
+    // document.end batch at seq 3, all sent in order.
     expect(search.batchPuts).toEqual([0, 1, 2, 3]);
     // Every emit-outbox page row ended acked.
     const emitRows = store.peekEmitBatches(job.id);
@@ -376,7 +376,7 @@ describe("emitter · resume reconciliation sends only the missing parts", () => 
     expect(outcome.status).toBe("committed");
 
     // Batch 0 was already accepted → NOT re-sent. Batches 1 and 2 go out, then
-    // the trailing document.end batch at seq 3 (task 2.7).
+    // the trailing document.end batch at seq 3.
     expect(search.batchPuts).toEqual([1, 2, 3]);
     // Page 1's image was already present → NOT re-uploaded.
     expect(search.assetPuts).not.toContain(page1Image);
@@ -565,8 +565,8 @@ describe("emitter · a mid-emit failure resumes without duplicates or loss", () 
     const counts = new Map<number, number>();
     for (const seq of search.batchPuts) counts.set(seq, (counts.get(seq) ?? 0) + 1);
     expect([...counts.values()].every((c) => c === 1)).toBe(true);
-    // Page batch seqs 0,1,2 plus the trailing document.end batch at seq 3 (task
-    // 2.7), each accepted exactly once across the two passes.
+    // Page batch seqs 0,1,2 plus the trailing document.end batch at seq 3, each
+    // accepted exactly once across the two passes.
     expect([...counts.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
     // Every page ended acked exactly once.
     expect(store.peekEmitBatches(job.id).every((r) => r.status === "acked")).toBe(true);

@@ -5,7 +5,7 @@
  * jobs/furniture-detector.ts
  *
  * Recurring header/footer ("furniture") detection over a rolling window of
- * pages (design §5 S2; task 2.2, requirements 7.3 and D10).
+ * pages.
  *
  * ## Why this exists, and why it *keeps* the furniture
  *
@@ -81,7 +81,7 @@ interface WindowEntry {
 }
 
 /**
- * The persisted, JSON-serialisable rolling-window state (design §9a.2). Held on
+ * The persisted, JSON-serialisable rolling-window state. Held on
  * `docpass_state` so a resume restores the window. `version` guards against a
  * future shape change; an unrecognised version rehydrates to an empty window
  * (which only costs a few pages of re-warming, never correctness).
@@ -212,7 +212,7 @@ export interface FurnitureDetector {
    * A line at the top or bottom band that has recurred at that band on at least
    * `minRepeats` of the recent pages is furniture; a one-off line is not.
    * Pages MUST be fed in ascending page order (the streaming document pass owns
-   * that order, design §9a.2).
+   * that order).
    */
   observe(analysis: PageAnalysis): Furniture | null;
   /** The current window state, to persist on `docpass_state`. */
@@ -221,7 +221,7 @@ export interface FurnitureDetector {
 
 /**
  * Create a furniture detector, optionally rehydrated from persisted state so a
- * resume continues the same window (design §9a.2). Deterministic.
+ * resume continues the same window. Deterministic.
  */
 export function createFurnitureDetector(
   initial: FurnitureState = emptyFurnitureState(),
@@ -271,7 +271,7 @@ export function createFurnitureDetector(
       countIn("footer", templates.footer) >= config.minRepeats
     ) {
       // A footer that reads like a page number is recorded as the pageLabel
-      // slot (design §5 S2: page label kept as furniture) as well as the footer,
+      // slot (page label kept furniture) as well as the footer,
       // so a consumer that wants the label does not have to re-parse the footer.
       if (PAGE_LABEL_TEMPLATE.test(templates.footer)) {
         furniture.pageLabel = verbatim.footer;

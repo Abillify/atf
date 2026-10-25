@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Consumes the provider full stream of one attempt (task 18.1).
+ * Consumes the provider full stream of one attempt.
  * Extracted verbatim from `llm.ts` (task 18.1, Req 13.6) — behaviour is
  * unchanged.
  */

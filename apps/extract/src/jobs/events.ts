@@ -4,8 +4,7 @@
 /**
  * jobs/events.ts
  *
- * The job-event seam that feeds SSE and the callback (design §9b, task 1.7,
- * requirement 6.1).
+ * The job-event seam that feeds SSE and the callback.
  *
  * In v1 the SSE stream and the callback delivery read directly from the
  * in-memory convert pipeline: the extractor called `onPage`/`onProgress` and the

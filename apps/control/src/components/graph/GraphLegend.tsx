@@ -6,7 +6,6 @@
  * GraphLegend — compact legend overlay showing which node types and statuses
  * are present in the current graph view.
  *
- * Requirements: 11.2
  */
 
 import type React from "react";

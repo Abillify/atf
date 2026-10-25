@@ -21,15 +21,14 @@
  *    `requestId`, so a retry stays idempotent on both sides.
  *  - `tenant`: every job of the tenant and every upload session.
  *
- * Honesty rules (requirement 2.10 applies to every store, not just the
- * orchestrator):
+ * Honesty rules (applies to every store, not just the orchestrator):
  *
  *  - A store result reports what was *actually* removed. `dryRun` counts and
  *    deletes nothing.
  *  - The Search cascade is a real dependency: when Search is unreachable the
  *    `search.documents` result is `failed` with the error, and the HTTP status
  *    drops to 207/502 — Extract never reports a DSAR as complete while the
- *    indexed copies still exist (requirement 2.12).
+ * indexed copies still exist.
  *  - Without a configured Search target the cascade is `not_configured`,
  *    which is truthful and never counts as a failure.
  *  - Upload sessions carry no tenant/subject column (they predate identity).
@@ -330,7 +329,7 @@ export function createErasureHandler(
 	}
 
 	/**
-	 * The Search cascade (requirement 2.12). The same `requestId` goes over, so
+	 * The Search cascade. The same `requestId` goes over, so
 	 * Search's ledger makes a retry idempotent on both sides. Search's `search.*`
 	 * results are merged as-is — they are more precise than anything Extract
 	 * could report about Search's tables.
@@ -427,7 +426,7 @@ export function createErasureHandler(
 			const searchResults = await eraseSearchCascade(request, principal);
 
 			// The HTTP status derives from the data stores only; `not_configured`
-			// never counts as a failure (requirement 2.10).
+			// never counts as a failure.
 			const dataResults = [...extractResults, ...searchResults];
 			const failed = dataResults.filter((r) => r.status === "failed").length;
 			const response: ErasureResponse = {

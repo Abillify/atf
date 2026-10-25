@@ -4,7 +4,7 @@
 /**
  * bbox-snap.test.ts
  *
- * Deterministic figure-bbox refinement — S4 (task 2.4, requirement 8.2).
+ * Deterministic figure-bbox refinement — S4.
  *
  * The snapping + regionText/labels core is a pure function of a candidate box,
  * an optional page image and an optional S2 analysis, so these tests drive it

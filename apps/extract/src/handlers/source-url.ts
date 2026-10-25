@@ -4,8 +4,7 @@
 /**
  * source-url.ts
  *
- * Pulling a source document from a caller-supplied URL (design §9a.1,
- * requirement 4.13).
+ * Pulling a source document from a caller-supplied URL.
  *
  * This is the same server-side request forgery primitive as `X-Callback-URL`:
  * the service issues an outbound request to an address the *caller* chose. The

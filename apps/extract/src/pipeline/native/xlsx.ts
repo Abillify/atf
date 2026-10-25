@@ -5,8 +5,7 @@
  * pipeline/native/xlsx.ts
  *
  * A native spreadsheet reader: an XLSX in, contract `table` blocks out, and a
- * decision about whether the workbook needs rendering at all (design §10.2,
- * requirement 10.2).
+ * decision about whether the workbook needs rendering at all.
  *
  * ## Why native, and why the render is conditional
  *
@@ -22,18 +21,18 @@
  * cannot express as text: an embedded chart or an image. So {@link readXlsx}
  * reports `needsRender` — true when the package has any chart (`xl/charts/…`) or
  * image (`xl/media/…`), false for a pure data workbook. The pipeline renders
- * only in the true case (requirement 10.2); otherwise it emits the native tables
+ * only in the true case; otherwise it emits the native tables
  * and skips rendering entirely.
  *
  * ## Why fflate + fast-xml-parser, not a spreadsheet library
  *
  * A full spreadsheet library (exceljs and friends) drags in a ZIP/stream
  * dependency tree with non-permissive transitive licences (GPL-optional jszip,
- * Unlicense/Zlib helpers) that the repo's supply-chain gate rejects (requirement
- * 1.2). An XLSX is just an OOXML ZIP, and reading cell values, shared strings,
- * cached formula results and merge ranges is a bounded, well-specified parse. So
- * this uses `fflate` (MIT) to unzip and `fast-xml-parser` (already a dependency)
- * to read the parts — no new heavyweight dependency, a clean licence tree.
+ * Unlicense/Zlib helpers) that the repo's supply-chain gate rejects. An XLSX is
+ * just an OOXML ZIP, and reading cell values, shared strings, cached formula
+ * results and merge ranges is a bounded, well-specified parse. So this uses
+ * `fflate` (MIT) to unzip and `fast-xml-parser` (already a dependency) to read
+ * the parts — no new heavyweight dependency, a clean licence tree.
  *
  * ## Tolerant and bounded
  *
@@ -67,7 +66,7 @@ export interface ParsedXlsx {
   sheets: XlsxSheet[];
   /**
    * True when the workbook embeds a chart or an image, so the pipeline must
-   * render it to capture what the grid cannot (requirement 10.2). False for a
+   * render it to capture what the grid cannot. False for a
    * pure data workbook, which is emitted as native tables with no rendering.
    */
   needsRender: boolean;
@@ -288,8 +287,8 @@ function readSheet(name: string, xml: string, sharedStrings: string[]): XlsxShee
 
 /**
  * Read an XLSX into native tables and decide whether it needs rendering
- * (requirement 10.2). Never throws — except for a ZIP-guard violation
- * (`DOCUMENT_TOO_COMPLEX`, requirement 5.1), which is a rejection, not a
+ * Never throws — except for a ZIP-guard violation
+ * (`DOCUMENT_TOO_COMPLEX`), which is a rejection, not a
  * warning: a bomb must fail the job, not degrade to an empty sheet set.
  */
 export async function readXlsx(
@@ -299,7 +298,7 @@ export async function readXlsx(
   const warnings: string[] = [];
   let entries: Record<string, Uint8Array>;
   try {
-    // Checked before any inflation (requirement 5.1). A limit violation throws
+    // Checked before any inflation. A limit violation throws
     // ExtractError, which the catch below re-throws instead of downgrading to
     // a warning; a buffer that is not a ZIP at all throws fflate's own error,
     // which keeps degrading to a warning as before.

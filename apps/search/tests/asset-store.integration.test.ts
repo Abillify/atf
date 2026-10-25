@@ -3,7 +3,7 @@
 
 /**
  * Integration tests for the v2 AssetStore against a REAL PostgreSQL instance
- * (task 1.11). These verify the SQL-level semantics unit tests cannot:
+ * These verify the SQL-level semantics unit tests cannot:
  *   - PUT stores a full + derived variants bound to a revision, idempotent on
  *     the checksum (same bytes → no-op, different bytes → rewrite) (Req 5.8);
  *   - HEAD reports variant existence (Req 5.8);

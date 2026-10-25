@@ -52,7 +52,7 @@ describe("PAGE_SYSTEM_PROMPT (v2, task 2.3)", () => {
 
   it("drops the v1 rule forbidding figure content in the body", () => {
     // The v1 prompt said: "Übernimm Inhalt, der Teil einer Abbildung ist, nicht
-    // zusätzlich in den Fließtext." That rule is gone in v2 (design §5 S3).
+    // zusätzlich in den Fließtext." That rule is gone in v2.
     expect(PAGE_SYSTEM_PROMPT).not.toContain("Teil einer Abbildung ist, nicht");
   });
 });

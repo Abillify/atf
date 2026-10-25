@@ -247,7 +247,7 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
 
   return (req, res, next) => {
     // Read outside the async block so the `finally` below can always release a
-    // spooled scratch file (requirement 5.9), whichever path the request took.
+    // spooled scratch file, whichever path the request took.
     let upload: UploadedDocument;
     try {
       upload = readUpload(req);
@@ -281,8 +281,8 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
       // already be gone by then.
       const outcome = await runWithPrincipal(principal, () =>
         queue.submit(async () => {
-          // Materialise *inside* the queue slot: a spooled upload (requirement
-          // 5.9) must not hold its bytes in the heap while it waits.
+          // Materialise *inside* the queue slot: a spooled upload must not
+          // hold its bytes in the heap while it waits.
           const buffer = await upload.readBuffer();
           try {
             const result = await extractor.extract({

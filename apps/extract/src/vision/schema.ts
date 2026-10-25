@@ -5,7 +5,6 @@
  * schema.ts
  *
  * Structured-output schemas for `response_format: json_schema` (task 7.9,
- * requirement 5.10).
  *
  * ## Why a schema *and* the tag parser, not one instead of the other
  *

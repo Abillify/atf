@@ -3,7 +3,6 @@
 
 /**
  * Optional TLS (and mTLS) termination for the ATF service HTTP servers
- * (requirement 11.8).
  *
  * Services listen on plain HTTP by default — in Kubernetes the mesh or the
  * ingress terminates TLS, and a sidecar-less deployment would otherwise have

@@ -19,7 +19,6 @@
  *   12. Bun.serve()               — HTTP server
  *   13. SIGTERM/SIGINT            — graceful shutdown
  *
- * Requirements: 10.5, 10.6, 11.5
  */
 
 import { getFlowLoadFailures } from "./graph/flow-parser/validate.js";
@@ -960,7 +959,7 @@ if (import.meta.main) {
   // OpenAPI documents — unauthenticated (auth middleware only guards /v1/*),
   // so tooling (Swagger UI, codegen, compat checks) can fetch them without a
   // credential. The inventory is parsed from the real router tree at request
-  // time, so the document cannot drift from the mounted routes (requirement 14.5).
+  // time, so the document cannot drift from the mounted routes.
   app.get("/openapi.json", (c) =>
     c.json(buildOpenApiSpec(resolveOpenApiServerUrl(c.req.url))),
   );

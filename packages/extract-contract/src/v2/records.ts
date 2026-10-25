@@ -95,7 +95,7 @@ export const figureKindSchema = z.enum([
 
 export type FigureKind = z.infer<typeof figureKindSchema>;
 
-// --- Transcription union (design §4.2) -------------------------------------
+// -- Transcription union -------------------------------------
 
 /** A BPMN/flowchart node in a `process` transcription. */
 export const processNodeSchema = z.object({
@@ -188,7 +188,7 @@ export const tileRefSchema = z.object({
 
 export type TileRef = z.infer<typeof tileRefSchema>;
 
-// --- Block model (design §4.2) ---------------------------------------------
+// -- Block model ---------------------------------------------
 
 /**
  * Fields every block carries in addition to its type-specific payload.
@@ -283,7 +283,7 @@ export type ListBlock = z.infer<typeof listBlockSchema>;
 export type TableBlock = z.infer<typeof tableBlockSchema>;
 export type FigureBlock = z.infer<typeof figureBlockSchema>;
 
-// --- Asset references (design §4.3) ----------------------------------------
+// -- Asset references ----------------------------------------
 
 /** The three variants Search materialises for an asset. */
 export const assetVariantsSchema = z.object({
@@ -311,7 +311,7 @@ export type AssetRef = z.infer<typeof assetRefSchema>;
 
 // --- Furniture and fidelity ------------------------------------------------
 
-/** Recurring header/footer content, kept rather than discarded (design §4.2). */
+/** Recurring header/footer content, kept rather than discarded. */
 export const furnitureSchema = z.object({
   header: z.string().optional(),
   footer: z.string().optional(),

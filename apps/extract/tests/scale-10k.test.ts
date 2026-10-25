@@ -5,9 +5,9 @@
  * scale-10k.test.ts
  *
  * The extraction + emit half of the 10,000-page scaling proof (task 1.16,
- * design §9b, requirements 6.1, 6.3, 6.9). This is the ALWAYS-RUNNABLE proof of
- * the memory invariant: it drives the REAL job runner (task 1.7) and the REAL
- * outbox emitter (task 1.12) through a synthetic 10,000-page document against
+ * ). This is the ALWAYS-RUNNABLE proof of
+ * the memory invariant: it drives the REAL job runner and the REAL
+ * outbox emitter through a synthetic 10,000-page document against
  * the in-memory fake ExtractStore, a counting vision mock, and a fake Search
  * revision server — no poppler, no model, no HTTP, no database, so production
  * code is exercised verbatim and a 10,000-page run finishes in well under a
@@ -24,7 +24,7 @@
  * page from its number alone. Together they are the synthetic PDF + model mock
  * the task asks for.
  *
- * ## The memory invariant (requirement 6.1), proved two ways
+ * ## The memory invariant, proved two ways
  *
  * Because JS GC makes a raw `heapUsed` assertion flaky, the proof is a
  * DETERMINISTIC PROXY plus a structural argument:
@@ -42,7 +42,7 @@
  * the two peaks are IDENTICAL (not merely small) is the flat-memory proof: the
  * working set is a function of the concurrency/batch tunables, not of N.
  *
- * ## The batch/segment cadence (requirement 6.3)
+ * ## The batch/segment cadence
  *
  * The emitter sends in EMIT_BATCH_PAGES batches and commits a segment every
  * SEGMENT_PAGES pages. The test asserts the exact batch count
@@ -506,13 +506,13 @@ describe("scaling · extraction + emit at 10,000 pages (task 1.16, req 6.1/6.3/6
       // eslint-disable-next-line no-console
       console.log(`[scale] ${formatProfile(large)}`);
 
-      // ── requirement 6.9: a 10,000-page synthetic run completes end to end ──
+      // ──: a 10,000-page synthetic run completes end to end ──
       expect(large.pages).toBe(10_000);
       expect(large.finalCommitted).toBe(true);
       expect(large.modelCalls).toBe(10_000); // one model call per page, no re-calls
       expect(large.renders).toBe(10_000); // one render per page, no re-renders
 
-      // ── requirement 6.1: MEMORY does not grow with the page count ──────────
+      // ──: MEMORY does not grow with the page count ──────────
       // (1) The render working set is bounded by PAGE_CONCURRENCY, and IDENTICAL
       //     at 1,000 and 10,000 pages — the flat-memory proof.
       expect(large.peakLivePageImages).toBeLessThanOrEqual(PAGE_CONCURRENCY);
@@ -522,9 +522,9 @@ describe("scaling · extraction + emit at 10,000 pages (task 1.16, req 6.1/6.3/6
       expect(large.peakLiveBatchRecords).toBeLessThanOrEqual(EMIT_BATCH_PAGES);
       expect(large.peakLiveBatchRecords).toBe(small.peakLiveBatchRecords);
 
-      // ── requirement 6.3: EMIT_BATCH_PAGES batches + SEGMENT_PAGES segments ──
+      // ──: EMIT_BATCH_PAGES batches + SEGMENT_PAGES segments ──
       // Batches: ceil(N / EMIT_BATCH_PAGES) page batches plus one trailing
-      // document.end batch (task 2.7). Every batch is sent exactly once.
+      // document.end batch. Every batch is sent exactly once.
       expect(large.batchPuts).toBe(Math.ceil(10_000 / EMIT_BATCH_PAGES) + 1);
       expect(small.batchPuts).toBe(Math.ceil(1_000 / EMIT_BATCH_PAGES) + 1);
       // Segment commits: one per full SEGMENT_PAGES block; the tail closes on the

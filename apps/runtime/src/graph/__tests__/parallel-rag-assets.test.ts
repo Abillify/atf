@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit tests for the RAG-node v2 asset handling (task 4.1):
+ * Unit tests for the RAG-node v2 asset handling:
  *   - the v2 evidence line carries section path, pages, figure kind and caption
  *     (Requirement 16.4);
  *   - `assets.attach=auto` attaches up to `maxImages` image parts ONLY when the

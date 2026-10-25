@@ -7,7 +7,7 @@
  * Extracted verbatim from `llm.ts` (task 18.1, Req 13.6) — behaviour is
  * unchanged. Resolves an `asset:<id>[#bbox]` reference through the configured
  * MCP server's `get_asset` tool so the read inherits its tenant/collection/row
- * ACL and fail-closed behaviour (task 3.9).
+ * ACL and fail-closed behaviour.
  */
 import type { ImageInspectionConfig } from "../../types/flow.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
@@ -54,7 +54,7 @@ function extractMcpImage(
  * Builds the `fetchAsset` hook the `inspect_image` tool uses to resolve an
  * `asset:<id>[#bbox]` reference (Req 16.3). It calls the configured MCP server's
  * `get_asset` tool with the caller's request context, so the read inherits
- * `get_asset`'s tenant/collection/row ACL and fail-closed behaviour (task 3.9),
+ * `get_asset`'s tenant/collection/row ACL and fail-closed behaviour,
  * and returns only the decoded image bytes — the responder model never sees the
  * base64. A `region` triggers `get_asset`'s server-side zoom crop; a whole-asset
  * fetch uses the configured `variant`. Any error or an image-less result yields

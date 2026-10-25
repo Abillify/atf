@@ -37,7 +37,7 @@ import { useStudioAutoLayout } from "./useStudioAutoLayout";
 import { useStudioSave } from "./useStudioSave";
 import { useStudioDrafts } from "./useStudioDrafts";
 import { useStudioPinnedRun } from "./useStudioPinnedRun";
-// Req 9.3 (Task 13.4): loading, history and Copilot focus in their own hooks.
+// Loading, history and Copilot focus in their own hooks.
 import { useStudioLoad } from "./useStudioLoad";
 import { useStudioHistory } from "./useStudioHistory";
 import { useStudioCopilot } from "./useStudioCopilot";
@@ -270,7 +270,7 @@ export function useStudioBuilder({
   // Load the flow definition when the selected flow changes (also reused
   // after a version rollback, which changes the file without changing
   // `flow.id` — see FlowVersionBar's `onRolledBack`).
-  // Req 9.3 (Task 13.4): loadFlow + auth effect split out to
+  // LoadFlow + auth effect split out to
   // hooks/useStudioLoad.
   // -------------------------------------------------------------------------
   const { loadFlow } = useStudioLoad({

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit tests for the auth flows (task 9.8): device-flow logging and restart
+ * Unit tests for the auth flows: device-flow logging and restart
  * after expiry, the refresh path without a device flow, the 300 s loopback
  * timeout, and logout removing Extract tokens.
  */

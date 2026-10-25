@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the v2 search filters + figure lookup (task 3.7)
+ * Integration tests for the v2 search filters + figure lookup
  * against a REAL PostgreSQL + pgvector instance. These verify the SQL-level
  * behaviour the handler/unit tests cannot:
  *

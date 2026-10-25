@@ -232,7 +232,7 @@ describe("buildTextFastPathBlocks", () => {
   });
 });
 
-// ── fidelity stays active on the fast path (requirement 7.5) ──────────────────
+// ── fidelity stays active on the fast path ──────────────────
 
 describe("checkFastPathFidelity", () => {
   it("passes for a clean text layer (blocks ARE the text layer verbatim)", () => {

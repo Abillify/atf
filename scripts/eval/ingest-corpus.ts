@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Corpus ingest driver for the retrieval eval (task 6.11).
+ * Corpus ingest driver for the retrieval eval.
  *
  * Indexes the corpus produced by `golden-set/build-corpus.ts` into a live
  * Search stack, either through the v1 `POST /ingest` endpoint (synchronous,

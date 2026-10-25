@@ -14,7 +14,6 @@
  * Security: when `monitoringAuthRequired` is set, the /monitoring/events route
  * requires a valid JWT-format token (header or ?token= query param).
  *
- * Requirements: 9.1, 9.2
  */
 
 import { Hono } from "hono";

@@ -34,7 +34,7 @@ export interface Config {
   postgresUrl: string; // POSTGRES_URL (required)
   /**
    * Apply schema migrations during boot. Unset means: true outside
-   * production, false when NODE_ENV=production (requirement 12.4) — a
+   * production, false when NODE_ENV=production — a
    * production rollout runs the standalone `bun run migrate` command as a
    * one-shot Job instead of doing DDL on the boot path of every replica.
    */
@@ -392,7 +392,7 @@ export interface Config {
 
   /**
    * Seconds an uncommitted v2 revision is kept before the TTL cleaner reaps
-   * it (design §9b.3, Requirement 5.10); the parsed value is held in
+   * it; the parsed value is held in
    * milliseconds internally. A staged revision that is neither committed nor
    * heartbeated within this window is reaped. Default: 1209600 seconds
    * (14 days). Set REVISION_TTL in seconds.
@@ -427,7 +427,7 @@ export interface Config {
   dedupDuplicateSimilarity: number; // DEDUP_DUPLICATE_SIMILARITY (default: 0.97)
 
   /**
-   * The v2 batch-processing worker (design §9b.3, task 1.10). When enabled, the
+   * The v2 batch-processing worker. When enabled, the
    * worker claims staged NDJSON batches (SKIP LOCKED), builds transitional index
    * units, embeds them and upserts them, marking each batch processed. Disabled
    * by default so a deployment opts in explicitly. Set BATCH_WORKER=true.
@@ -454,7 +454,7 @@ export interface Config {
 
   /**
    * Per-chunk contextual placement sentence via the SUMMARY_* text-LLM
-   * (Requirement 11.6, design §6.3). When true, the batch worker asks the
+   * When true, the batch worker asks the
    * summary model for ONE short sentence placing each `chunk` in the document
    * and appends it to the contextual embedding header. This is one model call
    * per chunk, so it is expensive and OFF by default — worthwhile offline with
@@ -502,7 +502,7 @@ export interface Config {
   revisionBatchBodyLimit: string; // REVISION_BATCH_BODY_LIMIT (default: "50mb")
 
   /**
-   * Backend for the v2 AssetStore (design §6.5, Requirement 14.2). `postgres`
+   * Backend for the v2 AssetStore. `postgres`
    * stores asset bytes as BYTEA in vs_assets (the default). `filesystem` keeps
    * the bytes in a volume under {@link assetStoreDir} while metadata still lives
    * in vs_assets. Set ASSET_STORE_BACKEND=postgres|filesystem.
@@ -1116,7 +1116,7 @@ export function loadConfig(): Config {
   const revisionBatchBodyLimit =
     (process.env.REVISION_BATCH_BODY_LIMIT ?? "50mb").trim() || "50mb";
 
-  // ── v2 AssetStore (design §6.5, Requirement 14.2) ──────────────────────────
+  // ── v2 AssetStore ──────────────────────────
   const assetStoreBackendRaw = (process.env.ASSET_STORE_BACKEND ?? "postgres")
     .trim()
     .toLowerCase();

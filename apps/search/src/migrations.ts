@@ -476,11 +476,11 @@ export const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
     toVersion: 12,
     description: "Add v2 index-unit columns as real indexed columns",
     up: async (client, table) => {
-      // Filter-relevant unit fields become real, indexed columns (design §6.2,
-      // Requirement 11.5). All columns are nullable/additive: legacy v1 rows —
-      // which carry no revision and no unit shape — migrate forward untouched
-      // and keep matching existing queries. Shared with ensureCollectionDDL so
-      // new and migrated tables stay identical.
+      // Filter-relevant unit fields become real, indexed columns. All columns
+      // are nullable/additive: legacy v1 rows — which carry no revision and no
+      // unit shape — migrate forward untouched and keep matching existing
+      // queries. Shared with ensureCollectionDDL so new and migrated tables
+      // stay identical.
       await ensureUnitColumns(client, table);
     },
   },
@@ -489,7 +489,7 @@ export const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
     description:
       "Add multi-level unit relationship columns (parent/prev/next, block_ids, figure_refs, table_id)",
     up: async (client, table) => {
-      // The full multi-level unit builder (task 3.2) links units into a graph:
+      // The full multi-level unit builder links units into a graph:
       // parent_unit_id / prev_unit_id / next_unit_id let small-to-big expansion
       // walk parents and reading-order siblings; block_ids records provenance;
       // figure_refs attaches figures to a text hit; table_id groups a table's

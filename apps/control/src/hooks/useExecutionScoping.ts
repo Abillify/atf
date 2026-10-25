@@ -12,7 +12,6 @@
  *   - effectiveExecutionId, following, selectedExecutionId
  *   - handlers: handleSelectExecution, handleFollowLive
  *
- * Requirements: 11.1, 11.3
  */
 
 import { useState, useEffect, useMemo, useRef } from "react";

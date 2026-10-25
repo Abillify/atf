@@ -4,7 +4,6 @@
 /**
  * Unit tests for flow-parser.ts — Zod schemas and validateFlowDefinition
  *
- * Tests Requirements: 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9
  */
 
 import { describe, test, expect } from "bun:test";

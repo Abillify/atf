@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Req 1.5 (Task 3.8): every route of a regulated action must use
+ * Every route of a regulated action must use
  * `recordRequired`; this test scans the route sources and makes sure no
  * regulated action falls back to best-effort `record()` or loses auditing
  * altogether.

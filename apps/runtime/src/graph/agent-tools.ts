@@ -2071,7 +2071,7 @@ export interface AgentImageInspectionHooks {
   /**
    * Fetches a stored document asset by id (Req 16.3), used when the model hands
    * the tool an `asset:<id>[#bbox]` reference instead of an already-parked
-   * `img-N`. The engine wires this to the MCP `get_asset` call (task 3.9), which
+   * `img-N`. The engine wires this to the MCP `get_asset` call, which
    * is ACL-checked and fail-closed; `agent-tools.ts` stays decoupled from the
    * MCP client. `region` (a normalised `[x0,y0,x1,y1]` in `0..1`) is forwarded
    * to `get_asset` to trigger its server-side zoom crop. Returns `undefined`

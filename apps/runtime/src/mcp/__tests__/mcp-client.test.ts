@@ -16,7 +16,6 @@
  * only in start(), which never runs because the fake client's connect is a
  * no-op) — so the transport-selection code stays covered.
  *
- * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";

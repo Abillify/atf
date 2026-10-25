@@ -13,7 +13,7 @@
  * The rule is applied generically to every `*_FILE` variable rather than a
  * hard-coded list, so a new secret needs no code change here. The resolved
  * secret values are returned alongside the environment so the caller can
- * register them with the log redactor (task 8.1).
+ * register them with the log redactor.
  */
 
 export type Env = Readonly<Record<string, string | undefined>>;
@@ -45,7 +45,7 @@ export function isSecretName(name: string): boolean {
  * Fold every `X_FILE` into `X`. `readFile` is injected so the function is
  * testable without touching disk and so the caller controls error handling
  * (a missing secret file is a configuration error, exit 78 — not a silent
- * fallback, requirement 15.4).
+ * fallback).
  */
 export async function resolveSecretEnv(
   env: Env,

@@ -6,9 +6,9 @@
  *
  * The schema describes the *file* format and deliberately knows no secret
  * fields: tokens, client secrets and cloud credentials live in the
- * CredentialStore under keys like `source:<id>:s3-secret-key` (requirement
- * 1.10). Unknown keys are stripped rather than rejected, so a stray
- * `apiToken:` in the file cannot smuggle a secret into the config object.
+ * CredentialStore under keys like `source:<id>:s3-secret-key`. Unknown
+ * keys are stripped rather than rejected, so a stray `apiToken:` in the
+ * file cannot smuggle a secret into the config object.
  *
  * Semantic rules that need more than one field — the collection pattern and
  * the HTTPS-only rule for the Extract URL — live in `validate.ts` so every
@@ -18,7 +18,7 @@
 
 import { z } from "zod";
 
-/** The collection-name pattern from requirement 1.4; quoted verbatim in errors. */
+/** The collection-name pattern; quoted verbatim in errors. */
 export const COLLECTION_PATTERN = "^[a-zA-Z][a-zA-Z0-9_]*$";
 const COLLECTION_REGEX = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 
@@ -36,7 +36,7 @@ const sourceCommon = {
       SOURCE_ID_REGEX,
       "source id must start with a letter or digit and contain only A-Z, a-z, 0-9, '.', '_' or '-' (max 64 characters)",
     ),
-  /** Overrides the global target collection for this source (requirement 1.8). */
+  /** Overrides the global target collection for this source. */
   collection: z.string().optional(),
   include: z.array(z.string().min(1)).optional(),
   exclude: z.array(z.string().min(1)).optional(),
@@ -83,7 +83,7 @@ export const sourceConfigSchema = z.discriminatedUnion("type", [
 
 export const outpostConfigSchema = z.object({
   extractUrl: z.string().min(1),
-  /** Allow `http://localhost` / `http://127.0.0.1` for development (requirement 1.6). */
+  /** Allow `http://localhost` / `http://127.0.0.1` for development. */
   allowInsecureLocalhost: z.boolean().default(false),
   caCertPath: z.string().min(1).optional(),
   oidc: z
@@ -96,7 +96,7 @@ export const outpostConfigSchema = z.object({
     .optional(),
   collection: z.string(),
   syncIntervalSec: z.int().min(1).default(900),
-  /** On by default (requirement 1.7). */
+  /** On by default. */
   mirrorDelete: z.boolean().default(true),
   deleteThresholdPercent: z.number().min(0).max(100).default(50),
   resumableThresholdBytes: z.int().min(1).default(33_554_432),

@@ -21,7 +21,6 @@
  * indistinguishable from a wrong key, so the platform rejected the very
  * credentials it had just minted.
  *
- * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
  */
 
 import type { RuntimePrincipalInput } from "@atf/identity-contract";

@@ -7,7 +7,6 @@
  * a selected graph node. Each node type gets a structured, type-specific
  * display with collapsible sections for input, evaluation, and output data.
  *
- * Requirements: 11.2
  * Split out (Req 9.3, Task 13.4): shared building blocks, parsers and
  * type-specific renderers live under ./nodedetail/, without behavior change.
  */

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Client_Credentials_Flow for machine identities (requirement 2.5). Used
+ * Client_Credentials_Flow for machine identities. Used
  * when a client id and client secret are configured via environment or
  * Docker secret; no refresh token is expected for this grant.
  */

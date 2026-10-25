@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Contract tests for the Gate's PUBLISHED OpenAPI document (requirement 14.5):
+ * Contract tests for the Gate's PUBLISHED OpenAPI document:
  * valid OpenAPI 3.1, product version, and the routers assembled in app.ts
  * (health, RFC 9728 metadata, erasure, MCP transports, monitor) present.
  *
