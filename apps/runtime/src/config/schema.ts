@@ -572,6 +572,13 @@ export interface AppConfig {
   groundednessJudgeModel?: LlmConfig;
   canaryJudgeModel?: LlmConfig;
   replayEnabled?: boolean;
+  /**
+   * Opt-in answer citation index (`CITATION_INDEX_ENABLED`, default `false`).
+   * Records which retrieved chunks each answer cited, per execution, in the
+   * `answer_citations` table. Requires `DATABASE_URL`; without it the feature
+   * stays off with a startup warning. See `compliance/citation-index.ts`.
+   */
+  citationIndexEnabled?: boolean;
   optimizerEnabled?: boolean;
   optimizerGeneratorModel?: LlmConfig;
   optimizerJudgeModel?: LlmConfig;
@@ -2104,6 +2111,10 @@ export const EnvSchema = z.object({
       return result.data;
     }),
   REPLAY_ENABLED: z
+    .string()
+    .optional()
+    .transform((raw): boolean => raw === "true" || raw === "1"),
+  CITATION_INDEX_ENABLED: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),

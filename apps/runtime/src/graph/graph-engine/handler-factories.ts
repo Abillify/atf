@@ -125,6 +125,7 @@ import {
 } from "./compile.js";
 import { SseEmitter } from "./sse-emitter.js";
 import { CitationRegistry } from "./citation-registry.js";
+import { buildCitationIndexRows } from "../../compliance/citation-index.js";
 import { createRunState, startDebugTrace } from "./run-state.js";
 import { nodeIdOfStateKey } from "./node-instance.js";
 import { computeFlowDigest, subflowVersionsOf } from "../flow-revision.js";
@@ -198,6 +199,13 @@ export interface GraphEngineOptions {
   reranker?: Reranker;
   toolOutputValidator?: import("../../mcp/tool-output-validator.js").ToolOutputValidator;
   /**
+   * Opt-in answer citation index (`CITATION_INDEX_ENABLED` + `DATABASE_URL`).
+   * When set, every successful execution with a final answer records which of
+   * its registered chunks the answer cited — asynchronously, after the
+   * response, never blocking or failing it. See `compliance/citation-index.ts`.
+   */
+  citationIndex?: import("../../compliance/citation-index.js").CitationIndexStore;
+  /**
    * Engine-wide breaker that OBSERVES provider reachability across executions,
    * so the operator monitoring plane can report it. It deliberately does not
    * decide anything for a run: each execution gets its own flow-local breaker
@@ -267,6 +275,10 @@ class GraphEngineServiceImpl implements GraphEngineService {
 
   /** Optional transient store for generated media served over `/media/:id`. */
   private readonly mediaStore: MediaStore | undefined;
+  /** Optional answer citation index — see GraphEngineOptions.citationIndex. */
+  private readonly citationIndex:
+    | import("../../compliance/citation-index.js").CitationIndexStore
+    | undefined;
   /** Optional LLM summariser of MCP server instructions for select_tools. */
   private readonly toolGroupSummarizer: ToolGroupSummarizer | undefined;
   /** Optional debug trace store — captures full, untruncated execution detail. */
@@ -316,6 +328,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       reranker,
       toolOutputValidator,
       providerCircuitBreaker,
+      citationIndex,
       logger,
     } = options;
     this.logger = logger;
@@ -349,6 +362,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
     this.toolGroupSummarizer = toolGroupSummarizer;
     this.reranker = reranker;
     this.toolOutputValidator = toolOutputValidator;
+    this.citationIndex = citationIndex;
     this.semaphore = new Semaphore(
       appConfig.maxConcurrentExecutions,
       appConfig.maxQueueDepth ?? 0,
@@ -1608,6 +1622,38 @@ class GraphEngineServiceImpl implements GraphEngineService {
       // execution would stay "running" in the rollup forever.
       emitFlowEnd("error");
       throw err;
+    }
+
+    // Opt-in answer citation index (CITATION_INDEX_ENABLED): record which of
+    // the registered chunks the final answer cited. Fire-and-forget AFTER the
+    // answer was delivered — the write must never delay the response, and a
+    // failure is only a warning. Sources without a chunk_id are skipped
+    // inside buildCitationIndexRows.
+    if (
+      this.citationIndex !== undefined &&
+      !st.flowErrored &&
+      finalResponse !== undefined
+    ) {
+      const rows = buildCitationIndexRows(
+        {
+          tenantId: ctx.clientId ?? "default",
+          ...(ctx.userId !== undefined ? { userId: ctx.userId } : {}),
+          executionId,
+          flowId,
+          flowVersion,
+        },
+        citations.entries(),
+        finalResponse,
+      );
+      if (rows.length > 0) {
+        void this.citationIndex.recordExecution(rows).catch((err: unknown) => {
+          this.logger?.warn("citation index write failed", {
+            executionId,
+            flowId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
     }
   }
 }

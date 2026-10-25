@@ -59,6 +59,7 @@ import {
 } from "../observability/retention-targets.js";
 import {
   analysisArtifactRetentionTarget,
+  answerCitationsRetentionTarget,
   assistantDataRetentionTarget,
   assistantWorkspaceRetentionTarget,
   autopilotRunRetentionTarget,
@@ -334,6 +335,9 @@ export function buildObservability(
         analysisArtifactRetentionTarget(database),
         rocketchatConnectRetentionTarget(database),
         autopilotRunRetentionTarget(database),
+        // The table always exists (migration 50); with the feature off it
+        // simply stays empty, so the age purge is a cheap no-op.
+        answerCitationsRetentionTarget(database),
       );
     }
     if (semanticCache !== undefined) {

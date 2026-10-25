@@ -396,6 +396,7 @@ export function loadConfig(): AppConfig {
     groundednessJudgeModel: env.GROUNDEDNESS_JUDGE_MODEL,
     canaryJudgeModel: env.CANARY_JUDGE_MODEL,
     replayEnabled: env.REPLAY_ENABLED,
+    citationIndexEnabled: env.CITATION_INDEX_ENABLED,
     flowEditorEnabled: env.FLOW_EDITOR_ENABLED,
     optimizerEnabled: env.OPTIMIZER_ENABLED,
     optimizerGeneratorModel: env.OPTIMIZER_GENERATOR_MODEL,

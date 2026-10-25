@@ -43,6 +43,7 @@ export const DB_RETENTION_TARGET = {
   analysisArtifacts: "analysis_artifacts",
   rocketchatConnectRequests: "rocketchat_connect_requests",
   autopilotRuns: "autopilot_runs",
+  answerCitations: "answer_citations",
 } as const;
 
 /**
@@ -342,6 +343,29 @@ export function rocketchatConnectRetentionTarget(db: Database): RetentionTarget 
 }
 
 /** Autopilot run history: operational flow metrics, no personal data — age purge only. */
+/**
+ * The opt-in answer citation index (`CITATION_INDEX_ENABLED`): age purge on
+ * `created_at`, subject erase on `user_id` within the tenant.
+ */
+export function answerCitationsRetentionTarget(db: Database): RetentionTarget {
+  return {
+    name: DB_RETENTION_TARGET.answerCitations,
+    purgeOlderThan: (cutoffIso) =>
+      db.withOperator((op) =>
+        deleteCount(op, `DELETE FROM answer_citations WHERE created_at < $1`, [
+          cutoffIso,
+        ]),
+      ),
+    eraseSubject: async (subject) => {
+      const clause = subjectClause(subject, "tenant_id", ["user_id"]);
+      if (clause === undefined) return 0;
+      return db.withOperator((op) =>
+        deleteCount(op, `DELETE FROM answer_citations WHERE ${clause.where}`, clause.params),
+      );
+    },
+  };
+}
+
 export function autopilotRunRetentionTarget(db: Database): RetentionTarget {
   return {
     name: DB_RETENTION_TARGET.autopilotRuns,

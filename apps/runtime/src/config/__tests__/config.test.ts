@@ -256,6 +256,14 @@ describe("loadConfig() — valid configurations", () => {
     );
   });
 
+  // Opt-in answer citation index: off unless CITATION_INDEX_ENABLED is true/1.
+  test("citationIndexEnabled defaults to false and accepts true/1", () => {
+    expect(expectConfigSuccess().citationIndexEnabled).toBe(false);
+    expect(expectConfigSuccess({ CITATION_INDEX_ENABLED: "true" }).citationIndexEnabled).toBe(true);
+    expect(expectConfigSuccess({ CITATION_INDEX_ENABLED: "1" }).citationIndexEnabled).toBe(true);
+    expect(expectConfigSuccess({ CITATION_INDEX_ENABLED: "yes" }).citationIndexEnabled).toBe(false);
+  });
+
   test("MIGRATE_ON_START explicit override wins over APP_ENV", () => {
     expect(
       expectConfigSuccess({ APP_ENV: "production", MIGRATE_ON_START: "true" })

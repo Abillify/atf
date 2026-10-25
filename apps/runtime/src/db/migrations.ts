@@ -1656,6 +1656,41 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE erasure_requests ADD COLUMN IF NOT EXISTS lease_token TEXT`,
     ],
   },
+  {
+    version: 50,
+    name: "answer_citations — cited chunks per execution",
+    statements: [
+      // Opt-in (CITATION_INDEX_ENABLED) record of which retrieved chunks an
+      // answer cited, written asynchronously after the response. One row per
+      // registered source carrying a chunk_id, per execution; `cited` marks
+      // the sources whose `[n]` marker occurred in the final answer. Covered
+      // by retention (age purge on created_at) and erasure (user_id).
+      `CREATE TABLE IF NOT EXISTS answer_citations (
+         id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+         tenant_id      TEXT NOT NULL,
+         user_id        TEXT,
+         execution_id   TEXT NOT NULL,
+         flow_id        TEXT NOT NULL,
+         flow_version   TEXT,
+         base_ref       TEXT NOT NULL,
+         chunk_id       TEXT NOT NULL,
+         revision       TEXT,
+         citation_index INTEGER NOT NULL,
+         cited          BOOLEAN NOT NULL,
+         created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `CREATE INDEX IF NOT EXISTS answer_citations_tenant_ref_idx
+         ON answer_citations (tenant_id, base_ref, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS answer_citations_tenant_exec_idx
+         ON answer_citations (tenant_id, execution_id)`,
+      `ALTER TABLE answer_citations ENABLE ROW LEVEL SECURITY`,
+      `ALTER TABLE answer_citations FORCE ROW LEVEL SECURITY`,
+      `DROP POLICY IF EXISTS tenant_isolation ON answer_citations`,
+      `CREATE POLICY tenant_isolation ON answer_citations
+         USING (tenant_id = current_setting('app.current_tenant', true))
+         WITH CHECK (tenant_id = current_setting('app.current_tenant', true))`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

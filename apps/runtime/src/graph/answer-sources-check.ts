@@ -115,6 +115,22 @@ function blankFencedCode(lines: string[]): string[] {
 }
 
 /**
+ * The citation markers `[n]` that occur in `text` outside fenced code — the
+ * same marker semantics {@link findOutOfRangeMarkers} and
+ * {@link completeSourcesSection} use. The answer citation index uses this to
+ * decide which registered sources the final answer actually cited.
+ */
+export function citedIndices(text: string): Set<number> {
+  const found = new Set<number>();
+  for (const line of blankFencedCode(text.split("\n"))) {
+    for (const match of line.matchAll(CITATION_RE)) {
+      found.add(Number(match[1]));
+    }
+  }
+  return found;
+}
+
+/**
  * Citation markers `[n]` in `text` outside the valid range `1..count`
  * (deduplicated, ascending). `[n]` inside fenced code is ignored, matching
  * {@link completeSourcesSection}. An empty array means every marker resolves

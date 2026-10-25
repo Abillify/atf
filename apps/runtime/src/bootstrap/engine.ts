@@ -75,6 +75,10 @@ import {
 import type { Tracer } from "../observability/tracing.js";
 import { verifyExecutionContext } from "../graph/verified-execution-context.js";
 import { createProviderCircuitBreaker, type ProviderCircuitBreaker } from "../graph/provider-circuit-breaker.js";
+import {
+  PostgresCitationIndexStore,
+  type CitationIndexStore,
+} from "../compliance/citation-index.js";
 export interface EngineResult {
   graphEngine: GraphEngine;
   modelQuality: ModelQualityRegistry;
@@ -226,6 +230,22 @@ export async function buildEngine(
     );
   }
 
+  // ── Answer citation index (opt-in) ─────────────────────────────────────────
+  // Only active with CITATION_INDEX_ENABLED=true AND a configured database;
+  // without DATABASE_URL the feature stays off with a one-time startup
+  // warning (the writes are fire-and-forget inside the engine, see
+  // compliance/citation-index.ts).
+  let citationIndex: CitationIndexStore | undefined;
+  if (config.citationIndexEnabled === true) {
+    if (database !== undefined) {
+      citationIndex = new PostgresCitationIndexStore(database);
+    } else {
+      logger.warn(
+        "CITATION_INDEX_ENABLED needs DATABASE_URL; the citation index is off",
+      );
+    }
+  }
+
   // ── Graph engine ───────────────────────────────────────────────────────────
   const providerCircuitBreaker = createProviderCircuitBreaker();
   const graphEngine = createGraphEngine(config, {
@@ -257,6 +277,7 @@ export async function buildEngine(
     reranker,
     toolOutputValidator,
     providerCircuitBreaker,
+    ...(citationIndex !== undefined ? { citationIndex } : {}),
     logger,
   });
 

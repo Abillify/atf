@@ -32,6 +32,9 @@ releases:
 - **Search**: `POST /v2/citations/check` tells whether cited chunks are still current,
   carried over unchanged into the current revision, changed, removed, or unknown to the
   caller.
+- **Runtime**: with `CITATION_INDEX_ENABLED=true` (needs `DATABASE_URL`) the chunks an
+  answer cited are recorded per execution in `answer_citations`; the table is covered
+  by retention and erasure.
 - **Outpost**: `sharepoint` source for SharePoint Online and OneDrive for Business
   document libraries (Microsoft Graph, client credentials, delta sync);
   `aclFromPermissions` maps item permissions to the document access list.

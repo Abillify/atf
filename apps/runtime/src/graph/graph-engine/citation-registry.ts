@@ -55,6 +55,20 @@ export class CitationRegistry {
     return undefined;
   };
 
+  /**
+   * Every registered source with its global citation number, ascending by
+   * index. Used by the opt-in answer citation index to record, after the
+   * response, which of these sources the final answer actually cited.
+   */
+  entries(): Array<{ index: number; citation: Citation }> {
+    const out: Array<{ index: number; citation: Citation }> = [];
+    for (const [key, index] of this.citationIndexByKey) {
+      const citation = this.citationByKey.get(key);
+      if (citation !== undefined) out.push({ index, citation });
+    }
+    return out.sort((a, b) => a.index - b.index);
+  }
+
   registerCitations = async (
     entries: { key: string; citation: Citation }[],
   ): Promise<number[]> => {
