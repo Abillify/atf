@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-25
+
 ### Security
 
 - **Runtime** (semantic cache): entries are scoped to tenant AND user, and a hit
@@ -4516,7 +4518,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.19.3...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/Abillify/atf/compare/v0.19.3...v0.20.0
 [0.19.3]: https://github.com/Abillify/atf/compare/v0.19.2...v0.19.3
 [0.19.2]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.2
 [0.19.0]: https://github.com/Abillify/atf/compare/v0.18.1...v0.19.0

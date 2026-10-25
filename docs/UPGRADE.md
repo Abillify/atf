@@ -604,7 +604,7 @@ add none; the rest is configuration and clients. Do these **before** rolling out
     chunk. The debug trace (`progress` per node) and `GET /v1/jobs/{id}` report
     progress regardless.
 
-### 0.19 → next
+### 0.19 → 0.20
 
 Changes since 0.19.3 that need operator attention:
 
