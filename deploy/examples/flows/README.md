@@ -12,7 +12,7 @@ cd apps/runtime
 bun run scripts/cli.ts validate ../../deploy/examples/flows/
 ```
 
-These five are ordered by what they add. Each is safe to run; none contains credentials or
+These six are ordered by what they add. Each is safe to run; none contains credentials or
 customer data.
 
 | Flow | Demonstrates | Requires beyond the quickstart |
@@ -22,12 +22,13 @@ customer data.
 | [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Search reachable, and a `handbook` collection with documents |
 | [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Agentic tool use where the write path needs a human decision | Gate with `ticket_lookup` and `ticket_create` tools; `APPROVAL_GATE_ENABLED=true` |
 | [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; Gate with `ticket_create` for actions |
+| [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
 
 The quickstart stack starts Search and Gate but ingests no documents and declares no tools.
 Flows 3 through 5 therefore validate and load, but their retrieval or tool branches are not a
 successful governed demo until you add the stated collection or tools. Depending on the branch,
 execution can return no context, a tool-not-found result, or an execution error; use
-`quickstart.yaml` and `02-routed-support.yaml` for infrastructure-free runs.
+`quickstart.yaml`, `02-routed-support.yaml` and `06-request-pipeline.yaml` for infrastructure-free runs.
 
 [`compliance-policy.example.yaml`](compliance-policy.example.yaml) is a synthetic policy starting
 point and is intentionally ignored by both the flow validator and policy loader. Review and adapt

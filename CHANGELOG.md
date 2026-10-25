@@ -90,6 +90,10 @@ releases:
 - **Outpost Desktop**: `check:desktop-updater` refuses release builds with the
   placeholder updater key; first tests for the sidecar API client.
 
+- **Examples**: `deploy/examples/flows/06-request-pipeline.yaml`, the flow from
+  that recording: transform, classifier, router, parallel fan-out with a
+  conditional child, and a risk classifier on the change branch. Runs without
+  external services.
 ### Changed
 
 - **Runtime** (presets): `secure`, `regulated` and `regulated-multitenant` no

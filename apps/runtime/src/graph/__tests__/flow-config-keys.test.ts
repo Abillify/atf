@@ -89,6 +89,7 @@ describe("findUnknownConfigKeys", () => {
       "03-grounded-retrieval.yaml",
       "04-tool-use-with-approval.yaml",
       "05-support-assistant.yaml",
+      "06-request-pipeline.yaml",
       "quickstart.yaml",
     ];
     for (const name of files) {

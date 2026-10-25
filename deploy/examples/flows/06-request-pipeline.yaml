@@ -1,0 +1,177 @@
+id: request-pipeline
+name: Request Pipeline
+description: >-
+  A domain-neutral multi-stage graph: deterministic pre-processing, structured triage,
+  routing to four branches, a parallel incident analysis, and a change branch with a second
+  risk classification. No tools, retrieval, or external services; this is the flow shown in
+  the Studio recording in the root README.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+# No tools and no side effects, so re-running an interrupted execution from the start is safe.
+recovery:
+  retry: true
+# Per-execution ceilings: the run stops before the next model call once one is reached.
+budgets:
+  maxTokens: 60000
+  maxWallMs: 180000
+variables:
+  answer_style: "briefly, as bullet points"
+nodes:
+  # A transform runs no model. Bounded regexes copy identifiers out of the message into
+  # state.classification, so later nodes and conditions can use them. A miss writes "".
+  - id: normalize
+    type: transform
+    label: Extract references
+    config:
+      extract:
+        - { from: query, pattern: "#(\\d{2,8})", target: ticketId }
+        - { from: query, pattern: "\\b([A-Z][a-z]+ service)\\b", target: component }
+      progress:
+        start: Pre-processing the request…
+
+  - id: triage
+    type: classifier
+    label: Triage
+    systemPrompt: >-
+      Classify the request. Use "incident" for outages or errors in operation, "change" for
+      a requested change, "question" for a request for information, and "other" otherwise.
+      Estimate the urgency and whether a follow-up question is needed.
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent: { type: string, enum: [incident, change, question, other] }
+          urgency: { type: string, enum: [low, normal, high] }
+          needsClarification: { type: boolean }
+        required: [intent, urgency, needsClarification]
+    config:
+      # Used when no parseable classification comes back (for example from the quickstart
+      # mock model): the turn continues on the safe clarification branch instead of failing.
+      fallback: { intent: other, urgency: normal, needsClarification: true }
+      progress:
+        start: Classifying the request…
+
+  # A router does no work; its outgoing edges decide. Every edge here carries a condition:
+  # give each alternative an explicit condition rather than relying on an unconditioned edge.
+  - id: route
+    type: router
+    label: Route
+
+  # Fan-out: the children run concurrently, the escalation child only when urgency is high.
+  # Children referenced only through parallelNodes need no edges of their own.
+  - id: incident_analysis
+    type: parallel
+    label: Incident analysis
+    parallelNodes:
+      - impact
+      - diagnosis
+      - { node: escalation, condition: "classification.urgency == 'high'" }
+    config:
+      progress:
+        start: Analysing impact, causes and escalation in parallel…
+
+  - id: impact
+    type: llm
+    label: Assess impact
+    systemPrompt: >-
+      [Impact] Assess the reach and business impact of the outage. Answer {{vars.answer_style}}.
+
+  - id: diagnosis
+    type: llm
+    label: Narrow down causes
+    systemPrompt: >-
+      [Diagnosis] Name the most likely causes and the next checks. Answer {{vars.answer_style}}.
+
+  - id: escalation
+    type: llm
+    label: Prepare escalation
+    systemPrompt: >-
+      [Escalation] Write a short escalation note for the on-call team. Answer {{vars.answer_style}}.
+
+  - id: incident_response
+    type: llm
+    label: Incident response
+    systemPrompt: >-
+      [Incident response] Combine the analyses above into one status update with impact,
+      suspected cause, and next steps.
+
+  - id: change_plan
+    type: llm
+    label: Plan the change
+    systemPrompt: >-
+      [Change plan] Describe the steps the requested change needs. Do not claim anything was
+      done; this flow has no tools.
+
+  - id: risk_review
+    type: classifier
+    label: Review risk
+    systemPrompt: >-
+      Rate the risk of the change plan above. "high" when production data, security, or
+      availability can be affected, otherwise "low".
+    classifierSchema:
+      classKey: risk
+      schema:
+        type: object
+        properties:
+          risk: { type: string, enum: [low, high] }
+        required: [risk]
+    config:
+      fallback: { risk: high }
+
+  - id: approval_note
+    type: llm
+    label: Request approval
+    systemPrompt: >-
+      [Approval] Explain why this change needs a human approval and list what the approvers
+      should check.
+
+  - id: change_summary
+    type: llm
+    label: Summarise the change
+    systemPrompt: >-
+      [Change summary] Turn the plan into an actionable checklist.
+
+  - id: answer
+    type: llm
+    label: Answer the question
+    systemPrompt: >-
+      [Answer] Answer the question {{vars.answer_style}}. If you are not certain, say so
+      instead of guessing.
+
+  - id: clarify
+    type: llm
+    label: Ask for clarification
+    systemPrompt: >-
+      [Clarification] Ask exactly one short question that would let you classify the request.
+edges:
+  - { source: normalize, target: triage }
+  - { source: triage, target: route }
+  - source: route
+    target: clarify
+    conditions: "classification.needsClarification == true || classification.intent == 'other'"
+    label: unclear
+  - source: route
+    target: incident_analysis
+    conditions: "classification.intent == 'incident'"
+    label: incident
+  - source: route
+    target: change_plan
+    conditions: "classification.intent == 'change'"
+    label: change
+  - source: route
+    target: answer
+    conditions: "classification.intent == 'question'"
+    label: question
+  - { source: incident_analysis, target: incident_response }
+  - { source: change_plan, target: risk_review }
+  - source: risk_review
+    target: approval_note
+    conditions: "classification.risk == 'high'"
+    label: high risk
+  - source: risk_review
+    target: change_summary
+    conditions: "classification.risk != 'high'"
+    label: low risk
