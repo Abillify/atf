@@ -18,6 +18,7 @@ import {
   FlowReleaseReceiptSchema,
   percentile50,
   releaseReceiptSigningBytes,
+  resolveReleaseThresholds,
   revisionBindingProblems,
   runBenchCases,
   signReleaseReceipt,
@@ -155,6 +156,70 @@ describe("evaluateThresholds", () => {
         { passRate: 1, maxCascadeEscalationRate: 0 },
       ),
     ).toEqual([]);
+  });
+});
+
+describe("resolveReleaseThresholds", () => {
+  test("the bench file value always wins over the flow's slo", () => {
+    const resolved = resolveReleaseThresholds(
+      { passRate: 1, maxLatencyMsP50: 200, maxTokensP50: 40 },
+      { p50LatencyMs: 999, maxTokensP50: 999 },
+    );
+    expect(resolved.thresholds).toEqual({
+      passRate: 1,
+      maxLatencyMsP50: 200,
+      maxTokensP50: 40,
+    });
+    expect(resolved.sources).toEqual({
+      maxLatencyMsP50: "bench",
+      maxTokensP50: "bench",
+    });
+  });
+
+  test("the slo fills a threshold the bench file leaves out", () => {
+    const resolved = resolveReleaseThresholds(
+      { passRate: 1 },
+      { p50LatencyMs: 300, maxTokensP50: 50 },
+    );
+    expect(resolved.thresholds).toEqual({
+      passRate: 1,
+      maxLatencyMsP50: 300,
+      maxTokensP50: 50,
+    });
+    expect(resolved.sources).toEqual({
+      maxLatencyMsP50: "slo",
+      maxTokensP50: "slo",
+    });
+  });
+
+  test("sources mix when only one threshold comes from the slo", () => {
+    const resolved = resolveReleaseThresholds(
+      { passRate: 1, maxTokensP50: 40 },
+      { p50LatencyMs: 300 },
+    );
+    expect(resolved.thresholds.maxLatencyMsP50).toBe(300);
+    expect(resolved.thresholds.maxTokensP50).toBe(40);
+    expect(resolved.sources).toEqual({
+      maxLatencyMsP50: "slo",
+      maxTokensP50: "bench",
+    });
+  });
+
+  test("without a slo the thresholds stay as the bench file has them", () => {
+    const resolved = resolveReleaseThresholds({ passRate: 0.9 });
+    expect(resolved.thresholds).toEqual({ passRate: 0.9 });
+    expect("maxLatencyMsP50" in resolved.thresholds).toBe(false);
+    expect("maxTokensP50" in resolved.thresholds).toBe(false);
+    expect(resolved.sources).toEqual({});
+  });
+
+  test("slo objectives without a bench counterpart are not applied", () => {
+    const resolved = resolveReleaseThresholds(
+      { passRate: 1 },
+      { p95LatencyMs: 10, maxErrorRate: 0.1 },
+    );
+    expect(resolved.thresholds).toEqual({ passRate: 1 });
+    expect(resolved.sources).toEqual({});
   });
 });
 
@@ -543,6 +608,49 @@ describe("release receipts", () => {
     expect(
       FlowReleaseReceiptSchema.safeParse({ ...receipt, unknown: true }).success,
     ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({
+        ...receipt,
+        thresholds: { ...receipt.thresholds, sources: { maxLatencyMsP50: "config" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      FlowReleaseReceiptSchema.safeParse({
+        ...receipt,
+        thresholds: { ...receipt.thresholds, sources: { maxErrorRate: "slo" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("the receipt records the source of each applied threshold", () => {
+    const receipt = signReleaseReceipt(
+      buildReleaseReceipt({
+        ...unsigned,
+        thresholds: {
+          passRate: 1,
+          maxLatencyMsP50: 30_000,
+          maxTokensP50: 120,
+          sources: { maxLatencyMsP50: "bench", maxTokensP50: "slo" },
+        },
+      }),
+      key,
+    );
+    expect(receipt.thresholds.sources).toEqual({
+      maxLatencyMsP50: "bench",
+      maxTokensP50: "slo",
+    });
+    expect(FlowReleaseReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+  });
+
+  test("a receipt written without threshold sources stays valid", () => {
+    const receipt = signReleaseReceipt(unsigned, key);
+    expect(receipt.thresholds.sources).toBeUndefined();
+    const restored = FlowReleaseReceiptSchema.parse(
+      JSON.parse(JSON.stringify(receipt)),
+    );
+    expect(restored.thresholds.sources).toBeUndefined();
+    expect(verifyReleaseReceiptSignature(restored, key.publicKeyRaw)).toBe(true);
   });
 
   test("the new statistics travel through results and keep the receipt valid", () => {

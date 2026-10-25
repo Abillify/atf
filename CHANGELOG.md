@@ -96,6 +96,8 @@ releases:
 - **Helm**: the chart version follows the product version (`version:sync` sets
   it, `verify:version` checks it). Releases push the chart to
   `oci://ghcr.io/abillify/charts/atf`, signed with cosign.
+- **Runtime** (`flows release`): a flow's `slo` supplies the latency and token
+  thresholds a bench file leaves out; the receipt records which source applied.
 
 ### Fixed
 

@@ -222,6 +222,9 @@ Releases are gated by a versioned bench file next to the flow:
 `flows/bench/<flowId>.bench.yaml` records conversations (`cases` with `messages` and
 `assert` assertions) plus release `thresholds` (`passRate`, optional `maxLatencyMsP50`,
 `maxTokensP50`, `maxCascadeEscalationRate`, `maxBudgetExceeded` and `maxWallMsP95`).
+Where the bench file leaves out `maxLatencyMsP50` or `maxTokensP50`, the flow's
+[`slo`](../../docs/FLOWS.md) block supplies the default (`p50LatencyMs` and
+`maxTokensP50`); a value in the bench file always wins.
 
 Bench cases do not have to be written by hand. Pick representative executions in Control
 (monitoring history), note their execution ids, and capture them:
@@ -256,6 +259,8 @@ bun run scripts/cli.ts flows release <flowId> --flows-dir ./flows \
 - With `--signing-key-file <file>` (key format as `EVIDENCE_SIGNING_KEY`: PEM PKCS#8
   Ed25519 or base64 raw seed) a passing gate writes an Ed25519-signed release receipt
   (`atf.flow-release-receipt`) covering the flow digest, bench digest and results.
+  The receipt's `thresholds` record the values actually applied plus a `sources`
+  map naming, per threshold, whether `bench` or the flow's `slo` supplied it.
 
 Anyone with the public key can verify the receipt later — it is the proof that a given
 flow version passed its bench gate:

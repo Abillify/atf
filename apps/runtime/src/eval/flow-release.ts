@@ -15,6 +15,7 @@
 import { type KeyObject, createHash } from "node:crypto";
 import { z } from "zod";
 import type { BenchFile, BenchThresholds } from "./bench-contract.js";
+import type { FlowServiceObjectives } from "../types/flow.js";
 import type { BenchExecutionExtras } from "./run.js";
 import {
   type EvalCase,
@@ -204,6 +205,56 @@ export function evaluateThresholds(
     );
   }
   return failures;
+}
+
+/**
+ * Where an applied release threshold came from: the bench file or the
+ * flow's `slo` block. The bench file always wins; `slo` only fills a gap.
+ */
+export type ReleaseThresholdSource = "bench" | "slo";
+
+/** Threshold keys a flow's `slo` can supply as a default. */
+export type SloBackedThreshold = "maxLatencyMsP50" | "maxTokensP50";
+
+/** Outcome of {@link resolveReleaseThresholds}. */
+export interface ResolvedReleaseThresholds {
+  /** The thresholds the release gate actually checks. */
+  thresholds: BenchThresholds;
+  /**
+   * Per SLO-backable key which source supplied the applied value; a key is
+   * absent when neither the bench file nor the flow's `slo` set it.
+   */
+  sources: Partial<Record<SloBackedThreshold, ReleaseThresholdSource>>;
+}
+
+/**
+ * Resolves the thresholds a release gate applies: the bench file's values
+ * win, and a flow's `slo` supplies a default for each latency/token
+ * threshold the bench file leaves out (`p50LatencyMs` → `maxLatencyMsP50`,
+ * `maxTokensP50` → `maxTokensP50`). The remaining thresholds have no `slo`
+ * counterpart and stay exactly as the bench file has them. The source map
+ * records, per applied value, whether `bench` or `slo` supplied it, so the
+ * release receipt can show where each threshold came from.
+ */
+export function resolveReleaseThresholds(
+  thresholds: BenchThresholds,
+  slo?: FlowServiceObjectives,
+): ResolvedReleaseThresholds {
+  const sources: Partial<Record<SloBackedThreshold, ReleaseThresholdSource>> = {};
+  const maxLatencyMsP50 = thresholds.maxLatencyMsP50 ?? slo?.p50LatencyMs;
+  if (thresholds.maxLatencyMsP50 !== undefined) sources.maxLatencyMsP50 = "bench";
+  else if (slo?.p50LatencyMs !== undefined) sources.maxLatencyMsP50 = "slo";
+  const maxTokensP50 = thresholds.maxTokensP50 ?? slo?.maxTokensP50;
+  if (thresholds.maxTokensP50 !== undefined) sources.maxTokensP50 = "bench";
+  else if (slo?.maxTokensP50 !== undefined) sources.maxTokensP50 = "slo";
+  return {
+    thresholds: {
+      ...thresholds,
+      ...(maxLatencyMsP50 !== undefined ? { maxLatencyMsP50 } : {}),
+      ...(maxTokensP50 !== undefined ? { maxTokensP50 } : {}),
+    },
+    sources,
+  };
 }
 
 /** Shape of a previously stored release receipt used as a baseline. */
@@ -501,13 +552,23 @@ export interface FlowReleaseReceipt {
   baseFlowVersion?: string;
   benchDigest: string;
   results: ReleaseStats;
-  thresholds: BenchThresholds;
+  thresholds: ReleaseReceiptThresholds;
   createdAt: string;
   signature: {
     alg: typeof RELEASE_RECEIPT_ALG;
     kid: string;
     value: string;
   };
+}
+
+/**
+ * The thresholds a release receipt records: the bench thresholds plus an
+ * optional `sources` map naming, per SLO-backable threshold, whether the
+ * applied value came from the `bench` file or the flow's `slo`. Receipts
+ * written before the `slo` fallback existed simply have no `sources`.
+ */
+export interface ReleaseReceiptThresholds extends BenchThresholds {
+  sources?: Partial<Record<SloBackedThreshold, ReleaseThresholdSource>>;
 }
 
 /**
@@ -547,6 +608,14 @@ export const FlowReleaseReceiptSchema = z
         maxCascadeEscalationRate: z.number().min(0).max(1).optional(),
         maxBudgetExceeded: z.number().int().nonnegative().optional(),
         maxWallMsP95: z.number().int().positive().finite().optional(),
+        // Optional: receipts written before the slo fallback stay valid.
+        sources: z
+          .object({
+            maxLatencyMsP50: z.enum(["bench", "slo"]).optional(),
+            maxTokensP50: z.enum(["bench", "slo"]).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     createdAt: z.string().min(1),
@@ -581,7 +650,7 @@ export interface ReleaseReceiptInput {
   baseFlowVersion?: string;
   benchDigest: string;
   results: ReleaseStats;
-  thresholds: BenchThresholds;
+  thresholds: ReleaseReceiptThresholds;
   createdAt: string;
 }
 

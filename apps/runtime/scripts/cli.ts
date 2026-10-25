@@ -71,11 +71,13 @@ import {
   compareBaseline,
   computeBenchDigest,
   evaluateThresholds,
+  resolveReleaseThresholds,
   revisionBindingProblems,
   runBenchCases,
   signReleaseReceipt,
   versionGateProblem,
   type ReleaseBaseline,
+  type ReleaseReceiptThresholds,
 } from "../src/eval/flow-release.js";
 import {
   parseEvidenceSigningKey,
@@ -1602,8 +1604,11 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
   const headRaw = loadFlowFile(flowPath);
   const headVersion = flowMetadataVersion(headRaw);
   let headDigest: string;
+  let headSlo: FlowDefinition["slo"] | undefined;
   try {
-    headDigest = computeFlowDigest(resolveFlowFile(flowPath));
+    const headDef = resolveFlowFile(flowPath);
+    headDigest = computeFlowDigest(headDef);
+    headSlo = headDef.slo;
   } catch (err) {
     console.error(`${fail} Flow ${flowId} does not resolve: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
@@ -1686,9 +1691,25 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
     );
   }
 
-  // 5. Check the thresholds.
+  // 5. Check the thresholds. The bench file wins; the flow's `slo` supplies
+  //    a default for each latency/token threshold the bench file omits, and
+  //    the receipt records which source applied.
+  const resolvedThresholds = resolveReleaseThresholds(bench.thresholds, headSlo);
+  const receiptThresholds: ReleaseReceiptThresholds = {
+    ...resolvedThresholds.thresholds,
+    ...(Object.keys(resolvedThresholds.sources).length > 0
+      ? { sources: resolvedThresholds.sources }
+      : {}),
+  };
+  if (!args.json) {
+    for (const [key, source] of Object.entries(resolvedThresholds.sources)) {
+      if (source === "slo") {
+        console.log(`  ${dim(`${key} from the flow's slo (bench file has none)`)}`);
+      }
+    }
+  }
   const failures: string[] = [];
-  for (const message of evaluateThresholds(stats, bench.thresholds)) {
+  for (const message of evaluateThresholds(stats, resolvedThresholds.thresholds)) {
     failures.push(`Threshold: ${message}`);
     console.error(`${fail} Threshold: ${message}`);
   }
@@ -1741,7 +1762,7 @@ async function cmdFlowsRelease(args: ParsedArgs): Promise<number> {
         ...(baseVersion !== undefined ? { baseFlowVersion: baseVersion } : {}),
         benchDigest: computeBenchDigest(bench),
         results: stats,
-        thresholds: bench.thresholds,
+        thresholds: receiptThresholds,
         createdAt: new Date().toISOString(),
       }),
       signingKey,
@@ -1788,7 +1809,7 @@ ${bold("Commands:")}
   ${bold("rls-status")}                      Report Row-Level Security enforcement per tenant table
   ${bold("rls-setup")} [--confirm]            Onboard Row-Level Security (dry-run unless --confirm)
   ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
-  ${bold("flows release")} <flowId>          Run a flow's bench file against a server as a release gate (--flows-dir, --base, --baseline)
+  ${bold("flows release")} <flowId>          Run a flow's bench file against a server as a release gate (--flows-dir, --base, --baseline; the flow's slo supplies thresholds the bench file omits)
   ${bold("citations impact")}               List past answers whose cited passages changed or disappeared (--since, --base-ref)
   ${bold("bench capture")}                 Turn executions into bench cases for flows release (--execution, --out, --append, --allow-raw)
 

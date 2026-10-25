@@ -227,6 +227,16 @@ calls, and wall-clock time. A budget breach stops the execution
 unbounded tokens — the per-execution floor under the deployment-level
 `BUDGET_*` caps (§4.4).
 
+**Service objectives.** A flow's `slo` block states what "good" costs: a
+median latency target, a p95 latency target, a token ceiling per answer and a
+maximum error rate. The Runtime evaluates it continuously (flow health in
+Control, `aiperator_flow_slo_breach_total`), and `flows release` applies it as
+a default: where the bench file sets no `maxLatencyMsP50` or `maxTokensP50`,
+the `slo` values become the release thresholds, so a flow that drifts past its
+own objective can no longer ship. A cost cut that doubles p50 latency then
+fails the gate instead of going unnoticed — the receipt records which source
+(`bench` or `slo`) supplied each applied threshold.
+
 **Coverage-queue lanes.** The agent harness's `coverageQueue.lanes` runs
 parallel coverage assignments for one execution. Each lane issues its own
 model calls concurrently, so lanes trade latency for concurrent inference

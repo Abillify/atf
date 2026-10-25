@@ -194,6 +194,92 @@ describe("flows release", () => {
     expect((await release("demo", "--server", serverUrl)).exitCode).toBe(1);
   });
 
+  test("the flow's slo supplies a token threshold the bench file omits", async () => {
+    // The fake server reports 10 tokens per case; the slo caps the p50 at 5.
+    writeFileSync(
+      join(dir, "demo.yaml"),
+      FLOW_V1.replace("nodes:", "slo:\n  maxTokensP50: 5\nnodes:"),
+    );
+    const result = await release("demo", "--flows-dir", dir, "--server", serverUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("p50 tokens 10 above max 5");
+  });
+
+  test("a bench file threshold wins over the flow's slo", async () => {
+    writeFileSync(
+      join(dir, "demo.yaml"),
+      FLOW_V1.replace("nodes:", "slo:\n  maxTokensP50: 5\nnodes:"),
+    );
+    writeFileSync(
+      join(dir, "bench", "demo.bench.yaml"),
+      `${BENCH}  maxTokensP50: 20\n`,
+    );
+    const result = await release("demo", "--flows-dir", dir, "--server", serverUrl);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("the receipt records which source supplied each threshold", async () => {
+    writeFileSync(
+      join(dir, "demo.yaml"),
+      FLOW_V1.replace("nodes:", "slo:\n  p50LatencyMs: 60000\n  maxTokensP50: 100\nnodes:"),
+    );
+    writeFileSync(
+      join(dir, "bench", "demo.bench.yaml"),
+      `${BENCH}  maxLatencyMsP50: 30000\n`,
+    );
+    // The flow file changed after beforeEach: let the server report its digest.
+    serveHeadRevision();
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(0);
+    const receipt = JSON.parse(
+      readFileSync(receiptPath, "utf8"),
+    ) as FlowReleaseReceipt;
+    expect(receipt.thresholds.maxLatencyMsP50).toBe(30000);
+    expect(receipt.thresholds.maxTokensP50).toBe(100);
+    expect(receipt.thresholds.sources).toEqual({
+      maxLatencyMsP50: "bench",
+      maxTokensP50: "slo",
+    });
+    const key = parseEvidenceSigningKey(Buffer.alloc(32, 7).toString("base64"));
+    if (key === undefined) throw new Error("fixture signing key missing");
+    expect(verifyReleaseReceiptSignature(receipt, key.publicKeyRaw)).toBe(true);
+  });
+
+  test("a release without slo and without those thresholds records no sources", async () => {
+    const keyPath = join(dir, "signing.key");
+    writeFileSync(keyPath, Buffer.alloc(32, 7).toString("base64"));
+    const receiptPath = join(dir, "demo.release-receipt.json");
+    const result = await release(
+      "demo",
+      "--flows-dir",
+      dir,
+      "--server",
+      serverUrl,
+      "--signing-key-file",
+      keyPath,
+      "--out",
+      receiptPath,
+    );
+    expect(result.exitCode).toBe(0);
+    const receipt = JSON.parse(
+      readFileSync(receiptPath, "utf8"),
+    ) as FlowReleaseReceipt;
+    expect(receipt.thresholds.sources).toBeUndefined();
+  });
+
   test("a missing bench file is reported", async () => {
     rmSync(join(dir, "bench", "demo.bench.yaml"));
     const result = await release("demo", "--flows-dir", dir, "--server", serverUrl);
