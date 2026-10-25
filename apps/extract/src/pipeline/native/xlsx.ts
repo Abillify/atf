@@ -286,7 +286,7 @@ function readSheet(name: string, xml: string, sharedStrings: string[]): XlsxShee
 }
 
 /**
- * Read an XLSX into native tables and decide whether it needs rendering
+ * Read an XLSX into native tables and decide whether it needs rendering.
  * Never throws — except for a ZIP-guard violation
  * (`DOCUMENT_TOO_COMPLEX`), which is a rejection, not a
  * warning: a bomb must fail the job, not degrade to an empty sheet set.

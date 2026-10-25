@@ -686,8 +686,8 @@ function assertInvariants(reference: RunFingerprint, chaos: RunFingerprint): voi
   expect(new Set(unitIds).size).toBe(unitIds.length);
 
   // 4. No orphaned assets: the set of stored assets equals exactly the set the
-  //    committed document references — no extra (orphan) and none missing
-  // Since a committed run stores precisely the referenced
+  //    committed document references — no extra (orphan) and none missing.
+  //    Since a committed run stores precisely the referenced
   //    page images and figure crops, equality with the expected set proves both
   //    directions at once.
   const expected = [...expectedAssetIds()].sort();

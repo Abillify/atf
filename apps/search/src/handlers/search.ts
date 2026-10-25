@@ -893,7 +893,7 @@ export async function rerankResultsWithStatus(
 ): Promise<RerankOutcome> {
   // Feed the reranker CONTEXT-enriched documents (title, section path, unit
   // type + content, capped at 1024 tokens) rather than raw content, so the
-  // cross-encoder scores against the same context a reader would see
+  // cross-encoder scores against the same context a reader would see.
   // Legacy v1 rows with no
   // title/section/type degrade to just their content — identical to the
   // previous behaviour, so the fallback/async paths are unaffected.

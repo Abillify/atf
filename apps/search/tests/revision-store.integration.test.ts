@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the revision store against a REAL PostgreSQL instance
+ * Integration tests for the revision store against a REAL PostgreSQL instance.
  * These verify the SQL-level semantics that unit tests cannot:
  * idempotency-key round-trips, the same-seq/same-digest 200 no-op vs the
  * different-digest 409, staging-before-ack durability, the RevisionState

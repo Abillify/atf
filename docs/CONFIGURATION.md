@@ -190,7 +190,7 @@ Source of truth: `apps/runtime/src/config/schema.ts`.
 | `MEMORY_TOP_K` | number | no | `5` | — |
 | `METRICS_AUTH` | boolean | no | — | Require authentication for `/metrics`. Default `true` (secure default); `false` exposes Prometheus metrics unauthenticated. |
 | `METRICS_ENABLED` | boolean | no | — | — |
-| `MIGRATE_ON_START` | boolean | no | — | Apply schema migrations during boot. Unset means: true outside production, false when APP_ENV=production (requirement 12.4) — a production rollout runs the standalone `bun run migrate` command as a one-shot Job instead of doing DDL on the boot path of every replica. The effective default is computed in `load.ts` from APP_ENV. |
+| `MIGRATE_ON_START` | boolean | no | — | Apply schema migrations during boot. Unset means: true outside production, false when APP_ENV=production — a production rollout runs the standalone `bun run migrate` command as a one-shot Job instead of doing DDL on the boot path of every replica. The effective default is computed in `load.ts` from APP_ENV. |
 | `MONITORING_AUTH` | boolean | no | — | Require operator authentication for the monitoring/operator plane (`/monitoring/*`, `/admin/*`, flow management). Default `true` (secure default). |
 | `MONITORING_MAX_CONNECTIONS` | number | no | `100` | — |
 | `MONITORING_TICKET_SECRET` | string | no | — | SECRET (≥ 16 characters). Signs short-lived tickets that authenticate the monitoring SSE stream without putting the operator token in the URL. |
@@ -365,13 +365,13 @@ Source of truth: `apps/search/src/config.ts`.
 | `API_SERVICE_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Legacy alias of DEFAULT_TENANT_ID for service-token callers; must match it when both are set |
 | `API_TOKEN` | string | no | — | Config member `apiToken` — optional |
 | `API_TOKEN_NEXT` | string | no | — | Optional rotation token: while both `API_TOKEN` and `API_TOKEN_NEXT` are set, either one authenticates (Requirement 11.8). — optional, rotation (`apiTokenNext`) |
-| `ASSET_STORE_BACKEND` | enum | no | `postgres` | one of `postgres`, `filesystem`; Backend for the v2 AssetStore (design §6.5, Requirement 14.2). (`assetStoreBackend`) |
+| `ASSET_STORE_BACKEND` | enum | no | `postgres` | one of `postgres`, `filesystem`; Backend for the v2 AssetStore. (`assetStoreBackend`) |
 | `ASSET_STORE_DIR` | string | no | `null` | Filesystem root for asset bytes when {@link assetStoreBackend} is `filesystem`. (`assetStoreDir`) |
 | `ATF_PROFILE` | string | no | `development` | Effective operational profile: `ATF_PROFILE` (explicit, platform-wide) wins over `NODE_ENV`; unset means `development`. (`nodeEnv`) |
 | `AUTHN_MODE` | string | no | — | API authentication: `disabled`, `token` (API_TOKEN), `oidc` (API_OIDC_ISSUERS) or `token_or_oidc`. Inferred from what is configured when unset; a mode without its credentials fails startup |
 | `AUTHZ_ENABLED` | string | no | — | Enforce scope-based authorization on the API (canonical switch; replaces AUTHZ_ENFORCEMENT). Default `false` |
 | `AUTHZ_ENFORCEMENT` | string | no | — | Legacy form of AUTHZ_ENABLED (`off`/`required`); `optional` is refused unless AUTHZ_ENABLED is set explicitly |
-| `BATCH_WORKER` | boolean | no | `false` | The v2 batch-processing worker (design §9b.3, task 1.10). (`batchWorkerEnabled`) |
+| `BATCH_WORKER` | boolean | no | `false` | The v2 batch-processing worker. (`batchWorkerEnabled`) |
 | `BATCH_WORKER_BACKOFF_MS` | number | no | `30000` | Backoff applied to a batch's next_attempt_at after an embedding-service failure, in milliseconds (Requirement 5.4). (`batchWorkerBackoffMs`) |
 | `BATCH_WORKER_EMBED_CONCURRENCY` | number | no | `4, 1-16` | Embedding round-trips of one staged batch that run at once. (`batchWorkerEmbedConcurrency`) |
 | `BATCH_WORKER_INTERVAL_MS` | number | no | `2000` | How often the batch worker polls for staged batches, in milliseconds. (`batchWorkerIntervalMs`) |
@@ -382,7 +382,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `CHUNK_OVERLAP` | number | no | — | Config member `defaultChunkOverlap` — optional |
 | `CHUNK_SIZE` | number | no | — | Config member `defaultChunkSize` — optional |
 | `CONTEXT_HEADER_MAX_FRACTION` | number | no | `0.15` | Fraction of the chunk token budget the contextual embedding header may occupy (Requirement 11.4). (`contextHeaderMaxFraction`) |
-| `CONTEXTUAL_CHUNK_LLM` | boolean | no | `false` | Per-chunk contextual placement sentence via the SUMMARY_* text-LLM (Requirement 11.6, design §6.3). (`contextualChunkLlm`) |
+| `CONTEXTUAL_CHUNK_LLM` | boolean | no | `false` | Per-chunk contextual placement sentence via the SUMMARY_* text-LLM. (`contextualChunkLlm`) |
 | `CONVERTER_CA_CERT_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying the converter's TLS certificate |
 | `CONVERTER_TIMEOUT_MS` | string | no | — | — |
 | `CONVERTER_TOKEN` | string | no | — | **read directly — not validated at startup**; SECRET. Bearer token Search sends to the document converter (Extract) on `/ingest-file` |
@@ -484,7 +484,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `RETRIEVE_DECOMPOSE_TOKEN` | string | no | — | Bearer token sent as `Authorization: Bearer <token>` on decomposition HTTP calls. — optional (`retrieveDecomposeToken`) |
 | `RETRIEVE_DECOMPOSE_URL` | string | no | — | Full chat-completions URL for `retrieve_for_answer` decomposition. — optional (`retrieveDecomposeUrl`) |
 | `REVISION_BATCH_BODY_LIMIT` | string | no | `50mb` | Body size limit for a single v2 revision NDJSON page batch (PUT …/revisions/{rev}/batches/{seq}). (`revisionBatchBodyLimit`) |
-| `REVISION_TTL` | number | no | `1209600` | Seconds an uncommitted v2 revision is kept before the TTL cleaner reaps it (design §9b.3, Requirement 5.10); the parsed value is held in milliseconds internally. (`revisionTtlMs`) |
+| `REVISION_TTL` | number | no | `1209600` | Seconds an uncommitted v2 revision is kept before the TTL cleaner reaps it; the parsed value is held in milliseconds internally. (`revisionTtlMs`) |
 | `REVISION_TTL_SWEEP_MS` | number | no | `3600000` | How often the revision TTL cleaner sweeps for expired revisions, in milliseconds. (`revisionTtlSweepMs`) |
 | `RRF_K` | number | no | `60` | RRF k parameter for hybrid search. (`rrfK`) |
 | `RRF_MISSING_ZERO` | boolean | no | `true` | Requirement 4.4: a list a document did not appear in contributes 0 to the RRF fusion instead of the legacy `1/(k+1000)` pseudo-rank. (`rrfMissingZero`) |
@@ -564,7 +564,7 @@ Source of truth: `apps/extract/src/config.ts`.
 | `CALLBACK_TIMEOUT_MS` | number | no | `30000` | CALLBACK_TIMEOUT_MS — per-attempt timeout for callback delivery. (`callbackTimeoutMs`) |
 | `CONVERT_CONCURRENCY` | number | no | `2` | CONVERT_CONCURRENCY — documents converted at once. (`convertConcurrency`) |
 | `CONVERTER_ALLOW_LOCAL_HTML` | boolean | no | `false` | CONVERTER_ALLOW_LOCAL_HTML — explicit acknowledgement that, with `CONVERTER_MODE=local`, HTML sources are laid out by LibreOffice inside this container in production. (`converterAllowLocalHtml`) |
-| `CONVERTER_MODE` | enum | no | `local` | one of `local`, `isolated`; CONVERTER_MODE — where the poppler/LibreOffice binaries execute (requirement 5.7). (`converterMode`) |
+| `CONVERTER_MODE` | enum | no | `local` | one of `local`, `isolated`; CONVERTER_MODE — where the poppler/LibreOffice binaries execute. (`converterMode`) |
 | `CONVERTER_SOCKET` | string | no | `/run/atf-converter/converter.sock` | CONVERTER_SOCKET — filesystem path of the converter RPC socket when CONVERTER_MODE=isolated. (`converterSocket`) |
 | `DEFAULT_TENANT_ID` | string | no | `default` | Tenant used for callers whose credential carries none (service token, single-tenant deployments). Default `default` (`defaultTenantId`) |
 | `DERIVED_PDF_CACHE` | boolean | no | `true` | DERIVED_PDF_CACHE — reuse a LibreOffice conversion's PDF across runs under `TEMP_DIR/derived-pdf`, keyed by the source sha256, the converter identity and (for HTML) the sanitizer revision; PDF sources are read in place and never copied t… (`derivedPdfCache`) |
@@ -576,8 +576,8 @@ Source of truth: `apps/extract/src/config.ts`.
 | `EXTRACT_DB_POOL_MAX` | string | no | — | — |
 | `EXTRACT_DB_STATEMENT_TIMEOUT_MS` | string | no | — | — |
 | `FIGURE_DPI` | number | no | `300` | FIGURE_DPI — resolution figure crops are rendered at. (`figureDpi`) |
-| `FIGURE_PASS2_KINDS` | list | no | `bpmn,flowchart,ui_mask,technical_drawing,chart,table_image` | FIGURE_PASS2_KINDS — the figure kinds that get a structured Pass-2 transcription (design §5 S5, requirement 8.3/8.6). (`figurePass2Kinds`) |
-| `FIGURE_PASS2_MIN_AREA` | number | no | `0.02` | FIGURE_PASS2_MIN_AREA — the smallest figure, as a fraction of the page area, that is worth a Pass-2 call (requirement 8.6). (`figurePass2MinArea`) |
+| `FIGURE_PASS2_KINDS` | list | no | `bpmn,flowchart,ui_mask,technical_drawing,chart,table_image` | FIGURE_PASS2_KINDS — the figure kinds that get a structured Pass-2 transcription. (`figurePass2Kinds`) |
+| `FIGURE_PASS2_MIN_AREA` | number | no | `0.02` | FIGURE_PASS2_MIN_AREA — the smallest figure, as a fraction of the page area, that is worth a Pass-2 call. (`figurePass2MinArea`) |
 | `FINALIZE_PASS` | string | no | — | — |
 | `JOB_CONCURRENCY` | string | no | — | — |
 | `JOB_HEARTBEAT_INTERVAL_MS` | string | no | — | — |
@@ -585,14 +585,14 @@ Source of truth: `apps/extract/src/config.ts`.
 | `JOB_MAX_TRANSIENT_WAIT_MS` | string | no | — | — |
 | `JOB_POLL_INTERVAL_MS` | string | no | — | — |
 | `JOB_RETENTION_DAYS` | number | no | `0` | JOB_RETENTION_DAYS — days a finished job (completed/failed/cancelled) is kept after its last change. (`jobRetentionDays`) |
-| `LABEL_COVERAGE_MIN` | number | no | `60` | LABEL_COVERAGE_MIN — the minimum percentage of a figure's `labels` that must appear in its Pass-2 transcription before the transcription is trusted (requirement 8.4). (`labelCoverageMin`) |
+| `LABEL_COVERAGE_MIN` | number | no | `60` | LABEL_COVERAGE_MIN — the minimum percentage of a figure's `labels` that must appear in its Pass-2 transcription before the transcription is trusted. (`labelCoverageMin`) |
 | `LANG` | string | no | — | **read directly — not validated at startup** |
 | `LARGE_JOB_MAX_CONCURRENCY` | string | no | — | — |
-| `LARGE_JOB_PAGE_THRESHOLD` | string | no | — | Large-job lane threshold and bounded parallelism (requirement 6.6). (`queueLane`) |
+| `LARGE_JOB_PAGE_THRESHOLD` | string | no | — | Large-job lane threshold and bounded parallelism. (`queueLane`) |
 | `LC_ALL` | string | no | — | **read directly — not validated at startup** |
 | `LIBREOFFICE_BIN` | string | no | `libreoffice` | LIBREOFFICE_BIN — binary used to convert Word/Excel formats to PDF. (`libreofficeBin`) |
 | `LOG_LEVEL` | string | no | `info` | Config member `logLevel` |
-| `MAX_EMBED_DEPTH` | number | no | `2` | MAX_EMBED_DEPTH — how deep an Outlook `.msg` may nest embedded messages before deeper ones are skipped with a warning (requirement 5.4). (`maxEmbedDepth`) |
+| `MAX_EMBED_DEPTH` | number | no | `2` | MAX_EMBED_DEPTH — how deep an Outlook `.msg` may nest embedded messages before deeper ones are skipped with a warning. (`maxEmbedDepth`) |
 | `MAX_PAGES` | number | no | `500, 0=unlimited` | MAX_PAGES — refuse documents longer than this. (`maxPages`) |
 | `MAX_UPLOAD_BYTES` | number | no | `52428800` | MAX_UPLOAD_BYTES — largest accepted upload. (`maxUploadBytes`) |
 | `MIGRATE_ON_START` | boolean | no | `true, false when NODE_ENV=production` | Apply schema migrations during boot (also carried into the database config below). (`migrateOnStart`) |
@@ -624,8 +624,8 @@ Source of truth: `apps/extract/src/config.ts`.
 | `RATE_LIMIT` | number | no | — | Requests per minute per client IP; `0` disables. Default 120 (`rateLimit`) |
 | `RATE_LIMIT_REDIS_URL` | string | no | — | RATE_LIMIT_REDIS_URL — shared Redis for the rate limiters (also backs RENDER_RATE_LIMIT). (`rateLimitRedisUrl`) |
 | `RENDER_DPI` | number | no | `200` | RENDER_DPI — resolution the page is rasterised at for the vision model. (`renderDpi`) |
-| `RENDER_MAX_PIXELS` | number | no | `40000000` | RENDER_MAX_PIXELS — hard ceiling on the output area of a `POST /v2/render` response, in pixels (design §9a.1, requirement 14.4). (`renderMaxPixels`) |
-| `RENDER_RATE_LIMIT` | number | no | `240, 0=disabled` | RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render` (requirement 14.4). (`renderRateLimit`) |
+| `RENDER_MAX_PIXELS` | number | no | `40000000` | RENDER_MAX_PIXELS — hard ceiling on the output area of a `POST /v2/render` response, in pixels. (`renderMaxPixels`) |
+| `RENDER_RATE_LIMIT` | number | no | `240, 0=disabled` | RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render`. (`renderRateLimit`) |
 | `REPLICAS` | number | no | `1` | REPLICAS — declared replica count for the production readiness gate. (`replicas`) |
 | `RETENTION_SWEEP_INTERVAL_MINUTES` | number | no | `60` | RETENTION_SWEEP_INTERVAL_MINUTES — how often the retention sweep runs (default 60). (`retentionSweepIntervalMinutes`) |
 | `SEARCH_CA_CERT_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying Search's TLS certificate |
@@ -638,8 +638,8 @@ Source of truth: `apps/extract/src/config.ts`.
 | `SOURCE_URL_ALLOWED_HOSTS` | string | no | — | Config for pulling a source from a caller-supplied `source_url`. (`sourceUrl`) |
 | `SOURCE_URL_MAX_BYTES` | string | no | — | — |
 | `SOURCE_URL_TIMEOUT_MS` | string | no | — | — |
-| `SUBPROCESS_CPU_LIMIT_S` | number | no | `900, 0=disabled` | SUBPROCESS_CPU_LIMIT_S — `prlimit --cpu` ceiling in CPU-seconds, SIGKILL on breach (requirement 5.5). (`subprocessCpuLimitSeconds`) |
-| `SUBPROCESS_MEMORY_LIMIT_MB` | number | no | `0, 0=disabled` | SUBPROCESS_MEMORY_LIMIT_MB — `prlimit --as` ceiling applied to each converter subprocess on Linux (requirement 5.5). (`subprocessMemoryLimitMb`) |
+| `SUBPROCESS_CPU_LIMIT_S` | number | no | `900, 0=disabled` | SUBPROCESS_CPU_LIMIT_S — `prlimit --cpu` ceiling in CPU-seconds, SIGKILL on breach. (`subprocessCpuLimitSeconds`) |
+| `SUBPROCESS_MEMORY_LIMIT_MB` | number | no | `0, 0=disabled` | SUBPROCESS_MEMORY_LIMIT_MB — `prlimit --as` ceiling applied to each converter subprocess on Linux. (`subprocessMemoryLimitMb`) |
 | `SUBPROCESS_TIMEOUT_MS` | number | no | `120000, 0=disabled` | SUBPROCESS_TIMEOUT_MS — wall-clock ceiling on a single poppler or LibreOffice invocation. (`subprocessTimeoutMs`) |
 | `SUMMARY_API_KEY` | string | no | — | **read directly — not validated at startup**; SECRET. API key of the summary LLM endpoint |
 | `SUMMARY_MAX_RETRIES` | string | no | — | — |
@@ -652,11 +652,11 @@ Source of truth: `apps/extract/src/config.ts`.
 | `TEMP_DIR` | string | no | `/tmp/atf-extract` | TEMP_DIR — scratch space for rendered pages and converted PDFs. (`tempDir`) |
 | `TENANT_ISOLATION_ENABLED` | boolean | no | `true` | Scope every request to the caller's tenant (from the token) instead of the single default tenant. Default `false` (`tenantIsolationEnabled`) |
 | `TESSERACT_BIN` | string | no | `tesseract` | TESSERACT_BIN — binary used for the OCR fallback. (`tesseractBin`) |
-| `TEXT_FAST_PATH` | boolean | no | `true` | TEXT_FAST_PATH — enable the deterministic text fast-path (design §5 S3 "Text-Fast-Path", requirement 7.5). (`textFastPath`) |
-| `TEXT_FAST_PATH_MAX_INK_RATIO` | number | no | `0.04` | TEXT_FAST_PATH_MAX_INK_RATIO — the conservative fidelity gate for the fast path (requirement 7.5). (`textFastPathMaxInkRatio`) |
-| `TILE_MAX_PER_PAGE` | number | no | `16` | TILE_MAX_PER_PAGE — hard ceiling on `cols × rows` tiles for one page (design §5 S6, requirement 8.6, budget guard). (`tileMaxPerPage`) |
-| `TILE_OVERLAP_FRACTION` | number | no | `0.1` | TILE_OVERLAP_FRACTION — the fraction of a tile's own extent that adjacent tiles overlap by (design §5 S6, requirement 8.5). (`tileOverlapFraction`) |
-| `TILE_TARGET_PIXELS` | number | no | `2000` | TILE_TARGET_PIXELS — the long edge, in pixels, a single tile of a large-format page is rendered towards (design §5 S6, task 5.1, requirement 8.5). (`tileTargetPixels`) |
+| `TEXT_FAST_PATH` | boolean | no | `true` | TEXT_FAST_PATH — enable the deterministic text fast-path ("Text-Fast-Path"). (`textFastPath`) |
+| `TEXT_FAST_PATH_MAX_INK_RATIO` | number | no | `0.04` | TEXT_FAST_PATH_MAX_INK_RATIO — the conservative fidelity gate for the fast path. (`textFastPathMaxInkRatio`) |
+| `TILE_MAX_PER_PAGE` | number | no | `16` | TILE_MAX_PER_PAGE — hard ceiling on `cols × rows` tiles for one page (budget guard). (`tileMaxPerPage`) |
+| `TILE_OVERLAP_FRACTION` | number | no | `0.1` | TILE_OVERLAP_FRACTION — the fraction of a tile's own extent that adjacent tiles overlap by. (`tileOverlapFraction`) |
+| `TILE_TARGET_PIXELS` | number | no | `2000` | TILE_TARGET_PIXELS — the long edge, in pixels, a single tile of a large-format page is rendered towards. (`tileTargetPixels`) |
 | `TLS_CERT_FILE` | string | no | — | Optional TLS material for the HTTP listener. (`tls`) |
 | `TLS_CLIENT_CA_FILE` | string | no | — | **read directly — not validated at startup**; CA bundle (PEM) for verifying client certificates (mTLS) on the HTTPS listener |
 | `TLS_KEY_FILE` | string | no | — | **read directly — not validated at startup**; SECRET. Private key (PEM) of the HTTPS listener; with TLS_CERT_FILE switches the server to TLS |
@@ -666,18 +666,18 @@ Source of truth: `apps/extract/src/config.ts`.
 | `UI_OPERATOR_GROUP` | string | no | — | **read directly — not validated at startup** |
 | `UI_SCOPES` | string | no | — | Scopes granted to web UI sessions |
 | `UI_TENANT_ID` | string | no | — | **read directly — not validated at startup**; Tenant of web UI sessions. Default DEFAULT_TENANT_ID |
-| `UPLOAD_MEMORY_THRESHOLD_BYTES` | number | no | `8388608` | UPLOAD_MEMORY_THRESHOLD_BYTES — a multipart upload larger than this is spooled to a scratch file under `TEMP_DIR/uploads` instead of the heap (requirement 5.9), so a document waiting for a conversion slot does not also hold its bytes there. (`uploadMemoryThresholdBytes`) |
+| `UPLOAD_MEMORY_THRESHOLD_BYTES` | number | no | `8388608` | UPLOAD_MEMORY_THRESHOLD_BYTES — a multipart upload larger than this is spooled to a scratch file under `TEMP_DIR/uploads` instead of the heap so a document waiting for a conversion slot does not also hold its bytes there. (`uploadMemoryThresholdBytes`) |
 | `UPLOAD_SESSION_MAX_AGE_HOURS` | number | no | `72, 0=forever` | UPLOAD_SESSION_MAX_AGE_HOURS — hours an unfinished resumable upload session (and its `.part` file) is kept after its last chunk. (`uploadSessionMaxAgeHours`) |
 | `UPLOAD_TMP_DIR` | string | no | — | **read directly — not validated at startup** |
 | `VISION_API_KEY` | string | no | — | VISION_API_KEY — optional, because a self-hosted vLLM behind the cluster network commonly has no auth. (`visionApiKey`) |
-| `VISION_BUDGET_PAGES_PER_DAY` | number | no | `0, 0=unlimited` | VISION_BUDGET_PAGES_PER_DAY — vision pages a single tenant may spend across all of its jobs per UTC day (requirement 5.8). (`visionBudgetPagesPerDay`) |
+| `VISION_BUDGET_PAGES_PER_DAY` | number | no | `0, 0=unlimited` | VISION_BUDGET_PAGES_PER_DAY — vision pages a single tenant may spend across all of its jobs per UTC day. (`visionBudgetPagesPerDay`) |
 | `VISION_INPUT_TOKEN_COST` | number | no | `0.15` | VISION_INPUT_TOKEN_COST — USD per million input tokens, for reporting. (`visionInputTokenCost`) |
 | `VISION_MAX_RETRIES` | number | no | `3` | VISION_MAX_RETRIES — transient-failure retries per token budget. (`visionMaxRetries`) |
 | `VISION_MAX_TOKEN_VARIANTS` | number | no | `8192,16384,32768` | VISION_MAX_TOKEN_VARIANTS — escalating output budgets, tried in order when the model stops with `finish_reason: "length"`. (`visionMaxTokenVariants`) |
 | `VISION_MODEL` | string | **yes** | — | Config member `visionModel` |
 | `VISION_OUTPUT_TOKEN_COST` | number | no | `0.6` | VISION_OUTPUT_TOKEN_COST — USD per million output tokens. (`visionOutputTokenCost`) |
 | `VISION_REASONING_EFFORT` | string | no | — | VISION_REASONING_EFFORT — forwarded as `chat_template_kwargs` for models that support a thinking budget. (`visionReasoningEffort`) |
-| `VISION_SUPPORTS_JSON_SCHEMA` | boolean | no | `false` | VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces `response_format: json_schema` on chat completions (task 7.9, requirement 5.10). (`visionSupportsJsonSchema`) |
+| `VISION_SUPPORTS_JSON_SCHEMA` | boolean | no | `false` | VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces `response_format: json_schema` on chat completions. (`visionSupportsJsonSchema`) |
 | `VISION_TEMPERATURE` | number | no | `0.1` | Config member `visionTemperature` |
 | `VISION_TIMEOUT_MS` | number | no | `600000, 0=disabled` | VISION_TIMEOUT_MS — per-page timeout. (`visionTimeoutMs`) |
 | `VISION_TOKEN_ESTIMATE` | string | no | — | — |

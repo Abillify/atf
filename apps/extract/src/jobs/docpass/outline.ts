@@ -42,7 +42,7 @@
  *
  * The whole thing is a small, JSON-serialisable value ({@link OutlineState}):
  * the open stack and the height→level memory. It is persisted on `docpass_state`
- * so a resume rebuilds the exact stack rather than re-deriving it from page 1
+ * so a resume rebuilds the exact stack rather than re-deriving it from page 1.
  * Deterministic — no model, no I/O.
  */
 

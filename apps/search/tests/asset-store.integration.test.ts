@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Integration tests for the v2 AssetStore against a REAL PostgreSQL instance
+ * Integration tests for the v2 AssetStore against a REAL PostgreSQL instance.
  * These verify the SQL-level semantics unit tests cannot:
  *   - PUT stores a full + derived variants bound to a revision, idempotent on
  *     the checksum (same bytes → no-op, different bytes → rewrite) (Req 5.8);

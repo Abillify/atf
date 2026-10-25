@@ -215,7 +215,7 @@ export interface ExtractStore {
     fence?: Fence,
   ): Promise<JobRow | null>;
   /**
-   * Atomically add `pages` to a tenant's vision-page counter for one UTC day
+   * Atomically add `pages` to a tenant's vision-page counter for one UTC day.
    * Returns the new total, or null when the
    * increment would cross `limit` — the counter is then unchanged.
    */

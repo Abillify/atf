@@ -446,7 +446,7 @@ export interface Config {
   figurePass2MinArea: number; // FIGURE_PASS2_MIN_AREA (default: 0.02)
   /**
    * LABEL_COVERAGE_MIN — the minimum percentage of a figure's `labels` that
-   * must appear in its Pass-2 transcription before the transcription is trusted
+   * must appear in its Pass-2 transcription before the transcription is trusted.
    * Below it, Extract emits a warning and retries Pass 2
    * once. Default 60 (per cent).
    */
@@ -509,7 +509,7 @@ export interface Config {
    */
   renderMaxPixels: number; // RENDER_MAX_PIXELS (default: 40000000)
   /**
-   * RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render`
+   * RENDER_RATE_LIMIT — requests per minute per IP for `POST /v2/render`.
    * Each render spawns a poppler subprocess, so a burst is
    * CPU, not just bytes; the endpoint gets its own limiter on top of auth. A
    * zoom-heavy research session issues many small renders, so the default is
@@ -572,7 +572,7 @@ export interface Config {
    */
   subprocessCpuLimitSeconds: number; // SUBPROCESS_CPU_LIMIT_S (default: 900, 0=disabled)
   /**
-   * CONVERTER_MODE — where the poppler/LibreOffice binaries execute
+   * CONVERTER_MODE — where the poppler/LibreOffice binaries execute.
    * `isolated` routes every conversion through a
    * newline-delimited JSON RPC over a Unix socket to the `extract-converter`
    * sidecar container — no network access, read-only root filesystem,

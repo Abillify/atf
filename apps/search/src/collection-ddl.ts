@@ -568,7 +568,7 @@ export async function saveCollectionMeta(
 export const CURRENT_SCHEMA_VERSION = 14;
 
 /**
- * Add the v2 index-unit columns and their indexes to a per-collection table
+ * Add the v2 index-unit columns and their indexes to a per-collection table.
  * These are the *filter-relevant* fields kept
  * as real, indexed columns rather than buried in `metadata` JSONB, so search
  * can filter on them with an index.

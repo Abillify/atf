@@ -29,7 +29,7 @@ export type StageStatus = "pending" | "running" | "done" | "failed";
 export type OutboxStatus = "pending" | "sent" | "acked" | "failed";
 
 /**
- * The lease fencing token a worker presents with every persistent write
+ * The lease fencing token a worker presents with every persistent write.
  * The store executes a fenced write only when
  * `extract.jobs` still carries `lease_holder = holder AND lease_epoch = epoch`,
  * checked in SQL inside the same transaction as the write — so the check and

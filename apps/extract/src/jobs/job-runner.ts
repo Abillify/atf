@@ -227,7 +227,7 @@ export interface JobRunnerConfig {
   visionModel: string;
   renderDpi: number;
   /**
-   * FIGURE_DPI — the resolution a figure crop is re-rendered at for Pass 2
+   * FIGURE_DPI — the resolution a figure crop is re-rendered at for Pass 2.
    * The crop shown to the Pass-2 model is rendered at
    * this DPI, higher than the model-resolution page, so small labels stay
    * legible.
@@ -2729,7 +2729,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // ── vision stage (render + model + parse, one checkpoint) ─────────────
     // Set only when the page actually reached the vision model: a fast-path
     // page, a render-hash dedup reuse, or a checkpoint replay runs no model
-    // call and must not be charged against the tenant's daily page budget
+    // call and must not be charged against the tenant's daily page budget.
     // The closure flag is the reliable signal —
     // the persisted checkpoint cannot tell a reuse copy from a fresh call.
     let modelCalled = false;

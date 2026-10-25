@@ -317,7 +317,7 @@ export function checkFastPathFidelity(rawText: string, blocks: readonly Block[])
 }
 
 /**
- * The share of the text layer's words the fast-path blocks must reproduce
+ * The share of the text layer's words the fast-path blocks must reproduce.
  * The blocks come from the same poppler text layer as the
  * raw text, so anything below this means the geometry lost content (text
  * outside every block, a dropped run) and the page must go through vision.
@@ -351,7 +351,7 @@ function coverageTokens(text: string): string[] {
 }
 
 /**
- * Check that the fast-path blocks cover the raw text layer word for word
+ * Check that the fast-path blocks cover the raw text layer word for word.
  * The risky-token fidelity check only looks at numbers and
  * identifiers; this complements it with plain-word coverage, so a page whose
  * geometry silently dropped a sentence cannot take the fast path.

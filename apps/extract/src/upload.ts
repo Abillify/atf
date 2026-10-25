@@ -19,7 +19,7 @@
  * impossible. So the parser is chosen per request from the `Content-Type`, which
  * is the one thing both shapes agree on.
  *
- * Buffering: memory up to `UPLOAD_MEMORY_THRESHOLD_BYTES`, disk above it
+ * Buffering: memory up to `UPLOAD_MEMORY_THRESHOLD_BYTES`, disk above it.
  * A document that waits in the conversion queue holds its
  * bytes for the whole wait, and a queue of 32 fifty-megabyte uploads is an
  * out-of-memory event with a 202 already sent — so above the threshold the

@@ -335,7 +335,7 @@ function parsePage(node: unknown, pageNumber: number): PageAnalysis {
 }
 
 /**
- * Flag lines whose text begins with a numbering pattern as heading candidates
+ * Flag lines whose text begins with a numbering pattern as heading candidates.
  * These are *hints* for the Pass-1 prompt, not a
  * decision — the model still confirms structure — so the bar is deliberately
  * low: a numbered prefix followed by text.

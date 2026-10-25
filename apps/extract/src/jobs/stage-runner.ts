@@ -47,8 +47,8 @@
  *
  *   5. **Atomic budget reservation** — before a stage that calls a model runs
  *      `fn`, its estimate is reserved atomically against the job's budget. An
- *      insufficient budget raises {@link BudgetExhaustedError} before any call
- * After the call the reservation is released and the
+ *      insufficient budget raises {@link BudgetExhaustedError} before any call.
+ *      After the call the reservation is released and the
  *      actual spend booked — in the same transaction as the checkpoint write
  *      when the ledger supports it, so a crash never separates result and cost.
  *

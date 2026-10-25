@@ -205,7 +205,7 @@ export function sourceFetchFailed(
 /**
  * A ZIP container (XLSX, VSDX, DOCX, PPTX, DOCX embeddings) whose declared
  * entry count, total or single uncompressed size, or compression ratio exceeds
- * a `ZIP_MAX_*` limit — a ZIP bomb, or a package no honest document is
+ * a `ZIP_MAX_*` limit — a ZIP bomb, or a package no honest document is.
  * Never retryable: the bytes do not change.
  */
 export function documentTooComplex(

@@ -453,7 +453,7 @@ export interface Config {
   batchWorkerEmbedConcurrency: number; // BATCH_WORKER_EMBED_CONCURRENCY (default: 4, 1-16)
 
   /**
-   * Per-chunk contextual placement sentence via the SUMMARY_* text-LLM
+   * Per-chunk contextual placement sentence via the SUMMARY_* text-LLM.
    * When true, the batch worker asks the
    * summary model for ONE short sentence placing each `chunk` in the document
    * and appends it to the contextual embedding header. This is one model call

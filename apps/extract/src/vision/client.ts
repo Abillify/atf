@@ -204,7 +204,7 @@ function sleep(ms: number): Promise<void> {
 class TransientVisionFailure extends Error {}
 
 /**
- * The provider refused the `response_format: json_schema` field itself
+ * The provider refused the `response_format: json_schema` field itself.
  * Carries the response body so the fallback log shows what the
  * server actually complained about.
  */
