@@ -81,6 +81,9 @@ releases:
 - **Tooling** (`atf-doctor`): `--service gate --config-dir <dir>` checks a Gate
   configuration, including permissive policy defaults, approver separation, unpinned
   imported tools and an open monitor.
+- **Runtime CLI**: `bench capture` turns executions into bench cases for `flows release`
+  (tools called, finish reason, token and latency caps), refusing inputs with personal
+  data unless `--allow-raw` is given.
 
 ### Changed
 

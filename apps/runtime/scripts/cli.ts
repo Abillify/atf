@@ -14,6 +14,7 @@
  *   test <flowId>         — Run a quick smoke-test against a running server
  *   verify-bundle <file>  — Verify a signed Evidence Bundle offline (no network)
  *   flows release <id>    — Run the flow's bench file against a server as a release gate
+ *   bench capture         — Turn recorded executions into bench cases for flows release
  *
  * Usage:
  *   bun run scripts/cli.ts validate flows/my-flow.yaml
@@ -54,6 +55,13 @@ import {
   loadBenchFile,
   type BenchFile,
 } from "../src/eval/bench-contract.js";
+import {
+  appendCapturedCases,
+  captureBenchCase,
+  renderBenchFile,
+  type CapturedBenchCase,
+} from "../src/eval/bench-capture.js";
+import type { DebugTrace } from "../src/types/debug-trace.js";
 import { computeFlowDigest } from "../src/graph/flow-revision.js";
 import { resolveFlowFile } from "../src/graph/flow-parser/loader.js";
 import { createHttpExecutor } from "../src/eval/run.js";
@@ -127,6 +135,12 @@ interface ParsedArgs {
   since?: string;
   /** citations impact: restrict the report to one document base ref. */
   baseRef?: string;
+  /** bench capture: execution ids to capture (repeatable). */
+  executions: string[];
+  /** bench capture: append to an existing bench file instead of failing. */
+  append: boolean;
+  /** bench capture: allow personal data in the captured input. */
+  allowRaw: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -139,6 +153,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     json: false,
     help: false,
     requireVersion: false,
+    executions: [],
+    append: false,
+    allowRaw: false,
   };
 
   let i = 0;
@@ -166,6 +183,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--out" && i + 1 < args.length) { result.out = args[++i] ?? ""; i++; continue; }
     if (a === "--since" && i + 1 < args.length) { result.since = args[++i] ?? ""; i++; continue; }
     if (a === "--base-ref" && i + 1 < args.length) { result.baseRef = args[++i] ?? ""; i++; continue; }
+    if (a === "--execution" && i + 1 < args.length) { result.executions.push(args[++i] ?? ""); i++; continue; }
+    if (a === "--append") { result.append = true; i++; continue; }
+    if (a === "--allow-raw") { result.allowRaw = true; i++; continue; }
     if (!result.command && !a.startsWith("-")) { result.command = a; i++; continue; }
     if (!a.startsWith("-")) { result.positional.push(a); i++; continue; }
     i++;
@@ -1098,6 +1118,106 @@ async function cmdCitationsImpact(args: ParsedArgs): Promise<number> {
   return (report.summary?.executions_affected ?? 0) > 0 ? 2 : 0;
 }
 
+/**
+ * bench capture: turn recorded executions into bench cases for
+ * `flows release`. Fetches each `--execution` trace from
+ * `GET /monitoring/debug/:executionId`, derives assertions from what the run
+ * actually did (tools called, finish reason, token and latency caps), refuses
+ * inputs containing personal data unless `--allow-raw` is given, and writes
+ * (or, with `--append`, extends) a bench file validated against the bench
+ * contract BEFORE anything is written.
+ */
+async function cmdBenchCapture(args: ParsedArgs): Promise<number> {
+  if (args.executions.length === 0) {
+    console.error(`${fail} bench capture requires at least one --execution <id>: bench capture --execution <id> --out <file>`);
+    return 1;
+  }
+  if (!args.out) {
+    console.error(`${fail} bench capture requires --out <FLOWS_DIR>/bench/<flowId>.bench.yaml`);
+    return 1;
+  }
+
+  const traces: DebugTrace[] = [];
+  for (const executionId of args.executions) {
+    const url = `${args.server}/monitoring/debug/${encodeURIComponent(executionId)}`;
+    const { status, data } = await api("GET", url, args.token);
+    if (status !== 200) {
+      const message =
+        data !== null && typeof data === "object" && "error" in data &&
+        (data as { error?: { message?: string } }).error?.message
+          ? `: ${(data as { error: { message?: string } }).error.message}`
+          : "";
+      console.error(`${fail} Could not load execution ${executionId} from ${url} (HTTP ${status})${message}`);
+      return 1;
+    }
+    traces.push(data as DebugTrace);
+  }
+
+  let flow: string | null = null;
+  const captured: CapturedBenchCase[] = [];
+  for (const trace of traces) {
+    if (trace.flow_id === null || trace.flow_id === "") {
+      console.error(`${fail} Execution ${trace.execution_id} has no flow id — cannot capture a bench case for it.`);
+      return 1;
+    }
+    if (flow === null) flow = trace.flow_id;
+    else if (trace.flow_id !== flow) {
+      console.error(`${fail} Executions span multiple flows (${JSON.stringify(flow)} and ${JSON.stringify(trace.flow_id)}) — one bench file holds one flow's cases.`);
+      return 1;
+    }
+    const result = captureBenchCase(trace, { allowRaw: args.allowRaw });
+    if (!result.ok) {
+      console.error(`${fail} ${result.error}`);
+      return 1;
+    }
+    for (const warning of result.warnings) console.error(`${warn} ${warning}`);
+    captured.push(result.captured);
+  }
+  const flowId = flow ?? "";
+
+  let content: string;
+  const outExists = fs.existsSync(args.out);
+  if (args.append && outExists) {
+    try {
+      content = appendCapturedCases(fs.readFileSync(args.out, "utf8"), flowId, captured);
+    } catch (err) {
+      console.error(`${fail} ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  } else if (outExists) {
+    console.error(`${fail} ${args.out} already exists — pass --append to add the captured case(s) to it.`);
+    return 1;
+  } else {
+    content = renderBenchFile(flowId, captured, { passRate: 1 });
+  }
+
+  // Validate against the bench contract before writing: round-trip through a
+  // temp file named like the target so the flow-name check applies too.
+  let tmpDir: string | null = null;
+  try {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atf-bench-capture-"));
+    const tmpPath = path.join(tmpDir, path.basename(args.out));
+    fs.writeFileSync(tmpPath, content);
+    loadBenchFile(tmpPath);
+  } catch (err) {
+    console.error(`${fail} Refusing to write ${args.out}: the captured bench file does not validate — ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  } finally {
+    if (tmpDir !== null) fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
+    fs.writeFileSync(args.out, content);
+  } catch (err) {
+    console.error(`${fail} Could not write ${args.out}: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  console.log(`${ok} Captured ${captured.length} bench case(s) for flow ${bold(flowId)} → ${args.out}`);
+  console.log(dim("Review the expectations before using the file with `flows release`."));
+  return 0;
+}
+
 /** test: send a message to a flow and stream the response. */
 async function cmdTest(args: ParsedArgs): Promise<number> {
   const [flowId] = args.positional;
@@ -1670,6 +1790,7 @@ ${bold("Commands:")}
   ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
   ${bold("flows release")} <flowId>          Run a flow's bench file against a server as a release gate (--flows-dir, --base, --baseline)
   ${bold("citations impact")}               List past answers whose cited passages changed or disappeared (--since, --base-ref)
+  ${bold("bench capture")}                 Turn executions into bench cases for flows release (--execution, --out, --append, --allow-raw)
 
 ${bold("Options:")}
   --server <url>                    Backend base URL (default: AIPERATOR_SERVER env or http://localhost:3000)
@@ -1687,6 +1808,9 @@ ${bold("Options:")}
   --out <file>                      Path to write the release receipt to (flows release) / citation impact report (citations impact)
   --since <90d|RFC3339>             Start of the citation impact window (citations impact; default: 90d)
   --base-ref <ref>                  Restrict the citation impact to one document (citations impact)
+  --execution <id>                  Execution to capture, repeatable (bench capture)
+  --append                          Add captured cases to an existing bench file (bench capture; without it an existing file is refused)
+  --allow-raw                       Keep personal data in captured inputs (bench capture; refused without it)
   --json                            Output raw JSON
   --help, -h                        Show this help
 
@@ -1710,6 +1834,8 @@ ${bold("Examples:")}
   bun run scripts/cli.ts flows release my-flow --flows-dir flows --base origin/main --baseline release-receipt.json
   bun run scripts/cli.ts citations impact --server https://aiperator.example.com --token sk-... --since 30d
   bun run scripts/cli.ts citations impact --base-ref doc-42 --out citation-impact.json
+  bun run scripts/cli.ts bench capture --execution 0f2a... --out flows/bench/my-flow.bench.yaml
+  bun run scripts/cli.ts bench capture --execution 0f2a... --execution 7c9b... --out flows/bench/my-flow.bench.yaml --append
 `);
 }
 
@@ -1771,6 +1897,17 @@ async function main(): Promise<void> {
         exitCode = await cmdCitationsImpact(args);
       } else {
         console.error(`${fail} Unknown citations subcommand: ${sub ?? "(none)"} — expected "impact"`);
+        showHelp();
+        exitCode = 1;
+      }
+      break;
+    }
+    case "bench": {
+      const sub = args.positional.shift();
+      if (sub === "capture") {
+        exitCode = await cmdBenchCapture(args);
+      } else {
+        console.error(`${fail} Unknown bench subcommand: ${sub ?? "(none)"} — expected "capture"`);
         showHelp();
         exitCode = 1;
       }
