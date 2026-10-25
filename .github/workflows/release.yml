@@ -311,6 +311,9 @@ jobs:
       # subcharts; `helm package` stamps the explicit version so the chart
       # cannot drift from the tag even if a Chart.yaml edit was missed.
       - uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # Same Helm release the CI chart job pins by checksum.
+          version: v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -320,11 +323,15 @@ jobs:
         id: helm
         env:
           VERSION: ${{ needs.guard.outputs.version }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Log in through Helm itself instead of relying on Helm reading the
+          # Docker credential store written by docker/login-action.
+          printf '%s' "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           helm dependency update deploy/helm/atf
           helm package deploy/helm/atf --version "$VERSION" --app-version "$VERSION" -d dist/helm
-          push_output="$(helm push "dist/helm/atf-${VERSION}.tgz" oci://ghcr.io/abillify/charts)"
+          push_output="$(helm push "dist/helm/atf-${VERSION}.tgz" oci://ghcr.io/abillify/charts 2>&1)"
           printf '%s\n' "$push_output"
           digest="$(printf '%s\n' "$push_output" | awk '/^Digest:/{print $2}')"
           if [ -z "$digest" ]; then
