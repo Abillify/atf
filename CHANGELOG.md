@@ -39,6 +39,7 @@ releases:
   past answers whose cited passages changed or disappeared in a newer document
   revision (Search `/v2/citations/check` via `CITATION_CHECK_URL`); the report is
   signed with the evidence key and verifiable with `atf-verify --citation-impact`.
+- **Control**: Citation impact page lists answers whose sources changed.
 - **Outpost**: `sharepoint` source for SharePoint Online and OneDrive for Business
   document libraries (Microsoft Graph, client credentials, delta sync);
   `aclFromPermissions` maps item permissions to the document access list.

@@ -62,6 +62,8 @@ export const de: Catalog = {
   "nav.compliance.hint": "Policy & Nachweisdossier",
   "nav.posture": "Governance-Status",
   "nav.posture.hint": "Welche Kontrollen gerade aktiv sind",
+  "nav.citationImpact": "Zitationsauswirkung",
+  "nav.citationImpact.hint": "Antworten mit geänderten Quellen",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Verbundene MCP-Server",
 

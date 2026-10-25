@@ -41,6 +41,7 @@ import {
   Package,
   UserCog,
   ListChecks,
+  Link2,
 } from "lucide-react";
 
 export interface NavItem {
@@ -197,6 +198,12 @@ export const NAV_GROUPS: NavGroup[] = [
         labelKey: "nav.posture",
         hintKey: "nav.posture.hint",
         icon: ShieldHalf,
+      },
+      {
+        href: "/citation-impact",
+        labelKey: "nav.citationImpact",
+        hintKey: "nav.citationImpact.hint",
+        icon: Link2,
       },
       {
         href: "/mcp",

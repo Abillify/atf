@@ -62,6 +62,8 @@ export const en = {
   "nav.compliance.hint": "Policy & evidentiary dossier",
   "nav.posture": "Governance posture",
   "nav.posture.hint": "Which controls are active right now",
+  "nav.citationImpact": "Citation impact",
+  "nav.citationImpact.hint": "Answers whose cited sources changed",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Connected MCP servers",
 
