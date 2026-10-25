@@ -537,6 +537,31 @@ versioning there is governed by the emitter's revision flow (Extract opens a new
 the Search revision API and Search does the atomic `is_latest` switch on commit). Either way the
 old revision stays visible until the new one commits.
 
+## Preflight with atf-doctor
+
+Before starting a service, check its environment file against the production-readiness gate
+offline — no database, no model endpoints, no service startup:
+
+```bash
+bun run atf-doctor --service runtime --env-file ./runtime.env
+bun run atf-doctor --service search  --env-file ./search.env
+bun run atf-doctor --service extract --env-file ./extract.env
+```
+
+Each service's `loadConfig` runs in its own child process with an environment built **only**
+from the env file plus `PATH` and `HOME`, so a variable exported in the operator's shell can
+never mask a missing one. The Runtime additionally reports the governance posture (evidence
+signing, anchoring, taint, disclosure, …) the same way the startup log does. The env file is a
+plain `KEY=VALUE` file — `#` comments, optional single or double quotes, no shell expansion —
+and its values are never printed: probe stderr is truncated and any substring equal to an
+env-file value of at least 8 characters is replaced by `***`.
+
+The output is a `Service | Check | Status | Detail` table (`--json` for machine-readable
+output) with one row per gate finding or posture check. Exit codes: `0` = no `fail` row,
+`1` = at least one `fail` (wire it into a deploy pipeline), `2` = usage error. A `warn` row
+never fails the preflight — posture findings are advisory outside `ATF_PROFILE=production`,
+where the service itself enforces the matching gate findings at startup.
+
 ## Configuration
 
 Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md), generated from the

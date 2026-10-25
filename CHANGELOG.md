@@ -58,6 +58,9 @@ releases:
   when the local Bun differs from the pinned one, scans the commits since the
   last tag with gitleaks and, with `--container`, checks the supply-chain
   inventory in a linux/amd64 container.
+- **Tooling**: `bun run atf-doctor --service runtime|search|extract --env-file <file>`
+  checks an environment file against the production gates and, for the Runtime,
+  the governance posture, without starting the service.
 
 ### Changed
 

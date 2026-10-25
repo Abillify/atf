@@ -280,6 +280,10 @@ with the commands in [DEPLOYMENT.md](DEPLOYMENT.md); if a pull fails with
 `denied` or `not found`, the package is not public yet — build from source or
 ask the maintainers.
 
+Before starting a service, `bun run atf-doctor --service runtime|search|extract --env-file <file>`
+checks its environment file against the production gates and the governance posture offline —
+see [Preflight with atf-doctor](DEPLOYMENT.md#preflight-with-atf-doctor).
+
 ## Development
 
 ```bash

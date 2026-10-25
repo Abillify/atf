@@ -316,7 +316,9 @@ function invalidReport(issues: FlowIssue[]): ReturnType<typeof validateFlow> {
   return { valid: false, errors: issues, warnings: [], meta: { nodeCount: 0, edgeCount: 0 } };
 }
 /** Mirrors the production loader: includes, variables, model shortcuts, then schema validation. */
-function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
+export function validateFlowFile(
+  filePath: string,
+): ReturnType<typeof validateFlow> {
   const raw = loadFlowFile(filePath);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return validateFlow(raw);
@@ -345,13 +347,20 @@ function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   } catch (err) {
     // An unresolvable include, variable or shortcut throws; report it as the
     // file's error instead of aborting the whole run with a stack trace.
-    const report = invalidReport([{ path: "$", message: err instanceof Error ? err.message : String(err) }]);
+    const report = invalidReport([
+      { path: "$", message: err instanceof Error ? err.message : String(err) },
+    ]);
     report.warnings.push(...includeWarnings);
     return report;
   }
   if (!resolved.success) {
     const report = invalidReport(
-      flowIssues(resolved.error.reason, resolved.error.details, resolved.error.issues, source),
+      flowIssues(
+        resolved.error.reason,
+        resolved.error.details,
+        resolved.error.issues,
+        source,
+      ),
     );
     report.warnings.push(...includeWarnings);
     return report;
@@ -410,11 +419,12 @@ function flowSkipReason(filePath: string): string | undefined {
   return undefined;
 }
 
-function collectFlowFiles(target: string): string[] {
+export function collectFlowFiles(target: string): string[] {
   const stat = fs.statSync(target);
   if (stat.isFile()) return [target];
   if (stat.isDirectory()) {
-    return fs.readdirSync(target)
+    return fs
+      .readdirSync(target)
       .map((file) => path.join(target, file))
       .filter(isFlowCandidate)
       .filter((file) => !isSubflowFile(file))

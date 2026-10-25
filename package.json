@@ -42,6 +42,8 @@
 		"atf-verify:build": "bun build --compile scripts/atf-verify.ts --outfile dist/bin/atf-verify",
 		"atf-verify:test": "bun test ./scripts/atf-verify.test.ts",
 		"atf-verify:typecheck": "tsc --noEmit -p scripts/tsconfig.json",
+		"atf-doctor": "bun run scripts/atf-doctor.ts",
+		"atf-doctor:test": "bun test ./scripts/atf-doctor.test.ts",
 		"flow-reference": "bun run apps/runtime/scripts/generate-flow-reference.ts",
 		"flow-reference:check": "bun run apps/runtime/scripts/generate-flow-reference.ts --check",
 		"route-reference": "bun run apps/runtime/scripts/generate-route-reference.ts",
