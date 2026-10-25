@@ -114,6 +114,7 @@ releases:
 - `docs/CONFIGURATION-ESSENTIALS.md` lists the variables a production start
   needs per service; CI checks that every listed variable exists in the
   configuration reference.
+- Citation impact: capabilities, configuration, runbook, threat model and DPIA notes.
 
 ## [0.19.3] - 2026-10-24
 

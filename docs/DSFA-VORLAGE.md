@@ -18,7 +18,7 @@ controls the platform contributes.
 | Categories of data subjects | | End users, persons named in documents |
 | Data categories | | Chat content, documents, metadata, audit log |
 | Special categories (Art. 9)? | | Document content may contain Art. 9 data → check the PII-vault mode |
-| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantischer Antwort-Cache (`SEMANTIC_CACHE_ENABLED`): pro Tenant und Nutzer getrennt, Löschung je Nutzer, TTL `SEMANTIC_CACHE_TTL_SECONDS` |
+| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantischer Antwort-Cache (`SEMANTIC_CACHE_ENABLED`): pro Tenant und Nutzer getrennt, Löschung je Nutzer, TTL `SEMANTIC_CACHE_TTL_SECONDS`, Citation-Index `answer_citations` (`CITATION_INDEX_ENABLED`, opt-in): Zweck Nachvollziehbarkeit erteilter Antworten (Nutzer-ID, Ausführungs-ID, Dokument- und Chunk-Referenzen, keine Antwort- oder Chunk-Texte), pro Tenant und Nutzer getrennt |
 | Retention periods | | TTLs: vault, sessions, audit — configurable. Extract keeps finished jobs (with the stored model response of every page) until `JOB_RETENTION_DAYS` (default: forever), abandoned uploads for `UPLOAD_SESSION_MAX_AGE_HOURS` (72), the derived-PDF cache by size and age; source bytes until the document is deleted or erased |
 
 → ATF: the processing overview comes from the record of processing
@@ -39,7 +39,7 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 | --- | --- | --- |
 | Purpose limitation | Flows define the use; no cross-tenant use | Tenant isolation (ADR 0005) |
 | Data minimisation | PII only where needed; tokenisation instead of clear text | PII vault (ADR 0007), detector pipeline (ADR 0015) |
-| Storage limitation | TTLs for vault/sessions, deletion concept | Cross-service erasure (ADR 0025), confirm-deletes (Outpost) |
+| Storage limitation | TTLs for vault/sessions, deletion concept | Cross-service erasure (ADR 0025), confirm-deletes (Outpost); `answer_citations` via Retention-Sweep (`RETENTION_ENABLED`) und Löschkanal je Nutzer |
 | Integrity/confidentiality | Encryption at rest and in transit, audit | Runtime audit hash chain + signed anchors (ADR 0026), secret cipher |
 | Accountability | Evidence per processing activity | Evidence dossier (ADR 0009), audit log, decision receipts (ADR 0029) |
 

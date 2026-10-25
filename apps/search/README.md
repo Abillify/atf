@@ -363,7 +363,9 @@ status per pair, in input order: `current` (the chunk belongs to the revision vi
 anymore) and `unknown` (the caller cannot see that chunk at all). Current revisions are
 resolved with the same temporal rule as `valid_at` at check time; each result also carries
 `current_revision` when one is visible. Read-only, same headers and scopes as
-`GET /v2/documents/{ref}/diff`.
+`GET /v2/documents/{ref}/diff`. The Runtime consumes this endpoint for its citation
+impact report (`CITATION_CHECK_URL`, `GET /monitoring/citation-impact`; see
+[`docs/runbooks/citation-impact.md`](../../docs/runbooks/citation-impact.md)).
 
 ## Retrieval pipeline
 

@@ -145,6 +145,13 @@ Settings that changed with the 0.18.x hardening, worth knowing early:
   without it these stores are per-process
 - `AUDIT_PSEUDONYM_PEPPER` — pepper for audit-log pseudonyms; rotate with care
   (existing pseudonyms stop matching after a rotation)
+- Citation impact: `CITATION_INDEX_ENABLED` (with `DATABASE_URL`) records the chunks each
+  answer cited in `answer_citations`; `CITATION_CHECK_URL` plus `CITATION_CHECK_TOKEN`
+  enable `GET /monitoring/citation-impact`, which reports past answers whose cited
+  passages changed or disappeared (Search `/v2/citations/check`), signed with
+  `EVIDENCE_SIGNING_KEY` when set. `scripts/cli.ts citations impact` runs the same
+  report from the command line (exit 2 when executions are affected). See
+  [`docs/runbooks/citation-impact.md`](../../docs/runbooks/citation-impact.md)
 - Shadowed flows: `flows/shadow.json` maps a production flow to a shadow
   counterpart; shadow runs execute asynchronously and never affect the user
   answer — state and stats are under `/monitoring/*`

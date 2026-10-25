@@ -616,6 +616,12 @@ Changes since 0.19.3 that need operator attention:
 3. Runtime CLI: flows that reference named providers validate only with the
    Runtime's `PROVIDERS` JSON exported in the shell; names and protocols are
    enough, keys are not needed.
+4. Runtime: migration 50 adds the `answer_citations` table (the citation impact
+   index). It is opt-in — nothing is written until `CITATION_INDEX_ENABLED=true`
+   with a `DATABASE_URL`, and only executions started after that are recorded.
+   `GET /monitoring/citation-impact` additionally needs `CITATION_CHECK_URL` and
+   `CITATION_CHECK_TOKEN`. See
+   [`docs/runbooks/citation-impact.md`](runbooks/citation-impact.md).
 
 ### Not yet shared between replicas (roadmap)
 

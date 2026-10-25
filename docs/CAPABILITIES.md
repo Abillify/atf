@@ -17,6 +17,7 @@ still depends on the operator enabling and verifying it. See
 - [Human-in-the-loop approvals](#human-in-the-loop-approvals)
 - [Privacy and the PII vault](#privacy-and-the-pii-vault)
 - [Compliance and evidence](#compliance-and-evidence)
+- [Citation impact](#citation-impact)
 - [Quality: evaluation, canary, shadow, replay](#quality-evaluation-canary-shadow-replay)
 - [Cost and reliability control](#cost-and-reliability-control)
 - [Multi-tenancy and identity](#multi-tenancy-and-identity)
@@ -460,6 +461,31 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   the red-team posture score, with references to the architecture decisions behind them.
 - **Decision provenance.** An explainability card reconstructs why a given answer was
   produced: which model, which sources, which policy decisions, which routing choice.
+
+## Citation impact
+
+- **Answer citation index.** With `CITATION_INDEX_ENABLED=true` and a PostgreSQL
+  connection, the Runtime records the chunks each answer cited in the
+  `answer_citations` table: tenant, user, execution, flow, document reference
+  (`base_ref`), chunk id, revision and citation position. Opt-in, written
+  fire-and-forget, and the rows hold no answer text — only the references.
+  Retention sweeps and subject erasure cover the table (`RETENTION_ENABLED`).
+- **Change detection in Search.** `POST /v2/citations/check` compares cited chunks
+  against the revision visible today and reports `current`, `carried` (content
+  unchanged in the current revision), `changed`, `removed` or `unknown` per pair, in
+  input order (up to 500 pairs). The Runtime calls it through
+  `CITATION_CHECK_URL` / `CITATION_CHECK_TOKEN`.
+- **Impact report.** `GET /monitoring/citation-impact?since=<RFC 3339>` (operator
+  plane, `monitoring:read`) groups the cited pairs of recent executions, checks them
+  in blocks of up to 500 and lists the executions whose sources changed or
+  disappeared, with a per-status summary. A request without `tenant_id` covers all
+  tenants and requires an admin actor. With an evidence key (`EVIDENCE_SIGNING_KEY`)
+  the report is signed (Ed25519) and verifiable offline with
+  `atf-verify --citation-impact <file> --jwks <url|file>`.
+- **Automation.** `bun run scripts/cli.ts citations impact [--since 90d] [--base-ref
+  <ref>] [--out <file>] [--json]` prints or exports the same report and exits with
+  code 2 when executions are affected, so a cron job can raise an alarm. See the
+  [citation impact runbook](runbooks/citation-impact.md).
 
 ## Quality: evaluation, canary, shadow, replay
 
