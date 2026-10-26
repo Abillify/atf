@@ -43,7 +43,7 @@
     "@atf/schema-compatibility": "workspace:1.0.0",
     "@atf/security-kit": "workspace:1.4.0",
     "@atf/transaction-contract": "workspace:1.1.0",
-    "@aws-sdk/client-bedrock-agent-runtime": "3.1152.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1156.0",
     "@huggingface/transformers": "4.2.0",
     "@langchain/core": "1.2.18",
     "@langchain/langgraph": "1.5.1",
