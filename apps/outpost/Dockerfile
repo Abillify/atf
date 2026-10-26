@@ -4,7 +4,7 @@ WORKDIR /repo
 COPY . .
 RUN bun install --frozen-lockfile && bun run --filter @atf/outpost build:node
 
-FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS runtime
 RUN addgroup -S outpost && adduser -S -G outpost -u 10001 outpost \
  && mkdir -p /data && chown outpost:outpost /data \
  && printf '#!/bin/sh\nexec node /app/main.js "$@"\n' > /usr/local/bin/atf-outpost \
