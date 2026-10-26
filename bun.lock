@@ -60,7 +60,7 @@
         "express": "5.2.1",
         "fast-xml-parser": "5.11.2",
         "fflate": "0.8.3",
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "multer": "2.4.0",
         "pg": "8.23.0",
         "pino": "10.3.1",
@@ -100,7 +100,7 @@
         "cors": "2.8.6",
         "express": "5.2.1",
         "express-rate-limit": "8.7.0",
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "knex": "3.3.0",
         "mqtt": "5.15.1",
         "mysql2": "3.24.4",
@@ -183,7 +183,7 @@
         "ai": "7.0.143",
         "chokidar": "5.0.0",
         "hono": "4.13.11",
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "yaml": "2.9.1",
         "zod": "4.4.3",
       },
@@ -207,7 +207,7 @@
         "@aws-sdk/client-bedrock-runtime": "3.1152.0",
         "@modelcontextprotocol/sdk": "1.32.0",
         "express": "5.2.1",
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "pg": "8.23.0",
         "pino": "10.3.1",
         "pino-http": "11.0.0",
@@ -358,7 +358,7 @@
       "name": "@atf/security-kit",
       "version": "1.4.0",
       "dependencies": {
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "undici": "7.29.1",
       },
       "devDependencies": {
@@ -1504,7 +1504,7 @@
 
     "jiti": ["jiti@2.7.0", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
 
-    "jose": ["jose@6.2.12", "", {}, "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw=="],
+    "jose": ["jose@6.2.13", "", {}, "sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ=="],
 
     "js-sdsl": ["js-sdsl@4.3.0", "", {}, "sha512-mifzlm2+5nZ+lEcLJMoBK0/IH/bDg8XnJfd/Wq6IP+xoCjLZsTOnV2QpxlVbX9bMnkl5PdEjNtBJ9Cj1NjifhQ=="],
 

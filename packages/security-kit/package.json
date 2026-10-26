@@ -21,7 +21,7 @@
         "build": "bun build ./src/index.ts ./src/browser.ts --outdir ./dist --target bun"
     },
     "dependencies": {
-        "jose": "6.2.12",
+        "jose": "6.2.13",
         "undici": "7.29.1"
     },
     "devDependencies": {
