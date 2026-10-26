@@ -23,7 +23,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
     "@playwright/test": "1.64.1",
-    "@tauri-apps/cli": "2.8.1",
+    "@tauri-apps/cli": "2.12.4",
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
