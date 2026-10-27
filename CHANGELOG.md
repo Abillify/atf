@@ -28,6 +28,10 @@ releases:
 
 - **CI** (eval): answer-ready retrieval and the contextual-header run are gated by their own thresholds.
 
+### Changed
+
+- **Dependencies**: zod 4.6.6, undici 6.29.1 (Outpost), AWS Bedrock SDK clients 3.1156.0 and the AI SDK group (`ai` 7.0.152 with the matching `@ai-sdk/*` providers).
+
 ### Fixed
 
 - **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure.
