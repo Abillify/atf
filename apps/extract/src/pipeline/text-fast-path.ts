@@ -9,7 +9,7 @@
  * ## Why this exists
  *
  * A vision call is by far the most expensive thing the pipeline does — one to
- * four minutes per page. For a text-heavy Pflichtenheft most pages are plain
+ * four minutes per page. For a text-heavy specification most pages are plain
  * body text: numbered headings, paragraphs, the odd bullet list. poppler's
  * `-bbox-layout` already gives us all of that verbatim, with coordinates
  * (see {@link ../pipeline/bbox-layout.ts}). So a `text` page with no table or
