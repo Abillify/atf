@@ -79,6 +79,8 @@ describe("X-ACL-Applied enforcement", () => {
       await harness.run();
       expect(harness.store.state.items["docs/a.txt"]?.status).toBe("failed");
       expect(storedDocuments(harness.fake)).toBe(0);
+      // The job is stopped before the delete, not awaited to completion.
+      expect(harness.fake.requests.some((r) => r.method === "POST" && /^\/v2\/jobs\/[^/]+\/cancel$/.test(new URL(r.url).pathname))).toBe(true);
     } finally {
       await harness.close();
     }

@@ -35,7 +35,7 @@ import { retryDecision, type RetryOutcome } from "../http/retry.js";
 import { ExtractApiError } from "../extract/api-error.js";
 import { deleteByReference } from "../extract/delete.js";
 import { ingest, readFileBytes } from "../extract/ingest.js";
-import { createJob, pollJob } from "../extract/jobs.js";
+import { cancelJob, createJob, pollJob } from "../extract/jobs.js";
 import {
   runResumableUpload,
   type ChunkReader,
@@ -240,8 +240,11 @@ async function requireAclApplied(
   });
   let message = `Extract did not apply the requested access list (X-ACL-Applied: ${value}); grant the Outpost token the scope extract.acl.assign`;
   try {
-    // A job stores the document when it completes; wait so the delete finds it.
+    // Stop the job first: its segments become searchable as they commit,
+    // with the wrong (tenant-wide) access list. Wait for the terminal status
+    // so no segment lands after the delete.
     if (jobId !== undefined) {
+      await cancelJob(ctx.client, jobId, ctx.signal);
       await pollJob(ctx.client, jobId, { sleep: ctx.sleep, signal: ctx.signal });
     }
     await deleteByReference(ctx.client, runCollection(ctx.src, ctx.cfg), reference, ctx.signal);

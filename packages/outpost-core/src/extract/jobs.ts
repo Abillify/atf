@@ -70,6 +70,29 @@ export async function createJob(
   return jobSchema.parse(response.json);
 }
 
+/**
+ * `POST /v2/jobs/{id}/cancel`: abandon a job that has not finished. A job that
+ * is already terminal answers 409, which counts as done here: there is
+ * nothing left to stop.
+ */
+export async function cancelJob(
+  client: ExtractHttpClient,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await client.request({
+    url: `/v2/jobs/${encodeURIComponent(jobId)}/cancel`,
+    method: "POST",
+    ...(signal !== undefined ? { signal } : {}),
+  });
+  if (response.status === 200 || response.status === 202 || response.status === 409) return;
+  throw new ExtractApiError(
+    response.status,
+    apiErrorCode(response.json),
+    apiErrorMessage(response.json) ?? `cancelJob answered ${response.status}`,
+  );
+}
+
 /** Read a job once. */
 export async function getJob(
   client: ExtractHttpClient,

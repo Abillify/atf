@@ -262,6 +262,10 @@ export class FakeExtract {
       return this.handleCreateJob(init);
     }
 
+    const cancelMatch = /^\/v2\/jobs\/([^/]+)\/cancel$/.exec(path);
+    if (cancelMatch !== null && method === "POST") {
+      return this.handleCancelJob(cancelMatch[1] ?? "");
+    }
     const jobMatch = /^\/v2\/jobs\/([^/]+)$/.exec(path);
     if (jobMatch !== null && method === "GET") {
       return this.handleGetJob(jobMatch[1] ?? "");
@@ -530,6 +534,18 @@ export class FakeExtract {
       { jobId, reference, status: "queued", warnings: [] },
       this.aclHeaders(list("allowedUsers"), list("allowedGroups")),
     );
+  }
+
+  private handleCancelJob(jobId: string): Response {
+    const job = this.jobs.get(jobId);
+    if (job === undefined) return jsonResponse(404, { code: "NOT_FOUND" });
+    const current = job.statuses[Math.min(job.reads, job.statuses.length - 1)] ?? "completed";
+    if (current === "completed" || current === "failed" || current === "cancelled") {
+      return jsonResponse(409, { code: "CONFLICT", error: `Cannot cancel a job in status ${current}` });
+    }
+    job.statuses = ["cancelled"];
+    job.reads = 0;
+    return jsonResponse(200, { jobId: job.jobId, reference: job.reference, status: "cancelled" });
   }
 
   private handleGetJob(jobId: string): Response {
