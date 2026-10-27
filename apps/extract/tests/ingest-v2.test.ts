@@ -198,6 +198,25 @@ describe("POST /v1/ingest · v2 wrapper", () => {
     expect(await sourceStore.has(job?.source_sha256 ?? "")).toBe(true);
   });
 
+  it("reports how the requested access list was treated in X-ACL-Applied", async () => {
+    const baseUrl = await buildApp(fakeWorker());
+    const plain = await request(baseUrl)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .send(PDF);
+    expect(plain.headers["x-acl-applied"]).toBe("none");
+
+    // No identity and no extract.acl.assign: the request is discarded.
+    const requested = await request(baseUrl)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "b")
+      .set("X-Allowed-Groups", "finance")
+      .send(PDF);
+    expect(requested.headers["x-acl-applied"]).toBe("service-empty");
+  });
+
   it("honours an explicit collection", async () => {
     const baseUrl = await buildApp(fakeWorker());
     const res = await request(baseUrl)

@@ -48,7 +48,7 @@ import type { SourceStore } from "../source-store.js";
 import { toJobView } from "../jobs/job-view.js";
 import { getPrincipal } from "../request-principal.js";
 import { sanitizeFilename } from "../upload.js";
-import { resolveAcl } from "./ingest.js";
+import { resolveAcl, setAclAppliedHeader } from "./ingest.js";
 import { stageOrderIndex, type PipelineSnapshot } from "../jobs/snapshot.js";
 import {
   CROPS_STAGE,
@@ -139,6 +139,12 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
       );
     }
 
+    const acl = resolveAcl(getPrincipal(req), {
+      users: body.allowedUsers ?? [],
+      groups: body.allowedGroups ?? [],
+    });
+    setAclAppliedHeader(res, acl);
+
     const id = randomUUID();
     const row = await store.createJob({
       id,
@@ -170,12 +176,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         ...(body.sourceLabel !== undefined ? { sourceLabel: body.sourceLabel } : {}),
         // The document's readers, narrowed to the caller exactly like
         // /v1/ingest; the emitter opens the Search revision with it.
-        acl: (({ allowedUsers, allowedGroups }) => ({ allowedUsers, allowedGroups }))(
-          resolveAcl(getPrincipal(req), {
-            users: body.allowedUsers ?? [],
-            groups: body.allowedGroups ?? [],
-          }),
-        ),
+        acl: { allowedUsers: acl.allowedUsers, allowedGroups: acl.allowedGroups },
       },
       pipeline_hash: snapshot.pipelineHash,
       prompt_hash: snapshot.promptHash,

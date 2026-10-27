@@ -33,6 +33,7 @@ import type { ExtractHttpClient } from "../http/client.js";
 import { ReauthRequiredError } from "../http/client.js";
 import { retryDecision, type RetryOutcome } from "../http/retry.js";
 import { ExtractApiError } from "../extract/api-error.js";
+import { deleteByReference } from "../extract/delete.js";
 import { ingest, readFileBytes } from "../extract/ingest.js";
 import { createJob, pollJob } from "../extract/jobs.js";
 import {
@@ -45,6 +46,7 @@ import type { ItemState } from "../state/schema.js";
 import type { SourceAdapter, SourceItem } from "../sources/types.js";
 import {
   buildIngestHeaders,
+  effectiveAcl,
   effectiveAclDigest,
   toJobRequest,
 } from "./headers.js";
@@ -210,6 +212,47 @@ async function persistSession(
   });
 }
 
+/** Extract stored the document, but not with the access list the source asked for. */
+class AclNotAppliedError extends Error {}
+
+/**
+ * Fail closed when an item with an access list was not stored with it. Extract
+ * reports how it treated the list in `X-ACL-Applied`; anything but `assigned`
+ * (including a missing header from an older Extract) means the document may be
+ * visible tenant-wide, so it is removed again and the item fails. No success
+ * state is written, so the next run tries again.
+ */
+async function requireAclApplied(
+  item: SourceItem,
+  reference: string,
+  applied: string | undefined,
+  ctx: ItemContext,
+  jobId?: string,
+): Promise<void> {
+  if (effectiveAcl(item, ctx.src) === undefined) return;
+  const value = applied ?? "missing";
+  if (value === "assigned") return;
+  ctx.logger.error({
+    event: "acl.not_applied",
+    sourceId: ctx.src.id,
+    quellId: item.quellId,
+    applied: value,
+  });
+  let message = `Extract did not apply the requested access list (X-ACL-Applied: ${value}); grant the Outpost token the scope extract.acl.assign`;
+  try {
+    // A job stores the document when it completes; wait so the delete finds it.
+    if (jobId !== undefined) {
+      await pollJob(ctx.client, jobId, { sleep: ctx.sleep, signal: ctx.signal });
+    }
+    await deleteByReference(ctx.client, runCollection(ctx.src, ctx.cfg), reference, ctx.signal);
+  } catch (error) {
+    if (isAborted(ctx.signal)) throw error;
+    if (error instanceof ReauthRequiredError) throw error;
+    message += `; the document may be visible tenant-wide until it is deleted (${errorMessage(error)})`;
+  }
+  throw new AclNotAppliedError(message);
+}
+
 /** Direct path: `POST /v1/ingest`; a 202 becomes accepted + poll (8.7). */
 async function transferDirect(
   item: SourceItem,
@@ -228,6 +271,13 @@ async function transferDirect(
     item.name,
     item.mimeType,
     ctx.signal,
+  );
+  await requireAclApplied(
+    item,
+    reference,
+    result.aclApplied,
+    ctx,
+    result.kind === "accepted" ? result.jobId : undefined,
   );
   if (result.kind === "ingested") {
     return {
@@ -295,11 +345,16 @@ async function transferResumable(
     },
     ctx.signal,
   );
+  let aclApplied: string | undefined;
   const job = await createJob(
     ctx.client,
     toJobRequest(item, ctx.src, ctx.cfg, sha256),
     ctx.signal,
+    (headers) => {
+      aclApplied = headers.get("x-acl-applied") ?? undefined;
+    },
   );
+  await requireAclApplied(item, reference, aclApplied, ctx, job.jobId);
   if (
     job.status === "completed" ||
     job.status === "failed" ||
@@ -370,6 +425,10 @@ async function transferWithRetry(
     } catch (error) {
       if (isAborted(ctx.signal)) throw error;
       if (error instanceof ReauthRequiredError) throw error;
+      // Not transient: retrying would store the document the same way again.
+      if (error instanceof AclNotAppliedError) {
+        return { kind: "client-error", status: 422, message: error.message };
+      }
       const outcome: RetryOutcome =
         error instanceof ExtractApiError
           ? {

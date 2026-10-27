@@ -26,8 +26,10 @@ export type IngestResult =
       status: "ok" | "skipped";
       reference: string;
       collection?: string;
+      /** Extract's `X-ACL-Applied` header; absent from an Extract that predates it. */
+      aclApplied?: string;
     }
-  | { kind: "accepted"; jobId: string };
+  | { kind: "accepted"; jobId: string; aclApplied?: string };
 
 /** Collect a stream into bytes (the direct path is bounded by the threshold). */
 async function readAll(stream: Readable): Promise<Uint8Array> {
@@ -69,6 +71,7 @@ export async function ingest(
     ...(signal !== undefined ? { signal } : {}),
   });
 
+  const aclApplied = response.headers.get("x-acl-applied") ?? undefined;
   if (response.status === 200) {
     const body = (response.json ?? {}) as Record<string, unknown>;
     const status = body["status"] === "skipped" ? "skipped" : "ok";
@@ -79,6 +82,7 @@ export async function ingest(
       status,
       reference,
       ...(collection !== undefined ? { collection } : {}),
+      ...(aclApplied !== undefined ? { aclApplied } : {}),
     };
   }
   if (response.status === 202) {
@@ -87,7 +91,7 @@ export async function ingest(
     if (jobId === "") {
       throw new ExtractApiError(202, undefined, "202 ohne job_id beantwortet");
     }
-    return { kind: "accepted", jobId };
+    return { kind: "accepted", jobId, ...(aclApplied !== undefined ? { aclApplied } : {}) };
   }
   throw new ExtractApiError(
     response.status,

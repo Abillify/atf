@@ -22,6 +22,21 @@ import {
 import { version } from "../package.json";
 import { supportedMimeTypes } from "./formats.js";
 
+/** Response header reporting how a requested access list was treated. */
+const aclAppliedHeader = {
+  "X-ACL-Applied": {
+    description:
+      "How the requested access list was treated: `assigned` (applied verbatim; the caller " +
+      "holds `extract.acl.assign` or `extract.admin`), `intersected` (narrowed to the caller's " +
+      "identity), `service-empty` (a caller without identity asked for a list; it was discarded " +
+      "and the document is tenant-wide) or `none` (nothing was requested).",
+    schema: {
+      type: "string",
+      enum: ["assigned", "intersected", "service-empty", "none"],
+    },
+  },
+};
+
 export interface OpenApiOptions {
   serverUrl: string;
   ingestEnabled: boolean;
@@ -454,7 +469,9 @@ export function buildOpenApiSpec(
           "`/v2/jobs/{id}`. Without a database the route falls back to the original " +
           "synchronous convert→forward path.\n\n" +
           "`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own " +
-          "identity; they cannot widen it.\n\n" +
+          "identity; they cannot widen it, unless the caller holds `extract.acl.assign` (or " +
+          "`extract.admin`), in which case the requested lists are applied as sent. The response " +
+          "header `X-ACL-Applied` says which happened.\n\n" +
           "On the v2 job path every ingest is identified first: a file already indexed in the " +
           "collection (same bytes, same normalised text, or — for the same reference without file " +
           "extension — a near-identical text of the same version) is **skipped** and answered " +
@@ -588,6 +605,7 @@ export function buildOpenApiSpec(
             description:
               "Converted and indexed (small document, driven inline). Figure assets are " +
               "stored when the v2 job path is active.",
+            headers: aclAppliedHeader,
             content: {
               "application/json": {
                 schema: {
@@ -647,6 +665,7 @@ export function buildOpenApiSpec(
             description:
               "Accepted (v2 job path, large document). The body carries the job id and a poll " +
               "path; the Location header points at the job.",
+            headers: aclAppliedHeader,
             content: {
               "application/json": {
                 schema: {
@@ -905,8 +924,9 @@ export function buildOpenApiSpec(
           "`queued → preparing → processing → emitting → committing → completed`, resuming from " +
           "the first unfinished unit after a crash.\n\n" +
           "`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own " +
-          "identity like the `/v1/ingest` headers; Search writes them onto every unit and asset " +
-          "check.\n\n" +
+          "identity like the `/v1/ingest` headers (a caller holding `extract.acl.assign` or " +
+          "`extract.admin` has them applied as sent; see the `X-ACL-Applied` response header); " +
+          "Search writes them onto every unit and asset check.\n\n" +
           "`filename` (optional) types the source by its extension; omitted, the reference stands " +
           "in for it. `collection` must follow Search's naming rule (a letter, then letters, digits " +
           "or underscores), otherwise the request is a 400.\n\n" +
@@ -931,7 +951,7 @@ export function buildOpenApiSpec(
         responses: {
           "201": {
             description: "Job created",
-            headers: { Location: { schema: { type: "string" } } },
+            headers: { Location: { schema: { type: "string" } }, ...aclAppliedHeader },
             content: {
               "application/json": {
                 schema: { type: "object", additionalProperties: true },

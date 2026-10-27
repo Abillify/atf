@@ -55,7 +55,7 @@ sources:
 
 An adapter may also supply a per-document ACL (for example, a cloud drive that exposes sharing information); that per-document list wins over the source's `acl`. Sources without any ACL are ingested without access headers and keep Extract's default visibility.
 
-Extract intersects every access list with the rights of the Outpost token itself: the token can only grant what it has. An Outpost that assigns `hr-staff` must therefore hold that group (or the equivalent permission) itself, otherwise Extract drops it from the list.
+Extract applies the access list as requested only when the Outpost token carries the scope `extract.acl.assign`; without it, Extract intersects the list with the identity of the token, which for a service token is empty, and the document becomes visible tenant-wide. The Outpost therefore checks the `X-ACL-Applied` response header of every item that has an access list: unless it says `assigned` (a missing header from an older Extract counts as not applied), the item fails with `Extract did not apply the requested access list`, the document is deleted again (this needs the scope `extract.delete`; if the delete fails, the error says so), and the next run retries the item. Grant the scope to the token, then re-sync the affected sources. Items without any access list are not affected.
 
 When the effective ACL of a document changes — the source list is edited or a per-document list differs — the Outpost re-uploads the document so Extract applies the new access list. Content that did not change is otherwise skipped. Sync states written before this feature carry no ACL digest and are treated as "unknown": they do not trigger a mass re-upload, and the digest is recorded with the next real update.
 

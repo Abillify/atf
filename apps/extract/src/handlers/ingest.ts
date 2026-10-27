@@ -36,7 +36,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import type { Logger } from "pino";
 import { collectFigures, type IngestHeaderOptions } from "@atf/extract-contract/v1";
 import { invalidAcl, validationError } from "../errors.js";
@@ -83,6 +83,14 @@ export interface ResolvedAcl {
   allowedUsers: string[];
   allowedGroups: string[];
   mode: AclResolutionMode;
+}
+
+/**
+ * Tell the caller how the requested list was treated, on every response that
+ * resolved one. A synchroniser compares it with what it asked for.
+ */
+export function setAclAppliedHeader(res: Response, acl: ResolvedAcl): void {
+  res.setHeader("X-ACL-Applied", acl.mode);
 }
 
 /** Limits for an access list a trusted client assigns. */
@@ -186,12 +194,13 @@ function canonicalValidFrom(value: string | undefined): string | undefined {
 }
 
 /** Parse the Search-bound options a caller may set. */
-function parseIngestOptions(req: Request, defaultCollection: string): IngestHeaderOptions {
+function parseIngestOptions(req: Request, res: Response, defaultCollection: string): IngestHeaderOptions {
   const principal = getPrincipal(req);
   const acl = resolveAcl(principal, {
     users: readListHeader(req, "x-allowed-users"),
     groups: readListHeader(req, "x-allowed-groups"),
   });
+  setAclAppliedHeader(res, acl);
 
   const versionModeRaw = readHeader(req, "x-version-mode");
   if (versionModeRaw !== undefined && !["replace", "version"].includes(versionModeRaw)) {
@@ -349,7 +358,7 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
       }
 
       const titleRaw = readHeader(req, "x-title")?.trim();
-      const options = parseIngestOptions(req, defaultCollection);
+      const options = parseIngestOptions(req, res, defaultCollection);
       const principal = getPrincipal(req);
 
       const controller = new AbortController();

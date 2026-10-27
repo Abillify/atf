@@ -974,7 +974,7 @@
     "/v1/ingest": {
       "post": {
         "summary": "Convert a document and index it in Search",
-        "description": "When a database and a Search target are both configured, this route is a wrapper around the v2 job path: the upload is stored in the content-addressed source store, a v2 job is created, and its emitter streams the revision **and figure assets** into Search. A small document is driven inline and answered **200** with the completed result (the historical synchronous shape, now including `job_id` and `revision_id`); a large one is answered **202** with the job id to poll at `/v2/jobs/{id}`. Without a database the route falls back to the original synchronous convert→forward path.\n\n`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own identity; they cannot widen it.\n\nOn the v2 job path every ingest is identified first: a file already indexed in the collection (same bytes, same normalised text, or — for the same reference without file extension — a near-identical text of the same version) is **skipped** and answered `status: skipped` with `duplicate_of`; it is recorded as an additional source of the indexed document. Another format of an indexed document is ingested as a new revision of it (`resolved_reference`), and only a newer version becomes the latest. Without `X-Version` the version is read from the first page (label, then date), else from `X-Source-Modified`. E-mails (`.eml`) are threaded; their attachments are ingested as documents of their own.",
+        "description": "When a database and a Search target are both configured, this route is a wrapper around the v2 job path: the upload is stored in the content-addressed source store, a v2 job is created, and its emitter streams the revision **and figure assets** into Search. A small document is driven inline and answered **200** with the completed result (the historical synchronous shape, now including `job_id` and `revision_id`); a large one is answered **202** with the job id to poll at `/v2/jobs/{id}`. Without a database the route falls back to the original synchronous convert→forward path.\n\n`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own identity; they cannot widen it, unless the caller holds `extract.acl.assign` (or `extract.admin`), in which case the requested lists are applied as sent. The response header `X-ACL-Applied` says which happened.\n\nOn the v2 job path every ingest is identified first: a file already indexed in the collection (same bytes, same normalised text, or — for the same reference without file extension — a near-identical text of the same version) is **skipped** and answered `status: skipped` with `duplicate_of`; it is recorded as an additional source of the indexed document. Another format of an indexed document is ingested as a new revision of it (`resolved_reference`), and only a newer version becomes the latest. Without `X-Version` the version is read from the first page (label, then date), else from `X-Source-Modified`. E-mails (`.eml`) are threaded; their attachments are ingested as documents of their own.",
         "parameters": [
           {
             "name": "X-Reference",
@@ -1273,6 +1273,20 @@
         "responses": {
           "200": {
             "description": "Converted and indexed (small document, driven inline). Figure assets are stored when the v2 job path is active.",
+            "headers": {
+              "X-ACL-Applied": {
+                "description": "How the requested access list was treated: `assigned` (applied verbatim; the caller holds `extract.acl.assign` or `extract.admin`), `intersected` (narrowed to the caller's identity), `service-empty` (a caller without identity asked for a list; it was discarded and the document is tenant-wide) or `none` (nothing was requested).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "assigned",
+                    "intersected",
+                    "service-empty",
+                    "none"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1347,6 +1361,20 @@
           },
           "202": {
             "description": "Accepted (v2 job path, large document). The body carries the job id and a poll path; the Location header points at the job.",
+            "headers": {
+              "X-ACL-Applied": {
+                "description": "How the requested access list was treated: `assigned` (applied verbatim; the caller holds `extract.acl.assign` or `extract.admin`), `intersected` (narrowed to the caller's identity), `service-empty` (a caller without identity asked for a list; it was discarded and the document is tenant-wide) or `none` (nothing was requested).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "assigned",
+                    "intersected",
+                    "service-empty",
+                    "none"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1846,7 +1874,7 @@
     "/v2/jobs": {
       "post": {
         "summary": "Create a persistent extraction job",
-        "description": "Creates a durable job over an already-stored source (referenced by sha256). The job carries a config/pipeline/prompt-hash snapshot, a token budget, and a lease; a worker with a valid lease epoch drives it through `queued → preparing → processing → emitting → committing → completed`, resuming from the first unfinished unit after a crash.\n\n`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own identity like the `/v1/ingest` headers; Search writes them onto every unit and asset check.\n\n`filename` (optional) types the source by its extension; omitted, the reference stands in for it. `collection` must follow Search's naming rule (a letter, then letters, digits or underscores), otherwise the request is a 400.\n\n`pages` (optional) selects one contiguous window of the source in source page numbers: `N`, `A-B`, `A-` (to the end) or `-B` (from page 1). A list such as `1-10,15` or a reversed window is a 400; a start beyond the last page fails the job before any model call; `MAX_PAGES` counts the window. The pages keep their source numbers (contract 2.4: `document.begin.firstPage`). A native source (BPMN, a chart-free XLSX) ignores it.\n\nOptional identity fields: `version` (explicit document version), `sourceModifiedAt` (RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job whose source is already indexed completes without extracting anything; its status carries `duplicateOf`. `resolvedReference` names the indexed document another format was ingested into, `version` the version it was ingested with.",
+        "description": "Creates a durable job over an already-stored source (referenced by sha256). The job carries a config/pipeline/prompt-hash snapshot, a token budget, and a lease; a worker with a valid lease epoch drives it through `queued → preparing → processing → emitting → committing → completed`, resuming from the first unfinished unit after a crash.\n\n`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own identity like the `/v1/ingest` headers (a caller holding `extract.acl.assign` or `extract.admin` has them applied as sent; see the `X-ACL-Applied` response header); Search writes them onto every unit and asset check.\n\n`filename` (optional) types the source by its extension; omitted, the reference stands in for it. `collection` must follow Search's naming rule (a letter, then letters, digits or underscores), otherwise the request is a 400.\n\n`pages` (optional) selects one contiguous window of the source in source page numbers: `N`, `A-B`, `A-` (to the end) or `-B` (from page 1). A list such as `1-10,15` or a reversed window is a 400; a start beyond the last page fails the job before any model call; `MAX_PAGES` counts the window. The pages keep their source numbers (contract 2.4: `document.begin.firstPage`). A native source (BPMN, a chart-free XLSX) ignores it.\n\nOptional identity fields: `version` (explicit document version), `sourceModifiedAt` (RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job whose source is already indexed completes without extracting anything; its status carries `duplicateOf`. `resolvedReference` names the indexed document another format was ingested into, `version` the version it was ingested with.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1865,6 +1893,18 @@
               "Location": {
                 "schema": {
                   "type": "string"
+                }
+              },
+              "X-ACL-Applied": {
+                "description": "How the requested access list was treated: `assigned` (applied verbatim; the caller holds `extract.acl.assign` or `extract.admin`), `intersected` (narrowed to the caller's identity), `service-empty` (a caller without identity asked for a list; it was discarded and the document is tenant-wide) or `none` (nothing was requested).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "assigned",
+                    "intersected",
+                    "service-empty",
+                    "none"
+                  ]
                 }
               }
             },

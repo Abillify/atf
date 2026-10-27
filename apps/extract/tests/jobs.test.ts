@@ -161,10 +161,22 @@ describe("POST /v2/jobs · create", () => {
         allowedGroups: ["finance"],
       });
     expect(res.status).toBe(201);
+    expect(res.headers["x-acl-applied"]).toBe("assigned");
     expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({
       allowedUsers: ["anna@example.com"],
       allowedGroups: ["finance"],
     });
+  });
+
+  it("reports service-empty when a token without the scope asked for a list", async () => {
+    const baseUrl = await buildApp({ API_TOKEN: "svc-token", AUTHN_MODE: "token" });
+    const res = await request(baseUrl)
+      .post("/v2/jobs")
+      .set("Authorization", "Bearer svc-token")
+      .send({ reference: "tests/finance.pdf", sourceSha256: seededSha, allowedGroups: ["finance"] });
+    expect(res.status).toBe(201);
+    expect(res.headers["x-acl-applied"]).toBe("service-empty");
+    expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({ allowedUsers: [], allowedGroups: [] });
   });
 
   it("stores the document attributes Search puts on every unit (contract 2.2)", async () => {

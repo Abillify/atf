@@ -54,7 +54,7 @@ import {
   sanitizeFilename,
   type UploadedDocument,
 } from "../upload.js";
-import { readMetadataHeader, resolveAcl, type ResolvedAcl } from "./ingest.js";
+import { readMetadataHeader, resolveAcl, setAclAppliedHeader, type ResolvedAcl } from "./ingest.js";
 import type { ExtractStore } from "../persistence/index.js";
 import type { SourceStore } from "../source-store.js";
 import type { PipelineSnapshot } from "../jobs/snapshot.js";
@@ -219,6 +219,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         );
       }
       const acl = resolveRequestAcl(req);
+      setAclAppliedHeader(res, acl);
       const identityInputs = readIdentityHeaders(req);
       const attributes = readAttributeHeaders(req);
 

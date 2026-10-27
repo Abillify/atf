@@ -48,6 +48,8 @@ export async function createJob(
   client: ExtractHttpClient,
   body: JobRequest,
   signal?: AbortSignal,
+  /** Receives the response headers, for example `X-ACL-Applied`. */
+  onHeaders?: (headers: Headers) => void,
 ): Promise<Job> {
   const parsed = jobRequestSchema.parse(body);
   const response = await client.request({
@@ -64,6 +66,7 @@ export async function createJob(
       apiErrorMessage(response.json) ?? `createJob antwortete mit ${response.status}`,
     );
   }
+  onHeaders?.(response.headers);
   return jobSchema.parse(response.json);
 }
 

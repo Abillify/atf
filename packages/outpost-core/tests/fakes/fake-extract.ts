@@ -97,6 +97,12 @@ export interface FakeExtractOptions {
   ingestSkipped?: boolean;
   /** reject DELETE with 403 regardless of scopes. */
   deleteForbidden?: boolean;
+  /**
+   * Value of the `X-ACL-Applied` response header. Unset: behave like an Extract
+   * that trusts the token (`assigned` when an access list was sent, no header
+   * otherwise). `null` always omits the header, as an Extract that predates it does.
+   */
+  aclApplied?: string | null;
 }
 
 const DEFAULT_WHOAMI: WhoamiResponse = {
@@ -127,6 +133,7 @@ export class FakeExtract {
   ingestMode: "sync" | "async";
   ingestSkipped: boolean;
   deleteForbidden: boolean;
+  aclApplied: string | null | undefined;
   requireToken: string | undefined;
 
   /** Faults keyed by PATCH index (0-based); each fires at most once. */
@@ -141,6 +148,7 @@ export class FakeExtract {
     this.ingestMode = options.ingestMode ?? "sync";
     this.ingestSkipped = options.ingestSkipped ?? false;
     this.deleteForbidden = options.deleteForbidden ?? false;
+    this.aclApplied = options.aclApplied;
     this.requireToken = options.requireToken;
   }
 
@@ -267,6 +275,12 @@ export class FakeExtract {
     return jsonResponse(404, { error: "not found", code: "NOT_FOUND" });
   }
 
+  private aclHeaders(users: string[], groups: string[]): Record<string, string> {
+    if (this.aclApplied === null) return {};
+    if (this.aclApplied !== undefined) return { "x-acl-applied": this.aclApplied };
+    return users.length + groups.length > 0 ? { "x-acl-applied": "assigned" } : {};
+  }
+
   private async handleIngest(
     headers: Headers,
     init: RequestInit | undefined,
@@ -290,10 +304,13 @@ export class FakeExtract {
     }
     const sha = sha256Hex(bytes);
     const collection = headers.get("x-collection") ?? "default";
+    const requestedUsers = readListHeader(headers, "x-allowed-users");
+    const requestedGroups = readListHeader(headers, "x-allowed-groups");
+    const aclHeaders = this.aclHeaders(requestedUsers, requestedGroups);
     this.ingests.push({
       reference,
-      allowedUsers: readListHeader(headers, "x-allowed-users"),
-      allowedGroups: readListHeader(headers, "x-allowed-groups"),
+      allowedUsers: requestedUsers,
+      allowedGroups: requestedGroups,
     });
     if (this.ingestMode === "async") {
       const jobId = `job-${this.nextJobId++}`;
@@ -305,16 +322,20 @@ export class FakeExtract {
         reads: 0,
         collection,
       });
-      return jsonResponse(202, { status: "accepted", job_id: jobId, reference });
+      return jsonResponse(202, { status: "accepted", job_id: jobId, reference }, aclHeaders);
     }
     const existing = this.documents.get(collection)?.get(reference);
     const skipped = this.ingestSkipped || existing === sha;
     this.storeDocument(collection, reference, sha);
-    return jsonResponse(200, {
-      status: skipped ? "skipped" : "ok",
-      reference,
-      collection,
-    });
+    return jsonResponse(
+      200,
+      {
+        status: skipped ? "skipped" : "ok",
+        reference,
+        collection,
+      },
+      aclHeaders,
+    );
   }
 
   private storeDocument(collection: string, reference: string, sha: string): void {
@@ -504,7 +525,11 @@ export class FakeExtract {
       allowedUsers: list("allowedUsers"),
       allowedGroups: list("allowedGroups"),
     });
-    return jsonResponse(201, { jobId, reference, status: "queued", warnings: [] });
+    return jsonResponse(
+      201,
+      { jobId, reference, status: "queued", warnings: [] },
+      this.aclHeaders(list("allowedUsers"), list("allowedGroups")),
+    );
   }
 
   private handleGetJob(jobId: string): Response {
@@ -562,9 +587,13 @@ function parseJson(body: BodyInit | null | undefined): unknown {
   return undefined;
 }
 
-function jsonResponse(status: number, body: unknown): Response {
+function jsonResponse(
+  status: number,
+  body: unknown,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }
