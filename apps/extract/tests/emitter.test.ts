@@ -700,7 +700,7 @@ describe("emitter · document identity on document.begin (contract 2.1)", () => 
       parent: { reference: "mail/root.eml", jobId: "j0" },
       acl: { allowedUsers: ["anna"], allowedGroups: [] },
       tags: ["kunde-a"],
-      metadata: { projekt: "WMS" },
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
     });
@@ -733,7 +733,7 @@ describe("emitter · document identity on document.begin (contract 2.1)", () => 
       parentReference: "mail/root.eml",
       // Contract 2.2 document attributes.
       tags: ["kunde-a"],
-      metadata: { projekt: "WMS" },
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
     });

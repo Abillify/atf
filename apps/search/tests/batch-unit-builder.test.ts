@@ -296,7 +296,7 @@ describe("buildUnitsFromRecords — table units", () => {
             type: "paragraph",
             id: "p1",
             page: 368,
-            text: "ID: QAP-MDE-03; Stand: 01.01.2025",
+            text: "ID: QAP-DOK-03; Stand: 01.01.2025",
             sectionPath: [
               "9 Prozess Fehlerbehebung, Sonderfall Bearbeitung",
               "9.13 Station auswählen",
@@ -322,8 +322,8 @@ describe("buildUnitsFromRecords — table units", () => {
     const [t] = tables;
     // The identifier is embedded (embedInput) and full-text searchable
     // (content) — the reranker sees it, the vector sees it, FTS finds it.
-    expect(t?.embedInput).toContain("IDs: QAP-MDE-03");
-    expect(t?.content).toContain("QAP-MDE-03");
+    expect(t?.embedInput).toContain("IDs: QAP-DOK-03");
+    expect(t?.content).toContain("QAP-DOK-03");
     // …but it is context, not the table's own document text: a document read
     // (which keeps the first displayLen chars) returns only the grid.
     const grid = "Eingabe-Möglichkeit | Hinweis\nimmer | Pflichtfeld";

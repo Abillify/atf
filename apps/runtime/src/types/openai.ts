@@ -274,7 +274,7 @@ export interface CitationEvidence {
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
-  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Antragseingang","4.2 …"]. */
   section_path?: string[];
   /** v2 covered page numbers of the hit. */
   pages?: number[];
@@ -319,7 +319,7 @@ export interface CitationSource {
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
-  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Antragseingang","4.2 …"]. */
   section_path?: string[];
   /** v2 covered page numbers of the hit. */
   pages?: number[];
@@ -381,7 +381,7 @@ export interface Citation {
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
-  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Antragseingang","4.2 …"]. */
   section_path?: string[];
   /** v2 covered page numbers of the hit. */
   pages?: number[];

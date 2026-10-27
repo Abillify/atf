@@ -186,18 +186,18 @@ describe("POST /ingest-file", () => {
       .post("/ingest-file")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
-      .set("X-Title", "Pflichtenheft")
-      .set("X-Tags", "kunde-a, wms")
-      .set("X-Metadata", JSON.stringify({ projekt: "WMS" }))
+      .set("X-Title", "Spezifikation")
+      .set("X-Tags", "kunde-a, alpha")
+      .set("X-Metadata", JSON.stringify({ projekt: "Alpha" }))
       .set("X-Link", "https://dms.example/1")
       .set("X-Source", "DMS")
       .set("X-Version", "3.1")
       .set("X-Dedup", "exact")
       .send(PDF);
     expect(calls[3]?.body).toMatchObject({
-      title: "Pflichtenheft",
-      tags: ["kunde-a", "wms"],
-      metadata: { projekt: "WMS" },
+      title: "Spezifikation",
+      tags: ["kunde-a", "alpha"],
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
       version: "3.1",

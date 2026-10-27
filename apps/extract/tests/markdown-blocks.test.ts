@@ -27,9 +27,9 @@ function blocks(md: string): Block[] {
 
 describe("markdown-blocks · headings", () => {
   it("maps ATX headings to heading blocks with level and numbering", () => {
-    const out = blocks("# 4 Wareneingang\n\n## 4.2. Anmeldung\n\n### Ohne Nummer ###");
+    const out = blocks("# 4 Antragseingang\n\n## 4.2. Anmeldung\n\n### Ohne Nummer ###");
     expect(out).toEqual([
-      { id: "p3-b1", page: 3, source: "vision", type: "heading", level: 1, numbering: "4", text: "Wareneingang" },
+      { id: "p3-b1", page: 3, source: "vision", type: "heading", level: 1, numbering: "4", text: "Antragseingang" },
       { id: "p3-b2", page: 3, source: "vision", type: "heading", level: 2, numbering: "4.2", text: "Anmeldung" },
       { id: "p3-b3", page: 3, source: "vision", type: "heading", level: 3, text: "Ohne Nummer" },
     ]);

@@ -1,64 +1,64 @@
 {
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Answer-level groundedness mini set (German, synthetic). Each item has a retrieval context and two curated candidate answers: one grounded in the context and one that adds unsupported claims. The reference candidates validate the deterministic lexical Groundedness checker of the runtime (checkGroundedness) without any model call. Answers produced by a live model are scored with --answers; producing them requires a live model and is not part of this fixture. Content is synthetic and contains no confidential material.",
 	"items": [
 		{
 			"id": "g-01",
 			"language": "de",
-			"question": "Welche Pflichtfelder hat die Wareneingangsmaske?",
+			"question": "Welche Pflichtfelder hat die Antragseingangsmaske?",
 			"context": [
-				"Die Wareneingangsmaske verlangt als Pflichtfelder die Lieferscheinnummer, die Artikelnummer und die gelieferte Menge. Das Feld Charge ist nur bei chargenpflichtigen Artikeln Pflicht."
+				"Die Antragseingangsmaske verlangt als Pflichtfelder die Belegnummer, die Aktennummer und die Anzahl der Anlagen. Das Feld Vorgang ist nur bei nachweispflichtigen Anträgen Pflicht."
 			],
 			"candidates": [
 				{
 					"id": "g-01-grounded",
 					"label": "grounded",
-					"answer": "Pflichtfelder der Wareneingangsmaske sind die Lieferscheinnummer, die Artikelnummer und die gelieferte Menge. Bei chargenpflichtigen Artikeln ist zusätzlich die Charge Pflicht."
+					"answer": "Pflichtfelder der Antragseingangsmaske sind die Belegnummer, die Aktennummer und die Anzahl der Anlagen. Bei nachweispflichtigen Anträgen ist zusätzlich der Vorgang Pflicht."
 				},
 				{
 					"id": "g-01-ungrounded",
 					"label": "ungrounded",
-					"answer": "Die Wareneingangsmaske verlangt den Fahrzeugkennzeichen-Scan sowie eine Unterschrift des Fahrers. Außerdem prüft das System automatisch die Bonität des Lieferanten."
+					"answer": "Die Antragseingangsmaske verlangt den Ausweis-Scan sowie eine Unterschrift des Boten. Außerdem prüft das System automatisch die Bonität des Antragstellers."
 				}
 			]
 		},
 		{
 			"id": "g-02",
 			"language": "de",
-			"question": "Wer darf die Teilfreigabe im Wareneingang erteilen?",
+			"question": "Wer darf die Teilfreigabe im Antragseingang erteilen?",
 			"context": [
-				"Eine Teilfreigabe im Wareneingang darf ausschließlich der Lagerleiter erteilen. Die Freigabe wird mit Zeitstempel und Benutzerkennung protokolliert."
+				"Eine Teilfreigabe im Antragseingang darf ausschließlich der Teamleiter erteilen. Die Freigabe wird mit Zeitstempel und Benutzerkennung protokolliert."
 			],
 			"candidates": [
 				{
 					"id": "g-02-grounded",
 					"label": "grounded",
-					"answer": "Die Teilfreigabe im Wareneingang darf ausschließlich der Lagerleiter erteilen. Sie wird mit Zeitstempel und Benutzerkennung protokolliert."
+					"answer": "Die Teilfreigabe im Antragseingang darf ausschließlich der Teamleiter erteilen. Sie wird mit Zeitstempel und Benutzerkennung protokolliert."
 				},
 				{
 					"id": "g-02-ungrounded",
 					"label": "ungrounded",
-					"answer": "Jeder Lagermitarbeiter darf die Teilfreigabe im Wareneingang erteilen. Die Geschäftsführung erhält dazu stets eine Benachrichtigung per Mobiltelefon."
+					"answer": "Jeder Sachbearbeiter darf die Teilfreigabe im Antragseingang erteilen. Die Geschäftsführung erhält dazu stets eine Benachrichtigung per Mobiltelefon."
 				}
 			]
 		},
 		{
 			"id": "g-03",
 			"language": "de",
-			"question": "Wie lange werden Chargendaten aufbewahrt?",
+			"question": "Wie lange werden Vorgangsdaten aufbewahrt?",
 			"context": [
-				"Chargendaten werden zehn Jahre nach Auslieferung aufbewahrt. Danach werden sie automatisch gelöscht."
+				"Vorgangsdaten werden zehn Jahre nach Abschluss aufbewahrt. Danach werden sie automatisch gelöscht."
 			],
 			"candidates": [
 				{
 					"id": "g-03-grounded",
 					"label": "grounded",
-					"answer": "Chargendaten werden zehn Jahre nach Auslieferung aufbewahrt und danach automatisch gelöscht."
+					"answer": "Vorgangsdaten werden zehn Jahre nach Abschluss aufbewahrt und danach automatisch gelöscht."
 				},
 				{
 					"id": "g-03-ungrounded",
 					"label": "ungrounded",
-					"answer": "Chargendaten werden dauerhaft im Cloud-Archiv gespeichert. Eine Löschung erfolgt ausschließlich auf schriftlichen Antrag des Kunden."
+					"answer": "Vorgangsdaten werden dauerhaft im Cloud-Archiv gespeichert. Eine Löschung erfolgt ausschließlich auf schriftlichen Antrag des Kunden."
 				}
 			]
 		},
@@ -67,13 +67,13 @@
 			"language": "de",
 			"question": "Welche Schnittstelle zum ERP wird verlangt?",
 			"context": [
-				"Die Anbindung an das ERP erfolgt über eine REST-Schnittstelle mit JSON-Nachrichten. Bestandsänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
+				"Die Anbindung an das ERP erfolgt über eine REST-Schnittstelle mit JSON-Nachrichten. Statusänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
 			],
 			"candidates": [
 				{
 					"id": "g-04-grounded",
 					"label": "grounded",
-					"answer": "Das ERP wird über eine REST-Schnittstelle mit JSON-Nachrichten angebunden. Bestandsänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
+					"answer": "Das ERP wird über eine REST-Schnittstelle mit JSON-Nachrichten angebunden. Statusänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
 				},
 				{
 					"id": "g-04-ungrounded",
@@ -85,20 +85,20 @@
 		{
 			"id": "g-05",
 			"language": "de",
-			"question": "Was passiert bei einer Mengenabweichung im Wareneingang?",
+			"question": "Was passiert bei einer Mengenabweichung im Antragseingang?",
 			"context": [
-				"Bei einer Mengenabweichung über fünf Prozent wird die Ware ins Sperrlager gebucht. Der Einkauf erhält eine Meldung zur Klärung."
+				"Bei einer Mengenabweichung über fünf Prozent erhält der Antrag einen Sperrvermerk. Der Einkauf erhält eine Meldung zur Klärung."
 			],
 			"candidates": [
 				{
 					"id": "g-05-grounded",
 					"label": "grounded",
-					"answer": "Liegt die Mengenabweichung über fünf Prozent, wird die Ware ins Sperrlager gebucht. Der Einkauf erhält eine Meldung zur Klärung."
+					"answer": "Liegt die Mengenabweichung über fünf Prozent, erhält der Antrag einen Sperrvermerk. Der Einkauf erhält eine Meldung zur Klärung."
 				},
 				{
 					"id": "g-05-ungrounded",
 					"label": "ungrounded",
-					"answer": "Bei jeder Mengenabweichung wird die Lieferung sofort an den Lieferanten zurückgeschickt. Zusätzlich verhängt das System automatisch eine Vertragsstrafe."
+					"answer": "Bei jeder Mengenabweichung wird der Antrag sofort an den Antragsteller zurückgeschickt. Zusätzlich verhängt das System automatisch eine Vertragsstrafe."
 				}
 			]
 		},
@@ -107,13 +107,13 @@
 			"language": "de",
 			"question": "Welche Rollen kennt das Berechtigungskonzept?",
 			"context": [
-				"Das Berechtigungskonzept kennt die Rollen Lagermitarbeiter, Lagerleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Bestände."
+				"Das Berechtigungskonzept kennt die Rollen Sachbearbeiter, Teamleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Akten."
 			],
 			"candidates": [
 				{
 					"id": "g-06-grounded",
 					"label": "grounded",
-					"answer": "Das Berechtigungskonzept kennt die Rollen Lagermitarbeiter, Lagerleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Bestände."
+					"answer": "Das Berechtigungskonzept kennt die Rollen Sachbearbeiter, Teamleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Akten."
 				},
 				{
 					"id": "g-06-ungrounded",
@@ -145,20 +145,20 @@
 		{
 			"id": "g-08",
 			"language": "de",
-			"question": "Wie läuft der Wareneingang als Prozess ab?",
+			"question": "Wie läuft der Antragseingang als Prozess ab?",
 			"context": [
-				"Der Prozess Wareneingang beginnt mit der Anmeldung des Lieferanten. Danach folgen Entladung, Mengenprüfung und Einlagerung. Bei Abweichungen wird eine Reklamation angelegt."
+				"Der Prozess Antragseingang beginnt mit der Anmeldung des Antragstellers. Danach folgen Erfassung, Mengenprüfung und Ablage. Bei Abweichungen wird eine Reklamation angelegt."
 			],
 			"candidates": [
 				{
 					"id": "g-08-grounded",
 					"label": "grounded",
-					"answer": "Der Wareneingang beginnt mit der Anmeldung des Lieferanten. Danach folgen Entladung, Mengenprüfung und Einlagerung. Bei Abweichungen wird eine Reklamation angelegt."
+					"answer": "Der Antragseingang beginnt mit der Anmeldung des Antragstellers. Danach folgen Erfassung, Mengenprüfung und Ablage. Bei Abweichungen wird eine Reklamation angelegt."
 				},
 				{
 					"id": "g-08-ungrounded",
 					"label": "ungrounded",
-					"answer": "Der Wareneingang beginnt mit einer Qualitätsfreigabe durch den Vorstand. Danach folgen Zolldeklaration, Röntgenkontrolle und Vernichtung der Verpackung."
+					"answer": "Der Antragseingang beginnt mit einer Qualitätsfreigabe durch den Vorstand. Danach folgen Steuerprüfung, Röntgenkontrolle und Vernichtung der Unterlagen."
 				}
 			]
 		},
@@ -185,20 +185,20 @@
 		{
 			"id": "g-10",
 			"language": "de",
-			"question": "Wann wird eine Inventur ausgelöst?",
+			"question": "Wann wird eine Revision ausgelöst?",
 			"context": [
-				"Eine Inventur wird zum Jahresende oder auf Anforderung des Lagerleiters ausgelöst. Während der Inventur sind Buchungen im betroffenen Lagerbereich gesperrt."
+				"Eine Revision wird zum Jahresende oder auf Anforderung des Teamleiters ausgelöst. Während der Revision sind Buchungen im betroffenen Fachbereich gesperrt."
 			],
 			"candidates": [
 				{
 					"id": "g-10-grounded",
 					"label": "grounded",
-					"answer": "Die Inventur wird zum Jahresende oder auf Anforderung des Lagerleiters ausgelöst. Im betroffenen Lagerbereich sind währenddessen Buchungen gesperrt."
+					"answer": "Die Revision wird zum Jahresende oder auf Anforderung des Teamleiters ausgelöst. Im betroffenen Fachbereich sind währenddessen Buchungen gesperrt."
 				},
 				{
 					"id": "g-10-ungrounded",
 					"label": "ungrounded",
-					"answer": "Die Inventur wird jeden Montag automatisch durch Drohnen ausgelöst. Buchungen bleiben währenddessen uneingeschränkt möglich, Differenzen werden ignoriert."
+					"answer": "Die Revision wird jeden Montag automatisch durch Drohnen ausgelöst. Buchungen bleiben währenddessen uneingeschränkt möglich, Differenzen werden ignoriert."
 				}
 			]
 		},
@@ -227,18 +227,18 @@
 			"language": "de",
 			"question": "Wie wird die Rückverfolgbarkeit gefordert?",
 			"context": [
-				"Die Rückverfolgbarkeit wird über die Chargennummer sichergestellt. Jede Bewegung einer Charge muss lückenlos protokolliert werden."
+				"Die Rückverfolgbarkeit wird über die Vorgangsnummer sichergestellt. Jede Änderung eines Vorgangs muss lückenlos protokolliert werden."
 			],
 			"candidates": [
 				{
 					"id": "g-12-grounded",
 					"label": "grounded",
-					"answer": "Die Rückverfolgbarkeit wird über die Chargennummer sichergestellt, und jede Bewegung einer Charge muss lückenlos protokolliert werden."
+					"answer": "Die Rückverfolgbarkeit wird über die Vorgangsnummer sichergestellt, und jede Änderung eines Vorgangs muss lückenlos protokolliert werden."
 				},
 				{
 					"id": "g-12-ungrounded",
 					"label": "ungrounded",
-					"answer": "Die Rückverfolgbarkeit wird über RFID-Transponder an jeder Palette sichergestellt. Bewegungsdaten werden wöchentlich in ein Data-Warehouse übertragen."
+					"answer": "Die Rückverfolgbarkeit wird über RFID-Transponder an jeder Akte sichergestellt. Bewegungsdaten werden wöchentlich in ein Data-Warehouse übertragen."
 				}
 			]
 		}

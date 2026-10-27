@@ -361,7 +361,7 @@ function normalizedRef(ref: string): string {
  * Canonical DOCUMENT-UNIT identity for cross-source deduplication.
  *
  * The coverage ledger is seeded from `get_summaries`, whose `reference` is a
- * document-UNIT path (`/…/Datei.pdf/79. PFLICHTENHEFT …`): one entry per
+ * document-UNIT path (`/…/Datei.pdf/79. SPEZIFIKATION …`): one entry per
  * logical unit (title page, content section, …), never per physical file.
  * `get_document` resolves exactly these unit references (directly or via a
  * search hit's `base_ref`) and merges the unit's chunks into one readable

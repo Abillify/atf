@@ -45,7 +45,7 @@
  *       "pages": [37, 38] | { "start": 37, "end": 38 },
  *       "unit_type": "figure",             // chunk|table|figure|section|page|document
  *       "figure_kind": "ui_mask",
- *       "section_prefix": ["4 Wareneingang", "4.2 Anmeldung"],
+ *       "section_prefix": ["4 Antragseingang", "4.2 Anmeldung"],
  *       "identifier": "WE-01/A"
  *     }
  *   }

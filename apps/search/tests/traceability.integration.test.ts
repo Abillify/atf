@@ -51,8 +51,8 @@ const IDENTIFIER = "WE-01/A";
 // unchanged, one reworded (long enough to exercise the 300-char excerpt),
 // one only in rev1 (removed), one only in rev2 (added).
 const ANWENDUNG = "Diese Richtlinie gilt für alle Standorte; Bezug ist WE-01/A.";
-const WARENEINGANG_REV1 = `Wareneingang Fassung 2024. ${"Vorwort und Begriffe. ".repeat(30)}Gemäß WE-01/A erfolgt die Prüfung direkt bei Anlieferung.`;
-const WARENEINGANG_REV2 = `Wareneingang Fassung 2025. ${"Vorwort und Begriffe. ".repeat(30)}Gemäß WE-01/A erfolgt die Prüfung nach der Entladung.`;
+const ANTRAGSEINGANG_REV1 = `Antragseingang Fassung 2024. ${"Vorwort und Begriffe. ".repeat(30)}Gemäß WE-01/A erfolgt die Prüfung direkt bei Eingang.`;
+const ANTRAGSEINGANG_REV2 = `Antragseingang Fassung 2025. ${"Vorwort und Begriffe. ".repeat(30)}Gemäß WE-01/A erfolgt die Prüfung nach der Erfassung.`;
 const ALT = "Das überholte Verfahren zu WE-01/A ist ersatzlos entfallen.";
 const NEU = "Das neue Verfahren ergänzt WE-01/A um die Stichprobenprüfung.";
 
@@ -126,10 +126,10 @@ describeIfPg("trace tool · identifier across two points in time · real postgre
     );
     // rev1 is valid from 2025-01-01, rev2 from 2025-06-01.
     await unit("rev1", "u1a", ["1 Anwendungsbereich"], ANWENDUNG, "2025-01-01T10:00:00Z", false);
-    await unit("rev1", "u1b", ["4 Wareneingang"], WARENEINGANG_REV1, "2025-01-01T10:00:03Z", false);
+    await unit("rev1", "u1b", ["4 Antragseingang"], ANTRAGSEINGANG_REV1, "2025-01-01T10:00:03Z", false);
     await unit("rev1", "u1c", ["9 Altes Verfahren"], ALT, "2025-01-01T10:00:06Z", false);
     await unit("rev2", "u2a", ["1 Anwendungsbereich"], ANWENDUNG, "2025-06-01T10:00:00Z", true);
-    await unit("rev2", "u2b", ["4 Wareneingang"], WARENEINGANG_REV2, "2025-06-01T10:00:04Z", true);
+    await unit("rev2", "u2b", ["4 Antragseingang"], ANTRAGSEINGANG_REV2, "2025-06-01T10:00:04Z", true);
     await unit("rev2", "u2c", ["9 Neues Verfahren"], NEU, "2025-06-01T10:00:08Z", true);
   });
 
@@ -190,12 +190,12 @@ describeIfPg("trace tool · identifier across two points in time · real postgre
     const b = await lookupAt("2025-07-01T00:00:00Z");
     expect(a.map((o) => o.section).sort()).toEqual([
       "1 Anwendungsbereich",
-      "4 Wareneingang",
+      "4 Antragseingang",
       "9 Altes Verfahren",
     ]);
     expect(b.map((o) => o.section).sort()).toEqual([
       "1 Anwendungsbereich",
-      "4 Wareneingang",
+      "4 Antragseingang",
       "9 Neues Verfahren",
     ]);
     for (const o of [...a, ...b]) {
@@ -217,14 +217,14 @@ describeIfPg("trace tool · identifier across two points in time · real postgre
     expect(diff.removed.map((o) => o.section)).toEqual(["9 Altes Verfahren"]);
     expect(diff.added.map((o) => o.section)).toEqual(["9 Neues Verfahren"]);
     expect(diff.changed).toHaveLength(1);
-    expect(diff.changed[0]?.key).toBe(`${BASE_REF}\u00004 Wareneingang`);
+    expect(diff.changed[0]?.key).toBe(`${BASE_REF}\u00004 Antragseingang`);
     expect(diff.changed[0]?.a.content_hash).not.toBe(diff.changed[0]?.b.content_hash);
     expect(diff.unchanged_count).toBe(1);
   });
 
   it("keeps excerpts within 300 chars centred on the identifier", async () => {
     const b = await lookupAt("2025-07-01T00:00:00Z");
-    const long = b.find((o) => o.section === "4 Wareneingang");
+    const long = b.find((o) => o.section === "4 Antragseingang");
     expect(long).toBeDefined();
     for (const o of b) {
       expect(o.excerpt.length).toBeLessThanOrEqual(300);

@@ -289,8 +289,8 @@ describe("the shipped synthetic set", () => {
 	test("scores the sample output with the pinned defects", async () => {
 		const { report } = await run({ set: SET, out: "", label: "t", thresholds: {} });
 		const byId = Object.fromEntries(report.cases.map((c) => [c.id, c]));
-		// One OCR slip ("Lagerverwaltunq") in 472 characters of running text.
-		expect(byId.anforderungen?.cer).toEqual({ distance: 1, length: 472, cer: 0.002118644 });
+		// One OCR slip ("Aktenverwaltunq") in 476 characters of running text.
+		expect(byId.anforderungen?.cer).toEqual({ distance: 1, length: 476, cer: 0.00210084 });
 		// "1.1" produced as H1 and "2.2" merged into a paragraph: found by text, one wrong level, one missing.
 		expect(byId.anforderungen?.headings?.text).toMatchObject({ truePositives: 4, falsePositives: 0, falseNegatives: 1 });
 		expect(byId.anforderungen?.headings?.withLevel).toMatchObject({ truePositives: 3, falsePositives: 1, falseNegatives: 2 });
@@ -307,7 +307,7 @@ describe("the shipped synthetic set", () => {
 		const { report } = await run({ set: SET, out: "", label: "demo", thresholds: {} });
 		const markdown = renderMarkdown(report);
 		expect(markdown).toContain("# Extraction quality — demo");
-		expect(markdown).toContain("synthetic v1.0.0");
+		expect(markdown).toContain("synthetic v1.1.0");
 		for (const id of ["anforderungen", "schnittstellen", "betriebshandbuch"]) expect(markdown).toContain(`| ${id} |`);
 	});
 });

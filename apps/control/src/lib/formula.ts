@@ -288,7 +288,7 @@ export function buildVocabulary(
     title: "Latest classification",
     hint: "The merged classification of this turn.",
     symbols: [
-      { path: "classLabel", description: `Value of the last classifier's classKey field.${toolOnly}`, example: "RETOURE" },
+      { path: "classLabel", description: `Value of the last classifier's classKey field.${toolOnly}`, example: "REKLAMATION" },
       ...[...classFields.entries()].map(([f, example]) => ({
         path: `classification.${f}`,
         description: `Latest value of ${f}.${toolOnly}`,

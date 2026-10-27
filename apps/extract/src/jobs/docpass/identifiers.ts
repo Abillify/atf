@@ -93,10 +93,10 @@ export const DEFAULT_IDENTIFIER_CLASSES: readonly IdentifierClass[] = [
   {
     // Composite (specification/module) codes: a two-to-six uppercase-letter
     // prefix, at least one further dashed uppercase-alphanumeric group, and a
-    // trailing digit group ("QAP-MDE-03", "QAB-MDE-03", "QAV-MDE-03").
+    // trailing digit group ("QAP-DOK-03", "QAB-DOK-03", "QAV-DOK-03").
     // Placed BEFORE drawing numbers on purpose: without it the drawing-number
-    // class claims only the tail ("MDE-03" out of "QAP-MDE-03"), so every
-    // section's "…-MDE-03" collapses to the same normalized value and the
+    // class claims only the tail ("DOK-03" out of "QAP-DOK-03"), so every
+    // section's "…-DOK-03" collapses to the same normalized value and the
     // distinguishing prefix is lost. Requiring at least two dashed groups and a
     // trailing digit group keeps prose ("AM-PM") and single-dash codes
     // ("ZG-100", "AB-100-2") with their existing classes. An optional "/A"

@@ -77,12 +77,12 @@ describe("buildPageUserPrompt (v2, task 2.3)", () => {
     const prompt = buildPageUserPrompt({
       ...base,
       prevPage: {
-        headingChain: ["4 Wareneingang", "4.2 Anmeldung"],
+        headingChain: ["4 Antragseingang", "4.2 Anmeldung"],
         lastTableHeader: "Bereich | Feld | Typ",
       },
     });
     expect(prompt).toContain("Überschriftenkette der Vorseite");
-    expect(prompt).toContain("4 Wareneingang › 4.2 Anmeldung");
+    expect(prompt).toContain("4 Antragseingang › 4.2 Anmeldung");
     expect(prompt).toContain("Letzte Tabellen-Kopfzeile der Vorseite");
     expect(prompt).toContain("Bereich | Feld | Typ");
   });

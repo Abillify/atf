@@ -27,8 +27,8 @@ const runner: IsolatedRunner = createIsolatedRunner({
 const BPMN = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_1">
   <bpmn:process id="Process_1" isExecutable="true">
-    <bpmn:startEvent id="Start_1" name="Anlieferung"/>
-    <bpmn:userTask id="Task_1" name="Wareneingang pruefen"/>
+    <bpmn:startEvent id="Start_1" name="Posteingang"/>
+    <bpmn:userTask id="Task_1" name="Antragseingang pruefen"/>
     <bpmn:endEvent id="End_1" name="Abgeschlossen"/>
     <bpmn:sequenceFlow id="F1" sourceRef="Start_1" targetRef="Task_1"/>
     <bpmn:sequenceFlow id="F2" sourceRef="Task_1" targetRef="End_1"/>

@@ -124,7 +124,7 @@ function figureHit(): SearchResult {
 		metadata: {
 			unit_id: "u-fig-1",
 			unit_type: "figure",
-			section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+			section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 			page_start: 37,
 			page_end: 37,
 			figure_id: "fig-12",
@@ -140,7 +140,7 @@ function figureHit(): SearchResult {
 			root_document_id: "doc-1",
 			page_start: 37,
 			page_end: 37,
-			section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+			section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 			figure_id: "fig-12",
 			asset_id: "asset-fig-12",
 			bbox: [0.1, 0.2, 0.3, 0.4],
@@ -157,11 +157,11 @@ function chunkHitWithRefs(): SearchResult {
 	return {
 		id: "11",
 		score: 0.8,
-		content: "Der Wareneingang beginnt mit der Anmeldung [Abbildung fig-12].",
+		content: "Der Antragseingang beginnt mit der Anmeldung [Abbildung fig-12].",
 		metadata: {
 			unit_id: "u-chunk-1",
 			unit_type: "chunk",
-			section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+			section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 			page_start: 37,
 			page_end: 38,
 			prev_unit_id: "u-c0",
@@ -173,7 +173,7 @@ function chunkHitWithRefs(): SearchResult {
 			root_document_id: "doc-1",
 			page_start: 37,
 			page_end: 38,
-			section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+			section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 			figure_refs: [{ figure_id: "fig-12", asset_id: "asset-fig-12" }],
 			asset_ids: ["asset-fig-12"],
 		},
@@ -228,7 +228,7 @@ describe("/v2/search handler", () => {
 		expect(body.results).toHaveLength(1);
 		const hit = body.results[0];
 		expect(hit.unit_type).toBe("chunk");
-		expect(hit.section_path).toEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+		expect(hit.section_path).toEqual(["4 Antragseingang", "4.2 Anmeldung"]);
 		expect(hit.pages).toEqual({ start: 37, end: 38 });
 		expect(hit.navigation).toMatchObject({
 			prev_unit_id: "u-c0",
@@ -269,7 +269,7 @@ describe("/v2/search handler", () => {
 					unit_type: "figure",
 					figure_kind: "ui_mask",
 					pages: { start: 37, end: 38 },
-					section_prefix: ["4 Wareneingang"],
+					section_prefix: ["4 Antragseingang"],
 				},
 			}) as never,
 			res as never,
@@ -284,7 +284,7 @@ describe("/v2/search handler", () => {
 			figureKind: "ui_mask",
 			pageStart: 37,
 			pageEnd: 38,
-			sectionPrefix: ["4 Wareneingang"],
+			sectionPrefix: ["4 Antragseingang"],
 		});
 	});
 
@@ -472,7 +472,7 @@ describe("/v2/search handler", () => {
 					},
 					{
 						unit_id: "u-chunk-1",
-						content: "Der Wareneingang…",
+						content: "Der Antragseingang…",
 						page_start: 37,
 						page_end: 38,
 					},
@@ -766,27 +766,27 @@ describe("/v2/search · optional HyDE expansion", () => {
 	it("embeds the expansion while the lexical branch keeps the original query", async () => {
 		const embedding = mockEmbedding();
 		const pg = mockPg();
-		const hydeClient = hydeOk("Die Buchung laeuet ueber das Modul Wareneingang.");
+		const hydeClient = hydeOk("Die Buchung laeuet ueber das Modul Antragseingang.");
 		const handler = createSearchV2Handler(embedding, pg, logger, {
 			hydeClient: hydeClient as never,
 		});
 		const res = mockRes();
 		await handler(
-			mockReq({ query: "wareneingang buchung", hyde: true }) as never,
+			mockReq({ query: "antragseingang buchung", hyde: true }) as never,
 			res as never,
 			vi.fn(),
 		);
 		expect(res.statusCode).toBe(200);
 		expect(hydeClient.expand).toHaveBeenCalledWith(
-			"wareneingang buchung",
+			"antragseingang buchung",
 			"t1",
 		);
 		expect(embedding.embed).toHaveBeenCalledWith(
-			"Die Buchung laeuet ueber das Modul Wareneingang.",
+			"Die Buchung laeuet ueber das Modul Antragseingang.",
 		);
 		// The PostgreSQL lexical branch still receives the original query.
 		expect((pg.search as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
-			"wareneingang buchung",
+			"antragseingang buchung",
 		);
 		expect(res.body).toMatchObject({ hyde_applied: true });
 	});
@@ -797,7 +797,7 @@ describe("/v2/search · optional HyDE expansion", () => {
 		});
 		const res = mockRes();
 		await handler(
-			mockReq({ query: "wareneingang buchung", hyde: true }) as never,
+			mockReq({ query: "antragseingang buchung", hyde: true }) as never,
 			res as never,
 			vi.fn(),
 		);
@@ -825,13 +825,13 @@ describe("/v2/search · optional HyDE expansion", () => {
 		});
 		const res = mockRes();
 		await handler(
-			mockReq({ query: "wareneingang buchung" }) as never,
+			mockReq({ query: "antragseingang buchung" }) as never,
 			res as never,
 			vi.fn(),
 		);
 		expect(res.statusCode).toBe(200);
 		expect(hydeClient.expand).not.toHaveBeenCalled();
-		expect(embedding.embed).toHaveBeenCalledWith("wareneingang buchung");
+		expect(embedding.embed).toHaveBeenCalledWith("antragseingang buchung");
 		expect(res.body).not.toHaveProperty("hyde_applied");
 	});
 });

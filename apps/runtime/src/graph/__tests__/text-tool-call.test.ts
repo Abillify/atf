@@ -59,9 +59,9 @@ describe("detectTextToolCall", () => {
   test("regular German answer with citations → not detected", () => {
     const answer =
       "**Klassifikation: Neue Anforderung**\n\n" +
-      "Das Pflichtenheft sieht für die offenen Auftragspositionen kein " +
+      "Die Spezifikation sieht für die offenen Auftragspositionen kein " +
       "Aktionskennzeichen als Filter oder Spalte vor [1]. Die Maske entspricht " +
-      "damit dem vereinbarten Umfang [2].\n\n## Quellen\n\n[1] Pflichtenheft, Kap. 4.2\n[2] Pflichtenheft, Kap. 4.3";
+      "damit dem vereinbarten Umfang [2].\n\n## Quellen\n\n[1] Spezifikation, Kap. 4.2\n[2] Spezifikation, Kap. 4.3";
     expect(detectTextToolCall(answer)).toEqual({ detected: false });
   });
 

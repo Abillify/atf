@@ -1183,7 +1183,7 @@ const ROUTER: NodeTypeDoc = {
     {
       title: "Route by a classification field",
       yaml: `edges:
-  - { source: router, target: retoure, conditions: "classification.route == 'RETOURE'" }
+  - { source: router, target: reklamation, conditions: "classification.route == 'REKLAMATION'" }
   - { source: router, target: answer-fast }   # default`,
     },
   ],
@@ -1286,7 +1286,7 @@ const CLASSIFIER: NodeTypeDoc = {
     schema:
       type: object
       properties:
-        route: { type: string, enum: [RETOURE, TENANTS, BETRIEB, ALLGEMEINES] }
+        route: { type: string, enum: [REKLAMATION, TENANTS, BETRIEB, ALLGEMEINES] }
         needsInfo: { type: boolean }
       required: [route, needsInfo]
   config:
@@ -1347,12 +1347,12 @@ const PARALLEL: NodeTypeDoc = {
       description:
         "`profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none|neighbors|section|page) pulls in surrounding context, `granularity` (chunk|section|page|document) picks the unit size, `includeAssets` (none|refs|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none|auto|always, default none), maxImages? (1–20, default 4), variant? (thumb|preview|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`.",
       example: {
-        select: [{ when: "classification.route == 'RETOURE'", use: "retoure" }],
+        select: [{ when: "classification.route == 'REKLAMATION'", use: "reklamation" }],
         default: "allgemein",
         profiles: {
-          retoure: [
+          reklamation: [
             {
-              collection: "retoure-docs",
+              collection: "reklamation-docs",
               tags: ["{{classification.clientTag}}"],
               limit: 8,
             },
@@ -1837,7 +1837,7 @@ const AGENT_HARNESS: NodeTypeDoc = {
   type: agent-harness
   llm: { shortcut: structured-pool }
   config:
-    allowlist: [rag-context, betrieb-responder, retoure-responder]
+    allowlist: [rag-context, betrieb-responder, reklamation-responder]
     maxIterations: 6
     maxCost: 0.5
     carryForward: condensed

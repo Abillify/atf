@@ -5,7 +5,7 @@
  * Cross-source deduplication in the staged coverage queue.
  *
  * The ledger is seeded from `get_summaries`, whose `reference` is a
- * document-UNIT path (`/…/Datei.pdf/79. PFLICHTENHEFT …`): one entry per
+ * document-UNIT path (`/…/Datei.pdf/79. SPEZIFIKATION …`): one entry per
  * logical unit, never per physical file. `get_document` resolves these unit
  * references and merges the unit's chunks. Discovery `search` hits carry a
  * `base_ref` (the unit) when the server provides one, otherwise a chunk-level

@@ -6,7 +6,7 @@
  *
  * Pure query-side splitting of long German compounds (FTS_COMPOUND_SPLIT).
  * The German stemmer keeps compounds as a single lexeme, so a query for
- * `Arbeitsplatz` never matches an indexed `Kommissionierarbeitsplatz`. With
+ * `Arbeitsplatz` never matches an indexed `Revisionsarbeitsplatz`. With
  * the feature on, every query token of at least COMPOUND_MIN_TOKEN_LENGTH
  * characters is checked against the collection lexicon (see
  * fts-lexicon-cache.ts): the smallest cut where BOTH sides are known lexicon

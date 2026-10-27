@@ -510,8 +510,8 @@ describe("runRetrievalPipeline", () => {
   const cfg = (
     over: Partial<RetrievalPipelineConfig> = {},
   ): RetrievalPipelineConfig => ({
-    query: "wie wird der wareneingang gebucht",
-    embedText: "wie wird der wareneingang gebucht",
+    query: "wie wird der antragseingang gebucht",
+    embedText: "wie wird der antragseingang gebucht",
     collection: "documents",
     scope: {} as never,
     limit: 2,
@@ -686,7 +686,7 @@ describe("runRetrievalPipeline", () => {
     }));
     const expand = vi.fn(async () => ({
       ok: true as const,
-      result: "Die Buchung erfolgt im Modul Wareneingang.",
+      result: "Die Buchung erfolgt im Modul Antragseingang.",
     }));
     const { clients, search } = clientsFor([hit({ id: "a" })]);
     clients.embeddingClient = { embed } as unknown as EmbeddingClient;
@@ -698,7 +698,7 @@ describe("runRetrievalPipeline", () => {
     );
     expect(expand).toHaveBeenCalledWith(cfg().query, undefined);
     expect(embed).toHaveBeenCalledWith(
-      "Die Buchung erfolgt im Modul Wareneingang.",
+      "Die Buchung erfolgt im Modul Antragseingang.",
     );
     // The PostgreSQL lexical branch still receives the original query.
     expect(search.mock.calls[0]?.[0]).toBe(cfg().query);

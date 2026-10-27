@@ -237,7 +237,7 @@ describe("job-runner · Pass-1 Markdown → typed blocks", () => {
     const vision = scriptedVision((page) =>
       page === 1
         ? body(
-            "# 2 Wareneingang\n\n<table data-continues=\"true\"><thead><tr><th>Art.</th><th>Menge</th></tr></thead><tr><td>A1</td><td>3</td></tr></table>",
+            "# 2 Antragseingang\n\n<table data-continues=\"true\"><thead><tr><th>Art.</th><th>Menge</th></tr></thead><tr><td>A1</td><td>3</td></tr></table>",
           )
         : body("<table data-continuation=\"true\"><tr><td>A2</td><td>4</td></tr></table>\n\nWeiter im Text."),
     );
@@ -248,7 +248,7 @@ describe("job-runner · Pass-1 Markdown → typed blocks", () => {
     const t2 = p2.blocks.find((b) => b.type === "table") as TableBlock;
     expect(t2.tableId).toBe(t1.tableId);
     expect(t2.continuationOf).toBe(t1.tableId);
-    expect(p2.blocks.find((b) => b.type === "paragraph")?.sectionPath).toEqual(["2 Wareneingang"]);
+    expect(p2.blocks.find((b) => b.type === "paragraph")?.sectionPath).toEqual(["2 Antragseingang"]);
   });
 });
 
@@ -258,7 +258,7 @@ describe("job-runner · previous-page context (design §5 S3)", () => {
   const bodies = (page: number): string =>
     page === 1
       ? body(
-          "# 3 Lager\n\n## 3.1 Regale\n\n<table data-continues><thead><tr><th>Regal</th><th>Fach</th></tr></thead><tr><td>R1</td><td>F1</td></tr></table>",
+          "# 3 Archiv\n\n## 3.1 Regale\n\n<table data-continues><thead><tr><th>Regal</th><th>Fach</th></tr></thead><tr><td>R1</td><td>F1</td></tr></table>",
         )
       : body(`Seite ${page} Fortsetzung.`);
 
@@ -270,7 +270,7 @@ describe("job-runner · previous-page context (design §5 S3)", () => {
 
     expect(vision.inputs[0]?.prevPage).toBeUndefined();
     expect(vision.inputs[1]?.prevPage).toEqual({
-      headingChain: ["3 Lager", "3.1 Regale"],
+      headingChain: ["3 Archiv", "3.1 Regale"],
       lastTableHeader: "Regal | Fach",
     });
     const row = await store.getStage("page", { job_id: job.id, page: 2, stage: VISION1_STAGE });

@@ -422,7 +422,7 @@ export function createNavMethods(ctx: PgFactoryCtx) {
         const accessSql = buildAccessSql(p, scope);
         const refPh = p.add(ref);
         // Prefer the explicit section id; else match a section-path PREFIX so a
-        // caller can pass "4 Wareneingang" and get every unit under it.
+        // caller can pass "4 Antragseingang" and get every unit under it.
         let targetSql: string;
         if (sectionId) {
           targetSql = `section_id = ${p.add(sectionId)}`;

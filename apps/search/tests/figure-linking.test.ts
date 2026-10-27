@@ -55,13 +55,13 @@ function documentWithFigure(): string {
   return [
     "## Seite 3",
     "",
-    "<summary>Seite 3 beschreibt den Wareneingang.</summary>",
+    "<summary>Seite 3 beschreibt den Antragseingang.</summary>",
     "",
     "<figures>",
-    '<figure id="p3-f1" bbox="[0.1, 0.2, 0.6, 0.75]" page="3">Ablaufdiagramm des Wareneingangs. Es zeigt drei Schritte.</figure>',
+    '<figure id="p3-f1" bbox="[0.1, 0.2, 0.6, 0.75]" page="3">Ablaufdiagramm des Antragseingangs. Es zeigt drei Schritte.</figure>',
     "</figures>",
     "",
-    "Der Wareneingang folgt einem festen Ablauf.",
+    "Der Antragseingang folgt einem festen Ablauf.",
     "",
     "![figure_p3-f1]",
     "",
@@ -85,8 +85,8 @@ async function buildJobs(content: string, options = chunkingOptions()) {
 
 describe("firstSentence", () => {
   it("returns the first sentence of a multi-sentence caption", () => {
-    expect(firstSentence("Ablaufdiagramm des Wareneingangs. Es zeigt drei Schritte.")).toBe(
-      "Ablaufdiagramm des Wareneingangs.",
+    expect(firstSentence("Ablaufdiagramm des Antragseingangs. Es zeigt drei Schritte.")).toBe(
+      "Ablaufdiagramm des Antragseingangs.",
     );
   });
 
@@ -107,7 +107,7 @@ describe("normalizeDocumentStructure: figure placeholder substitution (Requireme
     const structure = normalizeDocumentStructure(documentWithFigure(), REFERENCE);
     expect(structure.content).not.toMatch(/!\[figure_/);
     expect(structure.content).toContain(
-      "[Abbildung p3-f1: Ablaufdiagramm des Wareneingangs.]",
+      "[Abbildung p3-f1: Ablaufdiagramm des Antragseingangs.]",
     );
   });
 
@@ -163,7 +163,7 @@ describe("buildJobsForDocument: figure chunk embed input (Requirement 2.5)", () 
     const embed = figureJob?.embedInput ?? "";
     expect(embed).toContain("title: Handbuch");
     expect(embed).toContain("heading: Prozessschritte");
-    expect(embed).toContain("Seite 3 beschreibt den Wareneingang");
+    expect(embed).toContain("Seite 3 beschreibt den Antragseingang");
   });
 });
 
@@ -172,7 +172,7 @@ describe("verified evidence surfaces referenced figure asset ids (Requirement 2.
     const result: SearchResult = {
       id: "1",
       score: 0.9,
-      content: "Der Wareneingang folgt einem festen Ablauf. [Abbildung p3-f1: …]",
+      content: "Der Antragseingang folgt einem festen Ablauf. [Abbildung p3-f1: …]",
       metadata: { version: "v1" },
       reference: "specs/handbuch.pdf_chunk_0",
       base_ref: "specs/handbuch.pdf",
@@ -189,8 +189,8 @@ describe("verified evidence surfaces referenced figure asset ids (Requirement 2.
     };
     const pack = buildVerifiedEvidencePack({
       collection: "handbuch",
-      query: "wareneingang",
-      effectiveQuery: "wareneingang",
+      query: "antragseingang",
+      effectiveQuery: "antragseingang",
       accessScopeFingerprint: "scope",
       results: [result],
       requestedLimit: 10,

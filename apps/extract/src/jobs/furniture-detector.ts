@@ -9,7 +9,7 @@
  *
  * ## Why this exists, and why it *keeps* the furniture
  *
- * A running header ("Pflichtenheft WMS · Kapitel 3"), a page footer ("Seite 12
+ * A running header ("Spezifikation Alpha · Kapitel 3"), a page footer ("Seite 12
  * von 340") or a plan's title block (drawing number, revision, sheet) repeats
  * at the same place on many pages. The v1 pipeline had no notion of this, and
  * the design (defect D10) calls out the real failure mode: naive extractors

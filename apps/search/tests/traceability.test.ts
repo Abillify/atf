@@ -61,8 +61,8 @@ describe("contentHash", () => {
 describe("traceOccurrenceKey", () => {
   it("joins base_ref and section with NUL", () => {
     expect(traceOccurrenceKey(occ("doc/a", "x"))).toBe("doc/a\u0000");
-    expect(traceOccurrenceKey(occ("doc/a", "x", "4 Wareneingang"))).toBe(
-      "doc/a\u00004 Wareneingang",
+    expect(traceOccurrenceKey(occ("doc/a", "x", "4 Antragseingang"))).toBe(
+      "doc/a\u00004 Antragseingang",
     );
   });
 

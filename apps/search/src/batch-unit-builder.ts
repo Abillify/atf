@@ -392,8 +392,8 @@ function samePath(a: string[], b: string[]): boolean {
 
 /**
  * Identifier-shaped code: two or more uppercase groups joined by dashes,
- * e.g. "QAP-MDE-03" or "ISO-9001". These are the codes a reader quotes when
- * asking for a section ("Welche ID hat die Station? → QAP-MDE-03");
+ * e.g. "QAP-DOK-03" or "ISO-9001". These are the codes a reader quotes when
+ * asking for a section ("Welche ID hat die Station? → QAP-DOK-03");
  * they sit in the section's heading/ID paragraph, not in the section's tables.
  */
 const SECTION_IDENTIFIER_RE = /\b[A-Z]{2,}(?:-[A-Z0-9]{2,})+\b/g;
@@ -408,7 +408,7 @@ const MAX_SECTION_IDENTIFIERS = 8;
  * sections (the same form table repeated per variant); without the section's
  * ID codes the reranker cannot tell them apart and the section's `chunk`
  * unit — which carries the "ID: …" line — gets crowded out of the top-k
- * (Bench regression: QAP-MDE-03 fell to rank 15 behind three identical
+ * (Bench regression: QAP-DOK-03 fell to rank 15 behind three identical
  * "Eingabe-Möglichkeit" table fragments). Prepending the codes keeps each
  * table unit searchable and rankable under its own section identity.
  *

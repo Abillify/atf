@@ -20,29 +20,29 @@ import {
 } from "../src/reembed-decision.js";
 
 describe("shouldReembed — selective re-embedding decision (requirement 9.6)", () => {
-  const incoming = { sectionPath: ["4 Wareneingang", "4.2 Anmeldung"], content: "Der Inhalt." };
+  const incoming = { sectionPath: ["4 Antragseingang", "4.2 Anmeldung"], content: "Der Inhalt." };
 
   it("re-embeds a NEW unit (no stored row)", () => {
     expect(shouldReembed(incoming, null)).toBe(true);
   });
 
   it("REUSES the stored vector when both section_path and content are unchanged", () => {
-    const stored = { sectionPath: ["4 Wareneingang", "4.2 Anmeldung"], content: "Der Inhalt." };
+    const stored = { sectionPath: ["4 Antragseingang", "4.2 Anmeldung"], content: "Der Inhalt." };
     expect(shouldReembed(incoming, stored)).toBe(false);
   });
 
   it("re-embeds when the section_path changed (the header, hence the vector, is stale)", () => {
-    const stored = { sectionPath: ["4 Wareneingang"], content: "Der Inhalt." };
+    const stored = { sectionPath: ["4 Antragseingang"], content: "Der Inhalt." };
     expect(shouldReembed(incoming, stored)).toBe(true);
   });
 
   it("re-embeds when only a deeper level of the path changed", () => {
-    const stored = { sectionPath: ["4 Wareneingang", "4.1 Voranmeldung"], content: "Der Inhalt." };
+    const stored = { sectionPath: ["4 Antragseingang", "4.1 Voranmeldung"], content: "Der Inhalt." };
     expect(shouldReembed(incoming, stored)).toBe(true);
   });
 
   it("re-embeds when the content changed even though the path is identical", () => {
-    const stored = { sectionPath: ["4 Wareneingang", "4.2 Anmeldung"], content: "Anderer Text." };
+    const stored = { sectionPath: ["4 Antragseingang", "4.2 Anmeldung"], content: "Anderer Text." };
     expect(shouldReembed(incoming, stored)).toBe(true);
   });
 

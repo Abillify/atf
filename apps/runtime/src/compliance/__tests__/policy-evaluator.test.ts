@@ -125,7 +125,7 @@ describe("evaluatePolicy", () => {
           blockedModels: [{ provider: "openai", model: "gpt-3*" }],
         },
         {
-          tenant: "retoure",
+          tenant: "reklamation",
           allowedModels: [{ provider: "openai", model: "gpt-4o" }],
         },
       ],
@@ -141,7 +141,7 @@ describe("evaluatePolicy", () => {
 
     it("denies a tenant-scoped model not on the allow-list", () => {
       const result = evaluatePolicy(policy, {
-        tenantId: "retoure",
+        tenantId: "reklamation",
         llmConfig: llm("anthropic", "claude-3-5-sonnet-latest"),
       });
       expect(result.decision).toBe("deny");
@@ -149,7 +149,7 @@ describe("evaluatePolicy", () => {
 
     it("allows a tenant-scoped model on the allow-list", () => {
       const result = evaluatePolicy(policy, {
-        tenantId: "retoure",
+        tenantId: "reklamation",
         llmConfig: llm("openai", "gpt-4o"),
       });
       expect(result.decision).toBe("allow");
@@ -170,7 +170,7 @@ describe("evaluatePolicy", () => {
       failClosed: true,
       approvalRules: [
         {
-          toolPatterns: ["retoure-*"],
+          toolPatterns: ["reklamation-*"],
           exemptRoles: ["admin"],
         },
       ],
@@ -178,14 +178,14 @@ describe("evaluatePolicy", () => {
 
     it("requires approval when a tool id matches the pattern", () => {
       const result = evaluatePolicy(policy, {
-        toolIds: ["retoure-delete"],
+        toolIds: ["reklamation-delete"],
       });
       expect(result.decision).toBe("require-approval");
     });
 
     it("does not require approval for an exempt role", () => {
       const result = evaluatePolicy(policy, {
-        toolIds: ["retoure-delete"],
+        toolIds: ["reklamation-delete"],
         role: "admin",
       });
       expect(result.decision).toBe("allow");
@@ -310,18 +310,18 @@ describe("policyRequiresToolApproval", () => {
   const policy: CompliancePolicy = {
     version: "1",
     failClosed: true,
-    approvalRules: [{ toolPatterns: ["retoure-*"], exemptRoles: ["admin"] }],
+    approvalRules: [{ toolPatterns: ["reklamation-*"], exemptRoles: ["admin"] }],
   };
 
   it("returns required:false when no policy is loaded", () => {
     expect(
-      policyRequiresToolApproval(undefined, "retoure-delete", {}),
+      policyRequiresToolApproval(undefined, "reklamation-delete", {}),
     ).toEqual({ required: false });
   });
 
   it("returns required:true for a matching tool pattern", () => {
     expect(
-      policyRequiresToolApproval(policy, "retoure-delete", {}),
+      policyRequiresToolApproval(policy, "reklamation-delete", {}),
     ).toEqual({ required: true });
   });
 
@@ -333,7 +333,7 @@ describe("policyRequiresToolApproval", () => {
 
   it("returns required:false for an exempt role", () => {
     expect(
-      policyRequiresToolApproval(policy, "retoure-delete", { role: "admin" }),
+      policyRequiresToolApproval(policy, "reklamation-delete", { role: "admin" }),
     ).toEqual({ required: false });
   });
 
@@ -352,16 +352,16 @@ describe("policyRequiresToolApproval", () => {
     const policyWithTimeout: CompliancePolicy = {
       version: "1",
       failClosed: true,
-      approvalRules: [{ toolPatterns: ["retoure-*"], timeoutMs: 120_000 }],
+      approvalRules: [{ toolPatterns: ["reklamation-*"], timeoutMs: 120_000 }],
     };
     expect(
-      policyRequiresToolApproval(policyWithTimeout, "retoure-delete", {}),
+      policyRequiresToolApproval(policyWithTimeout, "reklamation-delete", {}),
     ).toEqual({ required: true, timeoutMs: 120_000 });
   });
 
   it("omits timeoutMs when the matched rule does not set one (falls back to the gate's global default)", () => {
     expect(
-      policyRequiresToolApproval(policy, "retoure-delete", {}),
+      policyRequiresToolApproval(policy, "reklamation-delete", {}),
     ).toEqual({ required: true });
   });
 
@@ -370,12 +370,12 @@ describe("policyRequiresToolApproval", () => {
       version: "1",
       failClosed: true,
       approvalRules: [
-        { toolPatterns: ["retoure-*"], timeoutMs: 60_000 },
+        { toolPatterns: ["reklamation-*"], timeoutMs: 60_000 },
         { toolPatterns: ["*"], timeoutMs: 5_000 },
       ],
     };
     expect(
-      policyRequiresToolApproval(multiRulePolicy, "retoure-delete", {}),
+      policyRequiresToolApproval(multiRulePolicy, "reklamation-delete", {}),
     ).toEqual({ required: true, timeoutMs: 60_000 });
   });
 });

@@ -113,7 +113,7 @@ describe("parseVectorSearchResults", () => {
           title: "Handbuch",
           score: 0.8,
           content: "…",
-          section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+          section_path: ["4 Antragseingang", "4.2 Anmeldung"],
           pages: [37, 38],
           assets: [
             {
@@ -131,7 +131,7 @@ describe("parseVectorSearchResults", () => {
       ]),
     );
     const c = at(out, 0);
-    expect(c.sectionPath).toEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+    expect(c.sectionPath).toEqual(["4 Antragseingang", "4.2 Anmeldung"]);
     expect(c.pages).toEqual([37, 38]);
     expect(c.assets).toHaveLength(1);
     expect(c.assets?.[0]).toEqual({

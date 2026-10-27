@@ -256,7 +256,7 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         .array(z.string().min(1))
         .min(1)
         .optional()
-        .describe('Section path prefix, e.g. ["4 Wareneingang", "4.2 Anmeldung"]. Used when section_id is not given.'),
+        .describe('Section path prefix, e.g. ["4 Antragseingang", "4.2 Anmeldung"]. Used when section_id is not given.'),
       max_chars: z
         .number()
         .int()

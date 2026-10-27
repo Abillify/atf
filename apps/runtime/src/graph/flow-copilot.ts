@@ -194,7 +194,7 @@ starts with one): build on it — configure it via updateNodes, or remove it and
 nodes — instead of leaving it next to your nodes. If you remove the first node, the next \
 remaining node in the list becomes the start.
 
-Edge "conditions" are expressions like classification.route == 'RETOURE' evaluated against \
+Edge "conditions" are expressions like classification.route == 'REKLAMATION' evaluated against \
 the run state. Every node id you reference must either already exist in the current flow or \
 be one you are adding in this same patch. Use empty string / empty array to mean "no change" \
 (update) or "use the platform default" (add). If the instruction is ambiguous about a value \

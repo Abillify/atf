@@ -144,7 +144,7 @@ describe("outline stack — sectionPath", () => {
     const pass = createDocumentPass();
     const p1 = pass.applyPage(
       pageRecord(1, [
-        heading(1, "Wareneingang", 1, "4"),
+        heading(1, "Antragseingang", 1, "4"),
         paragraph(1, "Intro to chapter 4."),
         heading(1, "Anmeldung", 2, "4.2"),
         paragraph(1, "Body of 4.2."),
@@ -152,29 +152,29 @@ describe("outline stack — sectionPath", () => {
     ).record;
 
     // The chapter heading itself carries just its own path…
-    expect((p1.blocks[0] as Block).sectionPath).toEqual(["4 Wareneingang"]);
+    expect((p1.blocks[0] as Block).sectionPath).toEqual(["4 Antragseingang"]);
     // …its intro paragraph too…
-    expect((p1.blocks[1] as Block).sectionPath).toEqual(["4 Wareneingang"]);
+    expect((p1.blocks[1] as Block).sectionPath).toEqual(["4 Antragseingang"]);
     // …and the 4.2 body nests under 4 › 4.2.
-    expect((p1.blocks[3] as Block).sectionPath).toEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+    expect((p1.blocks[3] as Block).sectionPath).toEqual(["4 Antragseingang", "4.2 Anmeldung"]);
 
     // Page 2 opens 4.2.1, then a sibling chapter 5 pops everything back to L1.
     const p2 = pass.applyPage(
       pageRecord(2, [
         heading(2, "Maske WE01", 3, "4.2.1"),
         paragraph(2, "Deep body."),
-        heading(2, "Wareneingang buchen", 1, "5"),
+        heading(2, "Antragseingang buchen", 1, "5"),
         paragraph(2, "Chapter 5 body."),
       ]),
     ).record;
 
     expect((p2.blocks[1] as Block).sectionPath).toEqual([
-      "4 Wareneingang",
+      "4 Antragseingang",
       "4.2 Anmeldung",
       "4.2.1 Maske WE01",
     ]);
     // Chapter 5 popped 4.2.1, 4.2 and 4.
-    expect((p2.blocks[3] as Block).sectionPath).toEqual(["5 Wareneingang buchen"]);
+    expect((p2.blocks[3] as Block).sectionPath).toEqual(["5 Antragseingang buchen"]);
 
     // The finished outline has all five headings with page ranges.
     const outline = pass.outline(2);
@@ -423,7 +423,7 @@ describe("refs and captions", () => {
     pass.applyPage(
       pageRecord(1, [
         heading(1, "Anmeldung", 2, "4.2"),
-        figure(1, "p1-f1", "Abbildung 12: Maske WE01 – Wareneingang"),
+        figure(1, "p1-f1", "Abbildung 12: Maske WE01 – Antragseingang"),
         table(1, [["Pos", "Wert"]], [["a", "b"]], { caption: "Tabelle 3: Werte" }),
       ]),
     );
@@ -466,7 +466,7 @@ describe("identifier extraction", () => {
       ["Öffne Maske WE01 im System.", "mask_code"],
       ["Zeichnung ZG-100 beachten.", "drawing_number"],
       ["Art.-Nr. 4711 bestellen.", "article_number"],
-      ["ID: QAP-MDE-03; Stand: 01.01.2025", "composite_code"],
+      ["ID: QAP-DOK-03; Stand: 01.01.2025", "composite_code"],
     ];
     for (const [text, kind] of cases) {
       const found = extractIdentifiers(text, 1, "b1");
@@ -496,12 +496,12 @@ describe("identifier extraction", () => {
   });
 
   it("a composite code is claimed whole, not as its drawing-number tail", () => {
-    const found = extractIdentifiers("ID: QAP-MDE-03", 1, undefined);
-    // The whole "QAP-MDE-03", not just "MDE-03" — the prefix distinguishes
+    const found = extractIdentifiers("ID: QAP-DOK-03", 1, undefined);
+    // The whole "QAP-DOK-03", not just "DOK-03" — the prefix distinguishes
     // it from the sibling codes of the other sections (QAB-, QAV-).
     expect(found).toHaveLength(1);
     expect(found[0]?.kind).toBe("composite_code");
-    expect(found[0]?.value).toBe("QAP-MDE-03");
+    expect(found[0]?.value).toBe("QAP-DOK-03");
   });
 
   it("the document pass indexes identifiers from figure labels", () => {
@@ -522,12 +522,12 @@ describe("furniture wiring", () => {
     for (let p = 1; p <= 3; p++) {
       const rec = pageRecord(p, [paragraph(p, `body ${p}`)]);
       const ana = analysis(p, [
-        line("Pflichtenheft WMS", 0.04, 0.02),
+        line("Spezifikation Alpha", 0.04, 0.02),
         line(`body ${p}`, 0.5, 0.02),
       ]);
       last = pass.applyPage(rec, ana).record;
     }
-    expect(last?.furniture?.header).toBe("Pflichtenheft WMS");
+    expect(last?.furniture?.header).toBe("Spezifikation Alpha");
   });
 });
 
@@ -540,7 +540,7 @@ describe("docpass_state persistence and resume (requirement 4.7)", () => {
     const header: Cell[][] = [["Lieferant", "Menge", "Datum"]];
     return [
       pageRecord(1, [
-        heading(1, "Wareneingang", 1, "4"),
+        heading(1, "Antragseingang", 1, "4"),
         figure(1, "p1-f1", "Abbildung 12: Maske WE01"),
         paragraph(1, "Norm DIN EN 1090-2."),
       ]),

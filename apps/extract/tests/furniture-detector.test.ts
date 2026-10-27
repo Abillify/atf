@@ -53,7 +53,7 @@ function page(pageNumber: number, lines: AnalyzedLine[]): PageAnalysis {
 describe("createFurnitureDetector", () => {
   it("records a header that recurs at the same band across the window", () => {
     const detector = createFurnitureDetector();
-    const header = "Pflichtenheft WMS";
+    const header = "Spezifikation Alpha";
     let last = null as ReturnType<typeof detector.observe>;
     for (let p = 1; p <= 4; p++) {
       last = detector.observe(

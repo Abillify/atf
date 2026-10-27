@@ -26,7 +26,7 @@
  * Expected format (`<id>.expected.json`)
  * --------------------------------------
  *   {
- *     "id": "pflichtenheft",
+ *     "id": "spec",
  *     "pages": [
  *       { "page": 1,
  *         "text": "Running text of the page in reading order: headings, paragraphs, list items.",

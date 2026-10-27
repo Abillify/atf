@@ -36,11 +36,11 @@ const serviceScope: AccessScope = {
 };
 
 describe("splitCompound", () => {
-  const lexicon = new Set(["arbeitsplatz", "kommission", "lager"]);
+  const lexicon = new Set(["arbeitsplatz", "revision", "akten"]);
 
   it("splits a long compound into its lexicon parts", () => {
-    expect(splitCompound("kommissionierarbeitsplatz", lexicon)).toEqual([
-      "kommission",
+    expect(splitCompound("revisionsarbeitsplatz", lexicon)).toEqual([
+      "revision",
       "arbeitsplatz",
     ]);
   });
@@ -53,17 +53,17 @@ describe("splitCompound", () => {
   });
 
   it("does not split when a side would be shorter than four characters", () => {
-    // The only plausible cut leaves "kommissionier" / "arbeitsplat" — the
+    // The only plausible cut leaves "revisions" / "arbeitsplat" — the
     // right side matches no lexeme within three chars of suffix.
-    expect(splitCompound("kommissionierarbeitsplat", lexicon)).toEqual([]);
+    expect(splitCompound("revisionsarbeitsplat", lexicon)).toEqual([]);
   });
 
   it("does not split umlaut forms below the minimum part length", () => {
-    expect(splitCompound("lagerplätze", lexicon)).toEqual([]);
+    expect(splitCompound("aktenplätze", lexicon)).toEqual([]);
   });
 
   it("returns no parts for a token with no lexicon anchor", () => {
-    expect(splitCompound("xyzlagerplatz", new Set(["lager", "platz"]))).toEqual(
+    expect(splitCompound("xyzaktenplatz", new Set(["akten", "platz"]))).toEqual(
       [],
     );
   });
@@ -71,13 +71,13 @@ describe("splitCompound", () => {
   it("prefers the smallest valid cut point", () => {
     // A spurious shorter anchor must not win over the real compound boundary.
     const noisy = new Set([
-      "kommission",
+      "revision",
       "arbeitsplatz",
       "arbeit",
       "splatz",
     ]);
-    expect(splitCompound("kommissionierarbeitsplatz", noisy)).toEqual([
-      "kommission",
+    expect(splitCompound("revisionsarbeitsplatz", noisy)).toEqual([
+      "revision",
       "arbeitsplatz",
     ]);
   });
@@ -90,25 +90,25 @@ describe("splitCompound", () => {
 });
 
 describe("compoundPartsForQuery", () => {
-  const lexicon = new Set(["arbeitsplatz", "kommission", "lager"]);
+  const lexicon = new Set(["arbeitsplatz", "revision", "akten"]);
 
   it("splits every long token and de-duplicates the parts", () => {
     expect(
       compoundPartsForQuery(
-        "Kommissionierarbeitsplatz kommissionierarbeitsplatz",
+        "Revisionsarbeitsplatz revisionsarbeitsplatz",
         lexicon,
       ),
-    ).toEqual(["kommission", "arbeitsplatz"]);
+    ).toEqual(["revision", "arbeitsplatz"]);
   });
 
   it("does not repeat parts already present as query tokens", () => {
     expect(
-      compoundPartsForQuery("Kommissionierarbeitsplatz Kommission", lexicon),
-    ).toEqual(["kommission", "arbeitsplatz"]);
+      compoundPartsForQuery("Revisionsarbeitsplatz Revision", lexicon),
+    ).toEqual(["revision", "arbeitsplatz"]);
   });
 
   it("returns an empty list when no token is long enough", () => {
-    expect(compoundPartsForQuery("lager platz", lexicon)).toEqual([]);
+    expect(compoundPartsForQuery("akten platz", lexicon)).toEqual([]);
   });
 });
 
@@ -116,14 +116,14 @@ describe("loadLexicon", () => {
   it("queries ts_stat and collects the words", async () => {
     const pool = {
       query: vi.fn(async () => ({
-        rows: [{ word: "arbeitsplatz" }, { word: "kommission" }],
+        rows: [{ word: "arbeitsplatz" }, { word: "revision" }],
       })),
     };
     const words = await loadLexicon(
       pool as unknown as Parameters<typeof loadLexicon>[0],
       "vc_docs",
     );
-    expect(words).toEqual(new Set(["arbeitsplatz", "kommission"]));
+    expect(words).toEqual(new Set(["arbeitsplatz", "revision"]));
     const sql = pool.query.mock.calls[0][0] as string;
     expect(sql).toContain('ts_stat(\'SELECT ts_search FROM "vc_docs"\')');
     expect(sql).toContain("ndoc >= 2");
@@ -214,7 +214,7 @@ describe("createFtsLexiconCache", () => {
 });
 
 describe("query-builder wiring (compoundTerms → OR list only)", () => {
-  const compoundTerms = ["kommission", "arbeitsplatz"];
+  const compoundTerms = ["revision", "arbeitsplatz"];
 
   it("adds split parts to the FTS OR list but not the AND list", () => {
     const built = buildFtsQuery(
@@ -224,7 +224,7 @@ describe("query-builder wiring (compoundTerms → OR list only)", () => {
       undefined,
       false,
       0,
-      "Kommissionierarbeitsplatz prüfen",
+      "Revisionsarbeitsplatz prüfen",
       serviceScope,
       undefined,
       undefined,
@@ -237,12 +237,12 @@ describe("query-builder wiring (compoundTerms → OR list only)", () => {
     );
     const orParam = built.params[0] as string;
     const andParam = built.params[1] as string;
-    expect(orParam).toContain("'kommission'");
+    expect(orParam).toContain("'revision'");
     expect(orParam).toContain("'arbeitsplatz'");
     // The AND list keeps the raw query tokens only.
-    expect(andParam).toContain("'Kommissionierarbeitsplatz'");
+    expect(andParam).toContain("'Revisionsarbeitsplatz'");
     expect(andParam).not.toContain("'arbeitsplatz'");
-    expect(andParam).not.toContain("'kommission'");
+    expect(andParam).not.toContain("'revision'");
   });
 
   it("adds split parts to the hybrid lexical OR list", () => {
@@ -259,7 +259,7 @@ describe("query-builder wiring (compoundTerms → OR list only)", () => {
       false,
       0,
       "[0.1,0.2]",
-      "Kommissionierarbeitsplatz prüfen",
+      "Revisionsarbeitsplatz prüfen",
       undefined,
       undefined,
       2,
@@ -275,9 +275,9 @@ describe("query-builder wiring (compoundTerms → OR list only)", () => {
     );
     const orParam = built.params[1] as string;
     const andParam = built.params[2] as string;
-    expect(orParam).toContain("'kommission'");
+    expect(orParam).toContain("'revision'");
     expect(orParam).toContain("'arbeitsplatz'");
-    expect(andParam).toContain("'Kommissionierarbeitsplatz'");
+    expect(andParam).toContain("'Revisionsarbeitsplatz'");
     expect(andParam).not.toContain("'arbeitsplatz'");
   });
 

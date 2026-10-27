@@ -19,7 +19,7 @@ import {
 } from "../ref-handles.js";
 
 const REF_A =
-  "prod/richtlinien/logistik/wareneingang_pruefung_v3.pdf#kapitel-4.2";
+  "prod/richtlinien/verwaltung/antragseingang_pruefung_v3.pdf#kapitel-4.2";
 const REF_B = "prod/handbuch/sicherheit/brandschutz.pdf";
 
 describe("HashRefHandleRegistry — handle derivation", () => {
@@ -182,8 +182,8 @@ describe("HashRefHandleRegistry — maskText (grounding context)", () => {
   it("replaces a reference inside a grounding (Ref: ...) line", () => {
     const reg = new HashRefHandleRegistry();
     const handle = reg.register(REF_A);
-    const section = `[1] Wareneingang (Ref: ${REF_A}): Kurztext`;
-    expect(reg.maskText(section)).toBe(`[1] Wareneingang (Ref: ${handle}): Kurztext`);
+    const section = `[1] Antragseingang (Ref: ${REF_A}): Kurztext`;
+    expect(reg.maskText(section)).toBe(`[1] Antragseingang (Ref: ${handle}): Kurztext`);
   });
 
   it("masks several references in one block, longest first", () => {
@@ -360,9 +360,9 @@ describe("resolveRefHandleArgs", () => {
   });
 });
 describe("resolveRefHandleArgs — strict", () => {
-  const PDF = "/Pflichtenheft WMS_Prozesse/Pflichtenheft WMS_Prozesse.pdf";
-  const CH73 = `${PDF}/73. 9.5 Lagereinheit prüfen`;
-  const CH77 = `${PDF}/77. PFLICHTENHEFT WMS - Prozesse`;
+  const PDF = "/Spezifikation Alpha_Prozesse/Spezifikation Alpha_Prozesse.pdf";
+  const CH73 = `${PDF}/73. 9.5 Akteneinheit prüfen`;
+  const CH77 = `${PDF}/77. SPEZIFIKATION ALPHA - Prozesse`;
   it("passes a registered real path reference unchanged, NFD-registered and NFC-requested", () => {
     const reg = new HashRefHandleRegistry();
     reg.register(CH73.normalize("NFD"));

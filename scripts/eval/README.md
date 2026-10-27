@@ -128,8 +128,8 @@ German word forms and keeps their expected answers:
 | Phenomenon | Example (base → variant) |
 | --- | --- |
 | inflection | „Wo werden die Berechtigungen beschrieben?" → „Wo wird die Berechtigung beschrieben?" |
-| compound | „Welche Pflichtfelder hat die Wareneingangsmaske?" → „Welches Pflichtfeld hat die Maske für den Wareneingang?" |
-| derivation | „Wie wird die Chargenverwaltung gefordert?" → „Wie werden Chargen verwaltet?" |
+| compound | „Welche Pflichtfelder hat die Antragseingangsmaske?" → „Welches Pflichtfeld hat die Maske für den Antragseingang?" |
+| derivation | „Wie wird die Vorgangsverwaltung gefordert?" → „Wie werden Vorgänge verwaltet?" |
 
 Since fixture 1.1.0 the set also holds 7 variants of unanswerable questions
 (16 % of 43), so the abstention metrics cover German word forms too.
@@ -164,7 +164,7 @@ content word of its base and must not occur verbatim in the corpus.
 ## The golden set
 
 `golden-set/golden-set.v1.json` is the **versioned** fixture: four representative
-document types (WMS requirements DOCX, a BPMN process document, a UI-mask manual,
+document types (requirements DOCX, a BPMN process document, a UI-mask manual,
 a technical plan set) and 144 questions: 120 answerable ones carrying expected
 page, figure and table-cell answers and 24 unanswerable ones (`abstain: true`,
 16.7 %, subject absent from the corpus, expected outcome „no hit"), plus ground-truth `extraction` annotations (expected table

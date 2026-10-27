@@ -47,17 +47,17 @@ describe("buildRerankDocument", () => {
   it("includes title, section path, type, and content", () => {
     const doc = buildRerankDocument(
       result({
-        title: "WMS Pflichtenheft",
-        content: "Der Wareneingang wird über Maske WE01 gebucht.",
-        metadata: { unit_type: "chunk", section_path: ["3", "3.2 Wareneingang"] },
+        title: "Spezifikation Alpha",
+        content: "Der Antragseingang wird über Maske WE01 gebucht.",
+        metadata: { unit_type: "chunk", section_path: ["3", "3.2 Antragseingang"] },
       }),
     );
-    expect(doc).toContain("Title: WMS Pflichtenheft");
-    expect(doc).toContain("Section: 3 / 3.2 Wareneingang");
+    expect(doc).toContain("Title: Spezifikation Alpha");
+    expect(doc).toContain("Section: 3 / 3.2 Antragseingang");
     expect(doc).toContain("Type: chunk");
-    expect(doc).toContain("Der Wareneingang wird über Maske WE01 gebucht.");
+    expect(doc).toContain("Der Antragseingang wird über Maske WE01 gebucht.");
     // Header comes before the content.
-    expect(doc.indexOf("Title:")).toBeLessThan(doc.indexOf("Der Wareneingang"));
+    expect(doc.indexOf("Title:")).toBeLessThan(doc.indexOf("Der Antragseingang"));
   });
 
   it("reads section path from evidence when metadata has none", () => {
@@ -427,31 +427,31 @@ describe("rerankResultsWithStatus feeds context-enriched documents", () => {
     const results = [
       result({
         id: "1",
-        content: "Wareneingang buchen",
-        title: "WMS",
+        content: "Antragseingang buchen",
+        title: "Alpha",
         metadata: { unit_type: "chunk", section_path: ["3.2"] },
       }),
       result({
         id: "2",
-        content: "Auslagerung",
-        title: "WMS",
+        content: "Archivierung",
+        title: "Alpha",
         metadata: { unit_type: "table", table_id: "T5", section_path: ["4.1"] },
       }),
     ];
 
     const outcome = await rerankResultsWithStatus(
       fakeReranker,
-      "wie wird der wareneingang gebucht?",
+      "wie wird der antragseingang gebucht?",
       results,
       silent,
     );
 
     expect(outcome.applied).toBe(true);
     expect(captured).toHaveLength(2);
-    expect(captured[0]).toContain("Title: WMS");
+    expect(captured[0]).toContain("Title: Alpha");
     expect(captured[0]).toContain("Section: 3.2");
     expect(captured[0]).toContain("Type: chunk");
-    expect(captured[0]).toContain("Wareneingang buchen");
+    expect(captured[0]).toContain("Antragseingang buchen");
     expect(captured[1]).toContain("Type: table");
     expect(captured[1]).toContain("Section: 4.1");
   });

@@ -1,6 +1,6 @@
 {
-	"version": "1.1.0",
-	"description": "German morphology variants of golden-set v1 questions: each re-asks a base question with a different inflection, a split compound (\"Wareneingangsmaske\" → \"Maske für den Wareneingang\") or a derivation (\"Chargenverwaltung\" → \"Chargen verwaltet\"). Expected answers are the base question's. The v1 questions appear verbatim in the corpus, so they cannot show whether stemming or compound splitting work; this set can (compare FTS_LANGUAGE=simple, german and a compound configuration). Version 1.1.0 adds 7 variants of unanswerable (abstain) base questions: the system must still find nothing relevant when the unanswerable question is phrased with other word forms.",
+	"version": "1.2.0",
+	"description": "German morphology variants of golden-set v1 questions: each re-asks a base question with a different inflection, a split compound (\"Antragseingangsmaske\" → \"Maske für den Antragseingang\") or a derivation (\"Vorgangsverwaltung\" → \"Vorgänge verwaltet\"). Expected answers are the base question's. The v1 questions appear verbatim in the corpus, so they cannot show whether stemming or compound splitting work; this set can (compare FTS_LANGUAGE=simple, german and a compound configuration). Version 1.1.0 adds 7 variants of unanswerable (abstain) base questions: the system must still find nothing relevant when the unanswerable question is phrased with other word forms.",
 	"baseFixture": "golden-set.v1.json",
 	"variants": [
 		{
@@ -10,7 +10,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Was wird zur teilweisen Freigabe von Wareneingängen gefordert?"
+			"question": "Was wird zur teilweisen Freigabe von Antragseingängen gefordert?"
 		},
 		{
 			"id": "de-002",
@@ -19,7 +19,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Welches Pflichtfeld hat die Maske für den Wareneingang?"
+			"question": "Welches Pflichtfeld hat die Maske für den Antragseingang?"
 		},
 		{
 			"id": "de-003",
@@ -27,7 +27,7 @@
 			"phenomena": [
 				"derivation"
 			],
-			"question": "Wie werden Chargen verwaltet?"
+			"question": "Wie werden Vorgänge verwaltet?"
 		},
 		{
 			"id": "de-004",
@@ -51,7 +51,7 @@
 			"phenomena": [
 				"inflection"
 			],
-			"question": "Welche Anforderungen betreffen Inventuren?"
+			"question": "Welche Anforderungen betreffen Revisionen?"
 		},
 		{
 			"id": "de-007",
@@ -68,7 +68,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Wie wird die Logik des Sperrlagers gefordert?"
+			"question": "Wie wird die Logik des Sperrvermerks gefordert?"
 		},
 		{
 			"id": "de-009",
@@ -76,7 +76,7 @@
 			"phenomena": [
 				"derivation"
 			],
-			"question": "Welche Anforderung beschreibt das Umlagern?"
+			"question": "Welche Anforderung beschreibt das Umverteilen?"
 		},
 		{
 			"id": "de-010",
@@ -101,7 +101,7 @@
 			"phenomena": [
 				"derivation"
 			],
-			"question": "Welche Anforderung regelt, wie etikettiert wird?"
+			"question": "Welche Anforderung regelt, wie gekennzeichnet wird?"
 		},
 		{
 			"id": "de-013",
@@ -120,7 +120,7 @@
 				"derivation",
 				"inflection"
 			],
-			"question": "Welche Anforderungen betreffen das Kommissionieren?"
+			"question": "Welche Anforderungen betreffen das Zusammenstellen?"
 		},
 		{
 			"id": "de-015",
@@ -129,7 +129,7 @@
 				"compound",
 				"derivation"
 			],
-			"question": "Wie wird der Nachschub gesteuert?"
+			"question": "Wie wird die Vertretung gesteuert?"
 		},
 		{
 			"id": "de-016",
@@ -156,7 +156,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Welche Aufgabe folgt im Prozess auf die Prüfung des Wareneingangs?"
+			"question": "Welche Aufgabe folgt im Prozess auf die Prüfung des Antragseingangs?"
 		},
 		{
 			"id": "de-019",
@@ -173,7 +173,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Wo beginnt der Prozess des Wareneingangs?"
+			"question": "Wo beginnt der Prozess des Antragseingangs?"
 		},
 		{
 			"id": "de-021",
@@ -182,7 +182,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Welche Aufgabe schließt den Prozess der Retouren ab?"
+			"question": "Welche Aufgabe schließt den Prozess der Reklamationen ab?"
 		},
 		{
 			"id": "de-022",
@@ -190,7 +190,7 @@
 			"phenomena": [
 				"compound"
 			],
-			"question": "Welche Aufgabe erzeugt das Etikett für den Wareneingang?"
+			"question": "Welche Aufgabe erzeugt das Protokoll für den Antragseingang?"
 		},
 		{
 			"id": "de-023",
@@ -215,7 +215,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Welche Schaltfläche zeigt die Maske für den Wareneingang?"
+			"question": "Welche Schaltfläche zeigt die Maske für den Antragseingang?"
 		},
 		{
 			"id": "de-026",
@@ -250,7 +250,7 @@
 				"compound",
 				"inflection"
 			],
-			"question": "Welche Felder hat die Maske für Inventuren?"
+			"question": "Welche Felder hat die Maske für Revisionen?"
 		},
 		{
 			"id": "de-030",
@@ -317,7 +317,7 @@
 			"phenomena": [
 				"compound"
 			],
-			"question": "Welche Anforderung regelt die Überwachung der Kühlkette bei Tiefkühlware?"
+			"question": "Welche Anforderung regelt die Überwachung der Fristen bei Eilverfahren?"
 		},
 		{
 			"id": "de-038",
@@ -325,7 +325,7 @@
 			"phenomena": [
 				"inflection"
 			],
-			"question": "Wo wird die Lagerung von Gefahrgütern der Klasse 7 beschrieben?"
+			"question": "Wo wird die Aufbewahrung einer Verschlusssache der Stufe 3 beschrieben?"
 		},
 		{
 			"id": "de-039",
@@ -350,7 +350,7 @@
 			"phenomena": [
 				"compound"
 			],
-			"question": "Welche Felder hat die Maske für die Registrierung von Fahrern?"
+			"question": "Welche Felder hat die Maske für die Registrierung von Besuchern?"
 		},
 		{
 			"id": "de-042",

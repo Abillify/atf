@@ -157,7 +157,7 @@ describe("maskRagContextForModel", () => {
         "The following sources are ordered by relevance to the question. " +
         "Base your answer on these case file contents.\n\n" +
         `RELEVANT PASSAGES (ordered by relevance to the question).\n\n` +
-        `[1] Pflichtenheft (Ref: ${ref})\nPassage text.`,
+        `[1] Spezifikation (Ref: ${ref})\nPassage text.`,
     });
 
   test("replaces the grounding Ref with its handle", () => {

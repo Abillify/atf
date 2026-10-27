@@ -47,9 +47,9 @@
  * per line). Each entry:
  *
  *   {
- *     "reference": "specs/wms.pdf",        // required, the Search row key
+ *     "reference": "specs/alpha.pdf",       // required, the Search row key
  *     "sourceSha256": "<64 hex>",          // an already-stored source, OR
- *     "path": "/corpus/wms.pdf",           // a file to upload first
+ *     "path": "/corpus/alpha.pdf",          // a file to upload first
  *     "mimeType": "application/pdf",       // optional hint
  *     "collection": "documents",           // optional; else --collection
  *     "hitCount": 128,                     // usage signal (Req 17.3)

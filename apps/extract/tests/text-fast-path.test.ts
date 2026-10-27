@@ -56,7 +56,7 @@ function block(lines: AnalyzedLine[]): AnalyzedBlock {
 function textPageAnalysis(page = 1): PageAnalysis {
   const heading = line("2.1 Anmeldung", [0.1, 0.1, 0.5, 0.13], 0.03);
   const para1 = block([
-    line("Der Wareneingang wird über die Maske WE01 erfasst.", [0.1, 0.15, 0.9, 0.18]),
+    line("Der Antragseingang wird über die Maske WE01 erfasst.", [0.1, 0.15, 0.9, 0.18]),
     line("Die Artikelnummer BA2b ist dabei Pflicht.", [0.1, 0.19, 0.9, 0.22]),
   ]);
   const list = block([
@@ -240,7 +240,7 @@ describe("checkFastPathFidelity", () => {
     const blocks = buildTextFastPathBlocks(analysis, 1);
     // The raw text layer as poppler linearises it: the same wording.
     const rawText =
-      "2.1 Anmeldung\nDer Wareneingang wird über die Maske WE01 erfasst.\n" +
+      "2.1 Anmeldung\nDer Antragseingang wird über die Maske WE01 erfasst.\n" +
       "Die Artikelnummer BA2b ist dabei Pflicht.\n- Position 1\n- Position 2";
     const result = checkFastPathFidelity(rawText, blocks);
     expect(result.flagged).toBe(false);

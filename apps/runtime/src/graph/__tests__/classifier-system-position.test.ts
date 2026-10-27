@@ -96,7 +96,7 @@ describe("classifier node — system messages stay provider-valid", () => {
     // Mirrors a production flow: a folder-listing tool node injected its live-result
     // context as a system message AFTER the human turn.
     const prompt = await runCapturing([
-      { role: "user", content: "Welche Anforderungen gibt es an das Etikett?" },
+      { role: "user", content: "Welche Anforderungen gibt es an das Protokoll?" },
       {
         role: "system",
         content:

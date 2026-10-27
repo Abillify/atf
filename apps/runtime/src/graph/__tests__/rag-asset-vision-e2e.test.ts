@@ -64,7 +64,7 @@ import { mkUsage } from "./v3-mock-helpers.js";
 // Shared fixture: one v2 `search` hit that carries a figure asset.
 // ---------------------------------------------------------------------------
 
-const QUESTION = "Welche Maske gilt für die Anmeldung im Wareneingang?";
+const QUESTION = "Welche Maske gilt für die Anmeldung im Antragseingang?";
 
 /**
  * Invokes a mock responder model's `doGenerate` directly with the given AI-SDK
@@ -117,11 +117,11 @@ function v2SearchResult(): { content: unknown } {
 					results: [
 						{
 							id: "doc-1#4",
-							title: "Wareneingang-Handbuch",
-							base_ref: "/Akte/Wareneingang.pdf",
+							title: "Antragseingang-Handbuch",
+							base_ref: "/Akte/Antragseingang.pdf",
 							content: "Die Anmeldung erfolgt über die Maske WE-01.",
 							score: 0.9,
-							section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+							section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 							pages: [37, 38],
 							assets: [ASSET],
 						},
@@ -233,7 +233,7 @@ function ragNode(
 
 /** Asserts the v2 evidence line carries section path, pages, figure, caption. */
 function expectEvidenceLine(ragText: string): void {
-	expect(ragText).toContain("Abschnitt: 4 Wareneingang › 4.2 Anmeldung");
+	expect(ragText).toContain("Abschnitt: 4 Antragseingang › 4.2 Anmeldung");
 	expect(ragText).toContain("S. 37–38");
 	expect(ragText).toContain("Abbildungstyp: ui_mask");
 	expect(ragText).toContain("Bildunterschrift: Abbildung 12 – Anmeldemaske");

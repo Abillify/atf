@@ -404,7 +404,7 @@ No type-specific settings.
 
 ```yaml
 edges:
-  - { source: router, target: retoure, conditions: "classification.route == 'RETOURE'" }
+  - { source: router, target: reklamation, conditions: "classification.route == 'REKLAMATION'" }
   - { source: router, target: answer-fast }   # default
 ```
 
@@ -456,7 +456,7 @@ Uses native structured output where the model supports it, otherwise a schema hi
     schema:
       type: object
       properties:
-        route: { type: string, enum: [RETOURE, TENANTS, BETRIEB, ALLGEMEINES] }
+        route: { type: string, enum: [REKLAMATION, TENANTS, BETRIEB, ALLGEMEINES] }
         needsInfo: { type: boolean }
       required: [route, needsInfo]
   config:
@@ -490,7 +490,7 @@ With `config.ragProfiles` it also acts as a **context assembler**: a retrieval p
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ragProfiles` | json | — | `profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none\|neighbors\|section\|page) pulls in surrounding context, `granularity` (chunk\|section\|page\|document) picks the unit size, `includeAssets` (none\|refs\|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none\|auto\|always, default none), maxImages? (1–20, default 4), variant? (thumb\|preview\|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`. Example: `{"select":[{"when":"classification.route == 'RETOURE'","use":"retoure"}],"default":"allgemein","profiles":{"retoure":[{"collection":"retoure-docs","tags":["{{classification.clientTag}}"],"limit":8}],"allgemein":[{"collection":"docs","limit":6}]},"maxDocuments":8}`. |
+| `ragProfiles` | json | — | `profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none\|neighbors\|section\|page) pulls in surrounding context, `granularity` (chunk\|section\|page\|document) picks the unit size, `includeAssets` (none\|refs\|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none\|auto\|always, default none), maxImages? (1–20, default 4), variant? (thumb\|preview\|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`. Example: `{"select":[{"when":"classification.route == 'REKLAMATION'","use":"reklamation"}],"default":"allgemein","profiles":{"reklamation":[{"collection":"reklamation-docs","tags":["{{classification.clientTag}}"],"limit":8}],"allgemein":[{"collection":"docs","limit":6}]},"maxDocuments":8}`. |
 | `ragCompression` | object | — | After fusion, a small model condenses each source to the parts relevant to the question and drops irrelevant ones. Fail-open: on any problem the original chunks are used. |
 | `ragCompression.enabled` (required) | boolean | — | Turns the compression pass on; without it the fused chunks are used as retrieved. |
 | `ragCompression.llm` (required) | model (`llm` block) | — | Small extraction model. A model: `{ shortcut: <name from flows/model-shortcuts.yaml> }` or `{ provider, model, parameters? }` (provider = a PROVIDERS name or protocol). |
@@ -659,7 +659,7 @@ Results either stay the delegated answers (`resultMode: delegated`, harness is t
   type: agent-harness
   llm: { shortcut: structured-pool }
   config:
-    allowlist: [rag-context, betrieb-responder, retoure-responder]
+    allowlist: [rag-context, betrieb-responder, reklamation-responder]
     maxIterations: 6
     maxCost: 0.5
     carryForward: condensed

@@ -387,7 +387,7 @@ describe("classifyEdgeFlow — inspect_image tool channel", () => {
     const { record } = classify({
       source: "vision",
       target: "answer",
-      state: state({ classification: { status: "enriched", route: "RETOURE" } }),
+      state: state({ classification: { status: "enriched", route: "REKLAMATION" } }),
       imageConsumedUpstream: true,
       imageConsumerId: "vision",
     });

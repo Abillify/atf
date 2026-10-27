@@ -59,7 +59,7 @@ const baseConfig: AppConfig = {
 
 const TOOL_OUTPUT = "2026-01-01 10:00";
 const ANSWER =
-  "Es handelt sich um eine neue Anforderung [1].\n\n## Quellen\n\n[1] Pflichtenheft";
+  "Es handelt sich um eine neue Anforderung [1].\n\n## Quellen\n\n[1] Spezifikation";
 const QWEN_XML =
   "<tool_call>\n<function=inspect_image>\n<parameter=image>\nimg-1\n</parameter>\n" +
   "<parameter=question>\nWas zeigt dieser Screenshot?\n</parameter>\n</function>\n</tool_call>";

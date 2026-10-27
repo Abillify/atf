@@ -1281,7 +1281,7 @@ describe("job-runner · streaming document pass (S7, task 2.6)", () => {
 						const headerLine = {
 							words: [],
 							bbox: bbox([0.1, 0.02, 0.9, 0.05]),
-							text: "Pflichtenheft WMS",
+							text: "Spezifikation Alpha",
 							height: 0.02,
 						};
 						return {
@@ -1390,7 +1390,7 @@ describe("job-runner · streaming document pass (S7, task 2.6)", () => {
 				record?: import("@atf/extract-contract/v2").PageRecord;
 			} | null
 		)?.record;
-		expect(record?.furniture?.header).toBe("Pflichtenheft WMS");
+		expect(record?.furniture?.header).toBe("Spezifikation Alpha");
 	});
 
 	it("resumes the document pass from the last persisted page without reprocessing", async () => {

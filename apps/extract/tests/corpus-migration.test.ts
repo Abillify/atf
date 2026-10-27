@@ -232,7 +232,7 @@ describe("localIdFor", () => {
 
 describe("expectedAssetIds", () => {
   it("recomputes ids through the REAL contract buildAssetId", () => {
-    const reference = "specs/wms.pdf";
+    const reference = "specs/alpha.pdf";
     const assets: ManifestAsset[] = [
       { kind: "figure", id: "p1-f1" },
       { kind: "page", id: "5" },

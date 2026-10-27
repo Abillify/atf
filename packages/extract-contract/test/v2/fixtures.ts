@@ -56,7 +56,7 @@ export function figureBlock(
     figureId,
     kind: "ui_mask",
     caption: `Abbildung ${ordinal}: Maske WE0${ordinal}`,
-    description: "Erfassungsmaske für die Avisierung eines Wareneingangs.",
+    description: "Erfassungsmaske für die Avisierung eines Antragseingangs.",
     bbox: [0.1, 0.2, 0.6, 0.75],
     assetId: buildAssetId(reference, figureLocalId(figureId)),
     transcription: {
@@ -85,7 +85,7 @@ export function pageRecord(
     page,
     size: { wPt: 595, hPt: 842 },
     class: "text",
-    summary: `Seite ${page} beschreibt den Wareneingang.`,
+    summary: `Seite ${page} beschreibt den Antragseingang.`,
     blocks: [
       {
         type: "heading",
@@ -94,11 +94,11 @@ export function pageRecord(
         level: 2,
         numbering: "4.2",
         text: "Anmeldung",
-        sectionPath: ["4 Wareneingang", "4.2 Anmeldung"],
+        sectionPath: ["4 Antragseingang", "4.2 Anmeldung"],
       },
       { type: "paragraph", id: `p${page}-b1`, page, text: `Fließtext auf Seite ${page}.` },
     ],
-    furniture: { header: "Wareneingang", footer: "Vertraulich", pageLabel: `S. ${page}` },
+    furniture: { header: "Antragseingang", footer: "Vertraulich", pageLabel: `S. ${page}` },
     assets: [
       {
         assetId: buildAssetId(REFERENCE, pageLocalId(page)),
@@ -122,14 +122,14 @@ export function endRecord(
     reference: REFERENCE,
     pageCount: 2,
     outline: [
-      { sectionId: "s4", level: 1, numbering: "4", title: "Wareneingang", pageStart: 1 },
+      { sectionId: "s4", level: 1, numbering: "4", title: "Antragseingang", pageStart: 1 },
       { sectionId: "s4.2", level: 2, numbering: "4.2", title: "Anmeldung", pageStart: 1 },
     ],
     identifiers: [
       { value: "WE01", kind: "mask", occurrences: [{ page: 1, blockId: "p1-f1" }] },
     ],
     summaries: [
-      { scope: "document", id: "doc", summary: "Handbuch zum Wareneingang." },
+      { scope: "document", id: "doc", summary: "Handbuch zum Antragseingang." },
     ],
     refs: [],
     warnings: [],
@@ -150,7 +150,7 @@ export function stream(): ExtractRecord[] {
           level: 2,
           numbering: "4.2",
           text: "Anmeldung",
-          sectionPath: ["4 Wareneingang", "4.2 Anmeldung"],
+          sectionPath: ["4 Antragseingang", "4.2 Anmeldung"],
         },
         { type: "paragraph", id: "p1-b1", page: 1, text: "Fließtext vor der Maske." },
         figureBlock(1, 1),

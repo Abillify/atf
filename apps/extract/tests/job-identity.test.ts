@@ -335,7 +335,7 @@ describe("embedded objects of a rendered document", () => {
       embeddedSources: [{ filename: "Prozess.bpmn", mimeType: "application/bpmn+xml", content: bpmn, inline: false }],
     };
     const store = createFakeJobStore();
-    const job = await seedJob(store, "specs/Pflichtenheft.docx", { collection: "docs", tags: ["kunde-a"] });
+    const job = await seedJob(store, "specs/Spezifikation.docx", { collection: "docs", tags: ["kunde-a"] });
     const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
     const outcome = await runner(store, recordingRenderer(prepared), fakeVision(), {
       identifier,
@@ -347,10 +347,10 @@ describe("embedded objects of a rendered document", () => {
     }).run(ctx(store, job));
     expect(outcome).toEqual({ status: "completed" });
     expect(store.peek(childJobId(job.id, 0))).toMatchObject({
-      reference: "specs/Pflichtenheft.docx/Prozess.bpmn",
+      reference: "specs/Spezifikation.docx/Prozess.bpmn",
       status: "queued",
       config: {
-        parent: { reference: "specs/Pflichtenheft.docx", jobId: job.id },
+        parent: { reference: "specs/Spezifikation.docx", jobId: job.id },
         tags: ["kunde-a"],
         source: { filename: "Prozess.bpmn", mimeType: "application/bpmn+xml" },
       },

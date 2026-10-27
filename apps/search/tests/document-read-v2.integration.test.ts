@@ -97,10 +97,10 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     // the trailing document.end batch land: summaries first, page 2 before
     // page 1, the figure and table before the text they sit between.
     const spec = "Lastenheft/WE.docx";
-    await insertUnit({ unitId: "doc", baseRef: spec, content: "Dokument-Summary: Wareneingang", unitType: "document", page: 1, blockIds: [spec], title: "Pflichtenheft Wareneingang" });
+    await insertUnit({ unitId: "doc", baseRef: spec, content: "Dokument-Summary: Antragseingang", unitType: "document", page: 1, blockIds: [spec], title: "Spezifikation Antragseingang" });
     await insertUnit({ unitId: "sec", baseRef: spec, content: "Abschnitts-Summary", unitType: "section", page: 1, blockIds: ["1 Einleitung"] });
     await insertUnit({ unitId: "pg1", baseRef: spec, content: "Seiten-Summary 1", unitType: "page", page: 1, blockIds: ["page:1"] });
-    await insertUnit({ unitId: "p2", baseRef: spec, content: "Text auf Seite zwei.", unitType: "chunk", page: 2, blockIds: ["p2-b1"], ordinal: 0, title: "Pflichtenheft Wareneingang" });
+    await insertUnit({ unitId: "p2", baseRef: spec, content: "Text auf Seite zwei.", unitType: "chunk", page: 2, blockIds: ["p2-b1"], ordinal: 0, title: "Spezifikation Antragseingang" });
     await insertUnit({
       unitId: "tbl",
       baseRef: spec,
@@ -110,7 +110,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
       blockIds: ["p1-b3"],
       ordinal: 0,
       meta: { display_len: "Feld | Pflicht\nLieferant | ja".length, table_id: "t1" },
-      title: "Pflichtenheft Wareneingang",
+      title: "Spezifikation Antragseingang",
     });
     await insertUnit({
       unitId: "fig",
@@ -121,10 +121,10 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
       blockIds: ["p1-b2"],
       ordinal: 0,
       meta: { figure_id: "fig-1", figure_kind: "ui_mask", asset_id: "a".repeat(64) },
-      title: "Pflichtenheft Wareneingang",
+      title: "Spezifikation Antragseingang",
     });
-    await insertUnit({ unitId: "p1b", baseRef: spec, content: "Zweiter Teil von Block 1.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 1, title: "Pflichtenheft Wareneingang" });
-    await insertUnit({ unitId: "p1a", baseRef: spec, content: "Erster Teil von Block 1.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0, title: "Pflichtenheft Wareneingang" });
+    await insertUnit({ unitId: "p1b", baseRef: spec, content: "Zweiter Teil von Block 1.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 1, title: "Spezifikation Antragseingang" });
+    await insertUnit({ unitId: "p1a", baseRef: spec, content: "Erster Teil von Block 1.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0, title: "Spezifikation Antragseingang" });
 
     // A v2 document the document pass produced no summary for.
     await insertUnit({ unitId: "n1", baseRef: "nosummary.pdf", content: "Nur Text.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0 });
@@ -154,7 +154,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     expect(doc.content).not.toContain("Summary");
     expect(doc.content).not.toContain("Feld: Lieferant");
     expect(doc.chunks).toBe(5);
-    expect(doc.title).toBe("Pflichtenheft Wareneingang");
+    expect(doc.title).toBe("Spezifikation Antragseingang");
   });
 
   it("get_document evidence spans carry the unit and its page", async () => {
@@ -181,11 +181,11 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     const spec = res.result.summaries.find((s) => s.reference === "Lastenheft/WE.docx");
-    expect(spec?.summary).toBe("Dokument-Summary: Wareneingang");
-    expect(spec?.title).toBe("Pflichtenheft Wareneingang");
+    expect(spec?.summary).toBe("Dokument-Summary: Antragseingang");
+    expect(spec?.title).toBe("Spezifikation Antragseingang");
     expect(spec?.isSummary).toBe(true);
     const single = await pg.getSummary(collection, serviceScope(), "Lastenheft/WE.docx");
-    expect(single.ok && single.result?.summary).toBe("Dokument-Summary: Wareneingang");
+    expect(single.ok && single.result?.summary).toBe("Dokument-Summary: Antragseingang");
   });
 
   it("the summary backfill lists a v2 document once and writes one row", async () => {

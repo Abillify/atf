@@ -34,13 +34,13 @@ import type { ExecRuntime } from "../graph-engine.js";
 import { HashRefHandleRegistry, resolveRefHandleArgs } from "../ref-handles.js";
 
 const R =
-  "/20250516_Pflichtenheft WMS_Prozesse/20250516_Pflichtenheft WMS_Prozesse.pdf/73. 9.5 Lagereinheit prüfen";
+  "/20250516_Spezifikation Alpha_Prozesse/20250516_Spezifikation Alpha_Prozesse.pdf/73. 9.5 Akteneinheit prüfen";
 const R2 =
-  "/20250516_Pflichtenheft WMS_Prozesse/20250516_Pflichtenheft WMS_Prozesse.pdf/74. 9.6 Umlagerung";
+  "/20250516_Spezifikation Alpha_Prozesse/20250516_Spezifikation Alpha_Prozesse.pdf/74. 9.6 Umverteilung";
 const MODIFIED = "2026-08-21T10:00:00.000Z";
 
 /** Real document text that quotes its own reference (masking shortens it). */
-const REAL_TEXT = `Kapitel siehe ${R} — Lagereinheit pruefen. NIOB bleibt NIOB.`;
+const REAL_TEXT = `Kapitel siehe ${R} — Akteneinheit pruefen. NIOB bleibt NIOB.`;
 
 function fakeRuntime(): ExecRuntime {
   const noop = async (): Promise<void> => {};
@@ -57,7 +57,7 @@ function originalAssignment(): CoverageAssignment {
   return {
     id: "cov-1",
     mode: "original",
-    documents: [{ ref: R, title: "9.5", summary: "Lagereinheit", windows: [] }],
+    documents: [{ ref: R, title: "9.5", summary: "Akteneinheit", windows: [] }],
   };
 }
 
@@ -171,7 +171,7 @@ describe("withCoverageEvidenceRuntime — refHandles worker", () => {
     await runtime.onToolEffectiveArgs?.(
       "s1",
       "vectorsearch__search",
-      JSON.stringify({ query: "Lagereinheit", hybrid: true, group_by_document: true, rerank: true }),
+      JSON.stringify({ query: "Akteneinheit", hybrid: true, group_by_document: true, rerank: true }),
     );
     await runtime.onToolResult("s1", masked, 0);
     expect(statuses).toEqual(["parsed"]);
@@ -207,7 +207,7 @@ describe("coverage acceptance with refHandles", () => {
           tool_call_id: "seed",
           tool_name: config.sourceTool,
           result: {
-            summaries: [{ reference: R, title: "9.5", summary: "Lagereinheit" }],
+            summaries: [{ reference: R, title: "9.5", summary: "Akteneinheit" }],
             count: 1,
             total: 1,
           },
@@ -219,7 +219,7 @@ describe("coverage acceptance with refHandles", () => {
     const triage = nextCoverageAssignment(ledger, config);
     if (triage === undefined) throw new Error("missing triage assignment");
     const triageReport = parseCoverageReport(
-      `<COVERAGE>{"assignmentId":"${triage.id}","documents":[{"ref":${JSON.stringify(R)},"decision":"relevant","reason":"Lagereinheit"}]}</COVERAGE>`,
+      `<COVERAGE>{"assignmentId":"${triage.id}","documents":[{"ref":${JSON.stringify(R)},"decision":"relevant","reason":"Akteneinheit"}]}</COVERAGE>`,
       triage,
       config.markers,
     );

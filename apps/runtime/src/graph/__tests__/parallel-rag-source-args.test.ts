@@ -63,7 +63,7 @@ function runConfig(
 
 const state = {
 	messages: [
-		new HumanMessage("Welche Maske gilt für die Wareneingangsbuchung?"),
+		new HumanMessage("Welche Maske gilt für die Antragseingangsbuchung?"),
 	],
 	classification: {},
 	classLabel: "X",

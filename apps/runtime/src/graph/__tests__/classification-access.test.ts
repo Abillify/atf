@@ -40,12 +40,12 @@ describe("appendNodeClassification", () => {
   test("a re-run of the same classifier node starts a NEW turn snapshot", () => {
     let turns: TurnSnapshot[] = [];
     // turn 1
-    turns = appendNodeClassification(turns, "triage", { route: "RETOURE" }, "RETOURE");
+    turns = appendNodeClassification(turns, "triage", { route: "REKLAMATION" }, "REKLAMATION");
     turns = appendNodeClassification(
       turns,
       "refine-client",
       { client: "Example Finance" },
-      "RETOURE",
+      "REKLAMATION",
     );
     // turn 2 — triage runs again → boundary detected
     turns = appendNodeClassification(turns, "triage", { route: "BETRIEB" }, "BETRIEB");
@@ -59,7 +59,7 @@ describe("appendNodeClassification", () => {
     if (triage0 === undefined || triage1 === undefined) {
       throw new Error("expected triage entries in both turns");
     }
-    expect(triage0.classification.route).toBe("RETOURE");
+    expect(triage0.classification.route).toBe("REKLAMATION");
     expect(triage1.classification.route).toBe("BETRIEB");
     // turn 1's refine-client is preserved, turn 2 has no refine-client yet
     expect(turn0["refine-client"]).toBeDefined();
@@ -77,7 +77,7 @@ describe("appendNodeClassification", () => {
 describe("buildClassificationNamespaces", () => {
   test("node = current run; turn[0] = current, turn[1] = previous", () => {
     let turns: TurnSnapshot[] = [];
-    turns = appendNodeClassification(turns, "triage", { route: "RETOURE" }, "RETOURE");
+    turns = appendNodeClassification(turns, "triage", { route: "REKLAMATION" }, "REKLAMATION");
     turns = appendNodeClassification(turns, "triage", { route: "CLIENTS" }, "CLIENTS");
     const { node, turn } = buildClassificationNamespaces(turns);
     const nodeTriage = node.triage;
@@ -92,7 +92,7 @@ describe("buildClassificationNamespaces", () => {
     }
     expect(nodeTriage.classification.route).toBe("CLIENTS"); // current
     expect(turn0Triage.classification.route).toBe("CLIENTS"); // current
-    expect(turn1Triage.classification.route).toBe("RETOURE"); // previous
+    expect(turn1Triage.classification.route).toBe("REKLAMATION"); // previous
   });
 
   test("empty history yields empty node and turn", () => {
@@ -110,7 +110,7 @@ describe("resolveStatePath", () => {
     },
     turn: [
       { triage: { classification: { route: "CLIENTS" } } },
-      { triage: { classification: { route: "RETOURE" } } },
+      { triage: { classification: { route: "REKLAMATION" } } },
     ],
   };
 
@@ -123,7 +123,7 @@ describe("resolveStatePath", () => {
     );
   });
   test("[n] index (previous turn)", () => {
-    expect(resolveStatePath(root, "turn[1].triage.classification.route")).toBe("RETOURE");
+    expect(resolveStatePath(root, "turn[1].triage.classification.route")).toBe("REKLAMATION");
   });
   test("missing path → undefined", () => {
     expect(resolveStatePath(root, "node.nope.classification.route")).toBeUndefined();
@@ -151,7 +151,7 @@ describe("renderTemplateNamespaced", () => {
     node: { triage: { classification: { route: "CLIENTS" } } },
     turn: [
       { triage: { classification: { route: "CLIENTS" } } },
-      { triage: { classification: { route: "RETOURE" } } },
+      { triage: { classification: { route: "REKLAMATION" } } },
     ],
   };
   test("resolves known roots (context/now/node/turn)", () => {
@@ -163,7 +163,7 @@ describe("renderTemplateNamespaced", () => {
     ).toBe("CLIENTS");
     expect(
       renderTemplateNamespaced("{{turn[1].triage.classification.route}}", roots),
-    ).toBe("RETOURE");
+    ).toBe("REKLAMATION");
   });
   test("leaves unknown roots INTACT", () => {
     expect(renderTemplateNamespaced("keep {{vars.x}} and {{weird}}", roots)).toBe(

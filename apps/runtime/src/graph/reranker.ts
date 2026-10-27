@@ -105,7 +105,7 @@ export interface RagChunk {
   section?: string;
   /**
    * v2 hit provenance for the evidence line / citations (Requirement 16.4).
-   * `sectionPath` is the ordered breadcrumb (e.g. ["4 Wareneingang","4.2
+   * `sectionPath` is the ordered breadcrumb (e.g. ["4 Antragseingang","4.2
    * Anmeldung"]); `pages` the covered page numbers; `figureKind` the classified
    * figure type of the hit unit (bpmn/flowchart/ui_mask/…); `caption` its
    * caption. All optional — a legacy (pre-v2) hit carries none of them and the

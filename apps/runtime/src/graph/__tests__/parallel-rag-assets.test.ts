@@ -37,11 +37,11 @@ function v2HitPayload(): { content: unknown } {
 					results: [
 						{
 							id: "doc-1#4",
-							title: "Wareneingang-Handbuch",
-							base_ref: "/Akte/Wareneingang.pdf",
+							title: "Antragseingang-Handbuch",
+							base_ref: "/Akte/Antragseingang.pdf",
 							content: "Die Anmeldung erfolgt über die Maske WE-01.",
 							score: 0.9,
-							section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+							section_path: ["4 Antragseingang", "4.2 Anmeldung"],
 							pages: [37, 38],
 							assets: [
 								{
@@ -143,7 +143,7 @@ describe("RAG node v2 — evidence line (Req 16.4)", () => {
 		const handler = createParallelNodeHandler(node(), new Map());
 		const out = await handler(state, runConfig(makeRuntime()));
 		const text = String(ragMessage(out.messages as BaseMessage[]).content);
-		expect(text).toContain("Abschnitt: 4 Wareneingang › 4.2 Anmeldung");
+		expect(text).toContain("Abschnitt: 4 Antragseingang › 4.2 Anmeldung");
 		expect(text).toContain("S. 37–38");
 		expect(text).toContain("Abbildungstyp: ui_mask");
 		expect(text).toContain("Bildunterschrift: Abbildung 12 – Anmeldemaske");

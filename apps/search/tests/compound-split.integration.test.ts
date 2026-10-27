@@ -5,15 +5,15 @@
  * pgvector instance.
  *
  * The German stemmer keeps compounds as a single lexeme, so the status quo
- * (flag off) is: a chunk containing `Kommissionierarbeitsplatz` is NOT found
+ * (flag off) is: a chunk containing `Revisionsarbeitsplatz` is NOT found
  * by the query `Arbeitsplatz`. With the flag on, the query-side splitter adds
  * the compound's parts to the lexical OR list, so the query
- * `Kommissionierarbeitsplatz` DOES find a chunk that only contains
+ * `Revisionsarbeitsplatz` DOES find a chunk that only contains
  * `Arbeitsplatz`.
  *
  * The lexicon is the collection's own vocabulary (ts_stat, ndoc >= 2), so the
  * ON collection ingests enough chunks for BOTH `arbeitsplatz` and
- * `kommission` to reach ndoc >= 2 — the split of `kommissionierarbeitsplatz`
+ * `revision` to reach ndoc >= 2 — the split of `revisionsarbeitsplatz`
  * needs both sides to be known lexemes. The lexicon is built ASYNCHRONOUSLY on
  * first need (the triggering query runs WITHOUT splitting), so the ON query is
  * polled until the target chunk appears or a bounded timeout elapses.
@@ -62,7 +62,7 @@ function point(reference: string, content: string): DocumentPoint {
     content,
     vector,
     metadata: {},
-    title: "Lagerdokument",
+    title: "Aktendokument",
     chunk: {
       chunk_index: 1,
       chunk_total: 2,
@@ -124,13 +124,13 @@ describeIfPg("compound split · real postgres", () => {
     expect(
       (
         await pgOff.upsert(
-          point("compound", "Der Kommissionierarbeitsplatz ist neu."),
+          point("compound", "Der Revisionsarbeitsplatz ist neu."),
           collectionOff,
         )
       ).ok,
     ).toBe(true);
 
-    // ON collection: enough chunks that BOTH `arbeitsplatz` and `kommission`
+    // ON collection: enough chunks that BOTH `arbeitsplatz` and `revision`
     // reach ndoc >= 2 in the lexicon. `target` only ever holds `Arbeitsplatz`.
     const ensuredOn = await pgOn.ensureCollection(collectionOn, VECTOR_SIZE, {
       language: "german",
@@ -138,8 +138,8 @@ describeIfPg("compound split · real postgres", () => {
     expect(ensuredOn.ok).toBe(true);
     const onChunks: Array<[string, string]> = [
       ["target", "Der neue Arbeitsplatz befindet sich im Hallenbereich."],
-      ["beleg1", "Die Kommission am Arbeitsplatz wurde abgeschlossen."],
-      ["beleg2", "Die Kommission umfasst mehrere Artikel."],
+      ["beleg1", "Die Revision am Arbeitsplatz wurde abgeschlossen."],
+      ["beleg2", "Die Revision umfasst mehrere Artikel."],
     ];
     for (const [reference, content] of onChunks) {
       expect((await pgOn.upsert(point(reference, content), collectionOn)).ok).toBe(
@@ -170,7 +170,7 @@ describeIfPg("compound split · real postgres", () => {
     // splitting; poll until the split OR list makes `target` match.
     let found = false;
     for (let attempt = 0; attempt < 40 && !found; attempt++) {
-      const res = await lexical(pgOn, collectionOn, "Kommissionierarbeitsplatz");
+      const res = await lexical(pgOn, collectionOn, "Revisionsarbeitsplatz");
       expect(res.ok, res.ok ? "" : JSON.stringify(res.error)).toBe(true);
       if (res.ok) found = res.result.map((r) => r.reference).includes("target");
       if (!found) await new Promise((resolve) => setTimeout(resolve, 50));

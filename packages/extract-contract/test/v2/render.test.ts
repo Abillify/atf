@@ -40,7 +40,7 @@ describe("renderMarkdown", () => {
 
   test("renders the page section path in the heading", () => {
     const md = renderPage(pageRecord(1));
-    expect(md).toContain("## Seite 1 · 4 Wareneingang › 4.2 Anmeldung");
+    expect(md).toContain("## Seite 1 · 4 Antragseingang › 4.2 Anmeldung");
   });
 
   test("renders a process transcription as mermaid plus steps", () => {

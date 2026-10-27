@@ -150,7 +150,7 @@ describeIfPg(
 				baseRef: "docA",
 				content: "chunk one",
 				unitType: "chunk",
-				sectionPath: ["4 Wareneingang", "4.2 Anmeldung"],
+				sectionPath: ["4 Antragseingang", "4.2 Anmeldung"],
 				pageStart: 37,
 				pageEnd: 38,
 			});
@@ -159,7 +159,7 @@ describeIfPg(
 				baseRef: "docA",
 				content: "table one",
 				unitType: "table",
-				sectionPath: ["4 Wareneingang"],
+				sectionPath: ["4 Antragseingang"],
 				pageStart: 40,
 				pageEnd: 40,
 			});
@@ -169,7 +169,7 @@ describeIfPg(
 				content: "Abbildung 12: Maske WE01\ndesc",
 				unitType: "figure",
 				figureKind: "ui_mask",
-				sectionPath: ["4 Wareneingang", "4.2 Anmeldung"],
+				sectionPath: ["4 Antragseingang", "4.2 Anmeldung"],
 				pageStart: 37,
 				pageEnd: 37,
 				figureId: "fig-12",
@@ -268,7 +268,7 @@ describeIfPg(
 
 		it("section_prefix filters by section_path array prefix", async () => {
 			const res = await search(
-				withUnitFilter({ sectionPrefix: ["4 Wareneingang", "4.2 Anmeldung"] }),
+				withUnitFilter({ sectionPrefix: ["4 Antragseingang", "4.2 Anmeldung"] }),
 			);
 			expect(res.ok).toBe(true);
 			if (!res.ok) return;

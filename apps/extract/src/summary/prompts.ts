@@ -84,7 +84,7 @@ export function summarySystemPrompt(scope: SummaryScope): string {
 /** Input to build the user prompt for one summary. */
 export interface SummaryUserPromptInput {
   scope: SummaryScope;
-  /** The section/chapter title path, when known (e.g. "4 Wareneingang › 4.2 Anmeldung"). */
+  /** The section/chapter title path, when known (e.g. "4 Antragseingang › 4.2 Anmeldung"). */
   title?: string | undefined;
   /**
    * The text to summarise: for a section, the page summaries plus the section's

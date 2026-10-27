@@ -5,7 +5,7 @@
  * Ref handles (`src/graph/ref-handles.ts`)
  *
  * A vectorsearch hit identifies its document with a long path-like reference
- * (`prod/richtlinien/logistik/wareneingang_pruefung_v3.pdf#kapitel-4.2`). The
+ * (`prod/richtlinien/verwaltung/antragseingang_pruefung_v3.pdf#kapitel-4.2`). The
  * model has to quote that string VERBATIM in the next tool call
  * (`get_document({reference: ...})`), and small/local models routinely fail at
  * this: they truncate the path to the bare `.pdf`, invent a plausible sibling,
@@ -17,7 +17,7 @@
  * The fix mirrors what {@link image-reference.ts} does for image bytes: park
  * the real value run-scoped and show the model a short handle instead.
  *
- *   real:  prod/richtlinien/logistik/wareneingang_pruefung_v3.pdf#kapitel-4.2
+ *   real:  prod/richtlinien/verwaltung/antragseingang_pruefung_v3.pdf#kapitel-4.2
  *   model: K3NQ
  *
  * Design choices, and why:

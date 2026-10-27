@@ -397,10 +397,10 @@ describeIfPg("batch worker · real postgres", () => {
       type: "document.begin",
       contract: "atf-extract/2.2.0",
       reference,
-      title: "Pflichtenheft WE",
-      tags: ["kunde-a", "wms"],
+      title: "Spezifikation WE",
+      tags: ["kunde-a", "alpha"],
       // A caller key never overrides the unit's technical metadata.
-      metadata: { projekt: "WMS", unit_type: "spoofed" },
+      metadata: { projekt: "Alpha", unit_type: "spoofed" },
       link: "https://dms.example/42",
       sourceLabel: "DMS",
       source: { filename: reference, mimeType: "application/pdf", bytes: 1, sha256: "b".repeat(64) },
@@ -438,11 +438,11 @@ describeIfPg("batch worker · real postgres", () => {
     expect(rows.rows.length).toBeGreaterThanOrEqual(4);
     for (const row of rows.rows) {
       // Page 2's batch carries no document.begin: it reads the revision row.
-      expect(row.title).toBe("Pflichtenheft WE");
-      expect(row.tags).toEqual(["kunde-a", "wms"]);
+      expect(row.title).toBe("Spezifikation WE");
+      expect(row.tags).toEqual(["kunde-a", "alpha"]);
       expect(row.link).toBe("https://dms.example/42");
       expect(row.source).toBe("DMS");
-      expect(row.metadata.projekt).toBe("WMS");
+      expect(row.metadata.projekt).toBe("Alpha");
       expect(row.metadata.unit_type).toBe(row.unit_type);
     }
   });

@@ -22,7 +22,7 @@ import type { RequestContext } from "../../types/monitoring.js";
 import type { ToolSet } from "ai";
 
 const REF_A =
-  "prod/richtlinien/logistik/wareneingang_pruefung_v3.pdf#kapitel-4.2";
+  "prod/richtlinien/verwaltung/antragseingang_pruefung_v3.pdf#kapitel-4.2";
 
 async function executeOnlyTool(
   tools: ToolSet,
@@ -113,13 +113,13 @@ describe("buildAiTools — ref-handle resolution (config.refHandles)", () => {
   it("masks references in the tool result the model reads", async () => {
     const payload = {
       results: [
-        { base_ref: REF_A, title: "Wareneingang", content: "Ablauf" },
+        { base_ref: REF_A, title: "Antragseingang", content: "Ablauf" },
       ],
     };
     const mcp = fakeMcp(payload, () => {});
     const registry = new HashRefHandleRegistry();
     const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
-    const result = await executeOnlyTool(tools, { query: "wareneingang" });
+    const result = await executeOnlyTool(tools, { query: "antragseingang" });
     const json = JSON.stringify(result);
     // The model must NOT see the long path anymore…
     expect(json).not.toContain(REF_A);
@@ -141,9 +141,9 @@ describe("buildAiTools — ref-handle resolution (config.refHandles)", () => {
 // Shapes from a production trace: `link` is the bare PDF path, chapter refs
 // hang below it. The folder name keeps the date prefix, commas and spaces.
 const PDF =
-  "/20250101_Pflichtenheft WMS_Prozesse_A, B, C/20250101_Pflichtenheft WMS_Prozesse_A, B, C.pdf";
-const CHAPTER_73 = `${PDF}/73. 9.5 Lagereinheit prüfen`;
-const CONSTRUCTED_77 = `${PDF}/77. PFLICHTENHEFT WMS - Prozesse`;
+  "/20250101_Spezifikation Alpha_Prozesse_A, B, C/20250101_Spezifikation Alpha_Prozesse_A, B, C.pdf";
+const CHAPTER_73 = `${PDF}/73. 9.5 Akteneinheit prüfen`;
+const CONSTRUCTED_77 = `${PDF}/77. SPEZIFIKATION ALPHA - Prozesse`;
 
 describe("buildAiTools — unregistered (model-assembled) references", () => {
   it("rejects a constructed neighbouring-chapter reference before the MCP call", async () => {
@@ -195,7 +195,7 @@ describe("buildAiTools — unregistered (model-assembled) references", () => {
     registry.register(CHAPTER_73);
     const node: FlowNode = { ...NODE, tools: ["vectorsearch/list_documents"] };
     const { tools } = await buildAiTools(node, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
-    const prefix = "/20250101_Pflichtenheft WMS_Prozesse_A, B, C";
+    const prefix = "/20250101_Spezifikation Alpha_Prozesse_A, B, C";
     const result = (await executeOnlyTool(tools, { path_prefix: prefix })) as Record<string, unknown>;
     expect(result.isError).toBeUndefined();
     expect(seenArgs).toEqual({ path_prefix: prefix });
@@ -241,7 +241,7 @@ describe("buildAiTools — unregistered (model-assembled) references", () => {
     const plain = await buildAiTools(plainNode, observed, CTX, undefined, undefined, undefined, undefined, undefined, { refObserver: registry });
     const plainResult = await executeOnlyTool(plain.tools, { query: "x" });
     // Observation never masks.
-    expect(JSON.stringify(plainResult)).toContain("73. 9.5 Lagereinheit");
+    expect(JSON.stringify(plainResult)).toContain("73. 9.5 Akteneinheit");
     expect(registry.list()).toHaveLength(0);
 
     let seenArgs: unknown;
@@ -282,7 +282,7 @@ describe("unregistered_ref names a concrete way out (list_documents path_prefix)
   });
 
   it("derives the prefix from the first file segment, else the parent folder", () => {
-    expect(suggestedPathPrefix("x/y/Datei WMS, A.pdf/72. Titel")).toBe("x/y/Datei WMS, A.pdf");
+    expect(suggestedPathPrefix("x/y/Datei Alpha, A.pdf/72. Titel")).toBe("x/y/Datei Alpha, A.pdf");
     expect(suggestedPathPrefix(PDF)).toBe(PDF);
     expect(suggestedPathPrefix("/Ordner/Unterordner/Kapitel 4.12")).toBe("/Ordner/Unterordner");
     expect(suggestedPathPrefix("Kapitel ohne Pfad")).toBeUndefined();

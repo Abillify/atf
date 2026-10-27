@@ -357,18 +357,18 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/attrs.pdf")
-      .set("X-Title", "Pflichtenheft")
-      .set("X-Tags", "kunde-a, wms")
-      .set("X-Metadata", JSON.stringify({ projekt: "WMS" }))
+      .set("X-Title", "Spezifikation")
+      .set("X-Tags", "kunde-a, alpha")
+      .set("X-Metadata", JSON.stringify({ projekt: "Alpha" }))
       .set("X-Link", "https://dms.example/1")
       .set("X-Source", "DMS")
       .send(PDF);
     expect(res.status).toBe(200);
     const job = fakeStore.peek(res.body.job_id);
     expect(job?.config).toMatchObject({
-      title: "Pflichtenheft",
-      tags: ["kunde-a", "wms"],
-      metadata: { projekt: "WMS" },
+      title: "Spezifikation",
+      tags: ["kunde-a", "alpha"],
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
     });

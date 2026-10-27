@@ -28,7 +28,7 @@ const flow: Pick<FlowDefinition, "nodes" | "variables"> = {
       type: "classifier",
       classifierSchema: {
         classKey: "route",
-        schema: { type: "object", properties: { route: { type: "string", enum: ["RETOURE", "BETRIEB"] }, needsInfo: { type: "boolean" } } },
+        schema: { type: "object", properties: { route: { type: "string", enum: ["REKLAMATION", "BETRIEB"] }, needsInfo: { type: "boolean" } } },
       },
     },
     { id: "refine-client", type: "classifier", classifierSchema: { classKey: "client", schema: { type: "object", properties: { client: { type: "string" } } } } },
@@ -74,9 +74,9 @@ describe("formula vocabulary", () => {
   });
 
   test("renders a template preview with variables, sample values and reports gaps", () => {
-    const sample = setPath({}, "turn[1].triage.classification.route", "RETOURE");
+    const sample = setPath({}, "turn[1].triage.classification.route", "REKLAMATION");
     const out = renderTemplatePreview("{{vars.model_main}} / {{turn[1].triage.classification.route}} / {{query}}", sample, flow.variables);
-    expect(out.text).toBe("fast-pool / RETOURE / ");
+    expect(out.text).toBe("fast-pool / REKLAMATION / ");
     expect(out.unresolved).toEqual(["query"]);
     expect(parseSampleValue("2")).toBe(2);
     expect(parseSampleValue("true")).toBe(true);
@@ -108,16 +108,16 @@ describe("formula components", () => {
     const onChange = vi.fn();
     render(
       <FormulaProvider flow={flow} reference={FLOW_REFERENCE}>
-        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'RETOURE'" onChange={onChange} />
+        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'REKLAMATION'" onChange={onChange} />
       </FormulaProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Open the formula editor for Condition" }));
     const dialog = await screen.findByRole("dialog");
     // pre-filled from the classifier enum
-    expect((screen.getByLabelText("Sample value for classification.route") as HTMLInputElement).value).toBe("RETOURE");
+    expect((screen.getByLabelText("Sample value for classification.route") as HTMLInputElement).value).toBe("REKLAMATION");
     await waitFor(() => expect(screen.getByText(/true — would match/)).toBeInTheDocument());
     const body = JSON.parse(String(fetchMock.mock.calls.at(-1)![1].body)) as { sample: unknown };
-    expect(body.sample).toEqual({ classification: { route: "RETOURE" } });
+    expect(body.sample).toEqual({ classification: { route: "REKLAMATION" } });
     fireEvent.click(screen.getByRole("button", { name: "and" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(onChange).toHaveBeenCalledWith(expect.stringContaining(" && "));
@@ -286,7 +286,7 @@ describe("expression builder: copilot", () => {
           status: 200,
           json: async () => ({
             ok: true,
-            expression: "classification.route == 'RETOURE' || classification.route == 'BETRIEB'",
+            expression: "classification.route == 'REKLAMATION' || classification.route == 'BETRIEB'",
             explanation: "BETRIEB ergänzt.",
             changed: true,
           }),
@@ -298,7 +298,7 @@ describe("expression builder: copilot", () => {
     const onChange = vi.fn();
     render(
       <FormulaProvider flow={flow} catalog={{ reference: FLOW_REFERENCE }}>
-        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'RETOURE'" onChange={onChange} />
+        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'REKLAMATION'" onChange={onChange} />
       </FormulaProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Open the formula editor for Condition" }));
@@ -325,16 +325,16 @@ describe("expression builder: copilot", () => {
       variables: Record<string, unknown>;
     };
     expect(body.kind).toBe("condition");
-    expect(body.current).toBe("classification.route == 'RETOURE'");
+    expect(body.current).toBe("classification.route == 'REKLAMATION'");
     const refs = body.vocabulary.flatMap((g) => g.entries.map((e) => e.ref));
     expect(refs).toEqual(expect.arrayContaining(["node.triage.classification.route", "lastMessageText", "{{vars.model_main}}"]));
     expect(body.variables).toMatchObject({ model_main: "fast-pool" });
 
     // Nothing applied yet; Accept puts the proposal into the editor.
     const area = within(dialog).getByLabelText("Condition") as HTMLTextAreaElement;
-    expect(area.value).toBe("classification.route == 'RETOURE'");
+    expect(area.value).toBe("classification.route == 'REKLAMATION'");
     fireEvent.click(within(proposal).getByRole("button", { name: "Accept" }));
-    expect(area.value).toBe("classification.route == 'RETOURE' || classification.route == 'BETRIEB'");
+    expect(area.value).toBe("classification.route == 'REKLAMATION' || classification.route == 'BETRIEB'");
     expect(onChange).not.toHaveBeenCalled(); // the field changes only with Apply
   });
 
@@ -347,20 +347,20 @@ describe("expression builder: copilot", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
     render(
       <FormulaProvider flow={flow} catalog={{ reference: FLOW_REFERENCE }}>
-        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'RETOURE'" onChange={() => {}} />
+        <FormulaTextarea kind="condition" ariaLabel="Condition" value="classification.route == 'REKLAMATION'" onChange={() => {}} />
       </FormulaProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Open the formula editor for Condition" }));
     const dialog = screen.getByRole("dialog");
     const area = within(dialog).getByLabelText("Condition") as HTMLTextAreaElement;
-    area.setSelectionRange(24, 33);
+    area.setSelectionRange(24, 37);
     fireEvent.select(area);
-    expect(within(dialog).getByTestId("expression-copilot-selection")).toHaveTextContent("selected “'RETOURE'”");
+    expect(within(dialog).getByTestId("expression-copilot-selection")).toHaveTextContent("selected “'REKLAMATION'”");
     fireEvent.change(within(dialog).getByLabelText("Ask the expression copilot"), { target: { value: "use BETRIEB here" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Ask" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body));
-    expect(body.selection).toEqual({ start: 24, end: 33 });
+    expect(body.selection).toEqual({ start: 24, end: 37 });
   });
 
   test("describes a caret by line and column", () => {

@@ -59,8 +59,8 @@ function buildVsdx(
 const FLOW_PAGE = `<?xml version="1.0" encoding="UTF-8"?>
 <PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main">
   <Shapes>
-    <Shape ID="1" NameU="Start" Type="Shape"><Text>Anlieferung</Text></Shape>
-    <Shape ID="2" NameU="Task" Type="Shape"><Text>Wareneingang <cp IX="0"/>prüfen</Text></Shape>
+    <Shape ID="1" NameU="Start" Type="Shape"><Text>Posteingang</Text></Shape>
+    <Shape ID="2" NameU="Task" Type="Shape"><Text>Antragseingang <cp IX="0"/>prüfen</Text></Shape>
     <Shape ID="3" NameU="End" Type="Shape"><Text>Abgeschlossen</Text></Shape>
     <Shape ID="4" NameU="Dynamic connector" Type="Shape"><Text/></Shape>
     <Shape ID="5" NameU="Dynamic connector" Type="Shape"><Text>ja</Text></Shape>
@@ -115,7 +115,7 @@ describe("parseVsdx", () => {
 		]);
 		// Interleaved formatting markers do not leak into the label.
 		expect(page.transcription.nodes.find((n) => n.id === "2")?.label).toBe(
-			"Wareneingang prüfen",
+			"Antragseingang prüfen",
 		);
 
 		// Two edges from the connector graph, in Begin→End direction.
@@ -126,14 +126,14 @@ describe("parseVsdx", () => {
 
 		// Steps walk from the root (shape 1) along the edges.
 		expect(page.transcription.steps).toEqual([
-			"Anlieferung",
-			"Wareneingang prüfen",
+			"Posteingang",
+			"Antragseingang prüfen",
 			"Abgeschlossen",
 		]);
 
 		// A deterministic Mermaid flowchart is generated.
 		expect(page.transcription.mermaid.startsWith("flowchart TD")).toBe(true);
-		expect(page.transcription.mermaid).toContain("Anlieferung");
+		expect(page.transcription.mermaid).toContain("Posteingang");
 	});
 
 	it("reads a connector-free page as a diagram markdown transcription", () => {

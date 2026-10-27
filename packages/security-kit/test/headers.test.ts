@@ -48,9 +48,9 @@ describe("readHeader / decodeIfBase64", () => {
   });
 
   test("base64: prefix is decoded as UTF-8", () => {
-    const encoded = Buffer.from("Pflichtenhäft WMS — Umlaute", "utf-8").toString("base64");
+    const encoded = Buffer.from("Übersicht Größe — Umlaute", "utf-8").toString("base64");
     expect(readHeader(reqWith({ "x-title": `base64:${encoded}` }), "x-title")).toBe(
-      "Pflichtenhäft WMS — Umlaute",
+      "Übersicht Größe — Umlaute",
     );
   });
 

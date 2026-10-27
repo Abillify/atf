@@ -207,7 +207,7 @@ export function registerSearchTool(opts: McpToolContext): void {
         .array(z.string().min(1))
         .min(1)
         .optional()
-        .describe('v2 filter: section path prefix, e.g. ["4 Wareneingang", "4.2 Anmeldung"].'),
+        .describe('v2 filter: section path prefix, e.g. ["4 Antragseingang", "4.2 Anmeldung"].'),
       identifier: z
         .string()
         .min(1)

@@ -47,9 +47,9 @@ const ANWENDUNG_HEAD = "1 Anwendung";
 const ANWENDUNG_KEEP = "Anwendungstext bleibt unverändert.";
 const ANWENDUNG_OLD = "Der alte Absatz der Anwendung.";
 const ANWENDUNG_NEW = "Der neue Absatz der Anwendung.";
-const WARENEINGANG_HEAD = "4 Wareneingang";
-const WARENEINGANG_OLD = `Wareneingang Fassung 2024. ${LONG_FILLER}Prüfung bei Anlieferung.`;
-const WARENEINGANG_NEW = `Wareneingang Fassung 2025. ${LONG_FILLER}Prüfung nach Entladung.`;
+const ANTRAGSEINGANG_HEAD = "4 Antragseingang";
+const ANTRAGSEINGANG_OLD = `Antragseingang Fassung 2024. ${LONG_FILLER}Prüfung bei Eingang.`;
+const ANTRAGSEINGANG_NEW = `Antragseingang Fassung 2025. ${LONG_FILLER}Prüfung nach Erfassung.`;
 const ALT_HEAD = "9 Altes Verfahren";
 const ALT = "Das überholte Verfahren ist ersatzlos entfallen.";
 const NEU_HEAD = "9 Neues Verfahren";
@@ -139,16 +139,16 @@ describeIfPg("document_diff · units across two points in time · real postgres"
     await navUnit({ revision: "rev1", unitId: "s1a", unitType: "section", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_HEAD, ordinal: 0, created: rev1, latest: false });
     await navUnit({ revision: "rev1", unitId: "u1a1", unitType: "chunk", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_KEEP, ordinal: 0, created: rev1, latest: false, pageStart: 3 });
     await navUnit({ revision: "rev1", unitId: "u1a2", unitType: "chunk", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_OLD, ordinal: 1, created: rev1, latest: false, pageStart: 3 });
-    await navUnit({ revision: "rev1", unitId: "s1w", unitType: "section", sectionPath: [WARENEINGANG_HEAD], content: WARENEINGANG_HEAD, ordinal: 0, created: rev1, latest: false });
-    await navUnit({ revision: "rev1", unitId: "u1w1", unitType: "chunk", sectionPath: [WARENEINGANG_HEAD], content: WARENEINGANG_OLD, ordinal: 0, created: rev1, latest: false, pageStart: 7 });
+    await navUnit({ revision: "rev1", unitId: "s1w", unitType: "section", sectionPath: [ANTRAGSEINGANG_HEAD], content: ANTRAGSEINGANG_HEAD, ordinal: 0, created: rev1, latest: false });
+    await navUnit({ revision: "rev1", unitId: "u1w1", unitType: "chunk", sectionPath: [ANTRAGSEINGANG_HEAD], content: ANTRAGSEINGANG_OLD, ordinal: 0, created: rev1, latest: false, pageStart: 7 });
     await navUnit({ revision: "rev1", unitId: "s1o", unitType: "section", sectionPath: [ALT_HEAD], content: ALT_HEAD, ordinal: 0, created: rev1, latest: false });
     await navUnit({ revision: "rev1", unitId: "u1o1", unitType: "chunk", sectionPath: [ALT_HEAD], content: ALT, ordinal: 0, created: rev1, latest: false, pageStart: 9 });
 
     await navUnit({ revision: "rev2", unitId: "s2a", unitType: "section", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_HEAD, ordinal: 0, created: rev2, latest: true });
     await navUnit({ revision: "rev2", unitId: "u2a1", unitType: "chunk", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_KEEP, ordinal: 0, created: rev2, latest: true, pageStart: 3 });
     await navUnit({ revision: "rev2", unitId: "u2a2", unitType: "chunk", sectionPath: [ANWENDUNG_HEAD], content: ANWENDUNG_NEW, ordinal: 1, created: rev2, latest: true, pageStart: 3 });
-    await navUnit({ revision: "rev2", unitId: "s2w", unitType: "section", sectionPath: [WARENEINGANG_HEAD], content: WARENEINGANG_HEAD, ordinal: 0, created: rev2, latest: true });
-    await navUnit({ revision: "rev2", unitId: "u2w1", unitType: "chunk", sectionPath: [WARENEINGANG_HEAD], content: WARENEINGANG_NEW, ordinal: 0, created: rev2, latest: true, pageStart: 7 });
+    await navUnit({ revision: "rev2", unitId: "s2w", unitType: "section", sectionPath: [ANTRAGSEINGANG_HEAD], content: ANTRAGSEINGANG_HEAD, ordinal: 0, created: rev2, latest: true });
+    await navUnit({ revision: "rev2", unitId: "u2w1", unitType: "chunk", sectionPath: [ANTRAGSEINGANG_HEAD], content: ANTRAGSEINGANG_NEW, ordinal: 0, created: rev2, latest: true, pageStart: 7 });
     await navUnit({ revision: "rev2", unitId: "s2n", unitType: "section", sectionPath: [NEU_HEAD], content: NEU_HEAD, ordinal: 0, created: rev2, latest: true });
     await navUnit({ revision: "rev2", unitId: "u2n1", unitType: "chunk", sectionPath: [NEU_HEAD], content: NEU, ordinal: 0, created: rev2, latest: true, pageStart: 11 });
   });
@@ -181,11 +181,11 @@ describeIfPg("document_diff · units across two points in time · real postgres"
     expect(payload.removed.map((u) => u.section_id).sort()).toEqual([ALT_HEAD, ALT_HEAD]);
     expect(payload.added.map((u) => u.section_id).sort()).toEqual([NEU_HEAD, NEU_HEAD]);
 
-    // Two reworded chunks: the second "1 Anwendung" chunk and the "4 Wareneingang" chunk.
+    // Two reworded chunks: the second "1 Anwendung" chunk and the "4 Antragseingang" chunk.
     expect(payload.changed).toHaveLength(2);
     const keys = payload.changed.map((c) => c.key).sort();
     expect(keys.some((k) => k.includes(ANWENDUNG_HEAD))).toBe(true);
-    expect(keys.some((k) => k.includes(WARENEINGANG_HEAD))).toBe(true);
+    expect(keys.some((k) => k.includes(ANTRAGSEINGANG_HEAD))).toBe(true);
 
     // Unchanged: the two section headings that persist and the kept chunk.
     expect(payload.unchanged_count).toBe(3);
@@ -200,14 +200,14 @@ describeIfPg("document_diff · units across two points in time · real postgres"
       "2025-03-01T00:00:00Z",
       "2025-07-01T00:00:00Z",
     );
-    const wareneingang = payload.changed.find((c) => c.key.includes(WARENEINGANG_HEAD));
-    if (!wareneingang) {
-      throw new Error("Wareneingang unit missing from changed bucket");
+    const antragseingang = payload.changed.find((c) => c.key.includes(ANTRAGSEINGANG_HEAD));
+    if (!antragseingang) {
+      throw new Error("Antragseingang unit missing from changed bucket");
     }
-    expect(wareneingang.before_excerpt.length).toBeLessThanOrEqual(300);
-    expect(wareneingang.after_excerpt.length).toBeLessThanOrEqual(300);
-    expect(wareneingang.before_excerpt.endsWith("…")).toBe(true);
-    expect(wareneingang.after_excerpt.startsWith("Wareneingang Fassung 2025.")).toBe(true);
+    expect(antragseingang.before_excerpt.length).toBeLessThanOrEqual(300);
+    expect(antragseingang.after_excerpt.length).toBeLessThanOrEqual(300);
+    expect(antragseingang.before_excerpt.endsWith("…")).toBe(true);
+    expect(antragseingang.after_excerpt.startsWith("Antragseingang Fassung 2025.")).toBe(true);
     for (const u of [...payload.added, ...payload.removed]) {
       expect(u.excerpt.length).toBeLessThanOrEqual(300);
     }

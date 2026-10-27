@@ -11,7 +11,7 @@ import { translate } from "../../lib/i18n";
 
 const EXAMPLES: Record<FormulaKind, string[]> = {
   condition: [
-    "classification.route == 'RETOURE'",
+    "classification.route == 'REKLAMATION'",
     "groups.includes('staff') && language == 'de'",
     "lastMessageText =~ 'parkplatz|stellplatz'",
     "!hasErrors && messageCount > 2",
@@ -68,7 +68,7 @@ export function BuilderHelp({
           <summary className="cursor-pointer font-medium">{translate("builderHelp.howConditionsWork")}</summary>
           <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
             <li>{translate("builderHelp.namesReadTheRunState")}</li>
-            <li>{translate("builderHelp.textInSingleQuotes")} <code>route == 'RETOURE'</code>{translate("builderHelp.combineWith")} <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> {translate("builderHelp.andParentheses")}</li>
+            <li>{translate("builderHelp.textInSingleQuotes")} <code>route == 'REKLAMATION'</code>{translate("builderHelp.combineWith")} <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> {translate("builderHelp.andParentheses")}</li>
             <li><code>=~</code> {translate("builderHelp.isACaseInsensitiveRegex")} <code>.includes()</code>, <code>.startsWith()</code>, <code>.endsWith()</code>, <code>.length</code> {translate("builderHelp.workOnTextAndLists")}</li>
             <li>{translate("builderHelp.flowVariablesAndConstantsAre")} <code>'{"{{vars.x}}"}'</code>.</li>
             <li>{translate("builderHelp.anEmptyConditionMeansAlways")}</li>

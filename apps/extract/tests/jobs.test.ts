@@ -184,17 +184,17 @@ describe("POST /v2/jobs · create", () => {
     const res = await request(baseUrl).post("/v2/jobs").send({
       reference: "tests/attrs.pdf",
       sourceSha256: seededSha,
-      title: "Pflichtenheft",
+      title: "Spezifikation",
       tags: ["kunde-a"],
-      metadata: { projekt: "WMS" },
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
     });
     expect(res.status).toBe(201);
     expect(fakeStore.peek(res.body.jobId)?.config).toMatchObject({
-      title: "Pflichtenheft",
+      title: "Spezifikation",
       tags: ["kunde-a"],
-      metadata: { projekt: "WMS" },
+      metadata: { projekt: "Alpha" },
       link: "https://dms.example/1",
       sourceLabel: "DMS",
     });

@@ -74,7 +74,7 @@ describe("buildIngestHeaders", () => {
       validFrom: "2026-01-01T12:30:00+01:00",
       version: "2026-01-01",
       versionMode: "version",
-      tags: ["wms", " ", "spec"],
+      tags: ["alpha", " ", "spec"],
       allowedUsers: ["alice"],
       allowedGroups: ["engineering", ""],
       ftsLanguage: "german",
@@ -88,7 +88,7 @@ describe("buildIngestHeaders", () => {
     expect(headers["x-version"]).toBe("2026-01-01");
     expect(headers["x-valid-from"]).toBe("2026-01-01T12:30:00+01:00");
     expect(headers["x-version-mode"]).toBe("version");
-    expect(headers["x-tags"]).toBe("wms,spec");
+    expect(headers["x-tags"]).toBe("alpha,spec");
     expect(headers["x-allowed-users"]).toBe("alice");
     expect(headers["x-allowed-groups"]).toBe("engineering");
     expect(headers["x-fts-language"]).toBe("german");
@@ -162,11 +162,11 @@ describe("buildIngestHeaders", () => {
 
   test("produces metadata Search accepts and keeps provenance in it", () => {
     const headers = buildIngestHeaders(document(), {
-      metadata: { project_id: "wms", document_type: "specification" },
+      metadata: { project_id: "alpha", document_type: "specification" },
     });
     const parsed = parseMetadataHeader(headers["x-metadata"]);
     expect(parsed.error).toBeUndefined();
-    expect(parsed.metadata["project_id"]).toBe("wms");
+    expect(parsed.metadata["project_id"]).toBe("alpha");
     expect(parsed.metadata["document_type"]).toBe("specification");
     expect(parsed.metadata["extract_contract"]).toBe(EXTRACT_CONTRACT_ID);
     expect(parsed.metadata["extract_extractor"]).toBe("poppler");

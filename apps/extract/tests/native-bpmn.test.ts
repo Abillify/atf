@@ -15,11 +15,11 @@ import { buildBpmnRecords } from "../src/pipeline/native/index.js";
 const BPMN = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Defs_1">
   <bpmn:collaboration id="Collab_1">
-    <bpmn:participant id="Part_1" name="Lager" processRef="Process_1"/>
+    <bpmn:participant id="Part_1" name="Verwaltung" processRef="Process_1"/>
   </bpmn:collaboration>
   <bpmn:process id="Process_1" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_A" name="Wareneingang">
+      <bpmn:lane id="Lane_A" name="Antragseingang">
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gw_1</bpmn:flowNodeRef>
@@ -29,10 +29,10 @@ const BPMN = `<?xml version="1.0" encoding="UTF-8"?>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
       </bpmn:lane>
     </bpmn:laneSet>
-    <bpmn:startEvent id="Start_1" name="Anlieferung"/>
-    <bpmn:userTask id="Task_1" name="Wareneingang prüfen"/>
+    <bpmn:startEvent id="Start_1" name="Posteingang"/>
+    <bpmn:userTask id="Task_1" name="Antragseingang prüfen"/>
     <bpmn:exclusiveGateway id="Gw_1" name="OK?"/>
-    <bpmn:serviceTask id="Task_2" name="Einlagern"/>
+    <bpmn:serviceTask id="Task_2" name="Ablegen"/>
     <bpmn:endEvent id="End_1" name="Abgeschlossen"/>
     <bpmn:sequenceFlow id="F1" sourceRef="Start_1" targetRef="Task_1"/>
     <bpmn:sequenceFlow id="F2" sourceRef="Task_1" targetRef="Gw_1"/>
@@ -64,17 +64,17 @@ describe("parseBpmn", () => {
     const task1 = transcription.nodes.find((n) => n.id === "Task_1");
     expect(task1).toMatchObject({
       type: "userTask",
-      label: "Wareneingang prüfen",
-      lane: "Wareneingang",
+      label: "Antragseingang prüfen",
+      lane: "Antragseingang",
     });
     const gw = transcription.nodes.find((n) => n.id === "Gw_1");
     expect(gw).toMatchObject({
       type: "exclusiveGateway",
-      lane: "Wareneingang",
+      lane: "Antragseingang",
     });
 
     // Lanes are captured, and lane membership is stamped on each node.
-    expect(transcription.lanes).toEqual(["Wareneingang", "Qualität"]);
+    expect(transcription.lanes).toEqual(["Antragseingang", "Qualität"]);
     expect(transcription.nodes.find((n) => n.id === "Task_2")?.lane).toBe(
       "Qualität",
     );
@@ -86,15 +86,15 @@ describe("parseBpmn", () => {
     expect(conditioned?.condition).toBe("ja");
 
     // Steps are a linear walk from the start event.
-    expect(transcription.steps[0]).toBe("Anlieferung");
-    expect(transcription.steps).toContain("Einlagern");
+    expect(transcription.steps[0]).toBe("Posteingang");
+    expect(transcription.steps).toContain("Ablegen");
     expect(transcription.steps[transcription.steps.length - 1]).toBe(
       "Abgeschlossen",
     );
 
     // A Mermaid rendering is generated deterministically.
     expect(transcription.mermaid.startsWith("flowchart TD")).toBe(true);
-    expect(transcription.mermaid).toContain("Wareneingang prüfen");
+    expect(transcription.mermaid).toContain("Antragseingang prüfen");
   });
 
   it("reads a conditionExpression when a flow has no name", () => {

@@ -122,10 +122,10 @@ function generatorFor(h: Harness, client: SummaryClient = h.client) {
  * summaries as they happen, then finalize. Returns the pass and generator so a
  * test can inspect the produced summaries and the client's calls.
  *
- *   1 Wareneingang            (page 1) ── closes when "2" opens
+ *   1 Antragseingang            (page 1) ── closes when "2" opens
  *     1.1 Anmeldung           (page 1) ── closes when "1.2" opens
  *     1.2 Prüfung             (page 2) ── closes when "2" opens
- *   2 Warenausgang            (page 2) ── open at end
+ *   2 Bescheidausgang            (page 2) ── open at end
  */
 async function runTwoChapterDoc(h: Harness, pass: DocumentPass): Promise<{
   outline: OutlineNode[];
@@ -137,11 +137,11 @@ async function runTwoChapterDoc(h: Harness, pass: DocumentPass): Promise<{
   const page1 = pageRecord(
     1,
     [
-      heading(1, "h1", "Wareneingang", "1"),
+      heading(1, "h1", "Antragseingang", "1"),
       heading(1, "h1.1", "Anmeldung", "1.1"),
-      paragraph(1, "p1", "Der Lieferant meldet den Wareneingang an."),
+      paragraph(1, "p1", "Der Lieferant meldet den Antragseingang an."),
     ],
-    "Seite 1 behandelt die Anmeldung des Wareneingangs.",
+    "Seite 1 behandelt die Anmeldung des Antragseingangs.",
   );
   const applied1 = pass.applyPage(page1);
   await generator.onSectionsClosed(applied1.closedSections, pass);
@@ -151,10 +151,10 @@ async function runTwoChapterDoc(h: Harness, pass: DocumentPass): Promise<{
     [
       heading(2, "h1.2", "Prüfung", "1.2"),
       paragraph(2, "p2", "Die Ware wird auf Vollständigkeit geprüft."),
-      heading(2, "h2", "Warenausgang", "2"),
-      paragraph(2, "p3", "Der Warenausgang wird kommissioniert."),
+      heading(2, "h2", "Bescheidausgang", "2"),
+      paragraph(2, "p3", "Der Bescheidausgang wird zusammengestellt."),
     ],
-    "Seite 2 behandelt Prüfung und Warenausgang.",
+    "Seite 2 behandelt Prüfung und Bescheidausgang.",
   );
   const applied2 = pass.applyPage(page2);
   await generator.onSectionsClosed(applied2.closedSections, pass);
@@ -173,7 +173,7 @@ describe("summary hierarchy · section close", () => {
     await runTwoChapterDoc(h, pass);
 
     const sectionCalls = h.client.calls.filter((c) => c.scope === "section");
-    // Sections: 1.1 Anmeldung, 1.2 Prüfung, 1 Wareneingang, 2 Warenausgang — one
+    // Sections: 1.1 Anmeldung, 1.2 Prüfung, 1 Antragseingang, 2 Bescheidausgang — one
     // summary each, no duplicates.
     expect(sectionCalls.length).toBe(4);
 
@@ -184,9 +184,9 @@ describe("summary hierarchy · section close", () => {
     // page summary plus its paragraph, not the whole document.
     const anmeldungCall = sectionCalls.find((c) => c.title?.includes("Anmeldung"));
     expect(anmeldungCall).toBeDefined();
-    expect(anmeldungCall?.content).toContain("Der Lieferant meldet den Wareneingang an.");
+    expect(anmeldungCall?.content).toContain("Der Lieferant meldet den Antragseingang an.");
     // It must NOT contain a sibling section's text.
-    expect(anmeldungCall?.content).not.toContain("kommissioniert");
+    expect(anmeldungCall?.content).not.toContain("zusammengestellt");
   });
 });
 
@@ -273,10 +273,10 @@ describe("summary hierarchy · resume", () => {
     const genA = generatorFor(h);
     const p1 = pageRecord(
       1,
-      [heading(1, "h1", "Wareneingang", "1"), heading(1, "h1.1", "Anmeldung", "1.1"), paragraph(1, "p1", "Anmeldetext.")],
+      [heading(1, "h1", "Antragseingang", "1"), heading(1, "h1.1", "Anmeldung", "1.1"), paragraph(1, "p1", "Anmeldetext.")],
       "S1.",
     );
-    const p2 = pageRecord(2, [heading(2, "h2", "Warenausgang", "2"), paragraph(2, "p2", "Ausgang.")], "S2.");
+    const p2 = pageRecord(2, [heading(2, "h2", "Bescheidausgang", "2"), paragraph(2, "p2", "Ausgang.")], "S2.");
     await genA.onSectionsClosed(passA.applyPage(p1).closedSections, passA);
     await genA.onSectionsClosed(passA.applyPage(p2).closedSections, passA);
     expect(h.client.calls.some((c) => c.title?.includes("Anmeldung"))).toBe(true);
@@ -320,10 +320,10 @@ describe("summary hierarchy · optional", () => {
     const pass = createDocumentPass();
 
     pass.applyPage(
-      pageRecord(1, [heading(1, "h1", "Wareneingang", "1"), paragraph(1, "p1", "Text.")], "S1."),
+      pageRecord(1, [heading(1, "h1", "Antragseingang", "1"), paragraph(1, "p1", "Text.")], "S1."),
     );
     pass.applyPage(
-      pageRecord(2, [heading(2, "h2", "Warenausgang", "2"), paragraph(2, "p2", "Text.")], "S2."),
+      pageRecord(2, [heading(2, "h2", "Bescheidausgang", "2"), paragraph(2, "p2", "Text.")], "S2."),
     );
 
     expect(pass.summaries()).toEqual([]);

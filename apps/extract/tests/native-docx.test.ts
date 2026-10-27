@@ -36,7 +36,7 @@ function buildDocx(): Uint8Array {
 	const document = `<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Wareneingang</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Antragseingang</w:t></w:r></w:p>
     <w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Ein Absatz.</w:t></w:r></w:p>
     <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Anmeldung</w:t></w:r></w:p>
     <w:p><w:pPr><w:pStyle w:val="Ueberschrift3"/></w:pPr><w:r><w:t xml:space="preserve">Maske </w:t></w:r><w:r><w:t>WE01</w:t></w:r></w:p>
@@ -56,7 +56,7 @@ describe("parseDocxHeadings", () => {
 		expect(warnings).toEqual([]);
 
 		expect(headings).toEqual([
-			{ text: "Wareneingang", level: 1 },
+			{ text: "Antragseingang", level: 1 },
 			{ text: "Anmeldung", level: 2 },
 			{ text: "Maske WE01", level: 3 },
 		]);
@@ -84,7 +84,7 @@ describe("parseDocxHeadings", () => {
 describe("buildDocxHeadingHints", () => {
 	it("keys authoritative levels by normalised heading text", () => {
 		const hints = buildDocxHeadingHints(buildDocx());
-		expect(hints.levelByText.get(normalizeHeadingKey("Wareneingang"))).toBe(1);
+		expect(hints.levelByText.get(normalizeHeadingKey("Antragseingang"))).toBe(1);
 		expect(hints.levelByText.get(normalizeHeadingKey("  ANMELDUNG "))).toBe(2);
 		expect(hints.levelByText.get(normalizeHeadingKey("Maske WE01"))).toBe(3);
 	});

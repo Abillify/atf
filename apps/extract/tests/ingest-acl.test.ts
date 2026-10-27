@@ -22,7 +22,7 @@ import type { RequestPrincipal } from "../src/request-principal.js";
 
 const user: RequestPrincipal = {
   userId: "alice",
-  userGroups: ["engineering", "wms"],
+  userGroups: ["engineering", "alpha"],
   source: "jwt",
 };
 
@@ -36,15 +36,15 @@ describe("resolveAcl", () => {
   it("defaults to the caller's own identity", () => {
     expect(resolveAcl(user, { users: [], groups: [] })).toEqual({
       allowedUsers: ["alice"],
-      allowedGroups: ["engineering", "wms"],
+      allowedGroups: ["engineering", "alpha"],
       mode: "none",
     });
   });
 
   it("narrows to the requested subset", () => {
-    expect(resolveAcl(user, { users: [], groups: ["wms"] })).toEqual({
+    expect(resolveAcl(user, { users: [], groups: ["alpha"] })).toEqual({
       allowedUsers: ["alice"],
-      allowedGroups: ["wms"],
+      allowedGroups: ["alpha"],
       mode: "intersected",
     });
   });
@@ -61,7 +61,7 @@ describe("resolveAcl", () => {
   it("drops another user, rather than publishing on their behalf", () => {
     expect(resolveAcl(user, { users: ["bob"], groups: [] })).toEqual({
       allowedUsers: [],
-      allowedGroups: ["engineering", "wms"],
+      allowedGroups: ["engineering", "alpha"],
       mode: "intersected",
     });
   });
@@ -69,7 +69,7 @@ describe("resolveAcl", () => {
   it("keeps the caller when they ask for themselves explicitly", () => {
     expect(resolveAcl(user, { users: ["alice"], groups: [] })).toEqual({
       allowedUsers: ["alice"],
-      allowedGroups: ["engineering", "wms"],
+      allowedGroups: ["engineering", "alpha"],
       mode: "intersected",
     });
   });
@@ -77,9 +77,9 @@ describe("resolveAcl", () => {
   it("passes an intersection through when only part is permitted", () => {
     // A bulk uploader naming a group the caller happens not to be in should keep
     // working for the groups they do have.
-    expect(resolveAcl(user, { users: [], groups: ["wms", "finance"] })).toEqual({
+    expect(resolveAcl(user, { users: [], groups: ["alpha", "finance"] })).toEqual({
       allowedUsers: ["alice"],
-      allowedGroups: ["wms"],
+      allowedGroups: ["alpha"],
       mode: "intersected",
     });
   });
@@ -109,12 +109,12 @@ describe("resolveAcl", () => {
   it("handles a group-only principal", () => {
     const groupOnly: RequestPrincipal = {
       userId: undefined,
-      userGroups: ["wms"],
+      userGroups: ["alpha"],
       source: "jwt",
     };
     expect(resolveAcl(groupOnly, { users: [], groups: [] })).toEqual({
       allowedUsers: [],
-      allowedGroups: ["wms"],
+      allowedGroups: ["alpha"],
       mode: "none",
     });
   });

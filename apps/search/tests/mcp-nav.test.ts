@@ -134,7 +134,7 @@ function fakePg(capturedScopes: unknown[]): Record<string, unknown> {
       result: {
         entries: [
           { unit_id: "s1", section_id: "sec-1", section_path: ["1 Einleitung"], depth: 1, heading: "1 Einleitung", page_start: 1, page_end: 3 },
-          { unit_id: "s2", section_id: "sec-2", section_path: ["2 Wareneingang"], depth: 1, heading: "2 Wareneingang", page_start: 4, page_end: 40 },
+          { unit_id: "s2", section_id: "sec-2", section_path: ["2 Antragseingang"], depth: 1, heading: "2 Antragseingang", page_start: 4, page_end: 40 },
         ],
         total: 5,
       },
@@ -142,14 +142,14 @@ function fakePg(capturedScopes: unknown[]): Record<string, unknown> {
     getSectionUnits: capture({
       ok: true,
       result: [
-        { unit_id: "c1", unit_type: "chunk", content: "## 2 Wareneingang\n\nText A", section_id: "sec-2", section_path: ["2 Wareneingang"], page_start: 4, page_end: 4, figure_kind: null, table_id: null, metadata: {} },
-        { unit_id: "c2", unit_type: "chunk", content: "Text B ".repeat(200), section_id: "sec-2", section_path: ["2 Wareneingang"], page_start: 5, page_end: 5, figure_kind: null, table_id: null, metadata: {} },
+        { unit_id: "c1", unit_type: "chunk", content: "## 2 Antragseingang\n\nText A", section_id: "sec-2", section_path: ["2 Antragseingang"], page_start: 4, page_end: 4, figure_kind: null, table_id: null, metadata: {} },
+        { unit_id: "c2", unit_type: "chunk", content: "Text B ".repeat(200), section_id: "sec-2", section_path: ["2 Antragseingang"], page_start: 5, page_end: 5, figure_kind: null, table_id: null, metadata: {} },
       ],
     }),
     getPageUnits: capture({
       ok: true,
       result: [
-        { unit_id: "p1", unit_type: "chunk", content: "Seite 4 Inhalt", section_id: "sec-2", section_path: ["2 Wareneingang"], page_start: 4, page_end: 4, figure_kind: null, table_id: null, metadata: {} },
+        { unit_id: "p1", unit_type: "chunk", content: "Seite 4 Inhalt", section_id: "sec-2", section_path: ["2 Antragseingang"], page_start: 4, page_end: 4, figure_kind: null, table_id: null, metadata: {} },
       ],
     }),
     getContextUnits: capture({
@@ -185,7 +185,7 @@ function fakePg(capturedScopes: unknown[]): Record<string, unknown> {
       ok: true,
       result: {
         occurrences: [
-          { value_norm: "WE01A", unit_id: "u9", page: 12, kind: "code", reference: "docs/manual.pdf#9", base_ref: "docs/manual.pdf", section_path: ["2 Wareneingang"], excerpt: "… WE-01/A …" },
+          { value_norm: "WE01A", unit_id: "u9", page: 12, kind: "code", reference: "docs/manual.pdf#9", base_ref: "docs/manual.pdf", section_path: ["2 Antragseingang"], excerpt: "… WE-01/A …" },
         ],
         total: 4,
       },
@@ -260,7 +260,7 @@ describe("MCP navigation tools (task 3.9)", () => {
     const res = (await client.callTool({ name: "get_section", arguments: { reference: "docs/manual.pdf", section_id: "sec-2", max_chars: 500 } })) as ToolResult;
     const doc = jsonOf(res);
     expect(doc.section_id).toBe("sec-2");
-    expect(String(doc.markdown)).toContain("## 2 Wareneingang");
+    expect(String(doc.markdown)).toContain("## 2 Antragseingang");
     expect(doc.truncated).toBe(true); // second unit is ~1400 chars, over the 500 cap
     expect(String(doc.markdown).length).toBeLessThanOrEqual(600);
   });
@@ -494,7 +494,7 @@ describe("MCP navigation tools (task 3.9)", () => {
         group_by: "section",
         pages: [37, 38],
         figure_kind: "ui_mask",
-        section_prefix: ["4 Wareneingang"],
+        section_prefix: ["4 Antragseingang"],
         identifier: "we-01/a",
         expand: "none",
       },
@@ -510,7 +510,7 @@ describe("MCP navigation tools (task 3.9)", () => {
       figureKind: "ui_mask",
       pageStart: 37,
       pageEnd: 38,
-      sectionPrefix: ["4 Wareneingang"],
+      sectionPrefix: ["4 Antragseingang"],
     });
   });
 

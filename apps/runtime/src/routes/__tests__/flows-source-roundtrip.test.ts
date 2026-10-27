@@ -510,8 +510,8 @@ describe("file flow source form", () => {
         body: JSON.stringify(body),
       });
     const ok = (await (await post({
-      expression: "classification.route == 'RETOURE' && messageCount > 1",
-      sample: { classification: { route: "RETOURE" }, messageCount: 2 },
+      expression: "classification.route == 'REKLAMATION' && messageCount > 1",
+      sample: { classification: { route: "REKLAMATION" }, messageCount: 2 },
     })).json()) as { valid: boolean; result: boolean };
     expect(ok).toEqual({ valid: true, result: true });
     const regex = (await (await post({ expression: "lastMessageText =~ 'park'", sample: { lastMessageText: "Parkplatz frei?" } })).json()) as { result: boolean };

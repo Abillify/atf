@@ -481,8 +481,8 @@ export const uiDe: Record<keyof typeof uiEn, string> = {
     "✓ Verifiziert — {checked} Datensatz/Datensätze geprüft, Hash-Kette seit dem Ursprung intakt.",
   "edgeDetailsPanel.beimLetztenRunUBer":
     "Beim letzten Lauf über diese Kante ({source} → {target}).",
-  "edgeDetailsPanel.classificationRouteRETOURE":
-    "classification.route == 'RETOURE'",
+  "edgeDetailsPanel.classificationRouteREKLAMATION":
+    "classification.route == 'REKLAMATION'",
   "edgeDetailsPanel.conditionRoutingExpression": "Bedingung (Routing-Ausdruck)",
   "edgeDetailsPanel.deleteEdge": "Kante löschen",
   "edgeDetailsPanel.edge": "Kante",
@@ -645,7 +645,7 @@ export const uiDe: Record<keyof typeof uiEn, string> = {
   "expressionCopilot.askTheExpressionCopilot": "Den Ausdrucks-Copilot fragen",
   "expressionCopilot.copilotProposal": "Vorschlag des Copilots",
   "expressionCopilot.describeTheConditionEG":
-    "Die Bedingung beschreiben, z. B. „Route ist RETOURE oder der Nutzer fragt nach dem Parken“",
+    "Die Bedingung beschreiben, z. B. „Route ist REKLAMATION oder der Nutzer fragt nach dem Parken“",
   "expressionCopilot.describeWhatToWriteOr":
     "Beschreiben, was geschrieben oder geändert werden soll, z. B. „die Hälfte des Worker-Budgets, gerundet“",
   "expressionCopilot.discard": "Verwerfen",

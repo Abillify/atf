@@ -9,7 +9,7 @@
  * material) so the fixture may live in the public tree. When the fixture
  * changes, bump `VERSION` and regenerate.
  *
- * The four documents mirror the representative set from the design: a WMS
+ * The four documents mirror the representative set from the design: a
  * requirements specification (DOCX), a process document with BPMN diagrams, a
  * screen/mask document with UI screenshots, and a technical plan set.
  */
@@ -23,7 +23,7 @@ import { parseGoldenSet } from "../golden-set.ts";
 // `extraction` field is optional.
 // 1.2.0: figure ids now use the extract-contract v1 shape `p<page>-f<n>`.
 // The contract parser (packages/extract-contract/src/v1/parse.ts) rewrites
-// every other id to a synthetic `p<page>-f<ordinal>`, so ids like `fig-wms-1`
+// every other id to a synthetic `p<page>-f<ordinal>`, so ids like `fig-spec-1`
 // could never match the figure ids Search stores — figure recall was always
 // zero. Annotating with the contract shape keeps golden and indexed ids
 // aligned.
@@ -31,7 +31,11 @@ import { parseGoldenSet } from "../golden-set.ts";
 // subject appears nowhere in the corpus. The expected outcome is "no hit"; they
 // feed the abstention metrics and are skipped by the recall/MRR metrics and by
 // the corpus builder. Backward-compatible: `abstain` is optional.
-const VERSION = "1.3.0";
+// 1.4.0: new document ids, references and titles (`requirements-spec`) and
+// reworded questions. Pages, figures, cells and the
+// question count are unchanged, but retrieval metrics are not comparable with
+// 1.3.0: re-ingest a live golden corpus and record a new baseline.
+const VERSION = "1.4.0";
 
 interface DocSpec {
 	id: string;
@@ -42,21 +46,21 @@ interface DocSpec {
 	note: string;
 }
 
-const WMS: DocSpec = {
-	id: "wms-spec",
-	reference: "/golden/wms-pflichtenheft.docx",
+const SPEC: DocSpec = {
+	id: "requirements-spec",
+	reference: "/golden/anforderungsspezifikation.docx",
 	kind: "docx",
-	title: "WMS-Pflichtenheft (synthetisch)",
+	title: "Anforderungsspezifikation (synthetisch)",
 	pages: 42,
-	note: "Synthetic warehouse-management requirements spec: numbered sections, requirement tables, field lists.",
+	note: "Synthetic requirements spec: numbered sections, requirement tables, field lists.",
 };
 const BPMN: DocSpec = {
 	id: "process-bpmn",
-	reference: "/golden/wareneingang-prozesse.pdf",
+	reference: "/golden/antragseingang-prozesse.pdf",
 	kind: "bpmn",
 	title: "Prozessdokumentation mit BPMN (synthetisch)",
 	pages: 18,
-	note: "Synthetic process manual embedding BPMN diagrams for goods receipt and returns.",
+	note: "Synthetic process manual embedding BPMN diagrams for application intake and objections.",
 };
 const MASKS: DocSpec = {
 	id: "ui-masks",
@@ -68,14 +72,14 @@ const MASKS: DocSpec = {
 };
 const PLAN: DocSpec = {
 	id: "plan-set",
-	reference: "/golden/plansatz-halle.pdf",
+	reference: "/golden/plansatz-gebaeude.pdf",
 	kind: "plan",
-	title: "Plansatz Halle (synthetisch)",
+	title: "Plansatz Gebäude (synthetisch)",
 	pages: 12,
 	note: "Synthetic plan set: large-format technical drawings with title blocks and legends.",
 };
 
-const documents: DocSpec[] = [WMS, BPMN, MASKS, PLAN];
+const documents: DocSpec[] = [SPEC, BPMN, MASKS, PLAN];
 
 interface ExtractionSpec {
 	expectedTable?: string[][];
@@ -116,42 +120,42 @@ function figureId(docId: string, page: number): string {
 
 const questions: QSpec[] = [];
 
-// WMS spec: 40 questions — mix of page lookups, requirement tables (cells),
+// Requirements spec: 40 questions — mix of page lookups, requirement tables (cells),
 // and a few field-list figures.
 const wmsTopics = [
-	"Welche Anforderung beschreibt die Teilfreigabe im Wareneingang?",
-	"Wo ist die Rolle des Lagerleiters definiert?",
-	"Welche Pflichtfelder hat die Wareneingangsmaske?",
-	"Wie wird die Chargenverwaltung gefordert?",
+	"Welche Anforderung beschreibt die Teilfreigabe im Antragseingang?",
+	"Wo ist die Rolle des Teamleiters definiert?",
+	"Welche Pflichtfelder hat die Antragseingangsmaske?",
+	"Wie wird die Vorgangsverwaltung gefordert?",
 	"Welche Anforderung regelt die Rückverfolgbarkeit?",
 	"Wo steht die Definition des Begriffs Anmeldung?",
 	"Welche Schnittstelle zum ERP wird verlangt?",
-	"Welche Anforderung betrifft die Inventur?",
+	"Welche Anforderung betrifft die Revision?",
 	"Wo werden die Berechtigungen beschrieben?",
 	"Welche Anforderung nennt die Prüfung der Mengen?",
-	"Wie wird die Sperrlagerlogik gefordert?",
-	"Welche Anforderung beschreibt die Umlagerung?",
+	"Wie wird die Sperrvermerklogik gefordert?",
+	"Welche Anforderung beschreibt die Umverteilung?",
 	"Wo ist der Freigabeprozess dokumentiert?",
 	"Welche Felder hat die Freigabemaske?",
-	"Welche Anforderung regelt die Etikettierung?",
+	"Welche Anforderung regelt die Kennzeichnung?",
 	"Wo steht die Fehlerbehandlung bei Buchungen?",
-	"Welche Anforderung betrifft die Kommissionierung?",
-	"Wie wird die Nachschubsteuerung beschrieben?",
-	"Welche Anforderung nennt die Bestandsführung?",
+	"Welche Anforderung betrifft die Zusammenstellung?",
+	"Wie wird die Vertretungssteuerung beschrieben?",
+	"Welche Anforderung nennt die Aktenführung?",
 	"Wo ist die Definition der Teilmenge?",
 ];
 wmsTopics.forEach((question, index) => {
-	const page = pickPage(index + 1, WMS.pages);
-	questions.push({ document: "wms-spec", question, pages: [page] });
+	const page = pickPage(index + 1, SPEC.pages);
+	questions.push({ document: "requirements-spec", question, pages: [page] });
 });
-// Requirement-table cell questions for the WMS spec. Each carries the
+// Requirement-table cell questions for the requirements spec. Each carries the
 // ground-truth requirement table so table-cell accuracy can be scored: a small
 // header + one requirement row per question (task T2.10).
 for (let i = 0; i < 12; i++) {
-	const page = pickPage(100 + i, WMS.pages);
+	const page = pickPage(100 + i, SPEC.pages);
 	const code = `A-${(i + 1).toString().padStart(3, "0")}`;
 	questions.push({
-		document: "wms-spec",
+		document: "requirements-spec",
 		question: `Welchen Wert hat Anforderung ${code} in der Anforderungstabelle?`,
 		pages: [page],
 		cells: [{ page, row: (i % 6) + 2, col: (i % 3) + 2 }],
@@ -160,22 +164,22 @@ for (let i = 0; i < 12; i++) {
 				["ID", "Anforderung", "Priorität"],
 				[
 					code,
-					`Anforderung ${code} des Wareneingangs`,
+					`Anforderung ${code} des Antragseingangs`,
 					i % 2 === 0 ? "MUSS" : "SOLL",
 				],
 			],
 		},
 	});
 }
-// Field-list figures in the WMS spec. Each figure is annotated with the field
+// Field-list figures in the requirements spec. Each figure is annotated with the field
 // labels a correct transcription must surface (label-coverage).
 for (let i = 0; i < 8; i++) {
-	const page = pickPage(200 + i, WMS.pages);
+	const page = pickPage(200 + i, SPEC.pages);
 	questions.push({
-    document: "wms-spec",
+    document: "requirements-spec",
     question: `Welche Feldliste zeigt die Abbildung der Maske M-${i + 1}?`,
     pages: [page],
-    figures: [figureId(WMS.id, page)],
+    figures: [figureId(SPEC.id, page)],
     extraction: {
       expectedLabels: [`Feld ${i + 1}a`, `Feld ${i + 1}b`, "Speichern"],
     },
@@ -184,15 +188,15 @@ for (let i = 0; i < 8; i++) {
 
 // BPMN document: 30 questions — process/figure heavy.
 const bpmnTopics = [
-	"Welche Aufgabe folgt auf die Wareneingangsprüfung im Prozess?",
+	"Welche Aufgabe folgt auf die Antragseingangsprüfung im Prozess?",
 	"Welches Gateway entscheidet über die Teilfreigabe?",
 	"Welche Lane bearbeitet die Rücksendung?",
-	"Wo beginnt der Wareneingangsprozess?",
-	"Welche Aufgabe schließt den Retourenprozess ab?",
-	"Welche Pools zeigt das BPMN-Diagramm des Wareneingangs?",
+	"Wo beginnt der Antragseingangsprozess?",
+	"Welche Aufgabe schließt den Reklamationsprozess ab?",
+	"Welche Pools zeigt das BPMN-Diagramm des Antragseingangs?",
 	"Welcher Sequenzfluss verbindet Prüfung und Buchung?",
-	"Welche Entscheidung trifft der Lagerleiter im Prozess?",
-	"Welche Aufgabe erzeugt das Wareneingangsetikett?",
+	"Welche Entscheidung trifft der Teamleiter im Prozess?",
+	"Welche Aufgabe erzeugt das Antragseingangsprotokoll?",
 	"Welches Ereignis startet die Reklamation?",
 ];
 bpmnTopics.forEach((question, index) => {
@@ -210,7 +214,7 @@ for (let i = 0; i < 20; i++) {
 	// annotated as ground truth for BPMN node/edge recall (task T2.10).
 	const nodes = [
 		{ id: `n${i}-start`, label: "Start" },
-		{ id: `n${i}-pruefung`, label: "Wareneingangsprüfung" },
+		{ id: `n${i}-pruefung`, label: "Antragseingangsprüfung" },
 		{ id: `n${i}-gw`, label: "Teilfreigabe?" },
 		{ id: `n${i}-end`, label: "Ende" },
 	];
@@ -232,12 +236,12 @@ for (let i = 0; i < 20; i++) {
 const maskTopics = [
 	"Welche Felder hat die Anmeldemaske?",
 	"Wo ist die Maske für die Teilfreigabe abgebildet?",
-	"Welche Schaltflächen zeigt die Wareneingangsmaske?",
+	"Welche Schaltflächen zeigt die Antragseingangsmaske?",
 	"Welche Pflichtfelder markiert die Freigabemaske?",
-	"Welche Maske zeigt die Chargenauswahl?",
+	"Welche Maske zeigt die Vorgangsauswahl?",
 	"Wo ist die Suchmaske für Artikel abgebildet?",
-	"Welche Felder hat die Inventurmaske?",
-	"Welche Maske zeigt die Umlagerung?",
+	"Welche Felder hat die Revisionsmaske?",
+	"Welche Maske zeigt die Umverteilung?",
 	"Welche Eingabefelder hat die Reklamationsmaske?",
 	"Wo ist die Übersichtsmaske dargestellt?",
 ];
@@ -308,13 +312,13 @@ for (let i = 0; i < 10; i++) {
 // nothing relevant. They stay in the base fixture so the German morphology set
 // can re-ask them with other word forms.
 const abstainTopics: Record<string, string[]> = {
-	"wms-spec": [
-		"Welche Anforderung regelt die Kühlkettenüberwachung für Tiefkühlware?",
-		"Wo ist die Lagerung von Gefahrgut der Klasse 7 beschrieben?",
-		"Welche Schnittstelle zum Zolldeklarationssystem wird verlangt?",
-		"Wie wird die Palettenverleihung an Subunternehmer abgerechnet?",
+	"requirements-spec": [
+		"Welche Anforderung regelt die Fristenüberwachung für Eilverfahren?",
+		"Wo ist die Aufbewahrung von Verschlusssachen der Stufe 3 beschrieben?",
+		"Welche Schnittstelle zum Meldesystem der Aufsichtsbehörde wird verlangt?",
+		"Wie wird die Geräteverleihung an Subunternehmer abgerechnet?",
 		"Welche Anforderung nennt die Sprachsteuerung per Headset?",
-		"Wo steht die Regelung zur Drohneninventur im Hochregal?",
+		"Wo steht die Regelung zur Drohnenrevision im Archivkeller?",
 	],
 	"process-bpmn": [
 		"Welcher Prozess beschreibt die Entsorgung von Altbatterien?",
@@ -325,10 +329,10 @@ const abstainTopics: Record<string, string[]> = {
 		"Wo ist der Ablauf der Gebäudeevakuierung bei Hochwasser abgebildet?",
 	],
 	"ui-masks": [
-		"Welche Felder hat die Maske zur Fahrerregistrierung?",
+		"Welche Felder hat die Maske zur Besucherregistrierung?",
 		"Wo ist der Dialog für die Reifendruckprüfung abgebildet?",
-		"Welche Schaltfläche startet den Barcode-Druck auf Thermotransfer-Etiketten?",
-		"Wie sieht die Maske für den Gabelstapler-Führerscheinnachweis aus?",
+		"Welche Schaltfläche startet den Barcode-Druck auf Aktendeckeln?",
+		"Wie sieht die Maske für den Dienstausweis-Antrag aus?",
 		"Welche Pflichtfelder hat die Kantinenbestellung?",
 		"Wo wird die Dunkelmodus-Einstellung des Handhelds beschrieben?",
 	],

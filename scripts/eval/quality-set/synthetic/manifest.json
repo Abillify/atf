@@ -1,12 +1,12 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "kind": "synthetic",
   "description": "Invented German requirements, interface and operations text; no real documents. Sample output carries deliberate defects to exercise the scorer.",
   "producedDir": "produced-sample",
   "cases": [
     {
       "id": "anforderungen",
-      "title": "Lagerverwaltung: Überschriften und Fließtext"
+      "title": "Aktenverwaltung: Überschriften und Fließtext"
     },
     {
       "id": "schnittstellen",

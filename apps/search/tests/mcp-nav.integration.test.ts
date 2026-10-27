@@ -130,25 +130,25 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
 
     // Two sections (outline).
     await insertUnit({ unitId: "s1", baseRef: "docA", content: "1 Einleitung", unitType: "section", sectionId: "sec-1", sectionPath: ["1 Einleitung"], pageStart: 0, pageEnd: 0 });
-    await insertUnit({ unitId: "s2", baseRef: "docA", content: "2 Wareneingang", unitType: "section", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 0, pageEnd: 0 });
-    await insertUnit({ unitId: "s2a", baseRef: "docA", content: "2.1 Anmeldung", unitType: "section", sectionId: "sec-2a", sectionPath: ["2 Wareneingang", "2.1 Anmeldung"], pageStart: 0, pageEnd: 0 });
+    await insertUnit({ unitId: "s2", baseRef: "docA", content: "2 Antragseingang", unitType: "section", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 0, pageEnd: 0 });
+    await insertUnit({ unitId: "s2a", baseRef: "docA", content: "2.1 Anmeldung", unitType: "section", sectionId: "sec-2a", sectionPath: ["2 Antragseingang", "2.1 Anmeldung"], pageStart: 0, pageEnd: 0 });
 
     // Reading-order chunks on pages 4 and 5 in section 2, prev/next linked.
-    await insertUnit({ unitId: "c1", baseRef: "docA", content: "## 2 Wareneingang\n\nErster Text", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 4, pageEnd: 4, nextUnitId: "c2", figureRefs: ["fig-7"] });
-    await insertUnit({ unitId: "c2", baseRef: "docA", content: "Zweiter Text auf Seite 5", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 5, pageEnd: 5, prevUnitId: "c1", nextUnitId: "c3" });
-    await insertUnit({ unitId: "c3", baseRef: "docA", content: "Dritter Text auf Seite 6", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 6, pageEnd: 6, prevUnitId: "c2" });
+    await insertUnit({ unitId: "c1", baseRef: "docA", content: "## 2 Antragseingang\n\nErster Text", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, nextUnitId: "c2", figureRefs: ["fig-7"] });
+    await insertUnit({ unitId: "c2", baseRef: "docA", content: "Zweiter Text auf Seite 5", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 5, pageEnd: 5, prevUnitId: "c1", nextUnitId: "c3" });
+    await insertUnit({ unitId: "c3", baseRef: "docA", content: "Dritter Text auf Seite 6", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 6, pageEnd: 6, prevUnitId: "c2" });
 
     // A table spanning pages 10-11.
-    await insertUnit({ unitId: "tbl-a", baseRef: "docA", content: "| A | B |\n|---|---|\n| 1 | 2 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 10, pageEnd: 10, tableId: "table-1" });
-    await insertUnit({ unitId: "tbl-b", baseRef: "docA", content: "| 3 | 4 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 11, pageEnd: 11, tableId: "table-1" });
+    await insertUnit({ unitId: "tbl-a", baseRef: "docA", content: "| A | B |\n|---|---|\n| 1 | 2 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 10, pageEnd: 10, tableId: "table-1" });
+    await insertUnit({ unitId: "tbl-b", baseRef: "docA", content: "| 3 | 4 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 11, pageEnd: 11, tableId: "table-1" });
 
     // Figures: a visible ui_mask on page 4, a bpmn on page 60, and a restricted one.
-    await insertUnit({ unitId: "f1", baseRef: "docA", content: "Abbildung 7: Maske\ndesc", unitType: "figure", figureKind: "ui_mask", sectionPath: ["2 Wareneingang"], pageStart: 4, pageEnd: 4, figureId: "fig-7", assetId: "asset-7" });
+    await insertUnit({ unitId: "f1", baseRef: "docA", content: "Abbildung 7: Maske\ndesc", unitType: "figure", figureKind: "ui_mask", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, figureId: "fig-7", assetId: "asset-7" });
     await insertUnit({ unitId: "f2", baseRef: "docA", content: "Abbildung 99: Prozess", unitType: "figure", figureKind: "bpmn", pageStart: 60, pageEnd: 60, figureId: "fig-99", assetId: "asset-99" });
     await insertUnit({ unitId: "f3", baseRef: "docA", content: "Abbildung geheim", unitType: "figure", figureKind: "drawing", pageStart: 4, pageEnd: 4, figureId: "fig-secret", assetId: "asset-secret", allowedUsers: ["vip"] });
 
     // identifiers: WE01A occurs on c1 (page 4) and a restricted unit r1 (vip-only).
-    await insertUnit({ unitId: "r1", baseRef: "docA", content: "WE-01/A steht hier geheim", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Wareneingang"], pageStart: 7, pageEnd: 7, allowedUsers: ["vip"] });
+    await insertUnit({ unitId: "r1", baseRef: "docA", content: "WE-01/A steht hier geheim", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 7, pageEnd: 7, allowedUsers: ["vip"] });
     const idClient = await pool.connect();
     try {
       await idClient.query(

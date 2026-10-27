@@ -467,8 +467,8 @@ export const uiEn = {
     "✓ Verified — {checked} record(s) checked, hash chain intact from genesis.",
   "edgeDetailsPanel.beimLetztenRunUBer":
     "In the last run across this edge ({source} → {target}).",
-  "edgeDetailsPanel.classificationRouteRETOURE":
-    "classification.route == 'RETOURE'",
+  "edgeDetailsPanel.classificationRouteREKLAMATION":
+    "classification.route == 'REKLAMATION'",
   "edgeDetailsPanel.conditionRoutingExpression":
     "Condition (routing expression)",
   "edgeDetailsPanel.deleteEdge": "Delete edge",
@@ -626,7 +626,7 @@ export const uiEn = {
   "expressionCopilot.askTheExpressionCopilot": "Ask the expression copilot",
   "expressionCopilot.copilotProposal": "Copilot proposal",
   "expressionCopilot.describeTheConditionEG":
-    "Describe the condition, e.g. “route is RETOURE or the user asks about parking”",
+    "Describe the condition, e.g. “route is REKLAMATION or the user asks about parking”",
   "expressionCopilot.describeWhatToWriteOr":
     "Describe what to write or change, e.g. “half of the worker budget, rounded”",
   "expressionCopilot.discard": "Discard",

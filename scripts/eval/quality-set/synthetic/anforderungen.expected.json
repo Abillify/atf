@@ -3,7 +3,7 @@
   "pages": [
     {
       "page": 1,
-      "text": "1 Einleitung\nDieses Dokument beschreibt die Anforderungen an die Lagerverwaltung eines mittelständischen Handelsunternehmens.\n1.1 Geltungsbereich\nDie Anforderungen gelten für alle Standorte und für sämtliche Wareneingänge.",
+      "text": "1 Einleitung\nDieses Dokument beschreibt die Anforderungen an die Aktenverwaltung eines mittelständischen Handelsunternehmens.\n1.1 Geltungsbereich\nDie Anforderungen gelten für alle Standorte und für sämtliche Wareneingänge.",
       "headings": [
         {
           "level": 1,
@@ -17,7 +17,7 @@
     },
     {
       "page": 2,
-      "text": "2 Funktionale Anforderungen\nDas System muss Chargen und Seriennummern verwalten.\n2.1 Wareneingang\nJeder Wareneingang wird gegen die Bestellung geprüft und gebucht.\n2.2 Nicht-funktionale Anforderungen\nAntwortzeiten über 2 Sekunden sind nicht zulässig.",
+      "text": "2 Funktionale Anforderungen\nDas System muss Vorgänge und Aktenzeichen verwalten.\n2.1 Antragseingang\nJeder Antragseingang wird gegen die Bestellung geprüft und gebucht.\n2.2 Nicht-funktionale Anforderungen\nAntwortzeiten über 2 Sekunden sind nicht zulässig.",
       "headings": [
         {
           "level": 1,
@@ -25,7 +25,7 @@
         },
         {
           "level": 2,
-          "text": "2.1 Wareneingang"
+          "text": "2.1 Antragseingang"
         },
         {
           "level": 2,

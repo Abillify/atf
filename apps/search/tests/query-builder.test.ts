@@ -1654,12 +1654,12 @@ describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
   });
 
   it("filters a section_path prefix with an array slice-equality", () => {
-    const { sql, params } = denseWith({ sectionPrefix: ["4 Wareneingang", "4.2 Anmeldung"] });
+    const { sql, params } = denseWith({ sectionPrefix: ["4 Antragseingang", "4.2 Anmeldung"] });
     const f = flat(sql);
     expect(f).toContain("section_path IS NOT NULL");
     expect(f).toContain("array_length(section_path, 1) >= 2");
     expect(f).toContain("section_path[1:2] = $");
-    expect(params).toContainEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+    expect(params).toContainEqual(["4 Antragseingang", "4.2 Anmeldung"]);
   });
 
   it("adds no unit predicate for an empty unit filter", () => {

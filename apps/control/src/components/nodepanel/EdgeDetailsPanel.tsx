@@ -116,7 +116,7 @@ export function EdgeDetailsPanel({
                 className={`${inputCls} resize-y font-mono text-xs`}
                 rows={3}
                 value={edge.conditions}
-                placeholder={translate("edgeDetailsPanel.classificationRouteRETOURE")}
+                placeholder={translate("edgeDetailsPanel.classificationRouteREKLAMATION")}
                 onChange={(v) => onEdgeChange({ ...edge, conditions: v })}
               />
             </Field>

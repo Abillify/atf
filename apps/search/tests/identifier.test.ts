@@ -73,21 +73,21 @@ describe("recognizeIdentifiers", () => {
   });
 
   it("recognises a composite module code whole, keeping its prefix", () => {
-    // "QAP-MDE-03" must NOT collapse to the drawing-number tail "MDE-03" —
-    // every WMS section has an "…-MDE-03", and only the prefix (QAP vs QAB
+    // "QAP-DOK-03" must NOT collapse to the drawing-number tail "DOK-03" —
+    // every section has an "…-DOK-03", and only the prefix (QAP vs QAB
     // vs QAV) tells them apart.
-    const hits = recognizeIdentifiers("Wie in QAP-MDE-03 beschrieben");
+    const hits = recognizeIdentifiers("Wie in QAP-DOK-03 beschrieben");
     expect(hits).toHaveLength(1);
     expect(hits[0]?.kind).toBe("composite_code");
-    expect(hits[0]?.valueNorm).toBe("QAPMDE03");
+    expect(hits[0]?.valueNorm).toBe("QAPDOK03");
   });
 
   it("keeps sibling composite codes distinct and leaves single-dash codes alone", () => {
     const hits = recognizeIdentifiers(
-      "QAB-MDE-03, QAP-MDE-03, QAV-MDE-03 sowie Zeichnung ZG-100",
+      "QAB-DOK-03, QAP-DOK-03, QAV-DOK-03 sowie Zeichnung ZG-100",
     );
     const norms = hits.map((h) => h.valueNorm).sort();
-    expect(norms).toEqual(["QABMDE03", "QAPMDE03", "QAVMDE03", "ZG100"]);
+    expect(norms).toEqual(["QABDOK03", "QAPDOK03", "QAVDOK03", "ZG100"]);
     expect(hits.find((h) => h.valueNorm === "ZG100")?.kind).toBe(
       "drawing_number",
     );
@@ -124,7 +124,7 @@ describe("queryIdentifierValueNorms", () => {
     expect(queryIdentifierValueNorms("prose only", ["abc 12.x"])).toEqual(["ABC12X"]);
   });
   it("returns [] for plain prose and ignores blank explicit values", () => {
-    expect(queryIdentifierValueNorms("der wareneingang", ["", "   "])).toEqual([]);
+    expect(queryIdentifierValueNorms("der antragseingang", ["", "   "])).toEqual([]);
   });
   it("caps the number of identifiers", () => {
     const many = Array.from({ length: 40 }, (_, i) => `ZG-${100 + i}`).join(" ");

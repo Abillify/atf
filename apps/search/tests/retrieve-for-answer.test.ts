@@ -210,7 +210,7 @@ describe("packEvidence", () => {
     const result = hit("a");
     result.title = "Handbuch";
     result.evidence = {
-      section_path: ["2 Wareneingang", "2.1 Maske"],
+      section_path: ["2 Antragseingang", "2.1 Maske"],
       page_start: 4,
       page_end: 5,
     } as SearchResult["evidence"];
@@ -218,7 +218,7 @@ describe("packEvidence", () => {
     expect(packed.evidence[0]).toMatchObject({
       id: "a",
       title: "Handbuch",
-      section: "2 Wareneingang > 2.1 Maske",
+      section: "2 Antragseingang > 2.1 Maske",
       page_start: 4,
       page_end: 5,
       matched_subqueries: [0, 1],

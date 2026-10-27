@@ -9,7 +9,7 @@
  * ## What it does
  *
  * As pages stream past in order, the document builds up a heading hierarchy:
- * "4 Wareneingang" › "4.2 Anmeldung" › "4.2.1 Maske WE01". Every block on a
+ * "4 Antragseingang" › "4.2 Anmeldung" › "4.2.1 Maske WE01". Every block on a
  * page is stamped with the `sectionPath` — the chain of heading titles in force
  * where it sits. The path is what lets Search group by section, keep a chunk
  * inside one section, and show a breadcrumb on a hit.

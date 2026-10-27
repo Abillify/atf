@@ -37,8 +37,8 @@ const baseConfig: AppConfig = {
   defaultLlm: { provider: "openai", model: "mock-model" },
 };
 
-const PDF = "/Pflichtenheft WMS_Prozesse/Pflichtenheft WMS_Prozesse.pdf";
-const R = `${PDF}/73. 9.5 Lagereinheit prüfen`;
+const PDF = "/Spezifikation Alpha_Prozesse/Spezifikation Alpha_Prozesse.pdf";
+const R = `${PDF}/73. 9.5 Akteneinheit prüfen`;
 const HANDLE = new HashRefHandleRegistry().register(R);
 
 const flow: FlowDefinition = {
@@ -82,7 +82,7 @@ describe("graph engine — ref-handle round trip", () => {
         const payload =
           tool === "search"
             ? { results: [{ base_ref: R, link: PDF, title: "9.5", content: "Treffer" }] }
-            : { reference: R, content: "Lagereinheit pruefen", totalChars: 20 };
+            : { reference: R, content: "Akteneinheit pruefen", totalChars: 20 };
         return { content: [{ type: "text", text: JSON.stringify(payload) }] };
       },
       getInstructions: () => undefined,
@@ -105,7 +105,7 @@ describe("graph engine — ref-handle round trip", () => {
                       call === 1 ? "vectorsearch__search" : "vectorsearch__get_document",
                     input:
                       call === 1
-                        ? JSON.stringify({ query: "Lagereinheit" })
+                        ? JSON.stringify({ query: "Akteneinheit" })
                         : JSON.stringify({ reference: HANDLE }),
                   });
                   controller.enqueue({
@@ -139,7 +139,7 @@ describe("graph engine — ref-handle round trip", () => {
     const chunks: ChatCompletionChunk[] = [];
     await engine.executeFlow(
       flow.id,
-      [{ role: "user", content: "Wie wird eine Lagereinheit geprueft?" }],
+      [{ role: "user", content: "Wie wird eine Akteneinheit geprueft?" }],
       { ssoToken: "a.b.c", executionId: "exec-ref-handles" },
       async (chunk) => {
         chunks.push(chunk);
@@ -154,9 +154,9 @@ describe("graph engine — ref-handle round trip", () => {
     // The masking node's model read the handle, never the chapter path.
     expect(prompts.length).toBe(4);
     expect(prompts[1]).toContain(HANDLE);
-    expect(prompts[1]).not.toContain("73. 9.5 Lagereinheit");
+    expect(prompts[1]).not.toContain("73. 9.5 Akteneinheit");
     // `link` is not a reference and stays visible as the bare file path.
-    expect(prompts[1]).toContain("Pflichtenheft WMS_Prozesse.pdf");
+    expect(prompts[1]).toContain("Spezifikation Alpha_Prozesse.pdf");
 
     // The downstream node receives the researcher's state unmapped: its answer
     // and the tool results carry the real reference, no handle.

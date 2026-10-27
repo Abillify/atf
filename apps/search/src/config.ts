@@ -480,7 +480,7 @@ export interface Config {
    * ts_search column, cached in-process for one hour) and the matched
    * lexemes are added to the lexical OR list only — the all-terms AND list
    * keeps its exact-match semantics. A query for
-   * `Kommissionierarbeitsplatz` then also finds chunks containing
+   * `Revisionsarbeitsplatz` then also finds chunks containing
    * `Arbeitsplatz`. The lexicon is built asynchronously, so the first query
    * per collection runs without splitting. `off` keeps the status quo.
    */
