@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { gateDoctorChecks } from "../apps/gate/scripts/doctor-probe.ts";
@@ -179,6 +179,61 @@ describe("buildRows", () => {
     });
   });
 
+  it("warns that flows were not checked and omits the flow_load row when FLOWS_DIR is unusable", () => {
+    const rows = buildRows(
+      "runtime",
+      {
+        service: "runtime",
+        configError: null,
+        fatal: [],
+        warnings: [],
+        flowsDirReadable: false,
+        posture: {
+          generatedAt: "2026-10-25T00:00:00.000Z",
+          operationalProfile: "development",
+          preset: null,
+          status: "ok",
+          summary: { ok: 2, warn: 0, fail: 0 },
+          checks: [
+            { id: "flow_load", area: "flows", status: "ok", message: "All flow files loaded without errors." },
+            { id: "taint", area: "injection", status: "ok", message: "taint active" },
+          ],
+          productionGate: { fatal: [], warnings: [] },
+        },
+      },
+      {},
+    );
+    expect(rows.map((r) => [r.check, r.status])).toEqual([
+      ["flows_dir", "warn"],
+      ["posture:taint", "ok"],
+    ]);
+    expect(rows[0]?.detail).toBe("FLOWS_DIR is not set or not readable from here; flow files were not checked");
+  });
+
+  it("keeps the flow_load row when the flows directory was read", () => {
+    const rows = buildRows(
+      "runtime",
+      {
+        service: "runtime",
+        configError: null,
+        fatal: [],
+        warnings: [],
+        flowsDirReadable: true,
+        posture: {
+          generatedAt: "2026-10-25T00:00:00.000Z",
+          operationalProfile: "development",
+          preset: null,
+          status: "ok",
+          summary: { ok: 1, warn: 0, fail: 0 },
+          checks: [{ id: "flow_load", area: "flows", status: "ok", message: "All flow files loaded without errors." }],
+          productionGate: { fatal: [], warnings: [] },
+        },
+      },
+      {},
+    );
+    expect(rows.map((r) => r.check)).toEqual(["posture:flow_load"]);
+  });
+
   it("maps fatal to fail, warnings to warn, and posture checks by status", () => {
     const rows = buildRows(
       "runtime",
@@ -222,9 +277,29 @@ describe("probe integration", () => {
     expect(report.configError).toBeNull();
     expect(report.posture).not.toBeNull();
     expect(report.posture?.operationalProfile).toBe("development");
+    expect(report.flowsDirReadable).toBe(false);
     expect(Array.isArray(report.posture?.checks)).toBe(true);
     // A development profile never produces fatal findings from the gate.
     expect(report.fatal).toEqual([]);
+  }, 60_000);
+
+  it("runtime probe sees a readable FLOWS_DIR", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "atf-doctor-flows-"));
+    try {
+      const report = await runProbe("runtime", {
+        APP_ENV: "development",
+        AUTHN_MODE: "disabled",
+        FLOWS_DIR: dir,
+      });
+      expect(report.flowsDirReadable).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("runtime probe treats an unset FLOWS_DIR as not checked", async () => {
+    const report = await runProbe("runtime", { APP_ENV: "development", AUTHN_MODE: "disabled" });
+    expect(report.flowsDirReadable).toBe(false);
   }, 60_000);
 
   it("runtime probe reports a config error instead of posture", async () => {

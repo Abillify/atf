@@ -183,6 +183,8 @@ interface ProbeReport {
   fatal: string[];
   warnings: string[];
   posture: PostureReport | null;
+  /** Runtime only: false when no flow file could be checked (see the probe). */
+  flowsDirReadable?: boolean;
 }
 
 /**
@@ -287,8 +289,19 @@ export function buildRows(service: Service, probe: ProbeReport, env: Record<stri
     rows.push({ service, check: "prod-gate", status: "warn", detail: msg });
   }
   const posture = probe.posture;
+  const flowsUnchecked = probe.flowsDirReadable === false;
+  if (flowsUnchecked) {
+    rows.push({
+      service,
+      check: "flows_dir",
+      status: "warn",
+      detail: "FLOWS_DIR is not set or not readable from here; flow files were not checked",
+    });
+  }
   if (posture !== null && Array.isArray(posture.checks)) {
     for (const check of posture.checks) {
+      // Without a readable directory the load check has nothing behind it.
+      if (flowsUnchecked && check.id === "flow_load") continue;
       rows.push({ service, check: `posture:${check.id}`, status: check.status, detail: check.message });
     }
   }

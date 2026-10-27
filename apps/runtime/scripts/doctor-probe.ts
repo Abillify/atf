@@ -10,7 +10,7 @@
  * Runtime configuration, runs the production-readiness gate and the
  * governance posture report, and writes exactly one JSON line to stdout:
  *
- *   {"service":"runtime","configError":null,"fatal":[],"warnings":[],"posture":{…}}
+ *   {"service":"runtime","configError":null,"fatal":[],"warnings":[],"posture":{…},"flowsDirReadable":true}
  *
  * `loadConfig()` calls `process.exit(1)` on invalid configuration and names
  * only the offending variables on stderr; the parent turns the exit code and
@@ -19,6 +19,7 @@
  * JSON line.
  */
 
+import fs from "node:fs";
 import { checkProductionReadiness, loadConfig } from "../src/config/index.js";
 import { createCompliancePolicyLoader } from "../src/compliance/policy-loader.js";
 import { buildPostureReport, type PostureReport } from "../src/compliance/posture.js";
@@ -30,6 +31,11 @@ interface ProbeResult {
   fatal: string[];
   warnings: string[];
   posture: PostureReport | null;
+  /**
+   * False when `FLOWS_DIR` is not set in the env file or the directory cannot
+   * be read from here, so no flow file was checked.
+   */
+  flowsDirReadable?: boolean;
 }
 
 // The reused cli.ts helpers report through console.log; redirect it to stderr
@@ -56,10 +62,15 @@ try {
     // An unreadable flows directory simply means no policy could be loaded.
   }
 
-  // Same validation as `cli.ts validate`; an unreadable FLOWS_DIR leaves the
-  // count at 0 because there is nothing to validate.
+  // Same validation as `cli.ts validate`. An unset or unreadable FLOWS_DIR
+  // leaves the count at 0 because there is nothing to validate; the report
+  // says so instead of presenting that as "all flows loaded".
   let flowLoadFailures = 0;
+  let flowsDirReadable = false;
   try {
+    const flowsDirSet = (process.env["FLOWS_DIR"] ?? "").trim() !== "";
+    fs.readdirSync(config.flowsDir);
+    flowsDirReadable = flowsDirSet;
     registerProvidersFromEnv();
     for (const file of collectFlowFiles(config.flowsDir)) {
       if (!validateFlowFile(file).valid) flowLoadFailures += 1;
@@ -73,7 +84,7 @@ try {
     flowLoadFailures,
     env: process.env,
   });
-  emit({ service: "runtime", configError: null, fatal, warnings, posture });
+  emit({ service: "runtime", configError: null, fatal, warnings, posture, flowsDirReadable });
 } catch (err) {
   emit({
     service: "runtime",
