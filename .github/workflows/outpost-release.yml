@@ -458,11 +458,32 @@ jobs:
               exit 1
             fi
           fi
-      - name: tauri build (DMG)
+      # tauri treats an APPLE_CERTIFICATE variable that is merely SET - even
+      # to an empty string - as "sign this build" and then fails in
+      # `security import -f pkcs12`. The APPLE_* variables must therefore only
+      # be exported when the certificate secret actually exists, which is why
+      # the signed and the unsigned build are separate gated steps.
+      - name: tauri build (DMG, signed)
+        if: env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO is missing" >&2; exit 1; }
+            endpoint="https://github.com/${OUTPOST_UPDATER_REPO}/releases/latest/download/latest.json"
+            bunx tauri build --target "${{ matrix.rust_target }}" --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"endpoints\":[\"${endpoint}\"]}}}"
+          else
+            bunx tauri build --target "${{ matrix.rust_target }}"
+          fi
+        working-directory: apps/outpost-desktop
+      - name: tauri build (DMG, unsigned)
+        if: env.HAS_APPLE_CERT != 'true'
+        env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
