@@ -15,6 +15,17 @@
  */
 
 import type { AuthPrincipal } from "../middleware/auth.js";
+import { createLogger } from "../observability/logger.js";
+
+let legacyTenantHeaderWarned = false;
+/** One warning per process: the legacy header is deprecated and removed in 1.0.0. */
+function warnLegacyTenantHeaderOnce(): void {
+  if (legacyTenantHeaderWarned) return;
+  legacyTenantHeaderWarned = true;
+  createLogger("warn").warn(
+    "The legacy tenant request header (pre-1.0 spelling of X-Tenant-Id) is deprecated and will be removed in 1.0.0; send X-Tenant-Id",
+  );
+}
 
 /** The identity signals the assistant plane scopes by. */
 export interface AssistantCaller {
@@ -47,12 +58,15 @@ export function resolveAssistantCaller(
   // `X-Mandant-Id` is the pre-1.0 spelling of `X-Tenant-Id`, still accepted so
   // existing callers keep working. Prefer `X-Tenant-Id`; the legacy name will be
   // dropped in a future major.
+  const legacyTenantHeader =
+    principal === undefined && headers.get("X-Tenant-Id") === null
+      ? headers.get("X-Mandant-Id")
+      : null;
+  if (legacyTenantHeader !== null) warnLegacyTenantHeaderOnce();
   const tenantId =
     principal !== undefined
       ? principal.tenantId
-      : (headers.get("X-Tenant-Id") ??
-        headers.get("X-Mandant-Id") ??
-        undefined);
+      : (headers.get("X-Tenant-Id") ?? legacyTenantHeader ?? undefined);
   const rawName = headers.get("X-OpenWebUI-User-Name");
   let userName: string | undefined;
   if (rawName !== null) {

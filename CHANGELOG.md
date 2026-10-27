@@ -36,7 +36,7 @@ releases:
 
 ### Deprecated
 
-- Deprecated environment variables and Gate options now log a warning at startup when set; `docs/DEPRECATIONS.md` lists every deprecated item with its replacement. They are removed in 1.0.0.
+- Deprecated environment variables and Gate options now log a warning at startup when set; `docs/DEPRECATIONS.md` lists every deprecated item with its replacement. They are removed in 1.0.0. The legacy tenant header warns once per Runtime process, and a `parallel` node that relies on the implicit `authoritativeTagField` default reports `deprecated_authoritative_tag_field_default` in the debug trace.
 
 ### Fixed
 

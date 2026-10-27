@@ -836,6 +836,23 @@ export function createParallelNodeHandler(
 			if (selected.length > 0) {
 				const authoritativeTagField =
 					ragCfg?.authoritativeTagField ?? LEGACY_AUTHORITATIVE_TAG_FIELD;
+				if (
+					ragCfg !== undefined &&
+					ragCfg.authoritativeTagField === undefined &&
+					typeof (state.classification as Record<string, unknown> | undefined)?.[
+						LEGACY_AUTHORITATIVE_TAG_FIELD
+					] === "string"
+				) {
+					runtime.onNodeDiagnostic?.(node.id, {
+						level: "warn",
+						code: "deprecated_authoritative_tag_field_default",
+						message:
+							`Node "${node.id}" relies on the implicit ragProfiles.authoritativeTagField ` +
+							`"${LEGACY_AUTHORITATIVE_TAG_FIELD}", which is deprecated and removed in 1.0.0; ` +
+							"set authoritativeTagField explicitly in the flow.",
+						details: { field: LEGACY_AUTHORITATIVE_TAG_FIELD },
+					});
+				}
 				const authoritativeTag =
 					typeof (
 						state.classification as Record<string, unknown> | undefined

@@ -38,9 +38,12 @@ use <REPLACEMENT>` (some older messages word this differently):
   through the production-readiness gate at startup, and `forwardBearerToken`
   once more per tool on its first forwarded call.
 
-Two items do not warn yet, because they are read where no logger is at hand:
-the old tenant header spelling and the implicit `clientClientdocs` default. Search
-your clients and flows for them before upgrading to 1.0.0.
+Two items are only seen per request, so they warn where they are used:
+- The old tenant header spelling logs one warning per Runtime process on its
+  first use.
+- The implicit `clientClientdocs` default adds the diagnostic
+  `deprecated_authoritative_tag_field_default` to the node in the debug trace
+  whenever a `parallel` node actually relies on it.
 
 ## Not on this list
 

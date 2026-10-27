@@ -20,9 +20,22 @@ describe("resolveAssistantCaller tenant resolution", () => {
     expect(caller.tenantId).toBe("acme");
   });
 
-  test("still accepts the legacy X-Mandant-Id spelling", () => {
-    const caller = resolveAssistantCaller(headers({ "X-Mandant-Id": "acme" }));
-    expect(caller.tenantId).toBe("acme");
+  test("still accepts the legacy X-Mandant-Id spelling and warns once", () => {
+    const lines: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const caller = resolveAssistantCaller(headers({ "X-Mandant-Id": "acme" }));
+      resolveAssistantCaller(headers({ "X-Mandant-Id": "acme" }));
+      expect(caller.tenantId).toBe("acme");
+    } finally {
+      process.stderr.write = write;
+    }
+    const warnings = lines.filter((l) => l.includes("deprecated and will be removed in 1.0.0"));
+    expect(warnings).toHaveLength(1);
   });
 
   test("prefers X-Tenant-Id over the legacy header", () => {
