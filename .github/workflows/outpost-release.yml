@@ -493,10 +493,25 @@ jobs:
         run: |
           set -euo pipefail
           bun run scripts/generate-updater-manifest.ts --dir artifacts --out latest.json
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: |
-            SHA256SUMS
-            latest.json
-            artifacts/**
-          generate_release_notes: true
+      # The release entry is created with the gh CLI (already used by
+      # release.yml) instead of softprops/action-gh-release: the organization
+      # restricts allowed actions to GitHub-owned, verified, Abillify-owned or
+      # oven-sh/setup-bun@* patterns, and softprops is none of those — the run
+      # fails at startup before any job executes.
+      - name: Create release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; published releases are not overwritten." >&2
+            exit 1
+          fi
+          assets=(SHA256SUMS)
+          if [ -f latest.json ]; then
+            assets+=(latest.json)
+          fi
+          while IFS= read -r file; do
+            assets+=("$file")
+          done < <(find artifacts -type f | sort)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "${assets[@]}"
