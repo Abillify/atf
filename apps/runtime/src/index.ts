@@ -192,6 +192,7 @@ if (import.meta.main) {
     metrics,
   );
   const {
+    stopSemanticCachePurge,
     embedder,
     semanticCache,
     responseCache,
@@ -1131,6 +1132,9 @@ if (import.meta.main) {
       },
       () => {
         retentionService?.stop();
+      },
+      () => {
+        stopSemanticCachePurge();
       },
       () => {
         auditAnchor?.stop();

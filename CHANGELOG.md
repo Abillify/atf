@@ -27,6 +27,7 @@ releases:
 ### Fixed
 
 - **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure.
+- **Runtime** (semantic cache): expired entries are removed by a periodic sweep across all namespaces (`SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`, default 300); before, they stayed in the database until the same namespace was written again.
 
 ## [0.20.0] - 2026-10-25
 

@@ -229,6 +229,24 @@ describe("deleteByMetadata / deleteWithoutMetadataKey", () => {
   });
 });
 
+describe("deleteExpired", () => {
+  it("deletes expired documents of every collection with the prefix in one call", async () => {
+    const store = new InMemoryRagStore();
+    await store.upsert("semcache:a", [
+      doc("1", [1, 0], "1", { expiresAt: 100 }),
+      doc("2", [1, 0], "2", { expiresAt: 900 }),
+      doc("3", [1, 0], "3"),
+    ]);
+    await store.upsert("semcache:b", [doc("4", [1, 0], "4", { expiresAt: 50 })]);
+    await store.upsert("rag:c", [doc("5", [1, 0], "5", { expiresAt: 50 })]);
+
+    expect(await store.deleteExpired("semcache:", 500)).toBe(2);
+    expect(await store.count("semcache:a")).toBe(2);
+    expect(await store.count("semcache:b")).toBe(0);
+    expect(await store.count("rag:c")).toBe(1);
+  });
+});
+
 describe("escapeLike", () => {
   it("escapes LIKE wildcards and the escape character", () => {
     expect(escapeLike("a_b%c\\d")).toBe("a\\_b\\%c\\\\d");

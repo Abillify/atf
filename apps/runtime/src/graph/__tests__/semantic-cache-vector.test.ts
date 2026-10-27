@@ -313,6 +313,29 @@ describe("createVectorStoreSemanticCache", () => {
     expect(await cache.get(key("capital of france"))).toBeDefined();
   });
 
+  it("purgeExpired removes expired entries of all namespaces and keeps live ones", async () => {
+    const embedder = new FakeEmbedder({ "capital of france": [1, 0, 0] });
+    const store = new InMemoryRagStore();
+    let now = 1_000_000;
+    const cache = mustCreateSemanticCache(
+      { enabled: true, threshold: 0.9, ttlSeconds: 60 },
+      embedder,
+      store,
+      undefined,
+      () => now,
+    );
+    await cache.set(key("capital of france"), value("Paris"));
+    await cache.set(key("capital of france", { userScope: "user-b" }), value("Paris"));
+    now += 30_000;
+    await cache.set(key("capital of france", { model: "other" }), value("Paris"));
+    now += 40_000; // the first two are past their 60 s TTL, the third is not
+
+    expect(await cache.purgeExpired?.()).toBe(2);
+    expect(await store.listCollections()).toHaveLength(1);
+    expect(await cache.get(key("capital of france", { model: "other" }))).toBeDefined();
+    expect(await cache.purgeExpired?.()).toBe(0);
+  });
+
   it("reports erasure as unsupported when the store cannot delete", async () => {
     const storeWithoutDelete = {
       upsert: async () => {},

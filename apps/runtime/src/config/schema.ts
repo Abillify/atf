@@ -376,6 +376,7 @@ export interface AppConfig {
   semanticCacheThreshold?: number;
   semanticCacheMaxEntries?: number;
   semanticCacheTtlSeconds?: number;
+  semanticCachePurgeIntervalSeconds?: number;
   embeddingCacheEnabled?: boolean;
   embeddingCacheMaxEntries?: number;
   embeddingCacheTtlSeconds?: number;
@@ -1432,6 +1433,17 @@ export const EnvSchema = z.object({
     .number()
     .int()
     .min(1)
+    .max(86400)
+    .default(300),
+  /**
+   * Interval of the sweep that removes expired entries of a database-backed
+   * semantic cache across all namespaces. Without it an expired entry stays
+   * in the database until the same namespace is written again.
+   */
+  SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
     .max(86400)
     .default(300),
   EMBEDDING_CACHE_ENABLED: z

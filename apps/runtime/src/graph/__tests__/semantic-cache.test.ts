@@ -363,6 +363,33 @@ describe("semantic cache as a retention target", () => {
     expect(dropped).toBe(1);
   });
 
+  it("offers an age purge when the cache can delete by insertion time", async () => {
+    const cutoffs: string[] = [];
+    const cache: SemanticCache = {
+      enabled: true,
+      get: async () => undefined,
+      set: async () => undefined,
+      isCacheable: () => true,
+      eraseUser: async () => 0,
+      purgeOlderThan: async (cutoffIso) => {
+        cutoffs.push(cutoffIso);
+        return 4;
+      },
+    };
+    const retention = new RetentionService([semanticCacheRetentionTarget(cache)], {
+      maxAgeDaysByTarget: { semantic_cache: 7 },
+    });
+    expect(retention.describeTargets()[0]).toMatchObject({
+      name: "semantic_cache",
+      agePurge: true,
+      maxAgeDays: 7,
+    });
+    expect(await retention.sweep()).toEqual([
+      { target: "semantic_cache", maxAgeDays: 7, purged: 4, skipped: false },
+    ]);
+    expect(cutoffs).toHaveLength(1);
+  });
+
   it("reports the cache as erased, so an erasure run is not partial", async () => {
     const cache = await twoUsers();
     const orch = createErasureOrchestrator({

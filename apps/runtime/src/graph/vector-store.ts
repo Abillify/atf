@@ -104,6 +104,20 @@ export interface VectorStore {
     collectionPrefix: string,
     key: string,
   ): Promise<number>;
+  /**
+   * Deletes every document of the collection prefix whose `expiresAt` metadata
+   * (epoch milliseconds) is before `nowMs`. Returns the number deleted.
+   */
+  deleteExpired?(collectionPrefix: string, nowMs: number): Promise<number>;
+  /**
+   * Deletes every document of the collection prefix stored before `cutoffIso`.
+   * Returns the number deleted. Only a store that records the insertion time
+   * provides it.
+   */
+  deleteCreatedBefore?(
+    collectionPrefix: string,
+    cutoffIso: string,
+  ): Promise<number>;
 }
 
 /** Escapes `%`, `_` and `\` so a string matches literally in a `LIKE ... ESCAPE '\'` pattern. */
@@ -255,6 +269,16 @@ export class InMemoryRagStore implements VectorStore {
       collectionPrefix,
       (doc) => doc.metadata?.[key] === undefined,
     );
+  }
+
+  async deleteExpired(
+    collectionPrefix: string,
+    nowMs: number,
+  ): Promise<number> {
+    return this.deleteWhere(collectionPrefix, (doc) => {
+      const expiresAt = doc.metadata?.expiresAt;
+      return typeof expiresAt === "number" && expiresAt < nowMs;
+    });
   }
 
   private deleteWhere(
@@ -538,6 +562,47 @@ export class PgVectorStore implements VectorStore {
           AND (metadata IS NULL OR NOT (metadata ? $2))
         RETURNING id`,
       [`${escapeLike(collectionPrefix)}%`, key],
+    );
+    return rows.length;
+  }
+
+  async deleteExpired(
+    collectionPrefix: string,
+    nowMs: number,
+  ): Promise<number> {
+    await this.ensureReady();
+    // Rows written by an older version carry the metadata as a JSON string
+    // value; unwrap it so their expiry counts too.
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM ${this.table}
+        WHERE collection LIKE $1 ESCAPE '\\'
+          AND CASE
+                WHEN jsonb_typeof(
+                       CASE WHEN jsonb_typeof(metadata) = 'string'
+                            THEN (metadata #>> '{}')::jsonb ELSE metadata END
+                       -> 'expiresAt') = 'number'
+                THEN (CASE WHEN jsonb_typeof(metadata) = 'string'
+                           THEN (metadata #>> '{}')::jsonb ELSE metadata END
+                      ->> 'expiresAt')::double precision < $2::double precision
+                ELSE false
+              END
+        RETURNING id`,
+      [`${escapeLike(collectionPrefix)}%`, nowMs],
+    );
+    return rows.length;
+  }
+
+  async deleteCreatedBefore(
+    collectionPrefix: string,
+    cutoffIso: string,
+  ): Promise<number> {
+    await this.ensureReady();
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM ${this.table}
+        WHERE collection LIKE $1 ESCAPE '\\'
+          AND created_at < $2::timestamptz
+        RETURNING id`,
+      [`${escapeLike(collectionPrefix)}%`, cutoffIso],
     );
     return rows.length;
   }

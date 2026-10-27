@@ -49,6 +49,8 @@ import {
 } from "../graph/llm-factory.js";
 
 export interface CacheResult {
+  /** Stops the periodic expiry sweep of the semantic cache (no-op without one). */
+  stopSemanticCachePurge: () => void;
   embedder: Embedder | undefined;
   semanticCache: SemanticCache | undefined;
   responseCache: ResponseCache | undefined;
@@ -56,6 +58,29 @@ export interface CacheResult {
   memoryStore: MemoryStore | undefined;
   memoryExtractor: MemoryExtract | undefined;
   reranker: Reranker | undefined;
+}
+
+/**
+ * Runs `purgeExpired()` of the semantic cache on a timer and returns the
+ * function that stops it. Errors are logged, never thrown, and the timer does
+ * not keep the process alive.
+ */
+export function startSemanticCachePurge(
+  cache: SemanticCache | undefined,
+  intervalMs: number,
+  logger: Logger,
+): () => void {
+  const purge = cache?.purgeExpired?.bind(cache);
+  if (purge === undefined) return () => undefined;
+  const timer = setInterval(() => {
+    purge().catch((err: unknown) => {
+      logger.warn("Semantic cache expiry sweep failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, intervalMs);
+  (timer as { unref?: () => void }).unref?.();
+  return () => clearInterval(timer);
 }
 
 /**
@@ -153,6 +178,15 @@ export async function buildCache(
   } else {
     semanticCache = createSemanticCache(semanticCacheOpts, embedder, logger);
   }
+
+  // ── Semantic cache expiry sweep ────────────────────────────────────────────
+  // A database-backed cache keeps one namespace per tenant, user and context,
+  // so the opportunistic purge on write almost never reaches an old namespace.
+  const stopSemanticCachePurge = startSemanticCachePurge(
+    semanticCache,
+    (config.semanticCachePurgeIntervalSeconds ?? 300) * 1000,
+    logger,
+  );
 
   // ── Exact-match response cache ─────────────────────────────────────────────
   const responseCache = createResponseCache(
@@ -282,6 +316,7 @@ export async function buildCache(
   }
 
   return {
+    stopSemanticCachePurge,
     embedder,
     semanticCache,
     responseCache,

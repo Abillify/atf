@@ -274,6 +274,7 @@ export function loadConfig(): AppConfig {
     semanticCacheThreshold: env.SEMANTIC_CACHE_THRESHOLD,
     semanticCacheMaxEntries: env.SEMANTIC_CACHE_MAX_ENTRIES,
     semanticCacheTtlSeconds: env.SEMANTIC_CACHE_TTL_SECONDS,
+    semanticCachePurgeIntervalSeconds: env.SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS,
     embeddingCacheEnabled: env.EMBEDDING_CACHE_ENABLED,
     embeddingCacheMaxEntries: env.EMBEDDING_CACHE_MAX_ENTRIES,
     embeddingCacheTtlSeconds: env.EMBEDDING_CACHE_TTL_SECONDS,

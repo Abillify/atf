@@ -339,6 +339,16 @@ export interface SemanticCache {
    * removed. Absent when the cache keeps no such entries.
    */
   eraseUnattributed?(): Promise<number>;
+  /**
+   * Removes expired entries from every namespace in one pass and returns how
+   * many were removed. Absent when expired entries leave on their own.
+   */
+  purgeExpired?(): Promise<number>;
+  /**
+   * Removes every entry stored before `cutoffIso`, whatever its TTL (age-based
+   * retention). Absent when the backing store records no insertion time.
+   */
+  purgeOlderThan?(cutoffIso: string): Promise<number>;
 }
 
 /**
@@ -551,17 +561,8 @@ class VectorStoreSemanticCache implements SemanticCache {
   private readonly lastPurgeAt = new Map<string, number>();
 
   /**
-   * `tenantScope|userScope` -> the documents written for that user
-   * (`collection|id`). The collection name is a hash over the whole namespace,
-   * which also contains the context hash, model and sampling params, so an
-   * erasure request cannot derive it from the user alone.
-   */
-  private readonly byUser = new Map<string, Set<string>>();
-
-  /**
    * False when the injected store cannot delete by metadata, which makes
-   * per-user erasure impossible: the per-process index below only knows what
-   * this replica wrote since it started.
+   * per-user erasure impossible: nothing else records who an entry belongs to.
    */
   readonly erasureSupported: boolean;
 
@@ -589,15 +590,6 @@ class VectorStoreSemanticCache implements SemanticCache {
     // method is optional on the interface and injected or partial stores may
     // not provide it, so the capability is checked rather than assumed.
     this.erasureSupported = typeof store.deleteByMetadata === "function";
-  }
-
-  /** Removes one document from every user bucket of the erasure index. */
-  private forget(entryKey: string): void {
-    for (const [userKey, entries] of this.byUser) {
-      if (entries.delete(entryKey) && entries.size === 0) {
-        this.byUser.delete(userKey);
-      }
-    }
   }
 
   /**
@@ -632,9 +624,6 @@ class VectorStoreSemanticCache implements SemanticCache {
       }
       if (expiredIds.length > 0) {
         await this.store.deleteDocuments(collection, expiredIds);
-        for (const id of expiredIds) {
-          this.forget(entryIndexKey(collection, id));
-        }
         this.logger?.debug("Semantic cache (vector) purged entries", {
           collection,
           removed: expiredIds.length,
@@ -710,13 +699,6 @@ class VectorStoreSemanticCache implements SemanticCache {
           },
         },
       ]);
-      const userKey = userIndexKey(input.tenantScope, input.userScope);
-      let entries = this.byUser.get(userKey);
-      if (entries === undefined) {
-        entries = new Set<string>();
-        this.byUser.set(userKey, entries);
-      }
-      entries.add(entryIndexKey(collection, id));
       // Fire-and-forget: sweep expired/overflow entries so the shared index
       // stays bounded. Throttled per collection; never blocks the request.
       void this.maybePurge(collection);
@@ -746,8 +728,6 @@ class VectorStoreSemanticCache implements SemanticCache {
       });
       throw err;
     }
-    // The store decided what was deleted; only tidy the local index.
-    this.byUser.delete(userIndexKey(tenantScope, userScope));
     this.logger?.debug("Semantic cache (vector) erased entries for a user", {
       tenantScope,
       userScope,
@@ -767,6 +747,24 @@ class VectorStoreSemanticCache implements SemanticCache {
       });
     }
     return removed;
+  }
+
+  async purgeExpired(): Promise<number> {
+    const deleteExpired = this.store.deleteExpired?.bind(this.store);
+    if (deleteExpired === undefined) return 0;
+    const removed = await deleteExpired(VECTOR_COLLECTION_PREFIX, this.clock());
+    if (removed > 0) {
+      this.logger?.debug("Semantic cache (vector) swept expired entries", {
+        removed,
+      });
+    }
+    return removed;
+  }
+
+  get purgeOlderThan(): ((cutoffIso: string) => Promise<number>) | undefined {
+    const deleteCreatedBefore = this.store.deleteCreatedBefore?.bind(this.store);
+    if (deleteCreatedBefore === undefined) return undefined;
+    return (cutoffIso) => deleteCreatedBefore(VECTOR_COLLECTION_PREFIX, cutoffIso);
   }
 
   isCacheable(opts: { hasTools: boolean; temperature?: number }): boolean {

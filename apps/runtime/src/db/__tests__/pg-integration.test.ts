@@ -613,6 +613,43 @@ suite("Postgres — API key expiry (migration 24: api_keys.expires_at)", () => {
   });
 });
 
+suite("Postgres — semantic cache expiry sweep", () => {
+  it("removes expired entries of several namespaces in one call, including older string-typed rows", async () => {
+    const store = mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db);
+    const tag = uniq();
+    const now = Date.now();
+    const doc = (id: string, expiresAt: number | undefined) => ({
+      id,
+      text: id,
+      embedding: [1, 0, 0],
+      metadata: expiresAt === undefined ? {} : { expiresAt },
+    });
+    await store.upsert(`semcache:sweep-${tag}-a`, [doc("old", now - 1000), doc("live", now + 60_000)]);
+    await store.upsert(`semcache:sweep-${tag}-b`, [doc("old", now - 5), doc("none", undefined)]);
+    await db.query(
+      `INSERT INTO semantic_cache (collection, id, content, embedding, metadata)
+       VALUES ($1, 'legacy', 'x', $2::vector, $3::jsonb)`,
+      [`semcache:sweep-${tag}-c`, "[1,0,0]", JSON.stringify({ expiresAt: now - 10 })],
+    );
+    await store.upsert(`other-${tag}`, [doc("old", now - 1000)]);
+
+    // `deleteExpired` is optional on the interface; the PG store provides it.
+    expect(await store.deleteExpired?.(`semcache:sweep-${tag}`, now)).toBe(3);
+    expect(await store.count(`semcache:sweep-${tag}-a`)).toBe(1);
+    expect(await store.count(`semcache:sweep-${tag}-b`)).toBe(1);
+    expect(await store.count(`semcache:sweep-${tag}-c`)).toBe(0);
+    expect(await store.count(`other-${tag}`)).toBe(1);
+  });
+
+  it("removes entries stored before a cutoff", async () => {
+    const store = mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db);
+    const collection = `semcache:age-${uniq()}`;
+    await store.upsert(collection, [{ id: "1", text: "1", embedding: [1, 0, 0], metadata: {} }]);
+    expect(await store.deleteCreatedBefore?.(collection, new Date(Date.now() - 60_000).toISOString())).toBe(0);
+    expect(await store.deleteCreatedBefore?.(collection, new Date(Date.now() + 60_000).toISOString())).toBe(1);
+  });
+});
+
 suite("Postgres — vector store deletes by metadata", () => {
   it("matches the collection prefix literally and every metadata pair", async () => {
     const store = mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db);

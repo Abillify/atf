@@ -126,6 +126,9 @@ export function semanticCacheRetentionTarget(
   let unattributedDropped = false;
   return {
     name: "semantic_cache",
+    ...(cache.purgeOlderThan !== undefined
+      ? { purgeOlderThan: cache.purgeOlderThan.bind(cache) }
+      : {}),
     eraseSubject: async (subject: ErasureSubject): Promise<number> => {
       const tenantScope = subject.tenantId?.trim() || SINGLE_TENANT_SCOPE;
       let erased = 0;
