@@ -42,7 +42,7 @@ releases:
 
 - **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure. A failing delete now fails the erasure instead of reporting zero entries.
 - **Runtime** (semantic cache): expired entries are removed by a periodic sweep across all namespaces (`SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`, default 300); before, they stayed in the database until the same namespace was written again.
-- **Search** (`/v2/citations/check`): documents with more than 5000 units report `unverified` instead of a false `changed`; the Runtime citation-impact report and Control count it separately.
+- **Search** (`/v2/citations/check`): the "carried over" comparison runs in the database, with whitespace collapsed on both sides, so documents of any size are classified correctly instead of a false `changed` beyond 5000 units. The status `unverified` is part of the response schema and is counted separately by the Runtime citation-impact report and Control, but is currently not produced.
 - **Tooling** (`atf-doctor`): without a readable `FLOWS_DIR` the report says that flows were not checked instead of reporting them as loaded.
 - **Outpost** (`sharepoint`): a run that starts from the stored delta link lists changes only, and items it did not mention were treated as deleted (with `mirrorDelete` they were deleted once the threshold allowed it, otherwise marked `deleted-in-source`). Incremental listings now skip the absence-based delete phase; deletions arrive as tombstones and follow `mirrorDelete`.
 

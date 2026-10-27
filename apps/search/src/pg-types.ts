@@ -1077,17 +1077,17 @@ export interface PostgresClient {
   ): Promise<PostgresResponse<CurrentRevisionRow[]>>;
 
   /**
-   * The content of every unit of one document's revision visible at `validAt`
-   * (citations-check content-hash comparison), bounded by the navigation unit
-   * cap; `truncated` says the document holds more units than were returned.
+   * Whether each candidate text exists as a unit of `baseRef`'s revision
+   * visible at `validAt`, compared with whitespace collapsed (citations-check
+   * "carried"). One boolean per candidate, in order.
    */
-  getCurrentRevisionContents(
+  findCarriedContents(
     collection: string,
     scope: AccessScope,
     baseRef: string,
     validAt: string,
-  ): Promise<PostgresResponse<{ contents: string[]; truncated: boolean }>>;
-
+    candidates: string[],
+  ): Promise<PostgresResponse<boolean[]>>;
   delete(
     filter: SearchFilter,
     collection: string,

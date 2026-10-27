@@ -43,9 +43,8 @@ interface Fakes {
   chunks: CitationChunkRow[];
   current: CurrentRevisionRow[];
   contents: Record<string, string[]>;
-  /** Documents whose content list is cut off at the unit cap. */
-  truncated?: string[];
 }
+const norm = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 function fakePg(fakes: Fakes) {
   const getChunksByIds = vi.fn(async (_c: string, _s: AccessScope, ids: string[]) => ({
@@ -58,21 +57,19 @@ function fakePg(fakes: Fakes) {
       result: fakes.current.filter((row) => baseRefs.includes(row.base_ref)),
     }),
   );
-  const getCurrentRevisionContents = vi.fn(
-    async (_c: string, _s: AccessScope, baseRef: string) => ({
+  // Mirrors the SQL: whitespace runs collapsed on both sides.
+  const findCarriedContents = vi.fn(
+    async (_c: string, _s: AccessScope, baseRef: string, _v: string, candidates: string[]) => ({
       ok: true as const,
-      result: {
-        contents: fakes.contents[baseRef] ?? [],
-        truncated: fakes.truncated?.includes(baseRef) ?? false,
-      },
+      result: candidates.map((c) => (fakes.contents[baseRef] ?? []).some((x) => norm(x) === norm(c))),
     }),
   );
   const pg = {
     getChunksByIds,
     getCurrentRevisionsAt,
-    getCurrentRevisionContents,
+    findCarriedContents,
   } as unknown as PostgresClient;
-  return { pg, getChunksByIds, getCurrentRevisionsAt, getCurrentRevisionContents };
+  return { pg, getChunksByIds, getCurrentRevisionsAt, findCarriedContents };
 }
 
 describe("parseCitationsCheckRequest", () => {
@@ -174,7 +171,7 @@ describe("buildCitationsCheck", () => {
 
   it("bounds the load: one chunk query, one revision query, one content query per document", async () => {
     const old = "Überholter Text.";
-    const { pg, getChunksByIds, getCurrentRevisionsAt, getCurrentRevisionContents } = fakePg({
+    const { pg, getChunksByIds, getCurrentRevisionsAt, findCarriedContents } = fakePg({
       chunks: [
         chunkRow("c1", "a.pdf", "rev1", old),
         chunkRow("c2", "a.pdf", "rev1", "Auch alt."),
@@ -200,33 +197,30 @@ describe("buildCitationsCheck", () => {
     expect(payload.results.map((r) => r.status)).toEqual(["changed", "changed", "changed"]);
     expect(getChunksByIds).toHaveBeenCalledTimes(1);
     expect(getCurrentRevisionsAt).toHaveBeenCalledTimes(1);
-    // One content read per document that needs the hash comparison — never per chunk.
-    expect(getCurrentRevisionContents).toHaveBeenCalledTimes(2);
+    // One comparison per document that needs it — never per chunk.
+    expect(findCarriedContents).toHaveBeenCalledTimes(2);
   });
 
-  it("reports unverified instead of changed when the current revision is cut off at the unit cap", async () => {
+  it("treats content that differs only in whitespace as carried", async () => {
     const { pg } = fakePg({
-      chunks: [chunkRow("c1", "big.pdf", "rev1", "Alter Text."), chunkRow("c2", "big.pdf", "rev1", "Blieb gleich.")],
-      current: [{ base_ref: "big.pdf", revision_id: "rev2" }],
-      contents: { "big.pdf": ["Blieb gleich."] },
-      truncated: ["big.pdf"],
+      chunks: [chunkRow("c1", "a.pdf", "rev1", "Blieb\n  gleich."), chunkRow("c2", "a.pdf", "rev1", "Alter Text.")],
+      current: [{ base_ref: "a.pdf", revision_id: "rev2" }],
+      contents: { "a.pdf": ["Blieb gleich."] },
     });
     const payload = await buildCitationsCheck(
       pg,
       "documents",
       scope,
       [
-        { base_ref: "big.pdf", chunk_id: "c1" },
-        { base_ref: "big.pdf", chunk_id: "c2" },
+        { base_ref: "a.pdf", chunk_id: "c1" },
+        { base_ref: "a.pdf", chunk_id: "c2" },
       ],
       NOW,
     );
-    // A hash found in the partial list still proves "carried"; a missing one proves nothing.
-    expect(payload.results.map((r) => r.status)).toEqual(["unverified", "carried"]);
+    expect(payload.results.map((r) => r.status)).toEqual(["carried", "changed"]);
   });
-
   it("skips the content read when every cited chunk is already current", async () => {
-    const { pg, getCurrentRevisionContents } = fakePg({
+    const { pg, findCarriedContents } = fakePg({
       chunks: [chunkRow("c1", "a.pdf", "rev2", "Aktuell.")],
       current: [{ base_ref: "a.pdf", revision_id: "rev2" }],
       contents: {},
@@ -239,7 +233,7 @@ describe("buildCitationsCheck", () => {
       NOW,
     );
     expect(payload.results[0].status).toBe("current");
-    expect(getCurrentRevisionContents).not.toHaveBeenCalled();
+    expect(findCarriedContents).not.toHaveBeenCalled();
   });
 
   it("matches the (base_ref, chunk_id) pair: an id found under another document is unknown", async () => {

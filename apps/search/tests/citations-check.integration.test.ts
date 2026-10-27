@@ -172,8 +172,8 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
     );
     await seedRow({ baseRef: "cites/private.pdf", revision: "priv-rev", content: "Nur für den Besitzer.", created: REV2, latest: true, unitId: "priv-u", allowedUsers: ["owner"] });
 
-    // big.pdf — the current revision has more units than one content read
-    // returns (the navigation unit cap), so a missing hash proves nothing.
+    // big.pdf — the current revision has more units than the navigation unit
+    // cap; the comparison runs in the database, so the last unit counts too.
     await revision("big-rev1", "cites/big.pdf", "superseded");
     await revision("big-rev2", "cites/big.pdf", "committed");
     await pool.query(
@@ -181,6 +181,8 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
       [TENANT, collection, "cites/big.pdf"],
     );
     await seedRow({ baseRef: "cites/big.pdf", revision: "big-rev1", content: "Alter Absatz im grossen Dokument.", created: REV1, latest: false, unitId: "big-u-old" });
+    // Same text as the LAST current unit, with different whitespace.
+    await seedRow({ baseRef: "cites/big.pdf", revision: "big-rev1", content: `Absatz \n ${NAV_MAX_UNITS + 1}`, created: REV1, latest: false, unitId: "big-u-carried" });
     await pool.query(
       `INSERT INTO "${table}"
         (tenant_id, reference, base_ref, is_latest, content, vector, metadata,
@@ -244,14 +246,11 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
     ], NOW);
     expect(payload.results.map((r) => r.status)).toEqual(["current", "carried", "current"]);
   });
-  it("reports unverified, not changed, when the current revision exceeds the unit cap", { timeout: 60_000 }, async () => {
-    const contents = await pg.getCurrentRevisionContents(collection, serviceScope(), "cites/big.pdf", NOW.toISOString());
-    expect(contents.ok && contents.result.truncated).toBe(true);
-    expect(contents.ok && contents.result.contents).toHaveLength(NAV_MAX_UNITS);
-
+  it("compares documents beyond the unit cap in the database, whitespace-insensitively", { timeout: 60_000 }, async () => {
     const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
       { base_ref: "cites/big.pdf", chunk_id: "big-u-old" },
+      { base_ref: "cites/big.pdf", chunk_id: "big-u-carried" },
     ], NOW);
-    expect(payload.results[0].status).toBe("unverified");
+    expect(payload.results.map((r) => r.status)).toEqual(["changed", "carried"]);
   });
 });

@@ -1102,18 +1102,20 @@ export function createNavMethods(ctx: PgFactoryCtx) {
     },
 
     /**
-     * The content of every unit of one document's revision visible at
-     * `validAt`, for the citations-check content-hash comparison. Bounded by
-     * the navigation unit cap; `truncated` is true when the document has more
-     * units than that, so the list is incomplete. One query per document,
-     * never per chunk.
+     * For each candidate text, whether a unit with the same content exists in
+     * the revision of `baseRef` visible at `validAt` (citations-check
+     * "carried"). Content is compared after collapsing whitespace runs to one
+     * space and trimming, on both sides in SQL, so the database does the work
+     * for documents of any size and only one boolean per candidate travels.
+     * One query per document, never per chunk.
      */
-    async getCurrentRevisionContents(
+    async findCarriedContents(
       collection: string,
       scope: AccessScope,
       baseRef: string,
       validAt: string,
-    ): Promise<PostgresResponse<{ contents: string[]; truncated: boolean }>> {
+      candidates: string[],
+    ): Promise<PostgresResponse<boolean[]>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
         return {
@@ -1124,6 +1126,7 @@ export function createNavMethods(ctx: PgFactoryCtx) {
           },
         };
       }
+      if (candidates.length === 0) return { ok: true, result: [] };
       const ref = normalizeReference(baseRef);
       return withClient(async (client) => {
         const p = new SqlParams();
@@ -1137,18 +1140,20 @@ export function createNavMethods(ctx: PgFactoryCtx) {
         );
         const accessSql = buildAccessSql(p, scope);
         const refPh = p.add(ref);
-        const res = await client.query<{ content: string | null }>(
-          `SELECT content
-             FROM "${table}"
-            WHERE base_ref = ${refPh}${temporalFilter}${accessSql}
-            LIMIT ${p.add(NAV_MAX_UNITS + 1)}`,
+        const candPh = p.add(candidates);
+        const res = await client.query<{ ord: string | number }>(
+          `SELECT c.ord
+             FROM unnest(${candPh}::text[]) WITH ORDINALITY AS c(txt, ord)
+            WHERE EXISTS (
+              SELECT 1 FROM "${table}"
+               WHERE base_ref = ${refPh}${temporalFilter}${accessSql}
+                 AND btrim(regexp_replace(content, '\\s+', ' ', 'g'))
+                   = btrim(regexp_replace(c.txt, '\\s+', ' ', 'g'))
+            )`,
           p.values,
         );
-        const truncated = res.rows.length > NAV_MAX_UNITS;
-        return {
-          contents: res.rows.slice(0, NAV_MAX_UNITS).map((row) => row.content ?? ""),
-          truncated,
-        };
+        const found = new Set(res.rows.map((row) => Number(row.ord)));
+        return candidates.map((_, i) => found.has(i + 1));
       });
     },
   };

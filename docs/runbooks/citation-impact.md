@@ -51,9 +51,9 @@ example after a planned re-ingest), `--json` to print the raw report to stdout, 
    breakdown (`current`, `carried`, `changed`, `removed`, `unknown`, `unverified`).
 2. Work through the affected executions: each entry names the execution, flow and
    the chunks that are `changed` or `removed`. `carried` is not a finding — the
-   content survives unchanged in the current revision. `unverified` is not a finding
-   either, but it is not a clean result: the cited document has more than 5000 units, so
-   Search could not compare its content. Check those sources by hand.
+   content survives unchanged in the current revision. `unverified` is reserved for a
+   comparison Search could not complete and is currently not produced; should it appear,
+   check those sources by hand.
 3. Decide per case: re-run the question against the current sources, correct or
    withdraw the answer where it was published, or accept it when the changed passage
    does not carry the claim.
