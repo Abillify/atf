@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-27
+
 ### Security
 
 - **Extract**: the new scope `extract.acl.assign` lets a trusted ingest client (such as Outpost) set `X-Allowed-Users`/`X-Allowed-Groups` as requested. Without it, requested access lists are still intersected with the caller's identity, and a service token without identity yields an empty (tenant-wide) access list, which Outpost-ingested documents silently received before.
@@ -4555,7 +4557,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/Abillify/atf/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Abillify/atf/compare/v0.19.3...v0.20.0
 [0.19.3]: https://github.com/Abillify/atf/compare/v0.19.2...v0.19.3
 [0.19.2]: https://github.com/Abillify/atf/compare/v0.19.0...v0.19.2

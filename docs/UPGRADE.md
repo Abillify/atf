@@ -623,7 +623,7 @@ Changes since 0.19.3 that need operator attention:
    `CITATION_CHECK_TOKEN`. See
    [`docs/runbooks/citation-impact.md`](runbooks/citation-impact.md).
 
-### 0.20 → next
+### 0.20 → 0.21
 
 Changes since 0.20.0 that need operator attention:
 
