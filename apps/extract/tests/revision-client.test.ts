@@ -98,6 +98,30 @@ describe("revision-client · request framing", () => {
     expect(headers["x-allowed-groups"]).toBe("team");
   });
 
+  it("sends a group-only document ACL as x-allowed-groups without x-allowed-users", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        jsonResponse(201, {
+          revisionId: "rev-3",
+          reference: "doc/b.pdf",
+          status: "staging",
+          visibility: "on_commit",
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createRevisionClient(CONFIG, testLogger);
+    await client.createRevision({
+      reference: "doc/b.pdf",
+      idempotencyKey: "job-10",
+      acl: { allowedUsers: [], allowedGroups: ["finance"] },
+    });
+    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers["x-allowed-groups"]).toBe("finance");
+    expect(headers["x-allowed-users"]).toBeUndefined();
+  });
+
   it("PUTs a batch with the Content-Digest header at its seq", async () => {
     const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
       Promise.resolve(

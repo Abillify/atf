@@ -509,6 +509,18 @@ describeIfPg("document identity · real postgres", () => {
       expect(expanded.ok && expanded.result).toEqual([]);
     });
 
+    it("a document ingested for the group finance is visible to its members only", async () => {
+      // The list Outpost sets from a source ACL and Extract passes on unchanged.
+      await ingest({
+        reference: "acl/finanzen.pdf",
+        text: "quartalszahl november",
+        acl: { allowedUsers: [], allowedGroups: ["finance"] },
+      });
+      expect(await searchTerm("quartalszahl", userScope("carl", ["finance"]))).toHaveLength(1);
+      expect(await searchTerm("quartalszahl", userScope("carl", ["team"]))).toHaveLength(0);
+      expect(await searchTerm("quartalszahl", userScope("dora"))).toHaveLength(0);
+    });
+
     it("the same file under another ACL is neither a duplicate nor a version of it", async () => {
       await identify({ sourceId: "acl-a1", reference: "acl/bericht.pdf", sourceSha256: sha("acl-bytes"), acl: anna });
       await ingest({ reference: "acl/bericht.pdf", text: "bericht lima", sourceId: "acl-a1", acl: anna });

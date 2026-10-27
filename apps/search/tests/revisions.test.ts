@@ -144,6 +144,21 @@ describe("v2 revision routes", () => {
     );
   });
 
+  it("POST passes the ACL a service writer requested (X-Allowed-Groups) to the store", async () => {
+    // What Extract sends once its token holds extract.acl.assign: the list of
+    // the system the document was read from, on a service credential.
+    const app = makeApp(store, { scope: { userId: undefined, service: true } });
+    const res = await request(app)
+      .post(`/v2/documents/${REF}/revisions`)
+      .set("Idempotency-Key", "job-43")
+      .set("X-Collection", "documents")
+      .set("X-Allowed-Groups", "finance");
+    expect(res.status).toBe(201);
+    expect(store.createRevision).toHaveBeenCalledWith(
+      expect.objectContaining({ acl: { allowedUsers: [], allowedGroups: ["finance"] } }),
+    );
+  });
+
   it("POST answers 200 for an idempotent replay of the same key", async () => {
     store = fakeStore({
       createRevision: vi.fn(async () =>
