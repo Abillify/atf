@@ -17,7 +17,11 @@
  * folders are skipped. With `aclFromPermissions` the item permissions map
  * to the document access list: users from `grantedToV2.user` (lower-cased),
  * groups from `grantedToV2.group.id` through `aclGroupMap`; share links are
- * never adopted, and a link-only item gets an empty list plus a warning.
+ * never adopted. An item without a single mappable user or group (shared only
+ * via links, or only to identities that cannot be mapped) is not yielded at
+ * all, with a warning: an empty list would make it visible tenant-wide. Like a
+ * deleted item it is then absent from the listing, so a previously synced copy
+ * is picked up by Mirror_Delete.
  * At most four Graph requests run in parallel per source; 429/503 honour
  * `Retry-After` with exponential backoff, at most five attempts.
  */
@@ -296,19 +300,27 @@ export function createSharepointSource(
     return driveIdCache;
   }
 
-  /** Item permissions → document ACL; link facets are never adopted. */
+  /**
+   * Item permissions → document ACL; link facets are never adopted. `skip`
+   * names why no access list could be derived.
+   */
   async function permissionsOf(
     driveId: string,
     itemId: string,
     signal: AbortSignal,
-  ): Promise<{ allowedUsers: string[]; allowedGroups: string[] }> {
+  ): Promise<
+    | { acl: { allowedUsers: string[]; allowedGroups: string[] } }
+    | { skip: "link_only" | "no_mappable_permissions" }
+  > {
     const res = await graphJson<GraphCollection<GraphPermission>>(
       `${GRAPH_API}/drives/${driveId}/items/${encodeURIComponent(itemId)}/permissions`,
       signal,
     );
     const users = new Set<string>();
     const groups = new Set<string>();
+    let hasLink = false;
     for (const permission of res.value ?? []) {
+      if (permission.link !== undefined) hasLink = true;
       const identity = permission.grantedToV2;
       const upn = identity?.user?.email ?? identity?.user?.userPrincipalName;
       if (upn !== undefined && upn !== "") users.add(upn.toLowerCase());
@@ -318,16 +330,9 @@ export function createSharepointSource(
       }
     }
     if (users.size === 0 && groups.size === 0) {
-      // Link-only sharing: the item syncs with an EMPTY access list — the
-      // anonymous link is not a user identity and must not widen access.
-      deps.logger?.warn({
-        event: "sharepoint.permissions_link_only",
-        sourceId: options.id,
-        itemId,
-        hint: "item is shared only via links; syncing with an empty access list",
-      });
+      return { skip: hasLink ? "link_only" : "no_mappable_permissions" };
     }
-    return { allowedUsers: [...users], allowedGroups: [...groups] };
+    return { acl: { allowedUsers: [...users], allowedGroups: [...groups] } };
   }
 
   async function* walk(signal: AbortSignal): AsyncGenerator<SourceItem> {
@@ -366,7 +371,17 @@ export function createSharepointSource(
           displayPath,
         };
         if (options.aclFromPermissions === true) {
-          out.acl = await permissionsOf(driveId, item.id, signal);
+          const permissions = await permissionsOf(driveId, item.id, signal);
+          if ("skip" in permissions) {
+            deps.logger?.warn({
+              event: "sharepoint.item_skipped_no_acl",
+              sourceId: options.id,
+              itemId: item.id,
+              reason: permissions.skip,
+            });
+            continue;
+          }
+          out.acl = permissions.acl;
         }
         yield out;
       }

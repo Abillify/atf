@@ -20,6 +20,7 @@ import {
   type SourceFetch,
   type SourceItem,
 } from "../../index.js";
+import { makeHarness } from "../../../tests/fakes/run-harness.js";
 
 const TENANT = "00000000-0000-0000-0000-000000000000";
 const TOKEN_URL = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
@@ -349,7 +350,7 @@ describe("SharePoint Rechte-Mapping (aclFromPermissions)", () => {
     });
   });
 
-  it("nur per Link geteilt → leere ACL + Warnung, Link wird nicht übernommen", async () => {
+  it("nur per Link geteilt → Item wird nicht geliefert, Warnung ohne Namen", async () => {
     const warnings: Record<string, unknown>[] = [];
     const graph = fakeGraph((url) => {
       if (url.includes("/oauth2/v2.0/token")) return tokenReply();
@@ -371,8 +372,124 @@ describe("SharePoint Rechte-Mapping (aclFromPermissions)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    expect(result.items[0]?.acl).toEqual({ allowedUsers: [], allowedGroups: [] });
-    expect(warnings.some((w) => w["event"] === "sharepoint.permissions_link_only")).toBe(true);
+    expect(result.items).toEqual([]);
+    const skipped = warnings.filter((w) => w["event"] === "sharepoint.item_skipped_no_acl");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ itemId: "f1", reason: "link_only" });
+  });
+
+  it("ohne Rechte oder nur nicht abbildbare Identitäten → no_mappable_permissions", async () => {
+    const warnings: Record<string, unknown>[] = [];
+    const graph = fakeGraph((url) => {
+      if (url.includes("/oauth2/v2.0/token")) return tokenReply();
+      if (url.includes("/root/delta")) {
+        return {
+          status: 200,
+          json: {
+            value: [driveItem({ id: "f1" }), driveItem({ id: "f2" })],
+            "@odata.deltaLink": `${GRAPH}/x/delta?d=1`,
+          },
+        };
+      }
+      if (url.includes("/items/f1/permissions")) return { status: 200, json: { value: [] } };
+      if (url.includes("/items/f2/permissions")) {
+        return { status: 200, json: { value: [{ grantedToV2: { siteUser: { loginName: "x" } } }] } };
+      }
+      return { status: 404 };
+    });
+    const adapter = createSharepointSource(
+      { ...baseOptions, aclFromPermissions: true },
+      { fetchImpl: graph.fetchImpl, logger: { warn: (f) => warnings.push(f) } },
+    );
+    const result = await collectListing(adapter, noSignal);
+    expect(result.kind).toBe("complete");
+    if (result.kind !== "complete") return;
+    expect(result.items).toEqual([]);
+    expect(warnings.map((w) => w["reason"])).toEqual([
+      "no_mappable_permissions",
+      "no_mappable_permissions",
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain("loginName");
+  });
+
+  it("gemischte Rechte: Link wird ignoriert, abbildbare Nutzer und Gruppen bleiben", async () => {
+    const graph = fakeGraph((url) => {
+      if (url.includes("/oauth2/v2.0/token")) return tokenReply();
+      if (url.includes("/root/delta")) {
+        return { status: 200, json: { value: [driveItem({ id: "f1" })], "@odata.deltaLink": `${GRAPH}/x/delta?d=1` } };
+      }
+      if (url.includes("/permissions")) {
+        return {
+          status: 200,
+          json: {
+            value: [
+              { link: { scope: "anonymous", type: "view" } },
+              { grantedToV2: { user: { email: "Alice@Contoso.example" } } },
+            ],
+          },
+        };
+      }
+      return { status: 404 };
+    });
+    const adapter = createSharepointSource(
+      { ...baseOptions, aclFromPermissions: true },
+      { fetchImpl: graph.fetchImpl },
+    );
+    const result = await collectListing(adapter, noSignal);
+    expect(result.kind).toBe("complete");
+    if (result.kind !== "complete") return;
+    expect(result.items[0]?.acl).toEqual({
+      allowedUsers: ["alice@contoso.example"],
+      allowedGroups: [],
+    });
+  });
+
+  it("ein zuvor ingestiertes Item, das nur noch per Link geteilt ist, wird gelöscht", async () => {
+    const graphWith = (permissions: unknown[]): ReturnType<typeof fakeGraph> =>
+      fakeGraph((url) => {
+        if (url.includes("/oauth2/v2.0/token")) return tokenReply();
+        if (url.includes("/root/delta")) {
+          return { status: 200, json: { value: [driveItem({ id: "f1" })], "@odata.deltaLink": `${GRAPH}/x/delta?d=1` } };
+        }
+        if (url.endsWith("/items/f1/permissions")) return { status: 200, json: { value: permissions } };
+        if (url.endsWith("/items/f1/content")) return { status: 200, bytes: enc("sharepoint-bytes") };
+        return { status: 404 };
+      });
+    const config = { mirrorDelete: true, deleteThresholdPercent: 100 };
+    const first = await makeHarness({
+      items: [],
+      config,
+      makeAdapter: () =>
+        createSharepointSource(
+          { ...baseOptions, aclFromPermissions: true },
+          { fetchImpl: graphWith([{ grantedToV2: { group: { id: "finance" } } }]).fetchImpl },
+        ),
+    });
+    try {
+      await first.run();
+      expect(first.fake.ingests[0]?.allowedGroups).toEqual(["finance"]);
+      expect(Object.keys(first.store.state.items)).toEqual(["f1"]);
+      const second = await makeHarness({
+        items: [],
+        dir: first.dir,
+        config,
+        makeAdapter: () =>
+          createSharepointSource(
+            { ...baseOptions, aclFromPermissions: true },
+            { fetchImpl: graphWith([{ link: { scope: "anonymous", type: "view" } }]).fetchImpl },
+          ),
+      });
+      try {
+        await second.run();
+        expect(second.fake.ingests).toHaveLength(0);
+        expect(second.fake.requests.some((r) => r.method === "DELETE")).toBe(true);
+        expect(Object.keys(second.store.state.items)).toEqual([]);
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await first.close();
+    }
   });
 
   it("aclFromPermissions=false → keine Permissions-Abfrage", async () => {
