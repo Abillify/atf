@@ -145,6 +145,28 @@ describe("POST /v2/jobs · create", () => {
     expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({ allowedUsers: ["anna"], allowedGroups: ["team"] });
   });
 
+  it("stores the requested ACL unchanged for a token holding extract.acl.assign", async () => {
+    const baseUrl = await buildApp({
+      API_TOKEN: "svc-token",
+      AUTHN_MODE: "token",
+      API_SERVICE_SCOPES: "extract.convert,extract.ingest,extract.acl.assign",
+    });
+    const res = await request(baseUrl)
+      .post("/v2/jobs")
+      .set("Authorization", "Bearer svc-token")
+      .send({
+        reference: "tests/finance.pdf",
+        sourceSha256: seededSha,
+        allowedUsers: ["Anna@Example.com"],
+        allowedGroups: ["finance"],
+      });
+    expect(res.status).toBe(201);
+    expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({
+      allowedUsers: ["anna@example.com"],
+      allowedGroups: ["finance"],
+    });
+  });
+
   it("stores the document attributes Search puts on every unit (contract 2.2)", async () => {
     const baseUrl = await buildApp();
     const res = await request(baseUrl).post("/v2/jobs").send({

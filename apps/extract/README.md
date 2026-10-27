@@ -309,9 +309,15 @@ config and the pipeline/prompt hash onto the job; when they differ on resume,
 large plan.
 
 **Readers.** A job's ACL (`X-Allowed-Users/-Groups` on `/v1/ingest`, `allowedUsers/-Groups`
-on `/v2/jobs`) is narrowed to the caller's own identity — a caller can restrict, never widen —
-and sent with the revision, so Search writes it onto every unit; assets are readable only
-through those units. E-mail attachments inherit their e-mail's ACL.
+on `/v2/jobs`) is sent with the revision, so Search writes it onto every unit; assets are
+readable only through those units. E-mail attachments inherit their e-mail's ACL. How the
+requested list is treated depends on the credential: a caller holding `extract.acl.assign`
+(or `extract.admin`) gets the requested readers verbatim, which is what a trusted ingest
+client such as Outpost needs — it publishes under the audience of the system it reads from,
+not under the identity of its own service account. Every other caller can only *narrow*:
+the request is intersected with the caller's own identity. A service token without any
+identity has nothing to narrow to, so a requested list is discarded and the document is
+tenant-wide.
 
 The emitter streams staged pages to Search's revision API in batches of
 `EMIT_BATCH_PAGES`, uploads assets with `ASSET_UPLOAD_CONCURRENCY` and reconciles against
@@ -522,8 +528,12 @@ Other properties worth knowing:
   A cookie authenticating an API call turns a CSRF into a document upload; a
   bearer token authenticating the UI makes the UI credential a full programmatic
   one.
-- **The ingest ACL can only narrow.** `X-Allowed-Users` / `X-Allowed-Groups` are
-  intersected with the caller's own identity, never passed through.
+- **The ingest ACL can only narrow, unless the caller is trusted to assign it.**
+  `X-Allowed-Users` / `X-Allowed-Groups` are intersected with the caller's own identity.
+  A credential carrying `extract.acl.assign` (or `extract.admin`) is the exception: its
+  requested list is applied verbatim, which is how a synchroniser such as Outpost
+  publishes under the audience of the source system. Grant that scope only to ingest
+  clients you trust with that decision.
 - **ZIP containers are checked before they are unpacked.** XLSX, VSDX, DOCX, PPTX and
   OOXML packages embedded in a DOCX must pass the `ZIP_MAX_*` limits, read from the
   central directory alone; a violation is `DOCUMENT_TOO_COMPLEX` (422), never retried.

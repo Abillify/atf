@@ -11,11 +11,13 @@
  * The scopes are coarse on purpose, matching the three things this service
  * actually does:
  *
- *   extract.convert  — turn an upload into Markdown and hand it back
- *   extract.ingest   — additionally write it into Search
- *   extract.erasure  — delete subject data (DSAR, Art. 17)
- *   extract.metrics  — read /metrics
- *   extract.admin    — read operational state
+ *   extract.convert     — turn an upload into Markdown and hand it back
+ *   extract.ingest      — additionally write it into Search
+ *   extract.acl.assign  — set a document access list as requested, instead of
+ *                         having it narrowed to the caller's own identity
+ *   extract.erasure     — delete subject data (DSAR, Art. 17)
+ *   extract.metrics     — read /metrics
+ *   extract.admin       — read operational state
  *
  * `convert` and `ingest` are deliberately not the same scope. Conversion returns
  * data to the caller and touches nothing; ingest performs a durable write into a
@@ -30,6 +32,7 @@ import { getPrincipal } from "./request-principal.js";
 export type ExtractScope =
   | "extract.convert"
   | "extract.ingest"
+  | "extract.acl.assign"
   | "extract.delete"
   | "extract.erasure"
   | "extract.metrics"

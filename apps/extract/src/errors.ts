@@ -27,6 +27,8 @@
 export type ExtractErrorCode =
   /** Caller sent something this service cannot accept. */
   | "VALIDATION_FAILED"
+  /** A requested access list is malformed (too long, too wide, control chars). */
+  | "INVALID_ACL"
   /** MIME type is outside the supported set. */
   | "UNSUPPORTED_MEDIA_TYPE"
   /** Upload exceeds MAX_UPLOAD_BYTES. */
@@ -66,6 +68,7 @@ export type ExtractErrorCode =
 /** Every code in the taxonomy, in declaration order. */
 const ALL_CODES: readonly ExtractErrorCode[] = [
   "VALIDATION_FAILED",
+  "INVALID_ACL",
   "UNSUPPORTED_MEDIA_TYPE",
   "PAYLOAD_TOO_LARGE",
   "TOO_MANY_PAGES",
@@ -98,6 +101,7 @@ export function isExtractErrorCode(value: unknown): value is ExtractErrorCode {
 /** HTTP status each code maps to. */
 const STATUS_BY_CODE: Record<ExtractErrorCode, number> = {
   VALIDATION_FAILED: 400,
+  INVALID_ACL: 400,
   UNSUPPORTED_MEDIA_TYPE: 415,
   PAYLOAD_TOO_LARGE: 413,
   TOO_MANY_PAGES: 422,
@@ -153,6 +157,18 @@ export class ExtractError extends Error {
 
 export function validationError(message: string, context?: Record<string, unknown>): ExtractError {
   return new ExtractError("VALIDATION_FAILED", message, context);
+}
+
+/**
+ * A requested access list this service will not accept — too many entries, an
+ * entry too long, or an entry containing control characters. Never retryable:
+ * the request does not change by itself.
+ */
+export function invalidAcl(
+  message: string,
+  context?: Record<string, unknown>,
+): ExtractError {
+  return new ExtractError("INVALID_ACL", message, context);
 }
 
 export function unsupportedMediaType(

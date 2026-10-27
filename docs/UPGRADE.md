@@ -623,6 +623,12 @@ Changes since 0.19.3 that need operator attention:
    `CITATION_CHECK_TOKEN`. See
    [`docs/runbooks/citation-impact.md`](runbooks/citation-impact.md).
 
+### 0.20 → next
+
+Changes since 0.20.0 that need operator attention:
+
+1. Extract/Outpost: grant the Outpost's Extract token the scope `extract.acl.assign` when sources set `acl` or `aclFromPermissions`. Without it, Outpost now fails those items instead of ingesting them tenant-wide. Re-sync affected sources after granting the scope.
+
 ### Not yet shared between replicas (roadmap)
 
 These are known single-process behaviours, not defects of a correct single-replica

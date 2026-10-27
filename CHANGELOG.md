@@ -18,6 +18,10 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Extract**: the new scope `extract.acl.assign` lets a trusted ingest client (such as Outpost) set `X-Allowed-Users`/`X-Allowed-Groups` as requested. Without it, requested access lists are still intersected with the caller's identity, and a service token without identity yields an empty (tenant-wide) access list, which Outpost-ingested documents silently received before.
+
 ## [0.20.0] - 2026-10-25
 
 ### Security

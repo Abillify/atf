@@ -54,7 +54,7 @@ import {
   sanitizeFilename,
   type UploadedDocument,
 } from "../upload.js";
-import { readMetadataHeader, resolveAcl } from "./ingest.js";
+import { readMetadataHeader, resolveAcl, type ResolvedAcl } from "./ingest.js";
 import type { ExtractStore } from "../persistence/index.js";
 import type { SourceStore } from "../source-store.js";
 import type { PipelineSnapshot } from "../jobs/snapshot.js";
@@ -112,7 +112,7 @@ export interface IngestV2HandlerDeps {
  * v1 handler's ACL intersection so the two routes attribute a document
  * identically.
  */
-function resolveRequestAcl(req: Request): { allowedUsers: string[]; allowedGroups: string[] } {
+function resolveRequestAcl(req: Request): ResolvedAcl {
   const principal = getPrincipal(req);
   return resolveAcl(principal, {
     users: readListHeader(req, "x-allowed-users"),

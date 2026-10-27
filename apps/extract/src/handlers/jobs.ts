@@ -170,10 +170,12 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         ...(body.sourceLabel !== undefined ? { sourceLabel: body.sourceLabel } : {}),
         // The document's readers, narrowed to the caller exactly like
         // /v1/ingest; the emitter opens the Search revision with it.
-        acl: resolveAcl(getPrincipal(req), {
-          users: body.allowedUsers ?? [],
-          groups: body.allowedGroups ?? [],
-        }),
+        acl: (({ allowedUsers, allowedGroups }) => ({ allowedUsers, allowedGroups }))(
+          resolveAcl(getPrincipal(req), {
+            users: body.allowedUsers ?? [],
+            groups: body.allowedGroups ?? [],
+          }),
+        ),
       },
       pipeline_hash: snapshot.pipelineHash,
       prompt_hash: snapshot.promptHash,

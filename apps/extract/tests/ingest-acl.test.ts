@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 import { resolveAcl } from "../src/handlers/ingest.js";
+import { ExtractError } from "../src/errors.js";
 import type { RequestPrincipal } from "../src/request-principal.js";
 
 const user: RequestPrincipal = {
@@ -36,6 +37,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: [], groups: [] })).toEqual({
       allowedUsers: ["alice"],
       allowedGroups: ["engineering", "wms"],
+      mode: "none",
     });
   });
 
@@ -43,6 +45,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: [], groups: ["wms"] })).toEqual({
       allowedUsers: ["alice"],
       allowedGroups: ["wms"],
+      mode: "intersected",
     });
   });
 
@@ -51,6 +54,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: [], groups: ["finance"] })).toEqual({
       allowedUsers: ["alice"],
       allowedGroups: [],
+      mode: "intersected",
     });
   });
 
@@ -58,6 +62,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: ["bob"], groups: [] })).toEqual({
       allowedUsers: [],
       allowedGroups: ["engineering", "wms"],
+      mode: "intersected",
     });
   });
 
@@ -65,6 +70,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: ["alice"], groups: [] })).toEqual({
       allowedUsers: ["alice"],
       allowedGroups: ["engineering", "wms"],
+      mode: "intersected",
     });
   });
 
@@ -74,6 +80,7 @@ describe("resolveAcl", () => {
     expect(resolveAcl(user, { users: [], groups: ["wms", "finance"] })).toEqual({
       allowedUsers: ["alice"],
       allowedGroups: ["wms"],
+      mode: "intersected",
     });
   });
 
@@ -84,6 +91,7 @@ describe("resolveAcl", () => {
       expect(resolveAcl(service, { users: [], groups: [] })).toEqual({
         allowedUsers: [],
         allowedGroups: [],
+        mode: "none",
       });
     });
 
@@ -93,6 +101,7 @@ describe("resolveAcl", () => {
       expect(resolveAcl(service, { users: ["alice"], groups: ["finance"] })).toEqual({
         allowedUsers: [],
         allowedGroups: [],
+        mode: "service-empty",
       });
     });
   });
@@ -106,6 +115,83 @@ describe("resolveAcl", () => {
     expect(resolveAcl(groupOnly, { users: [], groups: [] })).toEqual({
       allowedUsers: [],
       allowedGroups: ["wms"],
+      mode: "none",
+    });
+  });
+
+  describe("extract.acl.assign", () => {
+    const assigner: RequestPrincipal = {
+      userId: undefined,
+      userGroups: undefined,
+      source: "service",
+      scopes: ["extract.ingest", "extract.acl.assign"],
+    };
+
+    it("applies the requested list unchanged for a service token", () => {
+      expect(resolveAcl(assigner, { users: ["Alice@Example.com"], groups: ["Finance"] })).toEqual({
+        allowedUsers: ["alice@example.com"],
+        allowedGroups: ["Finance"],
+        mode: "assigned",
+      });
+    });
+
+    it("applies the requested list even when the caller has an identity", () => {
+      const withIdentity: RequestPrincipal = { ...user, scopes: ["extract.acl.assign"] };
+      expect(resolveAcl(withIdentity, { users: ["bob"], groups: ["finance"] })).toEqual({
+        allowedUsers: ["bob"],
+        allowedGroups: ["finance"],
+        mode: "assigned",
+      });
+    });
+
+    it("is implied by extract.admin", () => {
+      const admin: RequestPrincipal = { ...service, scopes: ["extract.admin"] };
+      expect(resolveAcl(admin, { users: [], groups: ["finance"] })).toEqual({
+        allowedUsers: [],
+        allowedGroups: ["finance"],
+        mode: "assigned",
+      });
+    });
+
+    it("trims, drops blanks and removes duplicates", () => {
+      expect(
+        resolveAcl(assigner, { users: [" bob ", "", "BOB"], groups: ["a", " a ", ""] }),
+      ).toEqual({ allowedUsers: ["bob"], allowedGroups: ["a"], mode: "assigned" });
+    });
+
+    it("does not change the result when nothing is requested", () => {
+      expect(resolveAcl(assigner, { users: [], groups: [] })).toEqual({
+        allowedUsers: [],
+        allowedGroups: [],
+        mode: "none",
+      });
+    });
+
+    it("still intersects for a token without the scope", () => {
+      const plain: RequestPrincipal = { ...service, scopes: ["extract.ingest"] };
+      expect(resolveAcl(plain, { users: ["alice"], groups: ["finance"] })).toEqual({
+        allowedUsers: [],
+        allowedGroups: [],
+        mode: "service-empty",
+      });
+    });
+
+    it.each([
+      ["too many entries", { users: [], groups: Array.from({ length: 201 }, (_, i) => `g${i}`) }],
+      ["an entry that is too long", { users: ["u".repeat(257)], groups: [] }],
+      ["a control character", { users: [], groups: ["fin\u0000ance"] }],
+    ])("rejects %s with INVALID_ACL", (_label, requested) => {
+      let thrown: unknown;
+      try {
+        resolveAcl(assigner, requested);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(ExtractError);
+      expect((thrown as ExtractError).code).toBe("INVALID_ACL");
+      expect((thrown as ExtractError).message).toBe(
+        "X-Allowed-Users/X-Allowed-Groups: at most 200 entries of at most 256 characters, no control characters",
+      );
     });
   });
 });

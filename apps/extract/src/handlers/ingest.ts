@@ -22,17 +22,24 @@
  * that may convert a file also publish it to an arbitrary audience, which is a
  * privilege escalation dressed up as a convenience.
  *
- * A service credential with no end-user identity ingests with an empty ACL, which
- * in Search means unrestricted. That is the documented behaviour for
- * service-to-service ingest, and `ACL_REQUIRE_IDENTITY` is the switch that turns
- * it into a 403 for deployments where every document must be attributable.
+ * A credential carrying `extract.acl.assign` (or `extract.admin`) is the one
+ * exception, and it is an explicit grant rather than an accident of the token
+ * format. A synchroniser such as Outpost knows the access list of the system it
+ * reads from, which has nothing to do with the identity of its own service
+ * account; only the intersection rule would silently throw those lists away.
+ *
+ * A service credential with no end-user identity and no such scope ingests with
+ * an empty ACL, which in Search means unrestricted. That is the documented
+ * behaviour for service-to-service ingest, and `ACL_REQUIRE_IDENTITY` is the
+ * switch that turns it into a 403 for deployments where every document must be
+ * attributable.
  */
 
 import { randomUUID } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import { collectFigures, type IngestHeaderOptions } from "@atf/extract-contract/v1";
-import { validationError } from "../errors.js";
+import { invalidAcl, validationError } from "../errors.js";
 import { readHeader, readListHeader, parseBooleanHeader } from "../header-utils.js";
 import { getPrincipal, runWithPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { QueueSaturatedError, type WorkQueue } from "../queue.js";
@@ -60,24 +67,98 @@ export interface IngestHandlerDeps {
 }
 
 /**
- * Intersect the requested ACL with the caller's own identity.
+ * How the requested access list was treated, reported back to the caller so a
+ * synchroniser can tell "applied as asked" from "silently thrown away".
  *
- * An empty request means "as wide as the caller"; a non-empty one may only
- * remove. Returning the intersection rather than rejecting a superset keeps a
- * bulk uploader working when one document names a group the caller happens not to
- * be in.
+ *   assigned       — the caller holds `extract.acl.assign` (or `extract.admin`)
+ *                    and the requested list was applied verbatim
+ *   intersected    — narrowed to the caller's own identity
+ *   service-empty  — a caller without identity asked for a list; the request was
+ *                    discarded and the document is tenant-wide
+ *   none           — nothing was requested
+ */
+export type AclResolutionMode = "assigned" | "intersected" | "service-empty" | "none";
+
+export interface ResolvedAcl {
+  allowedUsers: string[];
+  allowedGroups: string[];
+  mode: AclResolutionMode;
+}
+
+/** Limits for an access list a trusted client assigns. */
+const ACL_MAX_ENTRIES = 200;
+const ACL_MAX_ENTRY_LENGTH = 256;
+const ACL_MESSAGE =
+  "X-Allowed-Users/X-Allowed-Groups: at most 200 entries of at most 256 characters, no control characters";
+
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Trim, drop blanks, de-duplicate, and reject entries this service will not store. */
+function normalizeAclList(values: string[], header: string, lowerCase = false): string[] {
+  const out: string[] = [];
+  for (const raw of values) {
+    const trimmed = raw.trim();
+    const value = lowerCase ? trimmed.toLowerCase() : trimmed;
+    if (value === "") continue;
+    if (out.includes(value)) continue;
+    out.push(value);
+  }
+  if (
+    out.length > ACL_MAX_ENTRIES ||
+    out.some((v) => v.length > ACL_MAX_ENTRY_LENGTH || hasControlChars(v))
+  ) {
+    throw invalidAcl(ACL_MESSAGE, { header, entries: out.length });
+  }
+  return out;
+}
+
+/**
+ * Resolve the access list for an ingested document.
+ *
+ * A caller holding `extract.acl.assign` (or `extract.admin`) that names readers
+ * gets exactly those readers: a synchroniser publishes under the audience of the
+ * system it reads from, not under the identity of its own service account.
+ *
+ * Everyone else may only *narrow* what they already are. An empty request means
+ * "as wide as the caller"; a non-empty one may only remove. Returning the
+ * intersection rather than rejecting a superset keeps a bulk uploader working
+ * when one document names a group the caller happens not to be in.
  */
 export function resolveAcl(
   principal: RequestPrincipal,
   requested: { users: string[]; groups: string[] },
-): { allowedUsers: string[]; allowedGroups: string[] } {
+): ResolvedAcl {
+  const scopes = principal.scopes ?? [];
+  const mayAssign = scopes.includes("extract.acl.assign") || scopes.includes("extract.admin");
+  const requestedAnything = requested.users.length > 0 || requested.groups.length > 0;
+
+  if (mayAssign && requestedAnything) {
+    return {
+      allowedUsers: normalizeAclList(requested.users, "X-Allowed-Users", true),
+      allowedGroups: normalizeAclList(requested.groups, "X-Allowed-Groups"),
+      mode: "assigned",
+    };
+  }
+
   const ownUsers = principal.userId !== undefined ? [principal.userId] : [];
   const ownGroups = principal.userGroups ?? [];
+
+  // Nothing was asked for: the caller's own identity is the audience, and a
+  // caller without one ingests tenant-wide (see the module note).
+  if (!requestedAnything) {
+    return { allowedUsers: ownUsers, allowedGroups: ownGroups, mode: "none" };
+  }
 
   // No identity: a service context. Search treats an empty ACL as unrestricted,
   // which is the documented service-to-service behaviour.
   if (ownUsers.length === 0 && ownGroups.length === 0) {
-    return { allowedUsers: [], allowedGroups: [] };
+    return { allowedUsers: [], allowedGroups: [], mode: "service-empty" };
   }
 
   const users =
@@ -87,7 +168,7 @@ export function resolveAcl(
       ? ownGroups
       : requested.groups.filter((g) => ownGroups.includes(g));
 
-  return { allowedUsers: users, allowedGroups: groups };
+  return { allowedUsers: users, allowedGroups: groups, mode: "intersected" };
 }
 
 function canonicalValidFrom(value: string | undefined): string | undefined {
