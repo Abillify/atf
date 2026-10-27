@@ -32,6 +32,7 @@ import {
   SourceRejectedError,
   collectListing,
   type SourceAdapter,
+  type SourceItem,
 } from "../sources/types.js";
 import { isAborted, Semaphore } from "./concurrency.js";
 import {
@@ -116,6 +117,8 @@ interface RotatingAdapter {
 /** Adapters with incremental listing may expose the next-run link. */
 interface DeltaLinkAdapter {
   deltaLink(): string | undefined;
+  /** True when the listing holds changes only (started from a delta link). */
+  listingIsIncremental?(): boolean;
 }
 
 export interface RunSourceDeps {
@@ -254,10 +257,16 @@ export async function runSourceOnce(deps: RunSourceDeps): Promise<RunReport> {
   const seen = new Set<string>();
   const listing = await collectListing(adapter, signal);
   for (const item of listing.items) seen.add(item.quellId);
+  // Tombstones are never uploaded; they are applied after the uploads.
+  const removals = listing.items.filter((item) => item.removal !== undefined);
+  // An incremental listing holds changes only: absence proves nothing, so
+  // the absence-based delete phase must not run for it.
+  const incremental =
+    (adapter as Partial<DeltaLinkAdapter>).listingIsIncremental?.() === true;
 
   // Worker pool: at most maxConcurrentUploads items are in flight; transfers
   // additionally take a semaphore permit (8.12), hashing runs outside it.
-  const queue = [...listing.items];
+  const queue = listing.items.filter((item) => item.removal === undefined);
   let nextIndex = 0;
   const processOne = async (item: (typeof queue)[number]): Promise<void> => {
     try {
@@ -326,6 +335,12 @@ export async function runSourceOnce(deps: RunSourceDeps): Promise<RunReport> {
   const listingIncomplete = listing.kind === "incomplete";
   const listingError = listing.kind === "incomplete" ? listing.error : undefined;
 
+  // ── 2b. tombstones: positive signals, applied even after a partial listing ─
+  if (fatal === undefined && !isAborted(signal)) {
+    await applyRemovals(ctx, removals, counters);
+    await journal.drain();
+  }
+
   // ── 3. rotated provider tokens back to the store (6.17) ──────────────────
   await persistRotatedToken(adapter, src, deps.credentialStore, logger);
   // ── 3b. incremental-listing link of a complete listing (delta sources) ───
@@ -375,7 +390,9 @@ export async function runSourceOnce(deps: RunSourceDeps): Promise<RunReport> {
   }
 
   // ── 5. delete planning — only after a COMPLETE listing (9.4) ─────────────
-  const deletePhase = await runDeletePhase(ctx, seen, counters);
+  const deletePhase: DeletePhaseResult = incremental
+    ? { kind: "none", reason: "nothing-missing" }
+    : await runDeletePhase(ctx, seen, counters);
   await journal.drain();
   await flushQuietly(store, logger, src.id);
 
@@ -514,6 +531,49 @@ async function runDeletePhase(
     });
   }
   return { kind: "delete" };
+}
+
+/**
+ * Apply tombstones from the listing. `access-revoked` always removes the
+ * synced copy (the source no longer grants anyone a mappable right);
+ * `deleted` follows Mirror_Delete: delete when it is on, otherwise mark the
+ * item `deleted-in-source` like an absent item. Items never synced are
+ * ignored.
+ */
+async function applyRemovals(
+  ctx: ItemContext,
+  removals: readonly SourceItem[],
+  counters: RunCounters,
+): Promise<void> {
+  const { src, cfg, store, logger, signal } = ctx;
+  for (const item of removals) {
+    if (isAborted(signal)) return;
+    const prev = store.state.items[item.quellId];
+    if (prev === undefined) continue;
+    if (item.removal === "deleted" && !cfg.mirrorDelete) {
+      if (prev.status === "deleted-in-source") continue;
+      await ctx.journal.enqueue(async () => {
+        await store.upsert(item.quellId, { ...prev, status: "deleted-in-source", jobId: undefined, pendingUpload: undefined });
+      });
+      continue;
+    }
+    try {
+      await ctx.withPermit(async () => await deleteWithRetry(prev.reference, ctx));
+      await ctx.journal.enqueue(async () => {
+        await store.deleteItem(item.quellId);
+      });
+      counters.deleted += 1;
+    } catch (error) {
+      if (isAborted(signal)) return;
+      logger.warn({
+        event: item.removal === "access-revoked" ? "removals.revoked_failed" : "removals.deleted_failed",
+        sourceId: src.id,
+        quellId: item.quellId,
+        error: errorMessage(error),
+      });
+      if (error instanceof DeleteForbiddenError) return;
+    }
+  }
 }
 
 /** Delete with the retry policy; 403 is final (scope problem, not transient). */

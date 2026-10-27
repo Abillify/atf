@@ -22,7 +22,7 @@ releases:
 
 - **Extract**: the new scope `extract.acl.assign` lets a trusted ingest client (such as Outpost) set `X-Allowed-Users`/`X-Allowed-Groups` as requested. Without it, requested access lists are still intersected with the caller's identity, and a service token without identity yields an empty (tenant-wide) access list, which Outpost-ingested documents silently received before.
 - **Outpost**: an item with an access list fails (and is removed again) when Extract reports `X-ACL-Applied` other than `assigned`, instead of staying visible tenant-wide. An asynchronous job is cancelled before the document is removed, so its segments stop becoming searchable instead of the job running to completion first.
-- **Outpost** (`sharepoint`): with `aclFromPermissions`, items without a mappable user or group (for example shared only via links) are no longer ingested with an empty, tenant-wide access list; they are skipped and removed if previously synced.
+- **Outpost** (`sharepoint`): with `aclFromPermissions`, items without a mappable user or group (for example shared only via links) are no longer ingested with an empty, tenant-wide access list. They are reported as revoked, and a previously synced copy is removed even with `mirrorDelete` off.
 - **Runtime** (erasure): erasure receipts are found by receipt id on Postgres again. The Runtime's SQL client stored stringified JSON bound to `$n::jsonb` as a JSON string scalar, so JSON operators on those columns matched nothing (also affected: the Postgres invocation ledger). Writers now cast through `::text::jsonb`, readers accept both shapes, and migration 51 repairs existing erasure, tenant and eval rows.
 
 ### Added
@@ -44,6 +44,7 @@ releases:
 - **Runtime** (semantic cache): expired entries are removed by a periodic sweep across all namespaces (`SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`, default 300); before, they stayed in the database until the same namespace was written again.
 - **Search** (`/v2/citations/check`): documents with more than 5000 units report `unverified` instead of a false `changed`; the Runtime citation-impact report and Control count it separately.
 - **Tooling** (`atf-doctor`): without a readable `FLOWS_DIR` the report says that flows were not checked instead of reporting them as loaded.
+- **Outpost** (`sharepoint`): a run that starts from the stored delta link lists changes only, and items it did not mention were treated as deleted (with `mirrorDelete` they were deleted once the threshold allowed it, otherwise marked `deleted-in-source`). Incremental listings now skip the absence-based delete phase; deletions arrive as tombstones and follow `mirrorDelete`.
 
 ### Documentation
 

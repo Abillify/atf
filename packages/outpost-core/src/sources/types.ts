@@ -40,6 +40,14 @@ export interface SourceItem {
    * source ACL applies.
    */
   acl?: { allowedUsers: string[]; allowedGroups: string[] };
+  /**
+   * A tombstone instead of a document: `deleted` (the source reports the item
+   * as deleted, applied like Mirror_Delete) or `access-revoked` (the item
+   * exists but none of its permissions map to a user or group; its synced copy
+   * is removed regardless of Mirror_Delete, and it is never uploaded).
+   * Incremental listings use tombstones because absence proves nothing there.
+   */
+  removal?: "deleted" | "access-revoked";
 }
 
 export interface SourceAdapter {

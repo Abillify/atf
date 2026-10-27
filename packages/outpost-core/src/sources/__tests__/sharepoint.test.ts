@@ -266,7 +266,7 @@ describe("SharePoint Delta-Listing", () => {
     expect(adapter.deltaLink()).toBe(`${GRAPH}/drives/drive-9/root/delta?token=final`);
   });
 
-  it("deleted-Facet wird nicht geliefert (Abwesenheit = Löschung)", async () => {
+  it("deleted-Facet wird als Tombstone geliefert (Delta enthält nur Änderungen)", async () => {
     const graph = fakeGraph((url) => {
       if (url.includes("/oauth2/v2.0/token")) return tokenReply();
       if (url.includes("/root/delta")) {
@@ -284,7 +284,19 @@ describe("SharePoint Delta-Listing", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    expect(result.items.map((i) => i.quellId)).toEqual(["alive"]);
+    expect(result.items.map((i) => [i.quellId, i.removal])).toEqual([
+      ["alive", undefined],
+      ["gone", "deleted"],
+    ]);
+  });
+  it("meldet ein Listing ab gespeichertem Delta-Link als inkrementell", () => {
+    const graph = fakeGraph(() => ({ status: 404 }));
+    expect(createSharepointSource(baseOptions, { fetchImpl: graph.fetchImpl }).listingIsIncremental()).toBe(false);
+    const incremental = createSharepointSource(
+      { ...baseOptions, initialDeltaLink: `${GRAPH}/drives/drive-9/root/delta?token=t` },
+      { fetchImpl: graph.fetchImpl },
+    );
+    expect(incremental.listingIsIncremental()).toBe(true);
   });
 });
 
@@ -350,7 +362,7 @@ describe("SharePoint Rechte-Mapping (aclFromPermissions)", () => {
     });
   });
 
-  it("nur per Link geteilt → Item wird nicht geliefert, Warnung ohne Namen", async () => {
+  it("nur per Link geteilt → Tombstone access-revoked, Warnung ohne Namen", async () => {
     const warnings: Record<string, unknown>[] = [];
     const graph = fakeGraph((url) => {
       if (url.includes("/oauth2/v2.0/token")) return tokenReply();
@@ -372,7 +384,7 @@ describe("SharePoint Rechte-Mapping (aclFromPermissions)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    expect(result.items).toEqual([]);
+    expect(result.items.map((i) => [i.quellId, i.removal, i.acl])).toEqual([["f1", "access-revoked", undefined]]);
     const skipped = warnings.filter((w) => w["event"] === "sharepoint.item_skipped_no_acl");
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toMatchObject({ itemId: "f1", reason: "link_only" });
@@ -404,7 +416,10 @@ describe("SharePoint Rechte-Mapping (aclFromPermissions)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    expect(result.items).toEqual([]);
+    expect(result.items.map((i) => [i.quellId, i.removal])).toEqual([
+      ["f1", "access-revoked"],
+      ["f2", "access-revoked"],
+    ]);
     expect(warnings.map((w) => w["reason"])).toEqual([
       "no_mappable_permissions",
       "no_mappable_permissions",

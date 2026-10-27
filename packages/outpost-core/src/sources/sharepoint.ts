@@ -11,17 +11,18 @@
  * drive is addressed directly by `driveId` or resolved from `siteUrl` +
  * `library` (site path → drives collection). Listing uses the drive `delta`
  * query and pages through `@odata.nextLink`; the final `@odata.deltaLink`
- * is exposed for the next incremental run. Items with the `deleted` facet
- * are not yielded — absence from the listing is the deletion format every
- * adapter uses, so Mirror_Delete picks them up. Only `file` items sync;
+ * is exposed for the next incremental run. An incremental listing carries
+ * changes only, so deletions (the `deleted` facet) are yielded as tombstones
+ * (`removal: "deleted"`) and the sync layer skips absence-based deletes for
+ * it (`listingIsIncremental`). Only `file` items sync;
  * folders are skipped. With `aclFromPermissions` the item permissions map
  * to the document access list: users from `grantedToV2.user` (lower-cased),
  * groups from `grantedToV2.group.id` through `aclGroupMap`; share links are
  * never adopted. An item without a single mappable user or group (shared only
- * via links, or only to identities that cannot be mapped) is not yielded at
- * all, with a warning: an empty list would make it visible tenant-wide. Like a
- * deleted item it is then absent from the listing, so a previously synced copy
- * is picked up by Mirror_Delete.
+ * via links, or only to identities that cannot be mapped) is never uploaded,
+ * with a warning: an empty list would make it visible tenant-wide. It is
+ * yielded as a tombstone (`removal: "access-revoked"`), so a previously synced
+ * copy is removed even with Mirror_Delete off.
  * At most four Graph requests run in parallel per source; 429/503 honour
  * `Retry-After` with exponential backoff, at most five attempts.
  */
@@ -77,6 +78,8 @@ export interface SharepointDeps {
 export interface SharepointSource extends SourceAdapter {
   /** Delta link of the last COMPLETE listing; undefined until then. */
   deltaLink(): string | undefined;
+  /** True when the listing started from a delta link and holds changes only. */
+  listingIsIncremental(): boolean;
 }
 
 interface GraphTokenResponse {
@@ -140,6 +143,18 @@ function retryAfterMs(header: string | undefined, now: () => number): number | u
 }
 
 /** `/drive/root:/a/b` → `/a/b`; anything without the root prefix is kept. */
+/** A removal marker for an item that must not be (or stay) indexed. */
+function tombstone(item: GraphDriveItem, removal: "deleted" | "access-revoked"): SourceItem {
+  return {
+    quellId: item.id,
+    name: item.name ?? item.id,
+    size: 0,
+    modified: new Date(item.lastModifiedDateTime ?? 0),
+    marker: "",
+    removal,
+  };
+}
+
 function stripDriveRootPrefix(path: string): string {
   const marker = "/root:";
   const index = path.indexOf(marker);
@@ -347,10 +362,13 @@ export function createSharepointSource(
       if (Boolean(signal.aborted)) throw new Error("listing aborted");
       const page = await graphJson<GraphCollection<GraphDriveItem>>(url, signal);
       for (const item of page.value ?? []) {
-        // Deletions arrive as the `deleted` facet; the sync layer treats
-        // absence from a COMPLETE listing as the deletion signal, so the
-        // item is simply not yielded.
-        if (item.deleted !== undefined) continue;
+        // Deletions arrive as the `deleted` facet. An incremental (delta)
+        // listing only carries changes, so absence proves nothing there: the
+        // deletion is yielded as a tombstone instead.
+        if (item.deleted !== undefined) {
+          yield tombstone(item, "deleted");
+          continue;
+        }
         if (item.file === undefined) continue; // folders and special collections
         const name = item.name ?? item.id;
         const parentRaw = item.parentReference?.path ?? "";
@@ -379,6 +397,9 @@ export function createSharepointSource(
               itemId: item.id,
               reason: permissions.skip,
             });
+            // Never indexed with an empty (tenant-wide) list; a synced copy
+            // is removed even with Mirror_Delete off — access was revoked.
+            yield tombstone(item, "access-revoked");
             continue;
           }
           out.acl = permissions.acl;
@@ -399,6 +420,10 @@ export function createSharepointSource(
     list(signal: AbortSignal): AsyncIterable<SourceItem> {
       completedDeltaLink = undefined;
       return walk(signal);
+    },
+    listingIsIncremental(): boolean {
+      // Started from a stored delta link: the listing holds changes only.
+      return options.initialDeltaLink !== undefined && options.initialDeltaLink !== "";
     },
     deltaLink(): string | undefined {
       return completedDeltaLink;

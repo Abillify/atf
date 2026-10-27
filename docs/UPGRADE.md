@@ -628,11 +628,12 @@ Changes since 0.19.3 that need operator attention:
 Changes since 0.20.0 that need operator attention:
 
 1. Extract/Outpost: grant the Outpost's Extract token the scope `extract.acl.assign` when sources set `acl` or `aclFromPermissions`. Without it, Outpost now fails those items instead of ingesting them tenant-wide. Re-sync affected sources after granting the scope.
-2. Outpost (`sharepoint`): with `aclFromPermissions`, an item without a mappable user or group (for example shared only via links) is no longer ingested with an empty, tenant-wide access list. It is skipped with the warning `sharepoint.item_skipped_no_acl` and removed by mirror delete if it was synced before. Check the logs after the first run to see which items this affects.
+2. Outpost (`sharepoint`): with `aclFromPermissions`, an item without a mappable user or group (for example shared only via links) is no longer ingested with an empty, tenant-wide access list. It is skipped with the warning `sharepoint.item_skipped_no_acl`, and a copy synced before is removed even with `mirrorDelete` off, because access was revoked. Check the logs after the first run to see which items this affects.
 3. Runtime: with `DATABASE_URL` and `SEMANTIC_CACHE_ENABLED=true`, entries written before this version carry no user attribution. The first subject erasure after the start drops them (the cache refills), and from then on an erasure deletes a user's entries in the database for every replica.
 4. Runtime: a database-backed semantic cache now sweeps expired entries every `SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS` (default 300, minimum 30). Set `RETENTION_MAX_AGE_DAYS` with the key `semantic_cache` to also bound entries by age.
 5. Search / Runtime / Control: `POST /v2/citations/check` can report the new status `unverified` for documents with more than 5000 units. Clients that switch over the status values should treat it like `unknown`; the citation impact report counts it separately and does not treat it as a finding.
 6. Runtime: migration 51 rewrites JSONB values that earlier versions stored as JSON string scalars in `erasure_requests`, `tenants`, `eval_runs` and `eval_matrix_runs`, so erasure receipts are found by id again. It only touches string scalars that hold a JSON object or array and runs once at startup with the other migrations.
+7. Outpost (`sharepoint`): runs that start from the stored delta link no longer treat unmentioned items as deleted. Sources that ran with `mirrorDelete` off may hold items marked `deleted-in-source` that still exist in SharePoint; they are uploaded again on their next change. To restore them at once, delete the source's `deltaLink` from the Outpost state, so the next run lists the whole library.
 
 ### Not yet shared between replicas (roadmap)
 
