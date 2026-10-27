@@ -1,5 +1,5 @@
 {{/*
-Shared helpers for the ATF service subcharts (requirement 12.3).
+Shared helpers for the ATF service subcharts.
 
 Every helper takes a dict. The convention throughout the chart:
 
@@ -182,7 +182,7 @@ this block and wins.
 - name: MIGRATE_ON_START
   value: "false"
 {{- with .Values.config.tls }}{{- if .secretName }}
-# Direct service TLS (requirement 11.8): the PEM pair comes from an existing
+# Direct service TLS: the PEM pair comes from an existing
 # kubernetes.io/tls Secret mounted read-only at /etc/atf/tls (see the
 # per-service deployment template). The chart wires the env vars and the
 # HTTPS probes; the workload itself terminates TLS.
@@ -457,7 +457,7 @@ spec:
 
 {{/*
 PodDisruptionBudget. Keeps a component available during voluntary
-disruptions (node drains); requirement 12.3.
+disruptions (node drains).
 */}}
 {{- define "atf.pdb" -}}
 {{- $ctx := .ctx -}}
@@ -530,8 +530,8 @@ spec:
 {{- end -}}
 
 {{/*
-One-shot schema migration Job as a Helm hook (pre-install,pre-upgrade),
-requirement 12.3 / 12.4. Runs the standalone migrator of the service image
+One-shot schema migration Job as a Helm hook (pre-install,pre-upgrade).
+Runs the standalone migrator of the service image
 (`bun run scripts/migrate.ts`, see apps/<service>/scripts/migrate.ts) with
 only the database URL from the service Secret — no model or auth config.
 The replicas run with MIGRATE_ON_START=false (atf.defaultEnv), so the hook

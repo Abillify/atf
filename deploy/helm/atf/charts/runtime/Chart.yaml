@@ -1,6 +1,6 @@
 apiVersion: v2
 name: runtime
-description: ATF Runtime - flow execution engine (requirement 12.3).
+description: ATF Runtime - flow execution engine.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

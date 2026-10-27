@@ -350,7 +350,7 @@ export interface Config {
 
   /**
    * Per-list weights applied to the reciprocal-rank contributions in hybrid
-   * (RRF) search (task 3.4, Requirement 12.3). The dense and full-text lists
+   * (RRF) search. The dense and full-text lists
    * always participate; the identifier list is added only when the query
    * carries a recognised identifier. Each weight scales its list's
    * `1/(rrfK + rank)` term, so the defaults of 1.0 reproduce the previous,

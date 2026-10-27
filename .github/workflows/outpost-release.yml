@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Elastic-2.0
 # SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 #
-# Release pipeline for the ATF Extract Outpost (hardening Task 14.1 /
-# Requirements 10.1-10.2).
+# Release pipeline for the ATF Extract Outpost.
 #
-# All actions are pinned to commit SHAs (Requirement 10.1); permissions are
+# All actions are pinned to commit SHAs; permissions are
 # restricted to {} globally and set minimally per job. The guard job enforces
 # the same conditions as release.yml: exact SHA, ancestry to main, a
 # successful CI run on the SHA and version equality of the tag with all
@@ -484,7 +483,7 @@ jobs:
           path: artifacts
       - run: find artifacts -type f ! -name '*.sig' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       # Updater manifest latest.json with the Minisign signatures (.sig) of
-      # the installers per platform (updater, Task 22.5).
+      # the installers per platform (updater).
       - name: Generate updater manifest latest.json
         if: env.HAS_MINISIGN == 'true'
         env:

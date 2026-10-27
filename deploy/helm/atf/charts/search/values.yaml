@@ -52,7 +52,7 @@ serviceAccount:
 # (EMBED_URL, EMBED_MODEL, EMBED_MODEL_REVISION, EMBED_INPUT_FIELD,
 # EMBED_EXPECTED_DIMENSION). Provide them through the Secret referenced by
 # global.secrets.search or via extraEnv/extraEnvFrom.
-# Optional direct service TLS (requirement 11.8): set
+# Optional direct service TLS: set
 # config.tls.secretName to an existing kubernetes.io/tls Secret; it is mounted
 # at /etc/atf/tls and TLS_CERT_FILE/TLS_KEY_FILE are wired, and the HTTP
 # probes switch to HTTPS. See DEPLOYMENT.md for the runbook.

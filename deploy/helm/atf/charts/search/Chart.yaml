@@ -1,6 +1,6 @@
 apiVersion: v2
 name: search
-description: ATF Search - retrieval and embedding service (requirement 12.3).
+description: ATF Search - retrieval and embedding service.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

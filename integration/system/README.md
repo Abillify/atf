@@ -32,7 +32,7 @@ synthetic values, require no credentials or external services, and run in CI.
 
 `outpost.test.ts` is the exception: it exercises the real Outpost → Extract → Search chain
 (new/version/delete cases, Keycloak audience, container SIGTERM, image non-root/size, the
-`source-login` TTY path per task 20.13). It skips with a clear message unless the environment
+`source-login` TTY path). It skips with a clear message unless the environment
 provides live services:
 
 | Variable | Purpose |
@@ -57,4 +57,4 @@ Notes for a full local run:
 - With `AUTHN_MODE=disabled` on Extract, the Keycloak-audience case skips by design.
 - The interactive `source-login` flow against a fake provider is covered by the unit test
   `stores the refresh token after a successful code exchange` in `apps/outpost/src/`
-  (live fake providers would need port 443 and fixed OAuth endpoints per requirement 15.1).
+  (live fake providers would need port 443 and fixed OAuth endpoints).

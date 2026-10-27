@@ -1,6 +1,6 @@
 apiVersion: v2
 name: gate
-description: ATF Gate - MCP/HTTP tool gateway (requirement 12.3).
+description: ATF Gate - MCP/HTTP tool gateway.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

@@ -492,7 +492,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `REVISION_TTL_SWEEP_MS` | number | no | `3600000` | How often the revision TTL cleaner sweeps for expired revisions, in milliseconds. (`revisionTtlSweepMs`) |
 | `RRF_K` | number | no | `60` | RRF k parameter for hybrid search. (`rrfK`) |
 | `RRF_MISSING_ZERO` | boolean | no | `true` | Requirement 4.4: a list a document did not appear in contributes 0 to the RRF fusion instead of the legacy `1/(k+1000)` pseudo-rank. (`rrfMissingZero`) |
-| `RRF_WEIGHT_DENSE` | number | no | `1.0` | Per-list weights applied to the reciprocal-rank contributions in hybrid (RRF) search (task 3.4, Requirement 12.3). (`rrfWeightDense`) |
+| `RRF_WEIGHT_DENSE` | number | no | `1.0` | Per-list weights applied to the reciprocal-rank contributions in hybrid (RRF) search. (`rrfWeightDense`) |
 | `RRF_WEIGHT_FTS` | number | no | `1.0` | Config member `rrfWeightFts` |
 | `RRF_WEIGHT_IDENTIFIER` | number | no | `1.0` | Config member `rrfWeightIdentifier` |
 | `RRF_WEIGHT_SPARSE` | number | no | `1.0` | Weight of the SPLADE sparse list in the RRF fusion (Requirement 4.3). (`rrfWeightSparse`) |

@@ -211,7 +211,7 @@ export function buildOpenApiSpec(
         summary: "Liveness probe",
         description:
           "Process liveness only — never checks dependencies, so a slow vision " +
-          "endpoint does not cause restart loops (requirement 12.5). Always 200.",
+          "endpoint does not cause restart loops. Always 200.",
         security: [],
         responses: {
           "200": { description: "Process alive" },
@@ -224,7 +224,7 @@ export function buildOpenApiSpec(
         description:
           "Gates the load balancer on the poppler binaries and the vision " +
           "endpoint — the same fatal gate as /health, without the LibreOffice " +
-          "and Search reporting (requirement 12.5). `?deep=1` forces a re-probe.",
+          "and Search reporting. `?deep=1` forces a re-probe.",
         security: [],
         parameters: [
           {
@@ -1235,13 +1235,13 @@ export function buildOpenApiSpec(
   if (options.erasureEnabled === true) {
     paths["/v1/erasure"] = {
       post: {
-        summary: "Erase subject data (DSAR, requirement 2.7)",
+        summary: "Erase subject data (DSAR)",
         description:
           "Removes subject-related data from Extract: jobs (with their staged page, " +
           "figure, tile, and outbox rows via FK cascade), resumable upload sessions, " +
           "and content-addressed source blobs that no remaining job references any more. " +
           "Afterwards the Search cascade runs with the same `requestId`, so a retry " +
-          "stays idempotent on both sides (requirement 2.12).\n\n" +
+          "stays idempotent on both sides.\n\n" +
           "Idempotent over `requestId`: a repeat of a committed request replays the " +
           "stored response; the same id with a different payload is rejected `409`. " +
           "`dryRun` counts what would be removed and deletes nothing. A store result " +

@@ -1,4 +1,4 @@
-# ATF umbrella chart values (requirement 12.3).
+# ATF umbrella chart values.
 #
 # The chart renders the five ATF services (runtime, gate, search, extract,
 # control) plus their Services, PDBs, optional HPAs, NetworkPolicies and

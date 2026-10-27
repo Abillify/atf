@@ -1,6 +1,6 @@
 apiVersion: v2
 name: extract
-description: ATF Extract - document conversion and vision extraction (requirement 12.3).
+description: ATF Extract - document conversion and vision extraction.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

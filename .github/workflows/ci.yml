@@ -305,8 +305,8 @@ jobs:
                          canonical-json mcp-2026; do
             bun run --filter "@atf/$package" test
           done
-      # Task 1.3: the egress-blockade property (Property 12) and the client
-      # TLS test also run under Node, which strips TypeScript types itself.
+      # The egress-blockade property and the client TLS test also run under
+      # Node, which strips TypeScript types itself.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -536,10 +536,10 @@ jobs:
           path: artifacts/images-linux-x64-${{ github.sha }}/index.json
           retention-days: 90
 
-  # Helm chart (task 16.4, requirement 12.3): lint the umbrella chart and
-  # validate every rendered manifest against the Kubernetes API schemas with
-  # kubeconform in strict mode. Both tools are pinned by checksum, matching
-  # the pinned-version style of the other supply-chain jobs.
+  # Helm chart: lint the umbrella chart and validate every rendered manifest
+  # against the Kubernetes API schemas with kubeconform in strict mode. Both
+  # tools are pinned by checksum, matching the pinned-version style of the
+  # other supply-chain jobs.
   helm:
     name: Helm chart
     runs-on: ubuntu-latest
@@ -713,9 +713,8 @@ jobs:
             -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}' \
             | tee /dev/stderr | grep -q 'deterministic mock model'
 
-      # Task 16.5 (requirements 12.6/12.7): the converter is part of the
-      # quickstart, so the smoke must prove an end-to-end conversion, not just
-      # a healthy port. A minimal one-page PDF goes through Extract's
+      # The converter is part of the quickstart, so the smoke must prove an
+      # end-to-end conversion, not just a healthy port. A minimal one-page PDF goes through Extract's
       # /v1/convert and through Search's /ingest-file proxy, which starts an
       # Extract v2 job — covering the Search -> Extract hop the documented
       # stack relies on. The synchronous v1 path rasterises every page with
@@ -772,8 +771,8 @@ jobs:
           docker compose --env-file deploy/examples/.env.example \
             -f deploy/examples/compose.yaml down --volumes
 
-  # Retrieval eval against REAL models (task 6.11, requirements 4.9/4.10): the
-  # quickstart compose stack only proves plumbing (constant-vector mock), so
+  # Retrieval eval against REAL models: the quickstart compose stack only
+  # proves plumbing (constant-vector mock), so
   # this job runs scripts/eval/compose.eval.yaml — Search, Extract, TEI-CPU
   # embedding (bge-m3), TEI-CPU cross-encoder rerank and a deterministic
   # HyDE mock — ingests the deterministic golden corpus and gates the baseline

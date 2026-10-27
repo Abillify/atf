@@ -406,7 +406,7 @@ The tuning goal is to keep the vLLM running batch **saturated but not oversubscr
 
 1. Read the vLLM server's `--max-num-seqs` (its running-batch ceiling). Divide it across the
    number of Extract jobs you expect to hit that server at once — normally the standard lane plus
-   the large-job lane (`LARGE_JOB_MAX_CONCURRENCY`, see task 5.2). That quotient is the starting
+   the large-job lane (`LARGE_JOB_MAX_CONCURRENCY`). That quotient is the starting
    per-job batch share, and the expected knee is at or just below it.
 2. Pick a fixed, representative source (a document that exercises the vision path — mostly `text`
    pages that the fast-path skips will not stress the model). Upload it once so it has a stable
@@ -453,7 +453,7 @@ a throughput or latency.
   is CPU/subprocess-bound, independent of the GPU batch. Tune it against CPU cores and
   LibreOffice memory, not the vLLM batch. `PAGE_CONCURRENCY × active jobs` is what lands on the
   GPU; keep that product at your target batch share.
-- **The large-job lane** (`LARGE_JOB_MAX_CONCURRENCY`, task 5.2) caps how many 1000+-page jobs
+- **The large-job lane** (`LARGE_JOB_MAX_CONCURRENCY`) caps how many 1000+-page jobs
   run at once. A single large job saturates the batch by itself, so with the lane at 1 the batch
   share for that job is the full `--max-num-seqs`. If you raise the lane cap or run the standard
   lane alongside it, divide the share accordingly (step 1).

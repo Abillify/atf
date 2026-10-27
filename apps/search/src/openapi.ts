@@ -405,7 +405,7 @@ export function buildOpenApiSpec(serverUrl: string) {
           summary: "Liveness probe",
           description:
             "Process liveness only — never checks dependencies, so a slow " +
-            "database does not cause restart loops (requirement 12.5). Always 200.",
+            "database does not cause restart loops. Always 200.",
           security: [],
           responses: {
             "200": { description: "Process alive" },
@@ -420,7 +420,7 @@ export function buildOpenApiSpec(serverUrl: string) {
           description:
             "Gates the load balancer on the database, the source of truth for " +
             "every request path. Model probes stay in /health so a degraded " +
-            "model does not remove the replica (requirement 12.5).",
+            "model does not remove the replica.",
           security: [],
           responses: {
             "200": { description: "Ready to serve" },

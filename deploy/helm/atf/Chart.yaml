@@ -1,6 +1,6 @@
 apiVersion: v2
 name: atf
-description: ATF (Aiperator Trust Fabric) production stack - runtime, gate, search, extract and control as vendored subcharts (requirement 12.3).
+description: ATF (Aiperator Trust Fabric) production stack - runtime, gate, search, extract and control as vendored subcharts.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

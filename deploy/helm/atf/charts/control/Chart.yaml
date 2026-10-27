@@ -1,6 +1,6 @@
 apiVersion: v2
 name: control
-description: ATF Control - web administration UI (requirement 12.3).
+description: ATF Control - web administration UI.
 type: application
 version: 0.20.0
 appVersion: "0.20.0"

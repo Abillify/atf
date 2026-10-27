@@ -230,7 +230,7 @@ All flags of `retrieval.ts`:
 `--base-url` / `--token` always wins. Prefer the environment variable for the
 token so it does not end up in shell history.
 
-### Targeting the v2 pipeline (`--v2`, task 3.7 / 3.10)
+### Targeting the v2 pipeline (`--v2`)
 
 By default the harness runs each question against v1 `POST /search`. Add `--v2`
 to run the same golden questions against `POST /v2/search` instead, which
