@@ -341,6 +341,28 @@ describe("semantic cache as a retention target", () => {
     ).toBe("Theirs 1");
   });
 
+  it("drops unattributed entries on the first erasure only", async () => {
+    let dropped = 0;
+    const cache: SemanticCache = {
+      enabled: true,
+      get: async () => undefined,
+      set: async () => undefined,
+      isCacheable: () => true,
+      eraseUser: async () => 0,
+      eraseUnattributed: async () => {
+        dropped++;
+        return 3;
+      },
+    };
+    const retention = new RetentionService([semanticCacheRetentionTarget(cache)]);
+    const subject = { tenantId: "acme", userId: "u@x.de", userAliases: [] };
+
+    // The count reports the subject's entries, not the legacy sweep.
+    expect(await retention.forget(subject)).toEqual([{ target: "semantic_cache", erased: 0 }]);
+    await retention.forget(subject);
+    expect(dropped).toBe(1);
+  });
+
   it("reports the cache as erased, so an erasure run is not partial", async () => {
     const cache = await twoUsers();
     const orch = createErasureOrchestrator({

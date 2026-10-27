@@ -333,6 +333,12 @@ export interface SemanticCache {
    * cannot honour an erasure request. Omitted (treated as supported) otherwise.
    */
   readonly erasureSupported?: boolean;
+  /**
+   * Deletes entries that cannot be attributed to a user because they were
+   * written before user scoping was stored with them, and returns how many were
+   * removed. Absent when the cache keeps no such entries.
+   */
+  eraseUnattributed?(): Promise<number>;
 }
 
 /**
@@ -354,6 +360,9 @@ function namespaceOf(input: SemanticCacheKeyInput): string {
     mt: input.maxTokens ?? null,
   });
 }
+
+/** Collection prefix of every entry written by {@link VectorStoreSemanticCache}. */
+const VECTOR_COLLECTION_PREFIX = "semcache:";
 
 /** Separator that cannot appear in a namespace or entry key. */
 const SCOPE_SEP = "\u0000";
@@ -550,8 +559,9 @@ class VectorStoreSemanticCache implements SemanticCache {
   private readonly byUser = new Map<string, Set<string>>();
 
   /**
-   * False when the injected store has no way of deleting documents, which
-   * makes per-user erasure impossible.
+   * False when the injected store cannot delete by metadata, which makes
+   * per-user erasure impossible: the per-process index below only knows what
+   * this replica wrote since it started.
    */
   readonly erasureSupported: boolean;
 
@@ -574,11 +584,11 @@ class VectorStoreSemanticCache implements SemanticCache {
     /** Minimum interval between opportunistic purges of one collection (ms). */
     private readonly purgeIntervalMs = 60_000,
   ) {
-    // A store without delete support cannot honour an erasure request. The
-    // interface requires the method, but injected or partial stores may not
-    // provide it, so the capability is checked rather than assumed.
-    const deleter = (store as { deleteDocuments?: unknown }).deleteDocuments;
-    this.erasureSupported = typeof deleter === "function";
+    // The database is the source of truth for who an entry belongs to; a store
+    // that cannot delete by metadata cannot honour an erasure request. The
+    // method is optional on the interface and injected or partial stores may
+    // not provide it, so the capability is checked rather than assumed.
+    this.erasureSupported = typeof store.deleteByMetadata === "function";
   }
 
   /** Removes one document from every user bucket of the erasure index. */
@@ -639,7 +649,7 @@ class VectorStoreSemanticCache implements SemanticCache {
 
   private collection(input: SemanticCacheKeyInput): string {
     const ns = namespaceOf(input);
-    return `semcache:${crypto.createHash("sha256").update(ns).digest("hex").slice(0, 32)}`;
+    return `${VECTOR_COLLECTION_PREFIX}${crypto.createHash("sha256").update(ns).digest("hex").slice(0, 32)}`;
   }
 
   async get(input: SemanticCacheKeyInput): Promise<CachedResponse | undefined> {
@@ -693,6 +703,10 @@ class VectorStoreSemanticCache implements SemanticCache {
           metadata: {
             response: value,
             expiresAt: this.clock() + this.ttlSeconds * 1000,
+            // Stored with the entry so an erasure finds it from any replica and
+            // after a restart, not only through this process's index.
+            tenantScope: input.tenantScope,
+            userScope: input.userScope,
           },
         },
       ]);
@@ -714,37 +728,45 @@ class VectorStoreSemanticCache implements SemanticCache {
   }
 
   async eraseUser(tenantScope: string, userScope: string): Promise<number> {
-    if (this.erasureSupported !== true) return 0;
-    const entries = this.byUser.get(userIndexKey(tenantScope, userScope));
-    if (entries === undefined || entries.size === 0) return 0;
-    this.byUser.delete(userIndexKey(tenantScope, userScope));
-    const idsByCollection = new Map<string, string[]>();
-    for (const entryKey of entries) {
-      const sep = entryKey.indexOf(SCOPE_SEP);
-      const collection = entryKey.slice(0, sep);
-      const id = entryKey.slice(sep + SCOPE_SEP.length);
-      const ids = idsByCollection.get(collection);
-      if (ids === undefined) idsByCollection.set(collection, [id]);
-      else ids.push(id);
+    const deleteByMetadata = this.store.deleteByMetadata?.bind(this.store);
+    if (this.erasureSupported !== true || deleteByMetadata === undefined) {
+      return 0;
     }
     let erased = 0;
     try {
-      for (const [collection, ids] of idsByCollection) {
-        erased += await this.store.deleteDocuments(collection, ids);
-      }
+      erased = await deleteByMetadata(VECTOR_COLLECTION_PREFIX, {
+        tenantScope,
+        userScope,
+      });
     } catch (err) {
       this.logger?.warn("Semantic cache (vector) erase failed", {
         tenantScope,
         userScope,
         error: err instanceof Error ? err.message : String(err),
       });
+      throw err;
     }
+    // The store decided what was deleted; only tidy the local index.
+    this.byUser.delete(userIndexKey(tenantScope, userScope));
     this.logger?.debug("Semantic cache (vector) erased entries for a user", {
       tenantScope,
       userScope,
       erased,
     });
     return erased;
+  }
+
+  async eraseUnattributed(): Promise<number> {
+    const deleteWithout = this.store.deleteWithoutMetadataKey?.bind(this.store);
+    if (deleteWithout === undefined) return 0;
+    // Entries written before user scoping cannot be attributed; they are dropped on the first erasure (the cache refills).
+    const removed = await deleteWithout(VECTOR_COLLECTION_PREFIX, "userScope");
+    if (removed > 0) {
+      this.logger?.info("Semantic cache (vector) dropped unattributed entries", {
+        removed,
+      });
+    }
+    return removed;
   }
 
   isCacheable(opts: { hasTools: boolean; temperature?: number }): boolean {

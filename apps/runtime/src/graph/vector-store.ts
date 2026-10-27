@@ -86,6 +86,29 @@ export interface VectorStore {
     collection: string,
     limit?: number,
   ): Promise<RagDocumentSummary[]>;
+  /**
+   * Deletes every document whose collection starts with `collectionPrefix` and
+   * whose metadata contains all `match` key/value pairs (string equality).
+   * Returns the number of deleted documents. Optional: a store without it
+   * cannot delete across collections.
+   */
+  deleteByMetadata?(
+    collectionPrefix: string,
+    match: Record<string, string>,
+  ): Promise<number>;
+  /**
+   * Deletes every document whose collection starts with `collectionPrefix` and
+   * whose metadata has no `key`. Returns the number of deleted documents.
+   */
+  deleteWithoutMetadataKey?(
+    collectionPrefix: string,
+    key: string,
+  ): Promise<number>;
+}
+
+/** Escapes `%`, `_` and `\` so a string matches literally in a `LIKE ... ESCAPE '\'` pattern. */
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +234,42 @@ export class InMemoryRagStore implements VectorStore {
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  async deleteByMetadata(
+    collectionPrefix: string,
+    match: Record<string, string>,
+  ): Promise<number> {
+    const entries = Object.entries(match);
+    return this.deleteWhere(
+      collectionPrefix,
+      (doc) => entries.every(([k, v]) => doc.metadata?.[k] === v),
+    );
+  }
+
+  async deleteWithoutMetadataKey(
+    collectionPrefix: string,
+    key: string,
+  ): Promise<number> {
+    return this.deleteWhere(
+      collectionPrefix,
+      (doc) => doc.metadata?.[key] === undefined,
+    );
+  }
+
+  private deleteWhere(
+    collectionPrefix: string,
+    predicate: (doc: RagDocument) => boolean,
+  ): number {
+    let removed = 0;
+    for (const [name, bucket] of [...this.collections]) {
+      if (!name.startsWith(collectionPrefix)) continue;
+      for (const [id, doc] of [...bucket]) {
+        if (predicate(doc) && bucket.delete(id)) removed++;
+      }
+      if (bucket.size === 0) this.collections.delete(name);
+    }
+    return removed;
   }
 
   private evictIfNeeded(): void {
@@ -348,13 +407,16 @@ export class PgVectorStore implements VectorStore {
   async upsert(collection: string, docs: RagDocument[]): Promise<void> {
     await this.ensureReady();
     for (const doc of docs) {
+      // The metadata goes through `::text::jsonb`: Bun's driver encodes a string
+      // bound to a `::jsonb` parameter as a JSON *string* value, which `@>` and
+      // `?` can neither match nor look into.
       const embeddingParam = this.usePgvector
         ? toVectorLiteral(doc.embedding)
         : JSON.stringify(doc.embedding);
       const cast = this.usePgvector ? "::vector" : "::jsonb";
       await this.db.query(
         `INSERT INTO ${this.table} (collection, id, content, embedding, metadata)
-         VALUES ($1, $2, $3, $4${cast}, $5::jsonb)
+         VALUES ($1, $2, $3, $4${cast}, $5::text::jsonb)
          ON CONFLICT (collection, id) DO UPDATE
            SET content = EXCLUDED.content,
                embedding = EXCLUDED.embedding,
@@ -446,6 +508,36 @@ export class PgVectorStore implements VectorStore {
     const rows = await this.db.query<{ id: string }>(
       `DELETE FROM ${this.table} WHERE collection = $1 RETURNING id`,
       [collection],
+    );
+    return rows.length;
+  }
+
+  async deleteByMetadata(
+    collectionPrefix: string,
+    match: Record<string, string>,
+  ): Promise<number> {
+    await this.ensureReady();
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM ${this.table}
+        WHERE collection LIKE $1 ESCAPE '\\'
+          AND metadata @> $2::text::jsonb
+        RETURNING id`,
+      [`${escapeLike(collectionPrefix)}%`, JSON.stringify(match)],
+    );
+    return rows.length;
+  }
+
+  async deleteWithoutMetadataKey(
+    collectionPrefix: string,
+    key: string,
+  ): Promise<number> {
+    await this.ensureReady();
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM ${this.table}
+        WHERE collection LIKE $1 ESCAPE '\\'
+          AND (metadata IS NULL OR NOT (metadata ? $2))
+        RETURNING id`,
+      [`${escapeLike(collectionPrefix)}%`, key],
     );
     return rows.length;
   }

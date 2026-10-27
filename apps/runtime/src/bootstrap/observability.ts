@@ -107,8 +107,10 @@ export interface ObservabilityResult {
  * user identifiers erases nothing, because the cache cannot enumerate the users
  * of a tenant.
  *
- * When the backing store cannot delete entries, the target keeps reporting the
- * gap instead of claiming an erasure it cannot perform.
+ * With a database-backed cache the entries are deleted in the database, so an
+ * erasure reaches every replica and entries written before a restart. When the
+ * backing store cannot delete entries, the target keeps reporting the gap
+ * instead of claiming an erasure it cannot perform.
  */
 export function semanticCacheRetentionTarget(
   cache: SemanticCache,
@@ -119,6 +121,9 @@ export function semanticCacheRetentionTarget(
       erasureGap: "the configured vector store cannot delete entries",
     };
   }
+  // Entries written before user scoping was stored cannot be found per user;
+  // the first erasure after the start drops them (the cache refills).
+  let unattributedDropped = false;
   return {
     name: "semantic_cache",
     eraseSubject: async (subject: ErasureSubject): Promise<number> => {
@@ -126,6 +131,10 @@ export function semanticCacheRetentionTarget(
       let erased = 0;
       for (const userId of subjectUserIds(subject)) {
         erased += await cache.eraseUser(tenantScope, userId);
+      }
+      if (!unattributedDropped && cache.eraseUnattributed !== undefined) {
+        await cache.eraseUnattributed();
+        unattributedDropped = true;
       }
       return erased;
     },

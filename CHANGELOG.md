@@ -24,6 +24,10 @@ releases:
 - **Outpost**: an item with an access list fails (and is removed again) when Extract reports `X-ACL-Applied` other than `assigned`, instead of staying visible tenant-wide.
 - **Outpost** (`sharepoint`): with `aclFromPermissions`, items without a mappable user or group (for example shared only via links) are no longer ingested with an empty, tenant-wide access list; they are skipped and removed if previously synced.
 
+### Fixed
+
+- **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure.
+
 ## [0.20.0] - 2026-10-25
 
 ### Security

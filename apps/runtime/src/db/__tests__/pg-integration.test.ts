@@ -613,6 +613,27 @@ suite("Postgres — API key expiry (migration 24: api_keys.expires_at)", () => {
   });
 });
 
+suite("Postgres — vector store deletes by metadata", () => {
+  it("matches the collection prefix literally and every metadata pair", async () => {
+    const store = mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db);
+    const tag = uniq();
+    const doc = (id: string, metadata: Record<string, unknown>) => ({
+      id,
+      text: id,
+      embedding: [1, 0, 0],
+      metadata,
+    });
+    await store.upsert(`bydel_${tag}:a`, [doc("1", { u: "x", t: "1" }), doc("2", { u: "y", t: "1" })]);
+    // `_` in the prefix must not match any character.
+    await store.upsert(`bydelX${tag}:a`, [doc("1", { u: "x", t: "1" })]);
+
+    expect(await store.deleteByMetadata?.(`bydel_${tag}:`, { u: "x", t: "1" })).toBe(1);
+    expect(await store.count(`bydel_${tag}:a`)).toBe(1);
+    expect(await store.count(`bydelX${tag}:a`)).toBe(1);
+    expect(await store.deleteByMetadata?.(`bydel_${tag}:`, { u: "x", t: "2" })).toBe(0);
+  });
+});
+
 suite("Postgres — cluster-wide semantic cache (pgvector)", () => {
   const embedder: Embedder = {
     embed: async (text: string) => {
@@ -657,6 +678,63 @@ suite("Postgres — cluster-wide semantic cache (pgvector)", () => {
     await cacheA.set(key("capital of france", m), value("Paris"));
     const hit = await cacheB.get(key("france's capital is", m));
     expect(hit?.text).toBe("Paris");
+  });
+
+  it("erases a user's entries across replicas, after a restart, and leaves other users", async () => {
+    const opts = { enabled: true, threshold: 0.9 };
+    const writer = mustCreateSemanticCache(
+      opts,
+      embedder,
+      mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db),
+    );
+    const m = `model-${uniq()}`;
+    const alice = `alice-${uniq()}`;
+    const bob = `bob-${uniq()}`;
+    await writer.set({ ...key("capital of france", m), userScope: alice }, value("Paris"));
+    await writer.set({ ...key("capital of france", m), userScope: bob }, value("Paris"));
+
+    // A second instance has no in-process index: it stands for another
+    // replica, or for this one after a restart.
+    const other = mustCreateSemanticCache(
+      opts,
+      embedder,
+      mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db),
+    );
+    expect(other.erasureSupported).toBe(true);
+    expect(await other.eraseUser("tenant-a", alice)).toBe(1);
+
+    expect(await writer.get({ ...key("capital of france", m), userScope: alice })).toBeUndefined();
+    expect(
+      (await writer.get({ ...key("capital of france", m), userScope: bob }))?.text,
+    ).toBe("Paris");
+  });
+
+  it("drops entries written before user scoping on the first erasure", async () => {
+    const store = mustCreateVectorStore({ enabled: true, tableName: "semantic_cache" }, db);
+    const cache = mustCreateSemanticCache({ enabled: true, threshold: 0.9 }, embedder, store);
+    const legacy = `semcache:legacy-${uniq()}`;
+    await store.upsert(legacy, [
+      {
+        id: "old",
+        text: "capital of france",
+        embedding: [1, 0, 0],
+        metadata: { response: value("Paris"), expiresAt: Date.now() + 60_000 },
+      },
+    ]);
+    // What the previous version wrote: the metadata as a JSON string value.
+    const stringTyped = `semcache:legacy-string-${uniq()}`;
+    await db.query(
+      `INSERT INTO semantic_cache (collection, id, content, embedding, metadata)
+       VALUES ($1, 'old', 'x', $2::vector, $3::jsonb)`,
+      [stringTyped, "[1,0,0]", JSON.stringify({ expiresAt: Date.now() + 60_000 })],
+    );
+    const m = `model-${uniq()}`;
+    await cache.set(key("capital of france", m), value("Paris"));
+
+    expect(await cache.eraseUnattributed?.()).toBeGreaterThanOrEqual(2);
+    expect(await store.count(legacy)).toBe(0);
+    expect(await store.count(stringTyped)).toBe(0);
+    expect((await cache.get(key("capital of france", m)))?.text).toBe("Paris");
   });
 
   it("misses across model namespaces and below threshold", async () => {

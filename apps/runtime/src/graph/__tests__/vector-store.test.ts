@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "bun:test";
 import {
+  escapeLike,
   InMemoryRagStore,
   PgVectorStore,
   rankByCosine,
@@ -196,5 +197,41 @@ describe("PgVectorStore — JSONB fallback path", () => {
     const store = new PgVectorStore(db);
     const hits = await store.query("kb", [1, 0], 1);
     expect(at(hits, 0).metadata).toEqual({ k: 1 });
+  });
+});
+
+describe("deleteByMetadata / deleteWithoutMetadataKey", () => {
+  async function seeded(): Promise<InMemoryRagStore> {
+    const store = new InMemoryRagStore();
+    await store.upsert("semcache:a", [
+      doc("1", [1, 0], "1", { userScope: "u1", tenantScope: "t1" }),
+      doc("2", [1, 0], "2", { userScope: "u2", tenantScope: "t1" }),
+      doc("3", [1, 0], "3"),
+    ]);
+    await store.upsert("semcache:b", [doc("4", [1, 0], "4", { userScope: "u1", tenantScope: "t1" })]);
+    await store.upsert("rag:c", [doc("5", [1, 0], "5", { userScope: "u1", tenantScope: "t1" })]);
+    return store;
+  }
+
+  it("deletes across collections of the prefix when every pair matches", async () => {
+    const store = await seeded();
+    expect(await store.deleteByMetadata("semcache:", { userScope: "u1", tenantScope: "t1" })).toBe(2);
+    expect(await store.count("semcache:a")).toBe(2);
+    expect(await store.count("semcache:b")).toBe(0);
+    expect(await store.count("rag:c")).toBe(1);
+    expect(await store.deleteByMetadata("semcache:", { userScope: "u1", tenantScope: "t2" })).toBe(0);
+  });
+
+  it("deletes documents that lack the metadata key", async () => {
+    const store = await seeded();
+    expect(await store.deleteWithoutMetadataKey("semcache:", "userScope")).toBe(1);
+    expect(await store.count("semcache:a")).toBe(2);
+  });
+});
+
+describe("escapeLike", () => {
+  it("escapes LIKE wildcards and the escape character", () => {
+    expect(escapeLike("a_b%c\\d")).toBe("a\\_b\\%c\\\\d");
+    expect(escapeLike("semcache:")).toBe("semcache:");
   });
 });

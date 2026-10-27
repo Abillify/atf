@@ -266,6 +266,53 @@ describe("createVectorStoreSemanticCache", () => {
     expect(await cache.eraseUser("tenant-a", "user-a")).toBe(0);
   });
 
+  it("erases a user's entries written by another cache instance on the same store", async () => {
+    const embedder = new FakeEmbedder({ "capital of france": [1, 0, 0] });
+    const store = new InMemoryRagStore();
+    const opts = { enabled: true, threshold: 0.9, ttlSeconds: 300 };
+    // Two caches over one store stand for two replicas (or one replica before
+    // and after a restart): the second has an empty per-process index.
+    const writer = mustCreateSemanticCache(opts, embedder, store);
+    const eraser = mustCreateSemanticCache(opts, embedder, store);
+
+    await writer.set(key("capital of france"), value("Paris"));
+    await writer.set(key("capital of france", { model: "other" }), value("Paris"));
+    await writer.set(key("capital of france", { userScope: "user-b" }), value("Paris"));
+
+    expect(await eraser.eraseUser("tenant-a", "user-a")).toBe(2);
+    expect(await writer.get(key("capital of france"))).toBeUndefined();
+    expect(await writer.get(key("capital of france", { userScope: "user-b" }))).toBeDefined();
+    expect(await eraser.eraseUser("tenant-a", "user-a")).toBe(0);
+  });
+
+  it("does not erase the same user id of another tenant", async () => {
+    const embedder = new FakeEmbedder({ "capital of france": [1, 0, 0] });
+    const store = new InMemoryRagStore();
+    const cache = mustCreateSemanticCache({ enabled: true, threshold: 0.9 }, embedder, store);
+    await cache.set(key("capital of france"), value("Paris"));
+    await cache.set(key("capital of france", { tenantScope: "tenant-b" }), value("Paris"));
+    expect(await cache.eraseUser("tenant-a", "user-a")).toBe(1);
+    expect(await cache.get(key("capital of france", { tenantScope: "tenant-b" }))).toBeDefined();
+  });
+
+  it("drops entries written before user scoping, and only those", async () => {
+    const embedder = new FakeEmbedder({ "capital of france": [1, 0, 0] });
+    const store = new InMemoryRagStore();
+    const cache = mustCreateSemanticCache({ enabled: true, threshold: 0.9 }, embedder, store);
+    await cache.set(key("capital of france"), value("Paris"));
+    await store.upsert("semcache:legacy", [
+      {
+        id: "old",
+        text: "capital of france",
+        embedding: [1, 0, 0],
+        metadata: { response: value("Paris"), expiresAt: Date.now() + 60_000 },
+      },
+    ]);
+    expect(await cache.eraseUnattributed?.()).toBe(1);
+    expect(await store.count("semcache:legacy")).toBe(0);
+    expect(await cache.get(key("capital of france"))).toBeDefined();
+  });
+
   it("reports erasure as unsupported when the store cannot delete", async () => {
     const storeWithoutDelete = {
       upsert: async () => {},
