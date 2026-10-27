@@ -227,8 +227,20 @@ runs **locally** — the cloud never gets pull access to the source; the Outpost
   collection; a large candidate set pauses until an operator confirms the exact candidate
   hash (`confirm-deletes`), so a mount glitch cannot mass-delete a collection.
 - **Least privilege.** Cloud sources use read-only scopes; Extract auth needs only
-  `extract.ingest` (plus `extract.delete` when mirroring deletes). Every secret supports a
-  `_FILE` variant and the logger scrubs registered secrets.
+  `extract.ingest` (plus `extract.delete` when mirroring deletes, and `extract.acl.assign`
+  when sources carry an access list). Every secret supports a `_FILE` variant and the
+  logger scrubs registered secrets.
+- **SharePoint and OneDrive.** The `sharepoint` source reads a document library through
+  Microsoft Graph with client credentials (secret or certificate from a file). It lists with
+  the drive delta query, syncs files only and skips folders. With `aclFromPermissions` the
+  item permissions become the document access list: users by e-mail or UPN, groups through
+  `aclGroupMap`. Sharing links are never adopted, and an item without a mappable user or
+  group is skipped (and removed if synced before) instead of being ingested tenant-wide.
+- **Source access lists.** A source can carry a static `acl` (users and groups), and an
+  adapter can supply one per item; the item list wins. Extract applies such a list as sent
+  only to a token holding the scope `extract.acl.assign` and reports the outcome in the
+  `X-ACL-Applied` response header. Outpost fails an item, and deletes the document again,
+  when the list was not applied, so a missing scope never publishes a document tenant-wide.
 - **Desktop credential isolation.** The desktop app keeps tokens in the OS keychain
   (`me.abillify.atf-outpost`), bridged to the sidecar over a token-handshake stdio protocol;
   the WebView never sees credentials, and the sidecar's control API binds to loopback only.
@@ -582,6 +594,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Three cache layers.** Response cache, semantic cache for equivalent-meaning requests, and
   embedding cache (`RESPONSE_CACHE_ENABLED`, `SEMANTIC_CACHE_ENABLED`,
   `EMBEDDING_CACHE_ENABLED`).
+- **Semantic cache lifecycle.** With a database the semantic cache is shared by all replicas.
+  Expired entries are removed by a periodic sweep across all namespaces
+  (`SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`, default 300), and erasing a user deletes that
+  user's entries in the database, from every replica and from before a restart.
 - **Budgets and anomaly detection.** Hard per-tenant daily budgets reject requests once
   exhausted, threshold webhooks fire earlier, and spike detection flags unusual spend
   (`BUDGET_DAILY_PER_TENANT`, `COST_ANOMALY_ENABLED`).
@@ -707,6 +723,16 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
   with a connection cap and ticket-based authorization
   (`MONITORING_TRANSPORT`, `MONITORING_AUTH`, `MONITORING_MAX_CONNECTIONS`).
 - **SLO tracking** and alert webhooks.
+- **Flow SLOs.** A flow can declare service objectives under `slo:` (p50 and p95 latency,
+  median tokens, maximum error rate) over the last `window` executions. A change from met
+  to breached raises `aiperator_flow_slo_breach_total{flow_id, objective}` and logs a
+  warning, and `GET /monitoring/flow-health` shows the state. Each replica evaluates its
+  own executions.
+- **Preflight with `atf-doctor`.** `bun run atf-doctor --service runtime|search|extract|gate`
+  checks a service's environment file offline against its production-readiness gate, for the
+  Runtime also the governance posture, and for the Gate its configuration directory (permissive
+  defaults, approver separation, unpinned imported tools), without starting the service or
+  printing a value from the file. It exits non-zero when a check fails.
 - **Governance posture report.** `GET /monitoring/posture` (and `cli.ts posture`) list
   which governance controls are active — evidence key, anchors, egress, taint,
   disclosure, policy, receipts, shared state, flow load, audit pseudonym pepper,

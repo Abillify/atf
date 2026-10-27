@@ -18,7 +18,7 @@ controls the platform contributes.
 | Categories of data subjects | | End users, persons named in documents |
 | Data categories | | Chat content, documents, metadata, audit log |
 | Special categories (Art. 9)? | | Document content may contain Art. 9 data → check the PII-vault mode |
-| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantischer Antwort-Cache (`SEMANTIC_CACHE_ENABLED`): pro Tenant und Nutzer getrennt, Löschung je Nutzer, TTL `SEMANTIC_CACHE_TTL_SECONDS`, Citation-Index `answer_citations` (`CITATION_INDEX_ENABLED`, opt-in): Zweck Nachvollziehbarkeit erteilter Antworten (Nutzer-ID, Ausführungs-ID, Dokument- und Chunk-Referenzen, keine Antwort- oder Chunk-Texte), pro Tenant und Nutzer getrennt |
+| Storage locations / recipients | | Postgres (including the Search asset store `vs_assets`), Extract source store (`SOURCE_STORE_DIR`), LLM providers (attach the list!), semantic answer cache (`SEMANTIC_CACHE_ENABLED`): separated per tenant and user, erasure per user, TTL `SEMANTIC_CACHE_TTL_SECONDS`, expired entries swept every `SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`; citation index `answer_citations` (`CITATION_INDEX_ENABLED`, opt-in): purpose is traceability of the answers given (user id, execution id, document and chunk references, no answer or chunk text), separated per tenant and user; SharePoint / OneDrive as a data source of the Outpost (`sharepoint` source): documents and their permissions are read through Microsoft Graph, Microsoft is the processor of that source (data processing agreement with Microsoft required) |
 | Retention periods | | TTLs: vault, sessions, audit — configurable. Extract keeps finished jobs (with the stored model response of every page) until `JOB_RETENTION_DAYS` (default: forever), abandoned uploads for `UPLOAD_SESSION_MAX_AGE_HOURS` (72), the derived-PDF cache by size and age; source bytes until the document is deleted or erased |
 
 → ATF: the processing overview comes from the record of processing
@@ -39,7 +39,7 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 | --- | --- | --- |
 | Purpose limitation | Flows define the use; no cross-tenant use | Tenant isolation (ADR 0005) |
 | Data minimisation | PII only where needed; tokenisation instead of clear text | PII vault (ADR 0007), detector pipeline (ADR 0015) |
-| Storage limitation | TTLs for vault/sessions, deletion concept | Cross-service erasure (ADR 0025), confirm-deletes (Outpost); `answer_citations` via Retention-Sweep (`RETENTION_ENABLED`) und Löschkanal je Nutzer |
+| Storage limitation | TTLs for vault/sessions, deletion concept | Cross-service erasure (ADR 0025), confirm-deletes (Outpost); `answer_citations` and the semantic cache via retention sweep (`RETENTION_ENABLED`) and per-user erasure |
 | Integrity/confidentiality | Encryption at rest and in transit, audit | Runtime audit hash chain + signed anchors (ADR 0026), secret cipher |
 | Accountability | Evidence per processing activity | Evidence dossier (ADR 0009), audit log, decision receipts (ADR 0029) |
 
@@ -74,7 +74,7 @@ log. Newer entries carry only subject hashes and keyed pseudonyms
 | Data leaking through tool misuse (prompt injection) | | | Tool policy (ADR 0011), red-teaming (ADR 0010), retrieved context handed to the model as delimited untrusted data (`RETRIEVAL_CONTEXT_MODE`), injection scan on chunks and tool results, approval for write tools after a finding (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`); detection is heuristic | |
 | Personal data in service logs | | | Shared log redaction for credentials and tokens, no raw search queries or user ids in Search logs, hashed emails in OIDC logs | |
 | Audit tampering | | | Hash chain + externally stored signed anchor | |
-| Frühere Revisionen mit personenbezogenen Daten bleiben über `document_diff` / `trace` lesbar | | | Gleiche Zugriffsrechte wie die Suche (`valid_at`-Regel auf dem Token des Aufrufenden); Löschung über Löschkonzept / Erasure und Revisions-TTL | Gelöschte oder ersetzte Inhalte früherer Revisionen sind für berechtigte Nutzer lesbar, solange die Revisionen gespeichert sind; Restlöschung erst mit Erasure oder TTL-Ablauf |
+| Earlier revisions containing personal data stay readable through `document_diff` / `trace` | | | Same access rights as search (`valid_at` rule on the caller's token); deletion through the deletion concept / erasure and the revision TTL | Deleted or replaced content of earlier revisions is readable for authorised users as long as the revisions are stored; it is removed completely only by erasure or when the TTL expires |
 
 → Detailed attack surfaces: `THREAT-MODEL.md` (STRIDE per service).
 
