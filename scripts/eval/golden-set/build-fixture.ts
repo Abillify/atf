@@ -72,9 +72,9 @@ const MASKS: DocSpec = {
 };
 const PLAN: DocSpec = {
 	id: "plan-set",
-	reference: "/golden/plansatz-gebaeude.pdf",
+	reference: "/golden/plansatz-neubau.pdf",
 	kind: "plan",
-	title: "Plansatz Gebäude (synthetisch)",
+	title: "Plansatz Neubau (synthetisch)",
 	pages: 12,
 	note: "Synthetic plan set: large-format technical drawings with title blocks and legends.",
 };
