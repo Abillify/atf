@@ -365,6 +365,7 @@ jobs:
       # work without the secrets context (actionlint compatible).
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
@@ -381,6 +382,10 @@ jobs:
           persist-credentials: false
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      # The runner image only ships the host Rust target (aarch64); tauri
+      # build --target x86_64-apple-darwin needs the cross target installed.
+      - name: Add the Rust target
+        run: rustup target add "${{ matrix.rust_target }}"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}

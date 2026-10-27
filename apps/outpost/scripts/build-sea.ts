@@ -7,6 +7,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -14,7 +15,12 @@ const root = join(import.meta.dirname, "..");
 const entry = join(root, "dist-node", "main.js");
 const outputDir = join(root, "..", "outpost-desktop", "src-tauri", "binaries");
 const nodeCommand = process.env.NODE_BIN ?? "node";
-const postject = process.env.POSTJECT_BIN ?? join(root, "node_modules", ".bin", "postject");
+// postject wird über sein CLI-Entrypoint mit demselben Node aufgerufen, dessen
+// Binary gepatcht wird: der .bin-Shim von bun/npm ist auf Windows eine .cmd,
+// die execFile ohne Shell nicht spawnen darf (EINVAL). createRequire löst den
+// Pfad unabhängig vom Hoisting (apps/outpost/node_modules vs. Root) auf.
+const postjectEntry =
+  process.env.POSTJECT_BIN ?? createRequire(import.meta.url).resolve("postject/dist/cli.js");
 const sentinelFuse = process.env.SEA_FUSE ?? "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 const targets = {
   "x86_64-pc-windows-msvc": { ext: ".exe" },
@@ -32,7 +38,11 @@ function localTarget(): keyof typeof targets {
 async function main(): Promise<void> {
   await run("bun", ["build", "./src/main.ts", "--outdir", "./dist-node", "--target", "node"], { cwd: root });
   await mkdir(outputDir, { recursive: true });
-  const nodeBinary = process.env.NODE_BIN ?? (await run("which", [nodeCommand])).stdout.trim();
+  // "which" liefert auf Windows (Git-Bash im PATH) MSYS-Pfade wie /c/...,
+  // die execFile nicht spawnen kann. Die Auflösung über Node selbst gibt
+  // überall den nativen Pfad des Binaries zurück.
+  const nodeBinary =
+    process.env.NODE_BIN ?? (await run(nodeCommand, ["-e", "console.log(process.execPath)"])).stdout.trim();
   if (nodeBinary === "") throw new Error("Node-Binary konnte nicht gefunden werden");
 
   const triple = process.env.SEA_TARGET ?? localTarget();
@@ -50,7 +60,7 @@ async function main(): Promise<void> {
   if (triple.includes("apple-darwin")) {
     await run("codesign", ["--remove-signature", staged]);
   }
-  await run(postject, [staged, "NODE_SEA_BLOB", blob, "--sentinel-fuse", sentinelFuse]);
+  await run(nodeBinary, [postjectEntry, staged, "NODE_SEA_BLOB", blob, "--sentinel-fuse", sentinelFuse]);
 
   if (triple.includes("apple-darwin")) {
     const entitlements = join(root, "..", "outpost-desktop", "src-tauri", "entitlements.plist");
