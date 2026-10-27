@@ -67,7 +67,7 @@
         "pino-http": "11.0.0",
         "redis": "5.10.0",
         "sharp": "0.35.5",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bmp-js": "0.1.2",
@@ -107,7 +107,7 @@
         "pg": "8.23.0",
         "redis": "5.10.0",
         "yaml": "2.9.1",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -185,7 +185,7 @@
         "hono": "4.13.11",
         "jose": "6.2.12",
         "yaml": "2.9.1",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -214,7 +214,7 @@
         "redis": "5.10.0",
         "sharp": "0.35.5",
         "uuid": "14.0.3",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -267,7 +267,7 @@
       "version": "1.0.1",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -279,7 +279,7 @@
       "version": "1.1.1",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -290,7 +290,7 @@
       "name": "@atf/extract-contract",
       "version": "2.4.0",
       "dependencies": {
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -302,7 +302,7 @@
       "name": "@atf/identity-contract",
       "version": "1.2.0",
       "dependencies": {
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -335,7 +335,7 @@
         "pino": "10.3.1",
         "undici": "6.28.1",
         "yaml": "2.9.1",
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -371,7 +371,7 @@
       "name": "@atf/transaction-contract",
       "version": "1.1.0",
       "dependencies": {
-        "zod": "4.4.3",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/bun": "1.4.0",
@@ -387,7 +387,7 @@
     "proxy-addr": "2.0.8",
     "sharp": "0.35.5",
     "source-map-js": "1.2.2",
-    "zod": "4.4.3",
+    "zod": "4.6.6",
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
@@ -1964,7 +1964,7 @@
 
     "yaml": ["yaml@2.9.1", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
 
-    "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
+    "zod": ["zod@4.6.6", "", {}, "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
 
