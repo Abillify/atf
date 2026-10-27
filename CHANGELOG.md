@@ -23,10 +23,12 @@ releases:
 - **Extract**: the new scope `extract.acl.assign` lets a trusted ingest client (such as Outpost) set `X-Allowed-Users`/`X-Allowed-Groups` as requested. Without it, requested access lists are still intersected with the caller's identity, and a service token without identity yields an empty (tenant-wide) access list, which Outpost-ingested documents silently received before.
 - **Outpost**: an item with an access list fails (and is removed again) when Extract reports `X-ACL-Applied` other than `assigned`, instead of staying visible tenant-wide.
 - **Outpost** (`sharepoint`): with `aclFromPermissions`, items without a mappable user or group (for example shared only via links) are no longer ingested with an empty, tenant-wide access list; they are skipped and removed if previously synced.
+- **Runtime** (erasure): erasure receipts are found by receipt id on Postgres again. The Runtime's SQL client stored stringified JSON bound to `$n::jsonb` as a JSON string scalar, so JSON operators on those columns matched nothing (also affected: the Postgres invocation ledger). Writers now cast through `::text::jsonb`, readers accept both shapes, and migration 51 repairs existing erasure, tenant and eval rows.
 
 ### Added
 
 - **CI** (eval): answer-ready retrieval and the contextual-header run are gated by their own thresholds.
+- **CI**: `check:jsonb-casts` fails on a bare `$n::jsonb` cast in Runtime SQL; an object parameter is marked with `jsonb-cast-ok:`.
 
 ### Changed
 

@@ -18,6 +18,8 @@
  * Targeted at PostgreSQL 18 (uses built-in `gen_random_uuid()`).
  */
 
+import { repairStringScalarJsonSql } from "./json-column.js";
+
 export interface Migration {
   /** Unique, monotonically increasing version number. */
   version: number;
@@ -1689,6 +1691,28 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE POLICY tenant_isolation ON answer_citations
          USING (tenant_id = current_setting('app.current_tenant', true))
          WITH CHECK (tenant_id = current_setting('app.current_tenant', true))`,
+    ],
+  },
+  {
+    version: 51,
+    name: "repair JSONB values stored as string scalars",
+    statements: [
+      // The Runtime's SQL client stored `JSON.stringify(...)` bound to
+      // `$n::jsonb` as a JSON string scalar, so JSON operators on these
+      // columns matched nothing (erasure receipts were not found by id).
+      // Writers now cast through `::text::jsonb`; this rewrites existing
+      // string scalars that hold an object or array. Tables under row-level
+      // security are not touched here; their readers accept both shapes.
+      repairStringScalarJsonSql("erasure_requests", "subject"),
+      repairStringScalarJsonSql("erasure_requests", "doc_references"),
+      repairStringScalarJsonSql("erasure_requests", "results"),
+      repairStringScalarJsonSql("erasure_requests", "store_groups"),
+      repairStringScalarJsonSql("erasure_requests", "receipt"),
+      repairStringScalarJsonSql("tenants", "metadata"),
+      repairStringScalarJsonSql("eval_runs", "parameters"),
+      repairStringScalarJsonSql("eval_runs", "retrieval_report"),
+      repairStringScalarJsonSql("eval_runs", "report"),
+      repairStringScalarJsonSql("eval_matrix_runs", "payload"),
     ],
   },
 ];

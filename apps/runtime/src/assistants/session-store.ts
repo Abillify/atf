@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import type { Database } from "../db/database.js";
 import type { AssistantScope } from "./types.js";
 import type { TranscriptAppendInput, TranscriptEntry, TranscriptStore } from "./transcript-store.js";
+import { jsonColumn } from "../db/json-column.js";
 
 export type AssistantToolStatus =
   | "planned"
@@ -191,7 +192,7 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
       await db.query(
         `INSERT INTO assistant_mirror_outbox
            (id, tenant_id, user_id, assistant_id, conversation_id, event_id, payload)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid, $7::jsonb)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid, $7::text::jsonb)
          ON CONFLICT (tenant_id, event_id) DO NOTHING`,
         [crypto.randomUUID(), scope.tenantId, scope.userId, scope.assistantId, entry.conversationId, id,
           JSON.stringify(persisted)],
@@ -358,7 +359,7 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
       if (previous !== undefined) {
         await db.query(
           `UPDATE assistant_tool_journal
-              SET operation_id = $6, execution_id = $7::uuid, tool_name = $8, args = $9::jsonb, status = 'pending',
+              SET operation_id = $6, execution_id = $7::uuid, tool_name = $8, args = $9::text::jsonb, status = 'pending',
                   attempts = attempts + 1, result = NULL, error = NULL, approval_id = NULL, completed_at = NULL,
                   lease_owner = NULL, lease_expires_at = now() + ($10::bigint * interval '1 millisecond'), updated_at = now()
             WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4 AND tool_call_id = $5
@@ -373,7 +374,7 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
         `INSERT INTO assistant_tool_journal
            (tenant_id, user_id, assistant_id, conversation_id, tool_call_id, operation_id, sequence, execution_id,
             tool_name, args, status, attempts, lease_expires_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9, $10::jsonb, 'pending', 1,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9, $10::text::jsonb, 'pending', 1,
                  now() + ($11::bigint * interval '1 millisecond'), now())`,
         [params.scope.tenantId, params.scope.userId, params.scope.assistantId, params.conversationId, params.toolCallId,
           operationId, sequence, params.executionId, params.tool, JSON.stringify(params.args), leaseMs],
@@ -475,7 +476,7 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
   async reconcileUnknown(params: Parameters<NonNullable<AssistantToolJournal["reconcileUnknown"]>>[0]): Promise<AssistantToolJournalEntry | undefined> {
     const rows = await this.inTenant(params.scope, (db) => db.query<ToolRow>(
       `UPDATE assistant_tool_journal
-          SET status = $6, result = CASE WHEN $7::jsonb IS NULL THEN result ELSE $7::jsonb END,
+          SET status = $6, result = CASE WHEN $7::text::jsonb IS NULL THEN result ELSE $7::text::jsonb END,
               error = CASE WHEN $8::text IS NULL THEN error ELSE $8::text END,
               lease_owner = NULL, lease_expires_at = NULL, completed_at = now(), updated_at = now()
         WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4 AND tool_call_id = $5
@@ -516,15 +517,15 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
     if (allowedFrom.length === 0) throw new Error(`Unsupported tool journal transition to ${status}.`);
     const rows = await this.inTenant(scope, (db) => db.query<{ tool_call_id: string }>(
       `UPDATE assistant_tool_journal
-          SET status = $6, result = COALESCE($7::jsonb, result), error = COALESCE($8, error), approval_id = COALESCE($9, approval_id),
+          SET status = $6, result = COALESCE($7::text::jsonb, result), error = COALESCE($8, error), approval_id = COALESCE($9, approval_id),
               lease_owner = NULL, lease_expires_at = NULL, completed_at = CASE WHEN $6 IN ('completed', 'failed', 'cancelled') THEN now() ELSE completed_at END,
               updated_at = now()
         WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4 AND tool_call_id = $5
           AND status IN (
             SELECT jsonb_array_elements_text(
-              CASE jsonb_typeof($10::jsonb)
-                WHEN 'array' THEN $10::jsonb
-                ELSE jsonb_build_array($10::jsonb)
+              CASE jsonb_typeof($10::text::jsonb)
+                WHEN 'array' THEN $10::text::jsonb
+                ELSE jsonb_build_array($10::text::jsonb)
               END
             )
           )
@@ -572,9 +573,9 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
   private toToolEntry(row: ToolRow): AssistantToolJournalEntry {
     return { conversationId: row.conversation_id, toolCallId: row.tool_call_id, operationId: row.operation_id,
       sequence: Number(row.sequence), executionId: row.execution_id, toolName: row.tool_name,
-      args: row.args as Record<string, unknown>, status: row.status as AssistantToolStatus, attempts: Number(row.attempts),
+      args: jsonColumn<Record<string, unknown>>(row.args) ?? {}, status: row.status as AssistantToolStatus, attempts: Number(row.attempts),
       ...(row.lease_expires_at !== null ? { leaseExpiresAt: this.iso(row.lease_expires_at) } : {}),
-      ...(row.result !== null ? { result: row.result } : {}), ...(row.error !== null ? { error: row.error } : {}),
+      ...(row.result !== null ? { result: jsonColumn(row.result) } : {}), ...(row.error !== null ? { error: row.error } : {}),
       createdAt: this.iso(row.created_at), updatedAt: this.iso(row.updated_at) };
   }
 

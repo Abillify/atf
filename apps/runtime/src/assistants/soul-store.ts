@@ -454,7 +454,7 @@ export class PostgresSoulStore implements SoulStore {
               `INSERT INTO assistant_souls
                  (tenant_id, user_id, assistant_id, identity, directives,
                   constraints, revision, revision_hash, updated_at)
-               VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, now())
+               VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::jsonb, $7, $8, now())
                -- A concurrent first write inserted the row between our SELECT
                -- and here. The predicate makes this a compare-and-set: it
                -- matches only if the row is still at the revision we read, so
@@ -482,9 +482,9 @@ export class PostgresSoulStore implements SoulStore {
             )
           : await db.query<SoulRow>(
               `UPDATE assistant_souls
-                  SET identity = $4::jsonb,
-                      directives = $5::jsonb,
-                      constraints = $6::jsonb,
+                  SET identity = $4::text::jsonb,
+                      directives = $5::text::jsonb,
+                      constraints = $6::text::jsonb,
                       revision = $7,
                       revision_hash = $8,
                       updated_at = now()
@@ -520,7 +520,7 @@ export class PostgresSoulStore implements SoulStore {
            (tenant_id, user_id, assistant_id, revision, revision_hash,
             write_class, actor_type, actor_id, identity, directives,
             constraints, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb, $11::text::jsonb, $12)
          -- Idempotent under retry: the (scope, revision) unique constraint means
          -- a replayed insert is a no-op rather than a duplicate history entry.
          ON CONFLICT (tenant_id, user_id, assistant_id, revision) DO NOTHING`,

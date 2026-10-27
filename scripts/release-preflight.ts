@@ -57,6 +57,7 @@ const CI_GATES: Step[] = [
 	{ name: "check:links", cmd: ["bun", "run", "check:links"] },
 	{ name: "check:workspace-counts", cmd: ["bun", "run", "check:workspace-counts"] },
 	{ name: "check:raw-fetch", cmd: ["bun", "run", "check:raw-fetch"] },
+	{ name: "check:jsonb-casts", cmd: ["bun", "run", "check:jsonb-casts"] },
 	{ name: "check:flow-versions", cmd: ["bun", "run", "check:flow-versions"] },
 	{ name: "coverage:security", cmd: ["bun", "run", "coverage:security"] },
 	{ name: "knip", cmd: ["bun", "run", "knip"] },

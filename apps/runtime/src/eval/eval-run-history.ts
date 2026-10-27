@@ -115,7 +115,7 @@ export class PostgresEvalRunHistory implements EvalRunHistory {
         `INSERT INTO eval_runs
            (id, name, source, kind, dataset_id, dataset_version, collection,
             parameters, retrieval_report, recorded_at, report)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::jsonb)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9::text::jsonb, $10, $11::text::jsonb)`,
         [record.id, record.name, record.source, record.kind ?? "evaluation",
          record.datasetId ?? null, record.datasetVersion ?? null, record.collection ?? null,
          record.parameters === undefined ? null : JSON.stringify(record.parameters),

@@ -460,7 +460,7 @@ export class PostgresTenantStore implements TenantStore {
     const id = crypto.randomUUID();
     await this.db.query(
       `INSERT INTO tenants (id, name, plan, daily_budget, metadata)
-       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+       VALUES ($1, $2, $3, $4, $5::text::jsonb)`,
       [
         id,
         input.name,

@@ -676,6 +676,9 @@ export class PostgresAuditLog implements AuditLog {
         const at = new Date().toISOString();
         const base = { id, at, outcome: entry.outcome ?? "success", ...entry };
         const hash = computeAuditHash(prevHash, base);
+        // jsonb-cast-ok: `details` is stored as the JSON text it was hashed
+        // from (a JSONB string scalar, read back by parseDetails). The chain
+        // has rows in this form; it is never queried with JSON operators.
         await db.query(
           `INSERT INTO audit_log (id, actor, role, action, target, outcome, details, hash, prev_hash, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,

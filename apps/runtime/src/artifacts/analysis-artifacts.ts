@@ -456,7 +456,7 @@ export class PostgresAnalysisArtifactStore implements AnalysisArtifactStore {
         type, schema_version, title, payload, status, revision, supersedes_id,
         source_execution_id, source_flow_id, dataset_id, created_by, content_hash,
         created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *`,
       [record.id, record.tenantId, record.userId ?? null, record.assistantId ?? null,
        record.conversationId ?? null, record.projectId ?? null, record.caseId ?? null,
@@ -515,7 +515,7 @@ export class PostgresAnalysisArtifactStore implements AnalysisArtifactStore {
            (id, tenant_id, user_id, assistant_id, conversation_id, project_id, case_id,
             type, schema_version, title, payload, status, revision, supersedes_id,
             source_execution_id, source_flow_id, dataset_id, created_by, content_hash, created_at, updated_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
            FROM superseded
          RETURNING *`,
         [next.id, next.tenantId, next.userId ?? null, next.assistantId ?? null,

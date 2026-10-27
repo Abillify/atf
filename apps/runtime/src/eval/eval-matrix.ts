@@ -116,7 +116,7 @@ export class PostgresEvalMatrixRunStore implements EvalMatrixRunStore {
     await this.database.query(
       `INSERT INTO eval_matrix_runs
          (id, name, status, created_by, created_at, started_at, completed_at, payload)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name,
          status = EXCLUDED.status,

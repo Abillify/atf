@@ -35,6 +35,7 @@ bun run openapi:check            # docs/openapi/*.json match the servers (breaki
 bun run check:links              # relative links in Markdown resolve
 bun run check:workspace-counts   # package and app counts stated in the docs are true
 bun run check:raw-fetch          # outbound HTTP goes through the guarded clients
+bun run check:jsonb-casts        # Runtime SQL casts stringified JSONB through ::text::jsonb
 bun run check:flow-versions      # a changed flow (or a file it depends on) raised metadata.version
 bun run coverage:security        # every security-relevant path has a test that names it
 bun run knip                     # no unused files, exports or dependencies

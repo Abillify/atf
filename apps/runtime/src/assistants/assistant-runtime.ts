@@ -431,7 +431,7 @@ export class AssistantRuntime {
            (execution_id, tenant_id, user_id, assistant_id, model_iterations,
             tool_calls, succeeded, aborted, errored, trigger, stop_reason,
             canary_skill_ids)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text::jsonb)
          -- Idempotent under a retried finalisation: the turn is keyed by its
          -- execution, and a second write must not create a second learnable turn.
          ON CONFLICT (execution_id) DO UPDATE

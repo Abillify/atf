@@ -4,6 +4,7 @@
 import type { Database } from "../db/database.js";
 import type { Logger } from "../observability/logger.js";
 import { createRedisClient, type RedisClientLike } from "../util/redis-client.js";
+import { jsonColumn, repairStringScalarJsonSql } from "../db/json-column.js";
 
 export type InvocationState =
   | "pending"
@@ -213,7 +214,10 @@ export class PostgresInvocationLedger<T = unknown> implements InvocationLedgerSt
   private init(): Promise<void> {
     this.initialized ??= this.db.query(`CREATE TABLE IF NOT EXISTS invocation_ledger (
       invocation_id TEXT PRIMARY KEY, record JSONB NOT NULL, updated_at BIGINT NOT NULL
-    )`).then(() => undefined);
+    )`)
+      // Records written before the `::text::jsonb` fix are string scalars.
+      .then(() => this.db.query(repairStringScalarJsonSql("invocation_ledger", "record")))
+      .then(() => undefined);
     return this.initialized;
   }
   async claim(input: InvocationClaimInput): Promise<InvocationClaim<T>> {
@@ -221,11 +225,11 @@ export class PostgresInvocationLedger<T = unknown> implements InvocationLedgerSt
     const at = this.now();
     const record: InvocationRecord<T> = { ...input, state: "pending", createdAt: at, updatedAt: at };
     const rows = await this.db.query<{ record: InvocationRecord<T> }>(
-      `INSERT INTO invocation_ledger(invocation_id, record, updated_at) VALUES ($1,$2::jsonb,$3)
+      `INSERT INTO invocation_ledger(invocation_id, record, updated_at) VALUES ($1,$2::text::jsonb,$3)
        ON CONFLICT (invocation_id) DO NOTHING RETURNING record`,
       [input.invocationId, JSON.stringify(record), at],
     );
-    if (rows[0]) return { acquired: true, record: rows[0].record };
+    if (rows[0]) return { acquired: true, record: jsonColumn<InvocationRecord<T>>(rows[0].record) as InvocationRecord<T> };
     const existing = await this.get(input.invocationId);
     if (!existing) throw new Error(`Invocation claim lost: ${input.invocationId}`);
     return { acquired: false, record: existing };
@@ -233,20 +237,20 @@ export class PostgresInvocationLedger<T = unknown> implements InvocationLedgerSt
   async get(invocationId: string): Promise<InvocationRecord<T> | undefined> {
     await this.init();
     const rows = await this.db.query<{ record: InvocationRecord<T> }>("SELECT record FROM invocation_ledger WHERE invocation_id=$1", [invocationId]);
-    return rows[0]?.record;
+    return jsonColumn<InvocationRecord<T>>(rows[0]?.record);
   }
   async transition(invocationId: string, state: InvocationState, update: InvocationUpdate<T> = {}): Promise<InvocationRecord<T>> {
     await this.init();
     const allowed = Object.entries(transitions).filter(([, targets]) => targets.includes(state)).map(([from]) => from);
     const at = this.now();
     const rows = await this.db.query<{ record: InvocationRecord<T> }>(
-      `UPDATE invocation_ledger SET record = record || $2::jsonb, updated_at=$3
+      `UPDATE invocation_ledger SET record = record || $2::text::jsonb, updated_at=$3
        WHERE invocation_id=$1
          AND record->>'state' IN (
            SELECT jsonb_array_elements_text(
-             CASE jsonb_typeof($4::jsonb)
-               WHEN 'array' THEN $4::jsonb
-               ELSE jsonb_build_array($4::jsonb)
+             CASE jsonb_typeof($4::text::jsonb)
+               WHEN 'array' THEN $4::text::jsonb
+               ELSE jsonb_build_array($4::text::jsonb)
              END
            )
          )
@@ -258,7 +262,7 @@ export class PostgresInvocationLedger<T = unknown> implements InvocationLedgerSt
       if (!current) throw new Error(`Unknown invocation: ${invocationId}`);
       throw new Error(`Invalid invocation transition: ${current.state} -> ${state}`);
     }
-    return rows[0].record;
+    return jsonColumn<InvocationRecord<T>>(rows[0].record) as InvocationRecord<T>;
   }
   async listStale(before: number, states: readonly InvocationState[] = ["pending", "running"]): Promise<InvocationRecord<T>[]> {
     await this.init();
@@ -267,15 +271,15 @@ export class PostgresInvocationLedger<T = unknown> implements InvocationLedgerSt
         WHERE updated_at <= $1
           AND record->>'state' IN (
             SELECT jsonb_array_elements_text(
-              CASE jsonb_typeof($2::jsonb)
-                WHEN 'array' THEN $2::jsonb
-                ELSE jsonb_build_array($2::jsonb)
+              CASE jsonb_typeof($2::text::jsonb)
+                WHEN 'array' THEN $2::text::jsonb
+                ELSE jsonb_build_array($2::text::jsonb)
               END
             )
           )`,
       [before, JSON.stringify(states)],
     );
-    return rows.map((row) => row.record);
+    return rows.map((row) => jsonColumn<InvocationRecord<T>>(row.record) as InvocationRecord<T>);
   }
 }
 

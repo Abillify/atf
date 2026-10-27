@@ -47,6 +47,7 @@ bun run openapi:check           # docs/openapi/*.json match the servers
 bun run check:links
 bun run check:workspace-counts
 bun run check:raw-fetch
+bun run check:jsonb-casts
 bun run check:flow-versions     # changed flows raised metadata.version
 bun run coverage:security
 bun run knip

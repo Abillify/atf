@@ -140,6 +140,10 @@ jobs:
       # Egress_Guard; a bare global fetch() would bypass SSRF protection.
       - name: No raw fetch outside the Egress_Guard
         run: bun run check:raw-fetch
+      # Bun's SQL client stores a stringified value bound to `$n::jsonb` as a
+      # JSON string scalar; Runtime writers must cast through `::text::jsonb`.
+      - name: No bare $n::jsonb casts in the Runtime
+        run: bun run check:jsonb-casts
 
       # Req 14.2: README/ARCHITECTURE must state the real workspace counts and
       # name every app and package — a new workspace fails CI until the docs

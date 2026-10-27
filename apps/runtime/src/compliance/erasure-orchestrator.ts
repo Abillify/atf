@@ -46,6 +46,7 @@ import {
 } from "@atf/erasure-contract";
 
 import type { Database } from "../db/database.js";
+import { jsonColumn } from "../db/json-column.js";
 import type { Logger } from "../observability/logger.js";
 import type {
   ErasureSubject,
@@ -173,13 +174,23 @@ function isScope(value: string): value is ErasureScope {
   return value === "subject" || value === "tenant" || value === "reference";
 }
 
-function rowToOperation(row: RowShape): ErasureOperation | null {
-  if (!isScope(row.scope)) return null;
+function rowToOperation(raw: RowShape): ErasureOperation | null {
+  const scope = raw.scope;
+  if (!isScope(scope)) return null;
+  // Rows written before the `::text::jsonb` fix hold string scalars.
+  const row: RowShape = {
+    ...raw,
+    subject: jsonColumn<RowShape["subject"]>(raw.subject) ?? null,
+    doc_references: jsonColumn<string[]>(raw.doc_references) ?? null,
+    results: jsonColumn<ErasureStoreResult[]>(raw.results) ?? [],
+    store_groups: jsonColumn<RowShape["store_groups"]>(raw.store_groups) ?? [],
+    receipt: jsonColumn(raw.receipt) ?? null,
+  };
   const results = Array.isArray(row.results) ? row.results : [];
   return {
     requestId: row.request_id,
     tenantId: row.tenant_id,
-    scope: row.scope,
+    scope,
     ...(row.subject !== null && row.subject !== undefined
       ? { subject: row.subject }
       : {}),
@@ -349,7 +360,7 @@ class InMemoryOperationStore implements OperationStore {
   }
 }
 
-class PostgresOperationStore implements OperationStore {
+export class PostgresOperationStore implements OperationStore {
   constructor(
     private readonly db: Database,
     private readonly logger?: Logger,
@@ -360,7 +371,7 @@ class PostgresOperationStore implements OperationStore {
       `INSERT INTO erasure_requests
          (request_id, tenant_id, scope, subject, doc_references, status,
           results, store_groups, lease_token)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8::jsonb, $9)
+       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, $7::text::jsonb, $8::text::jsonb, $9)
        ON CONFLICT (request_id) DO NOTHING
        RETURNING request_id`,
       [
@@ -383,8 +394,8 @@ class PostgresOperationStore implements OperationStore {
   async update(op: ErasureOperation): Promise<void> {
     await this.db.query(
       `UPDATE erasure_requests
-          SET status = $2, results = $3::jsonb, store_groups = $4::jsonb,
-              receipt = COALESCE($5::jsonb, receipt), updated_at = now()
+          SET status = $2, results = $3::text::jsonb, store_groups = $4::text::jsonb,
+              receipt = COALESCE($5::text::jsonb, receipt), updated_at = now()
         WHERE request_id = $1`,
       [
         op.requestId,

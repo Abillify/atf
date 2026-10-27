@@ -190,6 +190,7 @@ export class PostgresReplayStore implements ReplayStore {
       }
       const hasMeta = Object.keys(meta).length > 0;
       await this.scoped(snapshot.tenantId, (db) =>
+        // jsonb-cast-ok: `metadata` ($4) is bound as an object, not a JSON string.
         db.query(
           `INSERT INTO execution_snapshots
              (execution_id, flow_id, messages, metadata, response_text, tenant_id)

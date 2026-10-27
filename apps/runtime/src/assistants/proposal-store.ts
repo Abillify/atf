@@ -790,7 +790,7 @@ export class PostgresProposalStore implements ProposalStore {
     await db.query(
       `INSERT INTO assistant_skill_proposal_events
          (proposal_id, event_type, revision, revision_hash, actor_type, actor_id, payload)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb)`,
       [
         proposal.id,
         eventType,
@@ -838,7 +838,7 @@ export class PostgresProposalStore implements ProposalStore {
             goal, evidence, autonomous_capture, created_by, scan_state,
             scan_findings, origin_execution_id, origin_run_id)
          VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12,
-                 $13, $14, $15, $16, $17, $18::jsonb, $19, $20)
+                 $13, $14, $15, $16, $17, $18::text::jsonb, $19, $20)
          RETURNING *`,
         [
           crypto.randomUUID(),
@@ -915,7 +915,7 @@ export class PostgresProposalStore implements ProposalStore {
                 goal = COALESCE($11, goal),
                 evidence = COALESCE($12, evidence),
                 scan_state = $13,
-                scan_findings = $14::jsonb,
+                scan_findings = $14::text::jsonb,
                 updated_at = now()
           WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND id = $4
             -- Compare-and-set on the revision we read, so a concurrent decision
