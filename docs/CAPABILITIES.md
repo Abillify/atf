@@ -17,7 +17,7 @@ still depends on the operator enabling and verifying it. See
 - [Human-in-the-loop approvals](#human-in-the-loop-approvals)
 - [Privacy and the PII vault](#privacy-and-the-pii-vault)
 - [Compliance and evidence](#compliance-and-evidence)
-- [Citation impact](#citation-impact)
+- [Citation impact (experimental)](#citation-impact-experimental)
 - [Quality: evaluation, canary, shadow, replay](#quality-evaluation-canary-shadow-replay)
 - [Cost and reliability control](#cost-and-reliability-control)
 - [Multi-tenancy and identity](#multi-tenancy-and-identity)
@@ -230,7 +230,7 @@ runs **locally** — the cloud never gets pull access to the source; the Outpost
   `extract.ingest` (plus `extract.delete` when mirroring deletes, and `extract.acl.assign`
   when sources carry an access list). Every secret supports a `_FILE` variant and the
   logger scrubs registered secrets.
-- **SharePoint and OneDrive.** The `sharepoint` source reads a document library through
+- **SharePoint and OneDrive (experimental).** The `sharepoint` source reads a document library through
   Microsoft Graph with client credentials (secret or certificate from a file). It lists with
   the drive delta query, syncs files only and skips folders. With `aclFromPermissions` the
   item permissions become the document access list: users by e-mail or UPN, groups through
@@ -261,7 +261,9 @@ vector database is required.
 - **Answer-ready retrieval.** `retrieve_for_answer` (MCP) and `POST /v2/retrieve` split a question
   into sub-questions by rule, search each, fuse the lists by reciprocal rank, remove duplicates,
   optionally rerank against the original question and pack the passages into a token budget
-  (`budget_tokens`), with every passage labelled as untrusted data.
+  (`budget_tokens`), with every passage labelled as untrusted data. With
+  `decomposition: "llm"` (experimental) a configured model splits the question instead of
+  the rules.
 - **Optional sparse vectors.** SPLADE-style sparse retrieval as a third signal.
 - **Collections and versioning.** Multiple collections with their own language configuration,
   document versioning, and score-keyset pagination that stays stable across pages.
@@ -474,7 +476,7 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Decision provenance.** An explainability card reconstructs why a given answer was
   produced: which model, which sources, which policy decisions, which routing choice.
 
-## Citation impact
+## Citation impact (experimental)
 
 - **Answer citation index.** With `CITATION_INDEX_ENABLED=true` and a PostgreSQL
   connection, the Runtime records the chunks each answer cited in the
@@ -519,7 +521,7 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   can emit an Ed25519-signed release receipt (`atf.flow-release-receipt`) over the flow digest,
   bench digest and results, verifiable independently with
   `atf-verify --release-receipt <file> --jwks <url|file>`.
-- **Bench cases from executions.** `bun run scripts/cli.ts bench capture` (in `apps/runtime`)
+- **Bench cases from executions (experimental).** `bun run scripts/cli.ts bench capture` (in `apps/runtime`)
   turns recorded executions (`--execution <id>`, chosen in the Control history) into bench
   cases for `flows release`: the conversation, a `toolCalled` assertion per tool the
   execution called, its finish reason, and token/latency caps with headroom over what was
@@ -559,7 +561,7 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Objective-driven routing.** A solver selects a model per request against a stated
   objective such as lowest cost at a required quality level, using observed quality with a
   configurable half-life (`ROUTER_QUALITY_HALF_LIFE_MS`).
-- **Model cascade.** An `llm` node with `config.cascade` lets a cheap model answer first and
+- **Model cascade (experimental).** An `llm` node with `config.cascade` lets a cheap model answer first and
   regenerates the answer once with `cascade.escalateTo` when the evidence is weak: too few
   distinct `[n]` citations (`minCitations`, default 1), a failed `sourcesCheck`, a best
   grounding score below `maxTopScore`, or a length cut-off. The rules need no model; the first
@@ -725,12 +727,12 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
   with a connection cap and ticket-based authorization
   (`MONITORING_TRANSPORT`, `MONITORING_AUTH`, `MONITORING_MAX_CONNECTIONS`).
 - **SLO tracking** and alert webhooks.
-- **Flow SLOs.** A flow can declare service objectives under `slo:` (p50 and p95 latency,
+- **Flow SLOs (experimental).** A flow can declare service objectives under `slo:` (p50 and p95 latency,
   median tokens, maximum error rate) over the last `window` executions. A change from met
   to breached raises `aiperator_flow_slo_breach_total{flow_id, objective}` and logs a
   warning, and `GET /monitoring/flow-health` shows the state. Each replica evaluates its
   own executions.
-- **Preflight with `atf-doctor`.** `bun run atf-doctor --service runtime|search|extract|gate`
+- **Preflight with `atf-doctor`** (output format experimental). `bun run atf-doctor --service runtime|search|extract|gate`
   checks a service's environment file offline against its production-readiness gate, for the
   Runtime also the governance posture, and for the Gate its configuration directory (permissive
   defaults, approver separation, unpinned imported tools), without starting the service or

@@ -37,7 +37,7 @@ the platform.
 > end to end, but still pre-1.0. Governed capabilities require explicit configuration and
 > verification for each deployment. Contract packages already carry compatibility guarantees;
 > flow fields, environment variables, and HTTP routes may still change with documented
-> migrations. See the [changelog](CHANGELOG.md) for the exact stability boundary.
+> migrations. See [docs/STABILITY.md](docs/STABILITY.md) for what is covered from 1.0.0.
 
 ATF grew out of production engineering for regulated environments, where audit evidence,
 identity, data residency, and approval controls are deployment requirements rather than roadmap
