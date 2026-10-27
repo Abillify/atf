@@ -43,6 +43,8 @@ interface Fakes {
   chunks: CitationChunkRow[];
   current: CurrentRevisionRow[];
   contents: Record<string, string[]>;
+  /** Documents whose content list is cut off at the unit cap. */
+  truncated?: string[];
 }
 
 function fakePg(fakes: Fakes) {
@@ -59,7 +61,10 @@ function fakePg(fakes: Fakes) {
   const getCurrentRevisionContents = vi.fn(
     async (_c: string, _s: AccessScope, baseRef: string) => ({
       ok: true as const,
-      result: fakes.contents[baseRef] ?? [],
+      result: {
+        contents: fakes.contents[baseRef] ?? [],
+        truncated: fakes.truncated?.includes(baseRef) ?? false,
+      },
     }),
   );
   const pg = {
@@ -197,6 +202,27 @@ describe("buildCitationsCheck", () => {
     expect(getCurrentRevisionsAt).toHaveBeenCalledTimes(1);
     // One content read per document that needs the hash comparison — never per chunk.
     expect(getCurrentRevisionContents).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports unverified instead of changed when the current revision is cut off at the unit cap", async () => {
+    const { pg } = fakePg({
+      chunks: [chunkRow("c1", "big.pdf", "rev1", "Alter Text."), chunkRow("c2", "big.pdf", "rev1", "Blieb gleich.")],
+      current: [{ base_ref: "big.pdf", revision_id: "rev2" }],
+      contents: { "big.pdf": ["Blieb gleich."] },
+      truncated: ["big.pdf"],
+    });
+    const payload = await buildCitationsCheck(
+      pg,
+      "documents",
+      scope,
+      [
+        { base_ref: "big.pdf", chunk_id: "c1" },
+        { base_ref: "big.pdf", chunk_id: "c2" },
+      ],
+      NOW,
+    );
+    // A hash found in the partial list still proves "carried"; a missing one proves nothing.
+    expect(payload.results.map((r) => r.status)).toEqual(["unverified", "carried"]);
   });
 
   it("skips the content read when every cited chunk is already current", async () => {

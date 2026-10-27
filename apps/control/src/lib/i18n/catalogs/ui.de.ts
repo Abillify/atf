@@ -1480,6 +1480,7 @@ export const uiDe: Record<keyof typeof uiEn, string> = {
   "citationImpactPanel.statusChanged": "geändert",
   "citationImpactPanel.statusRemoved": "entfernt",
   "citationImpactPanel.statusUnknown": "unbekannt",
+  "citationImpactPanel.statusUnverified": "nicht prüfbar",
   "citationImpactPanel.currentRevision": "jetzt {value}",
   "citationImpactPanel.loading": "Wird geladen…",
   "citationImpactPanel.empty": "Keine Antwort zitiert eine geänderte oder entfernte Quelle.",

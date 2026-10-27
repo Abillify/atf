@@ -36,7 +36,7 @@ const reportFixture = (
   summary: {
     executions_checked: 120,
     executions_affected: 2,
-    chunks: { current: 40, carried: 5, changed: 3, removed: 1, unknown: 0 },
+    chunks: { current: 40, carried: 5, changed: 3, removed: 1, unknown: 0, unverified: 2 },
   },
   affected: [affectedRow()],
   ...over,

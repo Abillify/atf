@@ -1104,14 +1104,16 @@ export function createNavMethods(ctx: PgFactoryCtx) {
     /**
      * The content of every unit of one document's revision visible at
      * `validAt`, for the citations-check content-hash comparison. Bounded by
-     * the navigation unit cap. One query per document, never per chunk.
+     * the navigation unit cap; `truncated` is true when the document has more
+     * units than that, so the list is incomplete. One query per document,
+     * never per chunk.
      */
     async getCurrentRevisionContents(
       collection: string,
       scope: AccessScope,
       baseRef: string,
       validAt: string,
-    ): Promise<PostgresResponse<string[]>> {
+    ): Promise<PostgresResponse<{ contents: string[]; truncated: boolean }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
         return {
@@ -1139,10 +1141,14 @@ export function createNavMethods(ctx: PgFactoryCtx) {
           `SELECT content
              FROM "${table}"
             WHERE base_ref = ${refPh}${temporalFilter}${accessSql}
-            LIMIT ${p.add(NAV_MAX_UNITS)}`,
+            LIMIT ${p.add(NAV_MAX_UNITS + 1)}`,
           p.values,
         );
-        return res.rows.map((row) => row.content ?? "");
+        const truncated = res.rows.length > NAV_MAX_UNITS;
+        return {
+          contents: res.rows.slice(0, NAV_MAX_UNITS).map((row) => row.content ?? ""),
+          truncated,
+        };
       });
     },
   };

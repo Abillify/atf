@@ -32,6 +32,7 @@ releases:
 
 - **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure.
 - **Runtime** (semantic cache): expired entries are removed by a periodic sweep across all namespaces (`SEMANTIC_CACHE_PURGE_INTERVAL_SECONDS`, default 300); before, they stayed in the database until the same namespace was written again.
+- **Search** (`/v2/citations/check`): documents with more than 5000 units report `unverified` instead of a false `changed`; the Runtime citation-impact report and Control count it separately.
 
 ### Documentation
 

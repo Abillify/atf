@@ -13,7 +13,8 @@ export type CitationChunkStatus =
   | "carried"
   | "changed"
   | "removed"
-  | "unknown";
+  | "unknown"
+  | "unverified";
 
 /** A cited chunk inside an affected execution, with its current status. */
 export interface CitationImpactChunk {

@@ -484,8 +484,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   Retention sweeps and subject erasure cover the table (`RETENTION_ENABLED`).
 - **Change detection in Search.** `POST /v2/citations/check` compares cited chunks
   against the revision visible today and reports `current`, `carried` (content
-  unchanged in the current revision), `changed`, `removed` or `unknown` per pair, in
-  input order (up to 500 pairs). The Runtime calls it through
+  unchanged in the current revision), `changed`, `removed`, `unknown` or `unverified`
+  (the current revision has more than 5000 units, so a missing match proves nothing)
+  per pair, in input order (up to 500 pairs); `unverified` pairs are counted but do not
+  make an execution count as affected. The Runtime calls it through
   `CITATION_CHECK_URL` / `CITATION_CHECK_TOKEN`.
 - **Impact report.** `GET /monitoring/citation-impact?since=<RFC 3339>` (operator
   plane, `monitoring:read`) groups the cited pairs of recent executions, checks them

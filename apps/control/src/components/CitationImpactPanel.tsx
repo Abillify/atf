@@ -62,6 +62,7 @@ const SUMMARY_STATUSES: CitationChunkStatus[] = [
   "changed",
   "removed",
   "unknown",
+  "unverified",
 ];
 
 const SUMMARY_STATUS_LABEL_KEY: Record<
@@ -71,12 +72,14 @@ const SUMMARY_STATUS_LABEL_KEY: Record<
   | "citationImpactPanel.statusChanged"
   | "citationImpactPanel.statusRemoved"
   | "citationImpactPanel.statusUnknown"
+  | "citationImpactPanel.statusUnverified"
 > = {
   current: "citationImpactPanel.statusCurrent",
   carried: "citationImpactPanel.statusCarried",
   changed: "citationImpactPanel.statusChanged",
   removed: "citationImpactPanel.statusRemoved",
   unknown: "citationImpactPanel.statusUnknown",
+  unverified: "citationImpactPanel.statusUnverified",
 };
 
 export function CitationImpactPanel({

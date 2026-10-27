@@ -162,7 +162,7 @@ describe("buildCitationImpactReport", () => {
     expect(report.summary).toEqual({
       executions_checked: 3,
       executions_affected: 3,
-      chunks: { current: 1, carried: 0, changed: 1, removed: 1, unknown: 0 },
+      chunks: { current: 1, carried: 0, changed: 1, removed: 1, unknown: 0, unverified: 0 },
     });
     const e1 = report.affected.find((a) => a.execution_id === "e1");
     expect(e1?.chunks).toEqual([
@@ -191,6 +191,30 @@ describe("buildCitationImpactReport", () => {
     expect(report.tenant_id).toBeNull();
   });
 
+  it("counts unverified pairs separately and does not treat them as affected", () => {
+    const report = buildCitationImpactReport(
+      [group("doc-a", "c1", ["e1"]), group("doc-a", "c2", ["e1", "e2"])],
+      [
+        { base_ref: "doc-a", chunk_id: "c1", status: "unverified" },
+        { base_ref: "doc-a", chunk_id: "c2", status: "changed" },
+      ],
+      { generatedAt: "2026-10-20T12:00:00.000Z", since, tenantId: null },
+    );
+    expect(report.summary.chunks.unverified).toBe(1);
+    expect(report.summary.chunks.changed).toBe(1);
+    // e2 cites only a changed pair, e1 an unverified and a changed one; the
+    // unverified pair is not listed among the affected chunks.
+    expect(report.summary.executions_affected).toBe(2);
+    expect(report.affected.find((a) => a.execution_id === "e1")?.chunks).toHaveLength(1);
+
+    const onlyUnverified = buildCitationImpactReport(
+      [group("doc-a", "c1", ["e1"])],
+      [{ base_ref: "doc-a", chunk_id: "c1", status: "unverified" }],
+      { generatedAt: "2026-10-20T12:00:00.000Z", since, tenantId: null },
+    );
+    expect(onlyUnverified.summary.executions_affected).toBe(0);
+  });
+
   it("carried pairs do not make an execution affected", () => {
     const report = buildCitationImpactReport(
       [group("doc-a", "c1", ["e1"])],
@@ -215,7 +239,7 @@ describe("signCitationImpact / citationImpactSigningBytes", () => {
     summary: {
       executions_checked: 3,
       executions_affected: 1,
-      chunks: { current: 1, carried: 0, changed: 1, removed: 0, unknown: 1 },
+      chunks: { current: 1, carried: 0, changed: 1, removed: 0, unknown: 1, unverified: 0 },
     },
     affected: [
       {

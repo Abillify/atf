@@ -28,13 +28,14 @@ import {
   signEvidenceBytes,
 } from "../observability/evidence-key.js";
 
-/** The five statuses the Search citation check reports per pair. */
+/** The six statuses the Search citation check reports per pair. */
 export type CitationChunkStatus =
   | "current"
   | "carried"
   | "changed"
   | "removed"
-  | "unknown";
+  | "unknown"
+  | "unverified";
 
 /** A `(base_ref, chunk_id)` pair as requested from the citation check. */
 export interface CitationCheckItem {
@@ -165,6 +166,7 @@ const CHECK_RESULT_STATUSES: readonly CitationChunkStatus[] = [
   "changed",
   "removed",
   "unknown",
+  "unverified",
 ];
 
 function isCitationChunkStatus(value: unknown): value is CitationChunkStatus {
@@ -231,6 +233,7 @@ export function buildCitationImpactReport(
     changed: 0,
     removed: 0,
     unknown: 0,
+    unverified: 0,
   };
   const executionsChecked = new Set<string>();
   const affectedByExecution = new Map<string, CitationImpactAffected>();

@@ -1441,6 +1441,7 @@ export const uiEn = {
   "citationImpactPanel.statusChanged": "changed",
   "citationImpactPanel.statusRemoved": "removed",
   "citationImpactPanel.statusUnknown": "unknown",
+  "citationImpactPanel.statusUnverified": "unverified",
   "citationImpactPanel.currentRevision": "now {value}",
   "citationImpactPanel.loading": "Loading…",
   "citationImpactPanel.empty": "No answers cite a changed or removed source.",

@@ -4449,7 +4449,8 @@
                               "carried",
                               "changed",
                               "removed",
-                              "unknown"
+                              "unknown",
+                              "unverified"
                             ]
                           },
                           "current_revision": {

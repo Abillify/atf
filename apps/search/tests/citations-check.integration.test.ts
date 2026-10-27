@@ -18,6 +18,7 @@ import { collectionTableName } from "../src/collection-ddl.js";
 import type { AccessScope } from "../src/access-scope.js";
 import { ensureRevisionSchema } from "../src/revision-schema.js";
 import { buildCitationsCheck } from "../src/handlers/citations-check-v2.js";
+import { NAV_MAX_UNITS } from "../src/pg-helpers.js";
 
 const CONNECTION = process.env.TEST_POSTGRES_URL;
 const describeIfPg = CONNECTION ? describe : describe.skip;
@@ -170,6 +171,26 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
       [TENANT, collection, "cites/private.pdf"],
     );
     await seedRow({ baseRef: "cites/private.pdf", revision: "priv-rev", content: "Nur für den Besitzer.", created: REV2, latest: true, unitId: "priv-u", allowedUsers: ["owner"] });
+
+    // big.pdf — the current revision has more units than one content read
+    // returns (the navigation unit cap), so a missing hash proves nothing.
+    await revision("big-rev1", "cites/big.pdf", "superseded");
+    await revision("big-rev2", "cites/big.pdf", "committed");
+    await pool.query(
+      `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'big-rev2')`,
+      [TENANT, collection, "cites/big.pdf"],
+    );
+    await seedRow({ baseRef: "cites/big.pdf", revision: "big-rev1", content: "Alter Absatz im grossen Dokument.", created: REV1, latest: false, unitId: "big-u-old" });
+    await pool.query(
+      `INSERT INTO "${table}"
+        (tenant_id, reference, base_ref, is_latest, content, vector, metadata,
+         unit_id, revision_id, document_id, created, ts_search, allowed_users, allowed_groups)
+       SELECT $1, 'cites/big.pdf#' || n, 'cites/big.pdf', true, 'Absatz ' || n, $2::vector,
+              '{"unit_type":"chunk"}'::jsonb, 'big-u-' || n, 'big-rev2', 'cites/big.pdf',
+              $3::timestamptz, to_tsvector('simple', 'Absatz ' || n), '{}', '{}'
+         FROM generate_series(1, $4::int) AS n`,
+      [TENANT, JSON.stringify(zeroVector), REV2, NAV_MAX_UNITS + 1],
+    );
   });
 
   afterAll(async () => {
@@ -222,5 +243,15 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
       { base_ref: "cites/changed.pdf", chunk_id: "chg-u-new" },
     ], NOW);
     expect(payload.results.map((r) => r.status)).toEqual(["current", "carried", "current"]);
+  });
+  it("reports unverified, not changed, when the current revision exceeds the unit cap", { timeout: 60_000 }, async () => {
+    const contents = await pg.getCurrentRevisionContents(collection, serviceScope(), "cites/big.pdf", NOW.toISOString());
+    expect(contents.ok && contents.result.truncated).toBe(true);
+    expect(contents.ok && contents.result.contents).toHaveLength(NAV_MAX_UNITS);
+
+    const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
+      { base_ref: "cites/big.pdf", chunk_id: "big-u-old" },
+    ], NOW);
+    expect(payload.results[0].status).toBe("unverified");
   });
 });

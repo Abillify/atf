@@ -3019,6 +3019,7 @@ export function buildOpenApiSpec(serverUrl: string) {
                                 "changed",
                                 "removed",
                                 "unknown",
+                                "unverified",
                               ],
                             },
                             current_revision: { type: "string" },

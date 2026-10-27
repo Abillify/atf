@@ -19,6 +19,9 @@
  * - `removed`  — the document has no revision visible to the caller today
  * - `unknown`  — no chunk with that id is visible to the caller (it never
  *                existed, or the caller's ACL hides it)
+ * - `unverified` — the chunk sits in an older revision and the current
+ *                revision has more units than one content read returns, so
+ *                "changed" cannot be told from "not read"
  *
  * The visibility rule for "today" is the same temporal `valid_at` rule as
  * `document_diff` with `validAt = now`. The load is bounded: one query for
@@ -34,13 +37,14 @@ import type { PostgresClient } from "../postgres-client.js";
 import type { CitationChunkRow } from "../pg-types.js";
 import { contentHash } from "../traceability.js";
 
-/** The five outcomes a cited chunk can have. */
+/** The six outcomes a cited chunk can have. */
 export type CitationChunkStatus =
   | "current"
   | "carried"
   | "changed"
   | "removed"
-  | "unknown";
+  | "unknown"
+  | "unverified";
 
 /** One citation to check, as sent by the caller. */
 export interface CitationCheckItem {
@@ -198,6 +202,9 @@ export async function buildCitationsCheck(
   // document that needs it, never one per chunk. A cited chunk whose exact
   // content exists in the current revision was carried over unchanged.
   const hashSets = new Map<string, Set<string>>();
+  // Documents whose current revision has more units than one read returns: a
+  // missing hash there proves nothing.
+  const truncatedRefs = new Set<string>();
   for (const baseRef of needsHash) {
     const contentsRes = await postgresClient.getCurrentRevisionContents(
       collection,
@@ -210,13 +217,18 @@ export async function buildCitationsCheck(
     }
     hashSets.set(
       baseRef,
-      new Set(contentsRes.result.map((content) => contentHash(content))),
+      new Set(contentsRes.result.contents.map((content) => contentHash(content))),
     );
+    if (contentsRes.result.truncated) truncatedRefs.add(baseRef);
   }
   for (const entry of pending) {
     const hashes = hashSets.get(entry.baseRef) ?? new Set<string>();
     const carried = entry.rows.some((row) => hashes.has(contentHash(row.content)));
-    results[entry.index].status = carried ? "carried" : "changed";
+    results[entry.index].status = carried
+      ? "carried"
+      : truncatedRefs.has(entry.baseRef)
+        ? "unverified"
+        : "changed";
   }
   return { checked_at: checkedAt, results };
 }

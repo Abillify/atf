@@ -1079,14 +1079,14 @@ export interface PostgresClient {
   /**
    * The content of every unit of one document's revision visible at `validAt`
    * (citations-check content-hash comparison), bounded by the navigation unit
-   * cap.
+   * cap; `truncated` says the document holds more units than were returned.
    */
   getCurrentRevisionContents(
     collection: string,
     scope: AccessScope,
     baseRef: string,
     validAt: string,
-  ): Promise<PostgresResponse<string[]>>;
+  ): Promise<PostgresResponse<{ contents: string[]; truncated: boolean }>>;
 
   delete(
     filter: SearchFilter,
