@@ -329,6 +329,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
 | [docs/README.md](docs/README.md) | Index of all documentation |
 | [docs/UPGRADE.md](docs/UPGRADE.md) | Upgrading a deployment, milestone by milestone |
+| [docs/STABILITY.md](docs/STABILITY.md) | Stability contract: what semantic versioning covers from 1.0.0 |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | STRIDE threat model per service |
 | [docs/EU-AI-ACT.md](docs/EU-AI-ACT.md) | EU AI Act obligations mapped to ATF controls |
 | [docs/runbooks/](docs/runbooks/) | Backup, key rotation, incidents, scaling, Redis outage, transaction-token rotation |

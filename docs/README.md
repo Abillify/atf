@@ -50,6 +50,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The short list per service for a first production deployment |
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
+| [STABILITY.md](STABILITY.md) | What is covered by semantic versioning from 1.0.0 and which features stay experimental |
 | [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
 | [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |

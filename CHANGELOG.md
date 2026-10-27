@@ -42,6 +42,7 @@ releases:
 ### Documentation
 
 - Capabilities, metrics and retention, threat model and DPIA template cover atf-doctor, the SharePoint source, access-list assignment, flow SLOs, the citation index and the semantic-cache sweep.
+- `docs/STABILITY.md` defines which surfaces are covered by semantic versioning from 1.0.0 and which features remain experimental.
 
 ## [0.20.0] - 2026-10-25
 
