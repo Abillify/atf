@@ -1717,6 +1717,6 @@ export const MIGRATIONS: readonly Migration[] = [
   },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
-  (max, m) => (m.version > max ? m.version : max),
+  (max, m) => Math.max(m.version, max),
   0,
 );

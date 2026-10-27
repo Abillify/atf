@@ -69,7 +69,7 @@ export const subflowLabel = (path: string): string => path.replace(/^subflows\//
 export function subflowColorIndex(path: string, all: string[]): number {
   const sorted = [...new Set(all)].sort();
   const i = sorted.indexOf(path);
-  return (i < 0 ? 0 : i) % SUBFLOW_COLORS.length;
+  return Math.max(i, 0) % SUBFLOW_COLORS.length;
 }
 
 /** Box styles (border / background / label) per colour slot (design tokens, theme dependent). */

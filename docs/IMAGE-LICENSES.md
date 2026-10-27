@@ -17,13 +17,13 @@ Production images are built from `deploy/images/Dockerfile.<service>` by the
 
 | Image | Runtime base | Copyleft OS packages in the final image |
 | --- | --- | --- |
-| `atf-runtime` | `oven/bun:1.4.3-distroless` (Debian distroless) | none beyond the distroless base |
-| `atf-search` | `oven/bun:1.4.3-distroless` | none beyond the distroless base |
-| `atf-gate` | `oven/bun:1.4.3-distroless` | none beyond the distroless base |
+| `atf-runtime` | `oven/bun:1.4.4-distroless` (Debian distroless) | none beyond the distroless base |
+| `atf-search` | `oven/bun:1.4.4-distroless` | none beyond the distroless base |
+| `atf-gate` | `oven/bun:1.4.4-distroless` | none beyond the distroless base |
 | `atf-control` | `node:26-alpine` (Alpine) | none beyond the Alpine base |
 | `atf-extract` | `debian:bookworm-slim` | poppler, LibreOffice, fonts (see below) |
-| Quickstart (`runtime`, `control`, `search`, `gate`) | `oven/bun:1.4.3` (Debian) | none beyond the Debian base |
-| Quickstart `extract` | `oven/bun:1.4.3` (Debian) | same package set as `atf-extract` |
+| Quickstart (`runtime`, `control`, `search`, `gate`) | `oven/bun:1.4.4` (Debian) | none beyond the Debian base |
+| Quickstart `extract` | `oven/bun:1.4.4` (Debian) | same package set as `atf-extract` |
 
 All bases are pinned by immutable digest in the Dockerfiles.
 

@@ -160,7 +160,7 @@ function num(value: unknown): number | null {
 
 /** Clamp a normalised coordinate into `[0,1]`; poppler can round a hair past. */
 function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
+  return Math.min(Math.max(n, 0), 1);
 }
 
 /** The union of two boxes (min of mins, max of maxes). */

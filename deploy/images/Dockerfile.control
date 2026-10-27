@@ -16,7 +16,7 @@
 #   docker build -f deploy/images/Dockerfile.control -t atf-control .
 #
 # Digests are updated by Dependabot (docker ecosystem).
-FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS build
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS build
 WORKDIR /repo
 # .dockerignore excludes node_modules, dist, .next and test artifacts, so the
 # context stays small even though this is a monorepo.
@@ -29,7 +29,7 @@ RUN bun install --frozen-lockfile
 # reverse proxy.
 RUN bun run --filter @atf/control build
 
-FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS runtime
 ENV NODE_ENV=production
 RUN addgroup -g 65532 atf \
     && adduser -u 65532 -G atf -D -h /tmp atf

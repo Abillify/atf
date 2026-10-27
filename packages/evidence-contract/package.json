@@ -19,7 +19,7 @@
     },
     "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
-        "zod": "4.6.6"
+        "zod": "4.6.7"
     },
     "devDependencies": {
         "@types/bun": "1.4.0",

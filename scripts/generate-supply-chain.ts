@@ -249,9 +249,9 @@ const REPOSITORY_LICENSE_REUSE_RULES: RepositoryLicenseReuseRule[] = [
 		expectedLicense: "Apache-2.0 OR MIT",
 		expectedRepository: "https://github.com/tauri-apps/tauri",
 		sourcePackagePattern: /^@tauri-apps\/cli$/,
-		allowedSourceFiles: /^LICENSE_(?:MIT|APACHE-2\.0)$/i,
+		allowedSourceFiles: /^LICENSE[_-](?:MIT|APACHE-2\.0)$/i,
 		reason:
-			"Tauri CLI platform binaries use the dual-license files of the Tauri repository.",
+			"Tauri CLI platform binaries use the dual-license files of the Tauri repository (named LICENSE_MIT / LICENSE_APACHE-2.0 up to 2.8, LICENSE-MIT / LICENSE-APACHE-2.0 from 2.12).",
 	},
 	{
 		packagePattern: /^cookie-signature$/,
@@ -331,7 +331,7 @@ const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 	{
 		packagePattern:
 			/^@oxc-parser\/binding-(?:darwin-arm64|linux-x64-gnu|linux-x64-musl)$/,
-		expectedVersion: "0.153.0",
+		expectedVersion: "0.155.0",
 		expectedLicense: "MIT",
 		expectedRepository: "https://github.com/oxc-project/oxc",
 		files: ["licenses/declared-MIT-no-upstream-copyright.txt"],
@@ -353,7 +353,7 @@ const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 const EXPRESSION_LICENSE_SUPPLEMENT_RULES: ExpressionLicenseSupplementRule[] = [
 	{
 		packagePattern: /^type-fest$/,
-		expectedVersion: "0.13.1",
+		expectedVersion: "0.20.2",
 		expectedLicense: "(MIT OR CC0-1.0)",
 		expectedRepository: "sindresorhus/type-fest",
 		files: ["licenses/CC0-1.0.txt"],
@@ -719,6 +719,10 @@ const MPL_SOURCE_BY_VERSION = new Map([
 	[
 		"1.30.2",
 		"https://github.com/parcel-bundler/lightningcss/archive/400f705e63e139c326f480aed11e1416f5a3a61f.tar.gz",
+	],
+	[
+		"1.32.0",
+		"https://github.com/parcel-bundler/lightningcss/archive/7f8a861bdee476fe90c89a8badeb3fd33a99c51a.tar.gz",
 	],
 	[
 		"1.33.0",

@@ -32,7 +32,7 @@ releases:
 
 ### Changed
 
-- **Dependencies**: zod 4.6.6, undici 6.29.1 (Outpost), AWS Bedrock SDK clients 3.1156.0 and the AI SDK group (`ai` 7.0.152 with the matching `@ai-sdk/*` providers).
+- **Dependencies**: every dependency on its latest release except `redis` (6.x switches to RESP3 and a 5 s default command timeout; kept on 5.x until it is tested against a real Redis) and the toolchain pins (`@types/bun`, TypeScript). Notable: zod 4.6.7, undici 8.12.3 (Outpost, security kit), chokidar 6 (Runtime flow watcher, Outpost), MCP SDK 1.32.2, hono 4.13.14, express 5.3.0, multer 2.5.0, `@langchain/core` 1.3.0, Next.js 16.4.3, Tailwind CSS 4.3, jsdom 30, Vite 8 with `@vitejs/plugin-react` 6 and Tauri 2.12 (Outpost Desktop, including a full `cargo update`), Biome 2.6.3 (Helm templates are no longer linted as YAML), the AI SDK and AWS SDK groups. Container bases move to `oven/bun:1.4.4` and the current `node:26-alpine` digest; the CodeQL, `docker/login-action` and `download-artifact` actions are updated.
 
 ### Deprecated
 

@@ -352,7 +352,7 @@ export function groupResultsBySection(results: SearchResult[]): SectionGroup[] {
   const out: SectionGroup[] = [];
   for (const { section_path, base_ref, results: groupResults } of groups.values()) {
     const score = groupResults.reduce(
-      (best, r) => (r.score > best ? r.score : best),
+      (best, r) => Math.max(r.score, best),
       Number.NEGATIVE_INFINITY,
     );
     out.push({ section_path, base_ref, score, results: groupResults });

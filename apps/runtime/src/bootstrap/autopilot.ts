@@ -247,7 +247,7 @@ function startHealthSignalPoller(opts: HealthPollerOptions): void {
           const flowQuality =
             qualitySnap.length > 0
               ? qualitySnap.reduce(
-                  (best, s) => (s.meanScore > best ? s.meanScore : best),
+                  (best, s) => Math.max(s.meanScore, best),
                   0,
                 )
               : undefined;

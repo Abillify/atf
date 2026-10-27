@@ -1279,13 +1279,6 @@
     {
       "rule": "lint/style/noNonNullAssertion",
       "severity": "warning",
-      "file": "apps/search/src/handlers/mcp-search-tool.ts",
-      "hash": "6d7b3f2ed2750344",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
       "file": "apps/search/src/handlers/mcp-transaction.ts",
       "hash": "0d5b1e2550fa40b9",
       "count": 1
@@ -1302,13 +1295,6 @@
       "severity": "warning",
       "file": "apps/search/src/handlers/mcp-transaction.ts",
       "hash": "8899d89680b91423",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/search/src/handlers/mcp-transaction.ts",
-      "hash": "a2908390ac7ce6df",
       "count": 1
     },
     {
@@ -1344,13 +1330,6 @@
       "severity": "warning",
       "file": "apps/search/src/handlers/search.ts",
       "hash": "61d8cb7d5a3bee39",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/search/src/handlers/search.ts",
-      "hash": "6cca39d57aac8c6c",
       "count": 1
     },
     {
@@ -1428,13 +1407,6 @@
       "severity": "warning",
       "file": "apps/search/src/pg-methods-collections.ts",
       "hash": "29628387caa82515",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/search/src/pg-methods-collections.ts",
-      "hash": "47f2eb0d11b78a3c",
       "count": 1
     },
     {

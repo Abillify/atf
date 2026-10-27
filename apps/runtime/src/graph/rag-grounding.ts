@@ -373,7 +373,7 @@ export function buildGroundingSections(
 
   if (summaries.length > 0) {
     const shown = summaries.length;
-    const total = summaryTotal > shown ? summaryTotal : shown;
+    const total = Math.max(summaryTotal, shown);
 
     // Build overview lines. Each line leads with the document's stable citation
     // number `[n]` (so the model can cite the overview directly) and carries the

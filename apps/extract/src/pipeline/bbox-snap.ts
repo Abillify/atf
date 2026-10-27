@@ -97,7 +97,7 @@ export interface SnapResult {
 
 /** Clamp a normalised coordinate into `[0,1]`. */
 function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
+  return Math.min(Math.max(n, 0), 1);
 }
 
 /** A finite, positive-area, in-page normalised box. */
