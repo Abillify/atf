@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { watch, type FSWatcher } from "node:fs";
-import { loadConfigAsync } from "./config/loader.ts";
+import { deprecatedEnvWarnings, loadConfigAsync } from "./config/loader.ts";
 import { checkProductionReadiness } from "./config/prod-gate.ts";
 import { buildApp } from "./app.ts";
 import { initTracing, shutdownTracing } from "./observability/tracing.ts";
@@ -74,6 +74,7 @@ if (process.env.MCPGATE_DEBUG_HEARTBEAT !== "0") {
 async function main() {
   logger.info(`loading configuration (pid=${process.pid}, uptime=${uptimeS()}s)`);
   const { config, dir } = await loadConfigAsync();
+  for (const warning of deprecatedEnvWarnings()) logger.warn(warning);
   logger.info(`loaded configuration from ${dir} (uptime=${uptimeS()}s)`);
 
   await initTracing(config.tracing);

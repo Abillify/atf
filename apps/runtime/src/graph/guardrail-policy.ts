@@ -52,9 +52,6 @@ import { z } from "zod";
 import type { Logger } from "../observability/logger.js";
 import { parseFlowFile, resolveConfigFile } from "../util/parse-flow-file.js";
 
-/** @deprecated Use resolveConfigFile(flowsDir, "guardrails") — kept for external references. */
-export const GUARDRAIL_POLICY_FILE = "guardrails.json";
-
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------

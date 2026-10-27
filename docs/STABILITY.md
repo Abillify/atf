@@ -13,7 +13,7 @@ change to it needs a new major version.
 From 1.0.0 the surfaces listed under [Stable surfaces](#stable-surfaces) follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html). A breaking change
 to one of them ships only in a new major version, and only after at least one
-minor release that announced it as a deprecation (see `docs/DEPRECATIONS.md`).
+minor release that announced it as a deprecation (see [DEPRECATIONS.md](DEPRECATIONS.md)).
 Additions that keep existing callers working are minor changes; fixes are patch
 changes.
 

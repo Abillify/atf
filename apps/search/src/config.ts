@@ -818,6 +818,29 @@ export interface OidcConfig {
   sessionTtlSeconds: number;
 }
 
+/**
+ * Warnings for settings that still work but are removed in 1.0.0. The caller
+ * logs them once at startup.
+ */
+export function deprecatedOptionWarnings(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const warnings: string[] = [];
+  // The config object falls back to DEFAULT_TENANT_ID for both, so only the
+  // environment says whether the alias was actually set.
+  if ((env["API_SERVICE_TENANT_ID"] ?? "").trim() !== "") {
+    warnings.push(
+      "API_SERVICE_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+    );
+  }
+  if ((env["API_OIDC_DEFAULT_TENANT_ID"] ?? "").trim() !== "") {
+    warnings.push(
+      "API_OIDC_DEFAULT_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+    );
+  }
+  return warnings;
+}
+
 export function loadConfig(): Config {
   // ── Env-var parse helpers ───────────────────────────────────────────────────
   //

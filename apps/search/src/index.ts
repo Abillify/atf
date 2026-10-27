@@ -126,7 +126,7 @@ import { getTestPageHtml } from "./test-page.js";
 import { createRateLimiter } from "./rate-limiter.js";
 import { createQueryEmbeddingCache } from "./query-cache.js";
 import { buildOpenApiSpec, buildOpenApiYaml } from "./openapi.js";
-import { type Config, loadConfig } from "./config.js";
+import { type Config, deprecatedOptionWarnings, loadConfig } from "./config.js";
 import type { CircuitBreaker } from "./retry.js";
 import { traceContextStorage } from "./trace-context.js";
 import {
@@ -1672,6 +1672,8 @@ async function main(): Promise<void> {
   }
 
   const logger = withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
+
+  for (const warning of deprecatedOptionWarnings()) logger.warn(warning);
 
   // ── Production-readiness gate ────────────────────────────────────────────
   // Refuse to start in production with permissive settings rather than warning

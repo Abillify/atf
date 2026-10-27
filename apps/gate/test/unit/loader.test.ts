@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig } from "../../src/config/loader.ts";
+import { deprecatedEnvWarnings, loadConfig } from "../../src/config/loader.ts";
 
 let dirs: string[] = [];
 
@@ -464,5 +464,21 @@ describe("loadConfig — MCP token exchange (Req 6.13)", () => {
       delete process.env.MCP_DS_SECRET;
       delete process.env.MCP_ACTOR_SECRET;
     }
+  });
+});
+
+describe("deprecated environment variables", () => {
+  it("warns once per deprecated variable that is set", () => {
+    expect(deprecatedEnvWarnings({})).toEqual([]);
+    expect(deprecatedEnvWarnings({ AUTHZ_ENABLED: "true", DEFAULT_TENANT_ID: "acme" })).toEqual([]);
+    expect(
+      deprecatedEnvWarnings({
+        AUTHORIZATION_ENABLED: "true",
+        TENANT_ISOLATION_DEFAULT_TENANT_ID: "acme",
+      }),
+    ).toEqual([
+      "AUTHORIZATION_ENABLED is deprecated and will be removed in 1.0.0; use AUTHZ_ENABLED",
+      "TENANT_ISOLATION_DEFAULT_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+    ]);
   });
 });

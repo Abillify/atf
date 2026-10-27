@@ -32,6 +32,10 @@ releases:
 
 - **Dependencies**: zod 4.6.6, undici 6.29.1 (Outpost), AWS Bedrock SDK clients 3.1156.0 and the AI SDK group (`ai` 7.0.152 with the matching `@ai-sdk/*` providers).
 
+### Deprecated
+
+- Deprecated environment variables and Gate options now log a warning at startup when set; `docs/DEPRECATIONS.md` lists every deprecated item with its replacement. They are removed in 1.0.0.
+
 ### Fixed
 
 - **Runtime** (semantic cache, erasure): with a database-backed cache, erasing a user deletes that user's entries from every replica and from before a restart; entries written before user scoping are dropped on the first erasure.

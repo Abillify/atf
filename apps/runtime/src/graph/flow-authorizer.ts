@@ -52,9 +52,6 @@ import { evaluateConditionExpression } from "./condition-evaluator.js";
 import type { Logger } from "../observability/logger.js";
 import { parseFlowFile, resolveConfigFile } from "../util/parse-flow-file.js";
 
-/** @deprecated Use resolveConfigFile(flowsDir, "access") — kept for test compatibility. */
-export const ACCESS_FILE_NAME = "access.json";
-
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------

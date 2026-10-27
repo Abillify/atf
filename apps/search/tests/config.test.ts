@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { loadConfig } from "../src/index.js";
+import { deprecatedOptionWarnings } from "../src/config.js";
 import { checkProductionReadiness } from "../src/prod-gate.js";
 
 const REQUIRED_VARS = ["POSTGRES_URL", "EMBED_URL", "EMBED_MODEL"] as const;
@@ -617,5 +618,15 @@ describe("loadConfig — full-text search language", () => {
   it("rejects an FTS_EXTRA_LANGUAGES entry that is not a configuration name", () => {
     process.env["FTS_EXTRA_LANGUAGES"] = "german; DROP TABLE x";
     expect(() => loadConfig()).toThrow("FTS_EXTRA_LANGUAGES");
+  });
+  it("warns about each deprecated tenant alias that is set, and about nothing else", () => {
+    expect(deprecatedOptionWarnings({})).toEqual([]);
+    expect(deprecatedOptionWarnings({ DEFAULT_TENANT_ID: "acme" })).toEqual([]);
+    expect(
+      deprecatedOptionWarnings({ API_SERVICE_TENANT_ID: "acme", API_OIDC_DEFAULT_TENANT_ID: "acme" }),
+    ).toEqual([
+      "API_SERVICE_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+      "API_OIDC_DEFAULT_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+    ]);
   });
 });

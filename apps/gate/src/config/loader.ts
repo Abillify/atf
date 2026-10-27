@@ -655,6 +655,27 @@ async function fetchSpecText(imp: OpenApiImport, dir: string): Promise<string> {
  *     tools/<name>/tool.yaml   (per-tool directory; may reference query.sql)
  *     tools/*.yaml             (optional grouped files: array or { tools: [...] })
  */
+/**
+ * Warnings for environment variables that still work but are removed in
+ * 1.0.0. The caller logs them once at startup.
+ */
+export function deprecatedEnvWarnings(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const warnings: string[] = [];
+  if ((env.AUTHORIZATION_ENABLED ?? "").trim() !== "") {
+    warnings.push(
+      "AUTHORIZATION_ENABLED is deprecated and will be removed in 1.0.0; use AUTHZ_ENABLED",
+    );
+  }
+  if ((env.TENANT_ISOLATION_DEFAULT_TENANT_ID ?? "").trim() !== "") {
+    warnings.push(
+      "TENANT_ISOLATION_DEFAULT_TENANT_ID is deprecated and will be removed in 1.0.0; use DEFAULT_TENANT_ID",
+    );
+  }
+  return warnings;
+}
+
 export function loadConfig(explicitDir?: string): { config: AppConfig; dir: string } {
   const dir = resolveConfigDir(explicitDir);
   const merged = buildMerged(dir);
