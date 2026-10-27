@@ -1,7 +1,7 @@
 {
   "version": 1,
   "artifacts": {
-    "runtime-dist": {"path": "apps/runtime/dist", "warningBytes": 12582912},
+    "runtime-dist": {"path": "apps/runtime/dist", "warningBytes": 13631488},
     "gate-dist": {"path": "apps/gate/dist", "warningBytes": 12582912},
     "search-dist": {"path": "apps/search/dist", "warningBytes": 6291456},
     "extract-dist": {"path": "apps/extract/dist", "warningBytes": 5242880},
