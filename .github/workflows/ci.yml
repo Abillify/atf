@@ -781,7 +781,12 @@ jobs:
   eval:
     name: Retrieval eval (real models)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 90, not 45: on push events to main the CPU-bound TEI ablation steps run
+    # roughly 2-3x slower than on pull_request runs (observed 35 min vs 14 min
+    # for the dense/rerank/hyde step), so 45 minutes cancelled every main CI
+    # run and blocked release tags that require a successful CI run on the
+    # exact SHA.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
