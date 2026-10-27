@@ -32,7 +32,8 @@ releases:
 
 ### Changed
 
-- **Dependencies**: every dependency on its latest release except `redis` (6.x switches to RESP3 and a 5 s default command timeout; kept on 5.x until it is tested against a real Redis) and the toolchain pins (`@types/bun`, TypeScript). Notable: zod 4.6.7, undici 8.12.3 (Outpost, security kit), chokidar 6 (Runtime flow watcher, Outpost), MCP SDK 1.32.2, hono 4.13.14, express 5.3.0, multer 2.5.0, `@langchain/core` 1.3.0, Next.js 16.4.3, Tailwind CSS 4.3, jsdom 30, Vite 8 with `@vitejs/plugin-react` 6 and Tauri 2.12 (Outpost Desktop, including a full `cargo update`), Biome 2.6.3 (Helm templates are no longer linted as YAML), the AI SDK and AWS SDK groups. Container bases move to `oven/bun:1.4.4` and the current `node:26-alpine` digest; the CodeQL, `docker/login-action` and `download-artifact` actions are updated.
+- **Dependencies**: every dependency on its latest release except `redis` (6.x switches to RESP3 and a 5 s default command timeout; kept on 5.x until it is tested against a real Redis), `jsdom` (30.x pulls in dependencies under BlueOak-1.0.0 and CC0-1.0, which are not on the license allowlist yet; kept on 26.x) and the toolchain pins (`@types/bun`, TypeScript). Notable: zod 4.6.7, undici 8.12.3 (Outpost, security kit), chokidar 6 (Runtime flow watcher, Outpost), MCP SDK 1.32.2, hono 4.13.14, express 5.3.0, multer 2.5.0, `@langchain/core` 1.3.0, Next.js 16.4.3, Tailwind CSS 4.3, Vite 8 with `@vitejs/plugin-react` 6 and Tauri 2.12 (Outpost Desktop, including a full `cargo update`), Biome 2.6.3 (Helm templates are no longer linted as YAML), the AI SDK and AWS SDK groups. Container bases move to `oven/bun:1.4.4` and the current `node:26-alpine` digest; the CodeQL, `docker/login-action` and `download-artifact` actions are updated.
+- **Eval**: golden-set fixture 1.4.0 with reworded documents and questions (pages, figures, cells and question count unchanged). Retrieval metrics are not directly comparable with fixture 1.3.0; re-ingest a live golden corpus before comparing.
 
 ### Deprecated
 
@@ -45,6 +46,7 @@ releases:
 - **Search** (`/v2/citations/check`): the "carried over" comparison runs in the database, with whitespace collapsed on both sides, so documents of any size are classified correctly instead of a false `changed` beyond 5000 units. The status `unverified` is part of the response schema and is counted separately by the Runtime citation-impact report and Control, but is currently not produced.
 - **Tooling** (`atf-doctor`): without a readable `FLOWS_DIR` the report says that flows were not checked instead of reporting them as loaded.
 - **Outpost** (`sharepoint`): a run that starts from the stored delta link lists changes only, and items it did not mention were treated as deleted (with `mirrorDelete` they were deleted once the threshold allowed it, otherwise marked `deleted-in-source`). Incremental listings now skip the absence-based delete phase; deletions arrive as tombstones and follow `mirrorDelete`.
+- **Outpost** (release): the container image gets GitHub build-provenance and SBOM attestations like the other images, the Windows single-executable build resolves `node` and `postject` natively, and the macOS x64 build installs the x64 dependencies.
 
 ### Documentation
 
