@@ -833,18 +833,20 @@ jobs:
             --base-url "$base"
           bun run scripts/eval/retrieval.ts --v2 --collection golden_ctx \
             --base-url "$base" --label ablation-ctx-header \
-            --out reports/eval/retrieval
+            --out reports/eval/retrieval \
+            --thresholds scripts/eval/baseline/thresholds.ctx-header.json
 
-      # Reporting ablations without thresholds: answer-ready retrieval
-      # (POST /v2/retrieve) and the German compound set against the plain and
-      # the compound-splitting Search instance (ports 3012 / 3013, same
-      # database, query-side option only).
+      # Answer-ready retrieval (POST /v2/retrieve) is gated by its own floors;
+      # the German compound set is reported only, against the plain and the
+      # compound-splitting Search instance (ports 3012 / 3013, same database,
+      # query-side option only).
       - name: Answer-ready retrieval and compound ablations
         run: |
           set -euo pipefail
           bun run scripts/eval/retrieval.ts --retrieve --collection golden \
             --base-url http://127.0.0.1:3012 --label ablation-retrieve \
-            --out reports/eval/retrieval
+            --out reports/eval/retrieval \
+            --thresholds scripts/eval/baseline/thresholds.retrieve.json
           bun run scripts/eval/retrieval.ts \
             --fixture scripts/eval/golden-set/de-morphology.v1.json \
             --search-mode fts --collection golden \

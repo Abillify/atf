@@ -1,0 +1,5 @@
+{
+  "page_recall": 0.97,
+  "figure_recall": 0.97,
+  "ndcg": 0.88
+}

@@ -377,6 +377,21 @@ hold with margin); the latency
 floors are generous because CI runs on shared CPU (a cold Search under TEI
 contention can show p50 in the tens of ms while warm it is ~5 ms).
 
+### Gates
+
+Three threshold files gate three runs in the CI `eval` job:
+
+| File | Run | Floors |
+| --- | --- | --- |
+| `baseline/thresholds.json` | baseline (v1 hybrid) | as above |
+| `baseline/thresholds.retrieve.json` | `--retrieve` (answer-ready retrieval, `POST /v2/retrieve`) | `page_recall` 0.96, `ndcg` 0.81 |
+| `baseline/thresholds.ctx-header.json` | `--v2` run on `golden_ctx` (contextual embedding header) | `page_recall` 0.97, `figure_recall` 0.97, `ndcg` 0.88 |
+
+The floors of the last two sit 0.03 below the CI measurement of 2026-10-25 on golden
+set 1.3.0 (page metrics at k=10): `--retrieve` 0.992 / nDCG 0.847, contextual header
+1.000 / figure recall 1.000 / nDCG 0.918. `thresholds.json` is unchanged. The other
+ablations (dense, rerank, HyDE, compound) are reported, not gated.
+
 ## Ablations (requirements 4.9/4.10)
 
 Each ablation isolates one pipeline stage against the same golden corpus:
