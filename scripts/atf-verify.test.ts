@@ -1138,7 +1138,7 @@ async function makeCitationImpactArtifacts(
       summary: {
         executions_checked: 12,
         executions_affected: 2,
-        chunks: { current: 9, carried: 0, changed: 1, removed: 1, unknown: 0 },
+        chunks: { current: 9, carried: 0, changed: 1, removed: 1, unknown: 0, unverified: 0 },
       },
       affected: [
         {
