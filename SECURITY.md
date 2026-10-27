@@ -39,6 +39,8 @@ There is no bug bounty program.
 
 ## Supported versions
 
+### Before 1.0
+
 ATF is pre-1.0. Only the latest commit on `main` receives security fixes. Tags mark releases
 but are not maintained branches: a fix ships on `main` and in the next tag, never as a patch to
 an earlier one. This table will gain rows if that changes.
@@ -47,6 +49,14 @@ an earlier one. This table will gain rows if that changes.
 | --- | --- |
 | `main` | Yes |
 | Tagged releases, including `v0.20.0` | Only through the next tag |
+
+### From 1.0.0
+
+The latest minor release receives all fixes. The previous minor receives security fixes for 90 days after the next minor is released. Patch releases are cut from a maintenance branch `release/X.Y`.
+
+| Version | Supported |
+| --- | --- |
+| 1.0.x | Yes (from release) |
 
 ## Scope
 
