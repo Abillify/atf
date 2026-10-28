@@ -327,6 +327,71 @@ describe("PostgresAuditLog", () => {
     expect(log.writeFailures()).toBe(1);
     expect(log.pendingWrites()).toBe(0);
   });
+
+  it("logs a failed write with its action and the cause", async () => {
+    const { db } = chainDb({ failInsert: () => true });
+    const warnings: Array<{ msg: string; meta: unknown }> = [];
+    const logger = {
+      warn: (msg: string, meta?: unknown) => warnings.push({ msg, meta }),
+      info: () => {},
+      error: () => {},
+      debug: () => {},
+    } as unknown as ConstructorParameters<typeof PostgresAuditLog>[1];
+    const log = new PostgresAuditLog(db, logger);
+    log.record({ actor: "a", action: "secret.read" });
+    await log.flush?.();
+    const failure = warnings.find((w) => w.msg === "Failed to persist audit entry");
+    expect(failure?.meta).toMatchObject({ action: "secret.read" });
+  });
+
+  it("getById reads one row through the operator pool, undefined when absent", async () => {
+    const row = {
+      id: 7,
+      actor: "alice",
+      role: "admin",
+      action: "flow.publish",
+      target: "flows/a",
+      outcome: "success",
+      details: { k: 1 },
+      created_at: new Date("2026-10-28T10:00:00Z"),
+      hash: "h7",
+      prev_hash: "h6",
+    };
+    const seen: unknown[][] = [];
+    const db: Database = {
+      async query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]> {
+        if (/WHERE id = \$1/.test(text)) {
+          seen.push(params ?? []);
+          return (params?.[0] === 7 ? [row] : []) as unknown as T[];
+        }
+        return [] as T[];
+      },
+      async close() {},
+      async withOperator<T>(cb: (db: Database) => Promise<T>): Promise<T> {
+        return cb(this);
+      },
+    };
+    const log = new PostgresAuditLog(db);
+    const found = await log.getById(7);
+    expect(found).toMatchObject({ id: 7, actor: "alice", action: "flow.publish", outcome: "success" });
+    expect(await log.getById(8)).toBeUndefined();
+    expect(seen).toEqual([[7], [8]]);
+  });
+
+  it("getById falls back to the in-memory mirror when the query fails", async () => {
+    const db: Database = {
+      async query<T = Record<string, unknown>>(text: string): Promise<T[]> {
+        if (/WHERE id = \$1/.test(text)) throw new Error("db down");
+        return [] as T[];
+      },
+      async close() {},
+      async withOperator<T>(cb: (db: Database) => Promise<T>): Promise<T> {
+        return cb(this);
+      },
+    };
+    const log = new PostgresAuditLog(db);
+    expect(await log.getById(123)).toBeUndefined();
+  });
 });
 
 describe("createAuditLog", () => {
