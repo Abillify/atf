@@ -425,6 +425,13 @@ const STANDARD_LICENSE_FAMILIES: StandardLicenseFamily[] = [
 		textPattern:
 			/CC0 1\.0 Universal[\s\S]*Statement of Purpose[\s\S]*1\. Copyright and Related Rights[\s\S]*2\. Waiver[\s\S]*3\. Public License Fallback[\s\S]*4\. Limitations and Disclaimers/i,
 	},
+	{
+		// Permissive with an express patent grant; the only duty is passing on
+		// the license text or its link, which the notices do (lru-cache 11 via jsdom).
+		id: "BlueOak-1.0.0",
+		textPattern:
+			/Blue Oak Model License[\s\S]*Version 1\.0\.0[\s\S]*## Purpose[\s\S]*## Copyright[\s\S]*## Notices[\s\S]*## Patent[\s\S]*## No Liability/i,
+	},
 	// Families below occur in the Rust (crates.io) dependency graph of
 	// Outpost Desktop (Requirement 10.7, Task 14.4).
 	{
@@ -472,6 +479,9 @@ const ALLOWED_LICENSE_EXPRESSIONS = new Map<string, string>([
 	["id:MPL-2.0", "MPL-2.0"],
 	["id:LGPL-3.0-or-later", "LGPL-3.0-or-later"],
 	["id:CC-BY-4.0", "CC-BY-4.0"],
+	// Dev-only dependencies of jsdom 30 (Control tests): lru-cache 11 and mdn-data.
+	["id:BlueOak-1.0.0", "BlueOak-1.0.0"],
+	["id:CC0-1.0", "CC0-1.0"],
 	["and(id:MIT,id:ISC)", "MIT AND ISC"],
 	["or(id:MIT,id:Apache-2.0)", "MIT OR Apache-2.0"],
 	// Same dual license, operand order as declared by the Tauri packages.

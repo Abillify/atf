@@ -115,8 +115,8 @@ export const ServerConfigSchema = z.object({
       /**
        * Backing store for the counter. `memory` (default) is per-instance and
        * fine for a single process; `redis` shares the counter across instances
-       * for correct limiting behind a load balancer (requires the optional
-       * `redis` + `rate-limit-redis` packages to be installed).
+       * for correct limiting behind a load balancer (the Gate ships the
+       * `redis` and `rate-limit-redis` packages).
        */
       store: z
         .object({
@@ -134,7 +134,7 @@ export const ServerConfigSchema = z.object({
        * (or one caller uses many IPs). Independent of the IP-based limit above
        * - both apply when enabled. Backed by an in-process TTL counter by
        * default; set `store.type: redis` to share it across instances
-       * (reuses the same optional `redis` + `rate-limit-redis` packages).
+       * (uses the bundled `redis` client and the Security_Kit GCRA backend).
        */
       perIdentity: z
         .object({

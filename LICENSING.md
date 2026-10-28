@@ -101,7 +101,8 @@ canonicalization, the complete expression must be exactly one entry of the allow
 (`ALLOWED_LICENSE_EXPRESSIONS` in `scripts/generate-supply-chain.ts` is authoritative; an
 expression not on it fails the check, however permissive its parts are):
 - single identifiers: `Apache-2.0`, `MIT`, `MIT-0`, `0BSD`, `ISC`, `BSD-2-Clause`,
-  `BSD-3-Clause`, `MPL-2.0`, `LGPL-3.0-or-later`, `CC-BY-4.0`, and, from the Rust dependency
+  `BSD-3-Clause`, `MPL-2.0`, `LGPL-3.0-or-later`, `CC-BY-4.0`, `BlueOak-1.0.0`, `CC0-1.0`
+  (both only from jsdom, a test dependency of Control), and, from the Rust dependency
   graph of Outpost Desktop, `Zlib`, `Unicode-3.0`, `Unlicense` and `CDLA-Permissive-2.0`;
 - combinations: `MIT AND ISC`, `MIT OR Apache-2.0` (either operand order),
   `(AFL-2.1 OR BSD-3-Clause)`, `(MIT OR CC0-1.0)`, plus the dual and triple licenses and the

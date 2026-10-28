@@ -12,11 +12,11 @@ import { logger } from "../logger.ts";
  *   built-in in-process store. Correct for a single instance.
  * - `redis`: returns a shared Redis-backed store so the limit is enforced
  *   across instances behind a load balancer. The `redis` and `rate-limit-redis`
- *   packages are optional and loaded lazily; a clear error is thrown when the
- *   store is selected but the packages are not installed.
+ *   packages ship with the Gate and are loaded lazily, only when this store
+ *   is selected.
  *
- * The factory is async so the (optional) Redis client can connect before the
- * limiter middleware is constructed.
+ * The factory is async so the Redis client can connect before the limiter
+ * middleware is constructed.
  */
 export async function createRateLimitStore(
   cfg: ServerConfig["rateLimit"],
@@ -31,16 +31,16 @@ export async function createRateLimitStore(
     let redisMod: { createClient: (opts: { url: string }) => RedisLike };
     let rlRedisMod: { RedisStore: new (opts: RedisStoreOptions) => Store };
     try {
-      // Variable specifiers keep these out of the static dependency graph so the
-      // build does not require the optional packages to be present.
+      // Variable specifiers keep these out of the bundle; they are resolved from
+      // the Gate's node_modules at runtime.
       const redisName = "redis";
       const rlRedisName = "rate-limit-redis";
       redisMod = (await import(redisName)) as typeof redisMod;
       rlRedisMod = (await import(rlRedisName)) as typeof rlRedisMod;
     } catch {
       throw new Error(
-        "server.rateLimit.store.type is 'redis' but the optional packages are missing. " +
-          "Install them with: bun add redis rate-limit-redis",
+        "server.rateLimit.store.type is 'redis' but the 'redis' or 'rate-limit-redis' package " +
+          "could not be loaded; reinstall the Gate dependencies (bun install)",
       );
     }
 

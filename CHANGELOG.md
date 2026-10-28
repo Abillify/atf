@@ -17,6 +17,12 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+### Changed
+
+- **Dependencies**: `redis` 6.3.0 (Gate, Search, Extract). The client now speaks RESP3 by default, applies a 5 s command timeout and negotiates maintenance notifications; it needs Redis 6 or later on the server (tested against 7.4 and 8.2). `jsdom` 30 for the Control tests.
+- **Gate**: `rate-limit-redis` 6.0.2 is a regular dependency and ships in the image, so `server.rateLimit.store.type: redis` works without installing anything; before, the stock image refused to start with that setting because the package was missing.
+- **Licensing**: `BlueOak-1.0.0` and `CC0-1.0` are allowed on their own; both come only from jsdom, a test dependency of Control.
+
 ### Fixed
 
 - **Gate** (approvals): with a Redis URL and the default `policies.approval.maxPending`, creating a pending approval always failed with "approval store unavailable", because the create script did not compile on Redis (and would have reported every write as a duplicate). Human-approval flows on a shared Redis work again.

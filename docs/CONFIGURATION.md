@@ -1137,7 +1137,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `server.rateLimit` | object | — | Rate-limiting on all MCP and authentication endpoints. Uses a sliding-window counter keyed on the client IP. |
 | `server.rateLimit.enabled` | boolean | `true` | — |
 | `server.rateLimit.max` | number | `200` | Maximum requests per IP per window (default: 200). |
-| `server.rateLimit.perIdentity` | object | — | Additional rate limit keyed on the caller's identity (auth subject) rather than IP, applied to MCP tool calls after authentication. Useful for multi-tenant deployments where many callers share one egress IP (or one caller uses many IPs). Independent of the IP-based limit above - both apply when enabled. Backed by an in-process TTL counter by default; set `store.type: redis` to share it across instances (reuses the same optional `redis` + `rate-limit-redis` packages). |
+| `server.rateLimit.perIdentity` | object | — | Additional rate limit keyed on the caller's identity (auth subject) rather than IP, applied to MCP tool calls after authentication. Useful for multi-tenant deployments where many callers share one egress IP (or one caller uses many IPs). Independent of the IP-based limit above - both apply when enabled. Backed by an in-process TTL counter by default; set `store.type: redis` to share it across instances (uses the bundled `redis` client and the Security_Kit GCRA backend). |
 | `server.rateLimit.perIdentity.enabled` | boolean | `false` | — |
 | `server.rateLimit.perIdentity.failMode` | "open" \| "closed" | `"closed"` | What to do when the backing store (Redis) fails: `closed` (default) rejects requests — protection first; `open` lets them through — availability first. Ignored by the memory backend. |
 | `server.rateLimit.perIdentity.max` | number | `120` | — |
@@ -1146,7 +1146,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `server.rateLimit.perIdentity.store.redisUrl` | string | — | — |
 | `server.rateLimit.perIdentity.store.type` | "memory" \| "redis" | `"memory"` | — |
 | `server.rateLimit.perIdentity.windowMs` | number | `60000` | — |
-| `server.rateLimit.store` | object | — | Backing store for the counter. `memory` (default) is per-instance and fine for a single process; `redis` shares the counter across instances for correct limiting behind a load balancer (requires the optional `redis` + `rate-limit-redis` packages to be installed). |
+| `server.rateLimit.store` | object | — | Backing store for the counter. `memory` (default) is per-instance and fine for a single process; `redis` shares the counter across instances for correct limiting behind a load balancer (the Gate ships the `redis` and `rate-limit-redis` packages). |
 | `server.rateLimit.store.prefix` | string | `"mcpgate:rl:"` | Key prefix for rate-limit entries in the shared store. |
 | `server.rateLimit.store.redisUrl` | string | — | Redis connection URL, e.g. redis://localhost:6379. |
 | `server.rateLimit.store.type` | "memory" \| "redis" | `"memory"` | — |

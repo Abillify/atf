@@ -55,8 +55,9 @@ describe("LabeledEdge", () => {
       (p) => p.style.strokeDasharray !== "",
     );
     expect(frames.length).toBe(2);
-    expect((frames[0] as SVGPathElement).style.stroke).toBe("#dc2626");
-    expect((container.querySelector("text") as SVGTextElement).style.fill).toBe("#dc2626");
+    // jsdom 30 serializes colours like a browser does (#dc2626 → rgb(220, 38, 38)).
+    expect((frames[0] as SVGPathElement).style.stroke).toBe("rgb(220, 38, 38)");
+    expect((container.querySelector("text") as SVGTextElement).style.fill).toBe("rgb(220, 38, 38)");
   });
 
   test("cuts a label longer than the edge at the end, with the full text as tooltip", () => {
