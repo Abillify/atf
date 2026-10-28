@@ -543,6 +543,12 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # setup-bun must run before the guard step: the guard reads the package
+      # version with `bun -e` and would otherwise fail with
+      # "bun: command not found" on a bare runner.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Re-assert release guard
         run: |
           set -euo pipefail
@@ -550,13 +556,15 @@ jobs:
           test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           test "$GITHUB_REF_NAME" = "outpost-v$(bun -e 'console.log((await Bun.file("apps/outpost/package.json").json()).version)')"
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
-      - run: find artifacts -type f ! -name '*.sig' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      # Only the installers (and their Minisign .sig files) are release assets;
+      # the artifacts also contain the unpacked .app bundles and build support
+      # files, which must not end up as individual release assets.
+      - run: |
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \) ! -name '*.sig' -print0 \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS
       # Updater manifest latest.json with the Minisign signatures (.sig) of
       # the installers per platform (updater).
       - name: Generate updater manifest latest.json
@@ -585,7 +593,11 @@ jobs:
           if [ -f latest.json ]; then
             assets+=(latest.json)
           fi
+          # Same filter as the SHA256SUMS step: only the installers and their
+          # Minisign signatures are release assets, not the unpacked .app
+          # bundles or create-dmg support files inside the artifacts.
           while IFS= read -r file; do
             assets+=("$file")
-          done < <(find artifacts -type f | sort)
+          done < <(find artifacts -type f \
+              \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.sig' \) | sort)
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "${assets[@]}"
