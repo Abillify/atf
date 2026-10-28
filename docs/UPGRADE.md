@@ -635,7 +635,7 @@ Changes since 0.20.0 that need operator attention:
 6. Runtime: migration 51 rewrites JSONB values that earlier versions stored as JSON string scalars in `erasure_requests`, `tenants`, `eval_runs` and `eval_matrix_runs`, so erasure receipts are found by id again. It only touches string scalars that hold a JSON object or array and runs once at startup with the other migrations.
 7. Outpost (`sharepoint`): runs that start from the stored delta link no longer treat unmentioned items as deleted. Sources that ran with `mirrorDelete` off may hold items marked `deleted-in-source` that still exist in SharePoint; they are uploaded again on their next change. To restore them at once, delete the source's `deltaLink` from the Outpost state, so the next run lists the whole library.
 
-### 0.21 → next
+### 0.21 → 0.22
 
 Changes since 0.21.0 that need operator attention:
 

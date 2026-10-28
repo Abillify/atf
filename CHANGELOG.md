@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-28
+
 ### Security
 
 - **Search, Extract**: every API route is rate limited per client IP (`RATE_LIMIT`). Before, only the ingest, search and v2 routes were; the read routes (`/documents`, `/document`, `/summaries`, …), the collection admin routes, `/ui`, the browser login (`POST /login`, which checks a token) and the OIDC routes were not. Health probes, `/metrics`, the evidence JWKS and the OpenAPI documents stay unlimited, and so do Search's MCP endpoints, whose callers (Gate, Runtime) bundle many users behind one IP and limit per identity themselves.
@@ -4586,7 +4588,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/Abillify/atf/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Abillify/atf/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Abillify/atf/compare/v0.19.3...v0.20.0
 [0.19.3]: https://github.com/Abillify/atf/compare/v0.19.2...v0.19.3

@@ -2,8 +2,8 @@ apiVersion: v2
 name: runtime
 description: ATF Runtime - flow execution engine.
 type: application
-version: 0.21.0
-appVersion: "0.21.0"
+version: 0.22.0
+appVersion: "0.22.0"
 dependencies:
   - name: atf-common
-    version: 0.21.0
+    version: 0.22.0
