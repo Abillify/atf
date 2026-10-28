@@ -379,6 +379,21 @@ describe("/ui/uploads · console upload path", () => {
 // ─── Resumable upload: abort mid-upload and resume via HEAD ──────────────────
 
 describe("POST/PATCH/HEAD/complete · resumable upload", () => {
+  it("answers 404 for an id that is not a server-issued UUID, before any file is touched", async () => {
+    const baseUrl = await buildApp();
+    const before = await readdir(tmpUploadDir);
+    for (const id of ["..%2F..%2Fetc%2Fpasswd", "not-a-uuid", "%2E%2E"]) {
+      expect((await request(baseUrl).head(`/v2/uploads/${id}`)).status).toBe(404);
+      const patch = await request(baseUrl)
+        .patch(`/v2/uploads/${id}`)
+        .set("Upload-Offset", "0")
+        .set("Content-Type", "application/octet-stream")
+        .send(Buffer.from("x"));
+      expect(patch.status).toBe(404);
+    }
+    expect(await readdir(tmpUploadDir)).toEqual(before);
+  });
+
   it("resumes from the HEAD-reported offset after a mid-upload abort", async () => {
     const baseUrl = await buildApp();
     const whole = Buffer.from("0123456789abcdefghij"); // 20 bytes

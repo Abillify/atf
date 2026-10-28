@@ -48,7 +48,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rm, stat } from "node:fs/promises";
 import type { Readable } from "node:stream";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 import type { Request, RequestHandler, Response, Router } from "express";
 import express from "express";
 import type { Logger } from "pino";
@@ -127,9 +127,31 @@ function readParam(req: Request, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/** Session ids are server-issued UUIDs (`randomUUID`). */
+const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `{id}` route parameter as an upload session id. Express decodes `%2F`
+ * in parameters, so anything that is not a server-issued UUID is answered
+ * with 404 before it can reach a scratch-file path.
+ */
+function readUploadId(req: Request): string {
+  const id = readParam(req, "id");
+  if (!UPLOAD_ID_RE.test(id)) throw notFound(`Upload session ${id.slice(0, 64)} does not exist`);
+  return id;
+}
+
+/** A file directly inside the scratch directory; refuses any name that would leave it. */
+function scratchFile(tmpDir: string, name: string): string {
+  const root = resolve(tmpDir);
+  const file = resolve(root, name);
+  if (!file.startsWith(root + sep)) throw new Error("Scratch file name escapes the scratch directory");
+  return file;
+}
+
 /** The scratch file a session's bytes accumulate in. */
 function sessionPath(tmpDir: string, uploadId: string): string {
-  return join(tmpDir, `${uploadId}.part`);
+  return scratchFile(tmpDir, `${uploadId}.part`);
 }
 
 /** A digest may be sent bare or `sha256:`-prefixed; normalise to bare hex. */
@@ -243,7 +265,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
   // ── HEAD /v2/uploads/{id} ─────────────────────────────────────────────────
   const headHandler: RequestHandler = (req, res, next) => {
     void (async () => {
-      const upload = await store.getUpload(readParam(req, "id"));
+      const upload = await store.getUpload(readUploadId(req));
       if (upload === null) {
         res.status(404).end();
         return;
@@ -265,7 +287,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
   };
 
   async function appendChunk(req: Request, res: Response): Promise<void> {
-    const uploadId = readParam(req, "id");
+    const uploadId = readUploadId(req);
 
     // Process-local guard: one chunk in flight per session. A concurrent PATCH
     // is refused instead of racing the first one; the database guard in the
@@ -274,7 +296,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
     if (release === null) {
       throw conflict(`Another chunk for upload session ${uploadId} is still in progress`);
     }
-    const chunkPath = join(config.tmpDir, `${uploadId}.${randomUUID()}.chunk`);
+    const chunkPath = scratchFile(config.tmpDir, `${uploadId}.${randomUUID()}.chunk`);
     let confirmed: { from: number; to: number; size: unknown } | null = null;
     try {
       const upload = await store.getUpload(uploadId);
@@ -371,7 +393,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
   };
 
   async function completeSession(req: Request, res: Response): Promise<void> {
-    const uploadId = readParam(req, "id");
+    const uploadId = readUploadId(req);
     const upload = await store.getUpload(uploadId);
     if (upload === null) throw notFound(`Upload session ${uploadId} does not exist`);
     if (upload.status === "completed") {
