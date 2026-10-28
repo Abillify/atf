@@ -33,6 +33,7 @@ import {
   createJwtVerifier as createKitJwtVerifier,
   type DiscoveryClient,
   type JwtVerifier as KitJwtVerifier,
+  trimTrailingSlashes,
 } from "@atf/security-kit";
 import type { ApiOidcIssuerConfig } from "./config.js";
 
@@ -86,7 +87,7 @@ interface IssuerState {
 }
 
 function normaliseIssuer(issuer: string): string {
-  return issuer.replace(/\/+$/, "");
+  return trimTrailingSlashes(issuer);
 }
 
 /**

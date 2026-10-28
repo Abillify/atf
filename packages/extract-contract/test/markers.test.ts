@@ -205,3 +205,20 @@ describe("attribute parsing tolerance", () => {
     expect(parsePageAttribute(' page="0"')).toBeUndefined();
   });
 });
+
+describe("bounding box scanning", () => {
+  test("an unterminated bracket or quote falls back to the unquoted value", () => {
+    expect(parseBoundingBoxAttribute(" bbox=[1,2,3,4")).toEqual([1, 2, 3, 4]);
+    expect(parseBoundingBoxAttribute(' bbox="1,2,3,4')).toBeUndefined();
+    // Only the first bbox attribute counts, as before.
+    expect(parseBoundingBoxAttribute(" bbox=[] bbox=[1 2 3 4]")).toBeUndefined();
+    expect(parseBoundingBoxAttribute(" BBOX = [0.1 0.2 0.3 0.4]>")).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+
+  test("stays fast on many unterminated bbox attributes", () => {
+    const hostile = " bbox=[1".repeat(20_000);
+    const started = performance.now();
+    parseBoundingBoxAttribute(hostile);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});

@@ -12,6 +12,7 @@
  * stays dependency-free (design: Node APIs + fetch/undici).
  */
 
+import { trimTrailingChar } from "../text-trim.js";
 import { createHmac, createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { sourceS3AccessKeyKey, sourceS3SecretKeyKey } from "../credentials/keys.js";
@@ -162,10 +163,39 @@ export function resolveS3Target(
   const scheme = url.protocol === "http:" ? "http" : "https";
   const pathStyle = forcePathStyle === true || url.hostname === "127.0.0.1" || url.hostname === "localhost";
   if (pathStyle) {
-    const base = url.pathname.replace(/\/+$/, "");
+    const base = trimTrailingChar(url.pathname, "/");
     return { host: url.host, pathPrefix: `${base}/${bucket}`, scheme };
   }
   return { host: `${bucket}.${url.host}`, pathPrefix: "", scheme };
+}
+
+/**
+ * The text between `open` and the next `close` at or after `from`, and the
+ * offset after `close`. indexOf-based: the lazy regexes it replaces
+ * (`<Contents>([\s\S]*?)</Contents>`) backtracked quadratically on many
+ * unterminated elements.
+ */
+function textBetween(
+  text: string,
+  open: string,
+  close: string,
+  from: number,
+): { text: string; next: number } | undefined {
+  const start = text.indexOf(open, from);
+  if (start === -1) return undefined;
+  const end = text.indexOf(close, start + open.length);
+  if (end === -1) return undefined;
+  return { text: text.slice(start + open.length, end), next: end + close.length };
+}
+
+/** Content of the first `<name ...>…</name>` element in `text`. */
+function elementText(text: string, name: string): string | undefined {
+  const start = text.indexOf(`<${name}`);
+  if (start === -1) return undefined;
+  const tagEnd = text.indexOf(">", start);
+  if (tagEnd === -1) return undefined;
+  const close = text.indexOf(`</${name}>`, tagEnd + 1);
+  return close === -1 ? undefined : text.slice(tagEnd + 1, close);
 }
 
 /** Minimal ListBucketResult XML extraction (no external parser). */
@@ -182,16 +212,14 @@ export function parseListObjectsV2(xml: string): {
       .replace(/&apos;/g, "'")
       .replace(/&amp;/g, "&");
   const contents: { key: string; size: number; lastModified: string; etag: string }[] = [];
-  const blockRe = /<Contents>([\s\S]*?)<\/Contents>/g;
-  for (const match of xml.matchAll(blockRe)) {
-    const block = match[1] ?? "";
-    const field = (name: string): string | undefined => {
-      const m = new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(block);
-      return m?.[1];
-    };
+  const encoded = xml.includes("<EncodingType>url</EncodingType>");
+  for (let from = 0; ; ) {
+    const block = textBetween(xml, "<Contents>", "</Contents>", from);
+    if (block === undefined) break;
+    from = block.next;
+    const field = (name: string): string | undefined => elementText(block.text, name);
     const rawKey = field("Key");
     if (rawKey === undefined) continue;
-    const encoded = /<EncodingType>url<\/EncodingType>/.test(xml);
     const key = decode(encoded ? decodeURIComponent(rawKey) : rawKey);
     contents.push({
       key,
@@ -201,12 +229,11 @@ export function parseListObjectsV2(xml: string): {
     });
   }
   const truncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/.test(xml);
-  const tokenMatch = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml);
+  const token = textBetween(xml, "<NextContinuationToken>", "</NextContinuationToken>", 0);
   return {
     contents,
     isTruncated: truncated,
-    nextContinuationToken:
-      tokenMatch?.[1] !== undefined ? decode(tokenMatch[1]) : undefined,
+    nextContinuationToken: token !== undefined ? decode(token.text) : undefined,
   };
 }
 
@@ -217,15 +244,20 @@ export function parseAwsIni(content: string): Map<string, Record<string, string>
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    const section = /^\[(?:profile\s+)?([^\]]+)\]$/.exec(line);
-    if (section?.[1] !== undefined) {
-      current = {};
-      profiles.set(section[1], current);
-      continue;
+    // Plain string scanning: the section and key=value regexes this replaces
+    // backtracked quadratically on long blank runs.
+    if (line.startsWith("[") && line.endsWith("]") && line.length > 2) {
+      const inner = line.slice(1, -1);
+      if (!inner.includes("]")) {
+        const named = /^profile\s/.test(inner) ? inner.slice("profile".length).trimStart() : "";
+        current = {};
+        profiles.set(named !== "" ? named : inner, current);
+        continue;
+      }
     }
-    const kv = /^([^=]+?)\s*=\s*(.*)$/.exec(line);
-    if (kv?.[1] !== undefined && current !== undefined) {
-      current[kv[1].trim()] = kv[2]?.trim() ?? "";
+    const eq = line.indexOf("=");
+    if (eq > 0 && current !== undefined) {
+      current[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
     }
   }
   return profiles;

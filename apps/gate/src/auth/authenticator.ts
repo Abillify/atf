@@ -50,7 +50,7 @@ function mappedGroupScopes(
 
 export function extractBearer(authorization: string | undefined): string | undefined {
   if (!authorization) return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  const match = /^Bearer\s+(\S.*)$/i.exec(authorization.trim());
   return match?.[1]?.trim() || undefined;
 }
 

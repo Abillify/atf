@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 /**
  * Citation impact route (`src/routes/citation-impact.ts`)
@@ -198,7 +199,7 @@ export function createCitationImpactRouter(
     if (deps.config.citationCheckToken !== undefined) {
       headers.Authorization = `Bearer ${deps.config.citationCheckToken}`;
     }
-    const url = `${baseUrl.replace(/\/+$/, "")}/v2/citations/check`;
+    const url = `${trimTrailingSlashes(baseUrl)}/v2/citations/check`;
     for (const block of chunkCheckItems(items, CITATION_CHECK_MAX_ITEMS)) {
       let resp: Response;
       try {

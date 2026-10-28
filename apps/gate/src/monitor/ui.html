@@ -970,7 +970,7 @@
       /* ─── JSON syntax highlighting ────────────────────────────────────── */
       function syntaxHL(json) {
         return escHtml(json).replace(
-          /(&quot;(?:\\.|[^&])*&quot;)(\s*:)|(&quot;(?:\\.|[^&])*&quot;)|(\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
+          /(&quot;(?:\\.|[^&\\])*&quot;)(\s*:)|(&quot;(?:\\.|[^&\\])*&quot;)|(\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
           (m, key, colon, str, num, bool, nil) => {
             if (key)  return '<span class="json-key">'  + key  + '</span>' + (colon || '');
             if (str)  return '<span class="json-str">'  + str  + '</span>';

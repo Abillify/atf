@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 import crypto from "node:crypto";
 import type { Database } from "../db/database.js";
@@ -68,7 +69,7 @@ function normalizeBaseUrl(value: string): string {
   url.password = "";
   url.search = "";
   url.hash = "";
-  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = trimTrailingSlashes(url.pathname);
   return url.toString().replace(/\/$/, "");
 }
 

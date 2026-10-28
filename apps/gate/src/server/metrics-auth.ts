@@ -60,7 +60,7 @@ export function isLoopbackRequest(req: Request): boolean {
 function bearerOf(req: Request): string | undefined {
   const header = req.headers.authorization;
   if (typeof header !== "string") return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  const match = /^Bearer\s+(\S.*)$/i.exec(header.trim());
   return match?.[1]?.trim() || undefined;
 }
 

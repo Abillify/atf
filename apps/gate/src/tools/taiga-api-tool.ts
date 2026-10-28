@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 import { createHash } from "node:crypto";
 import type { AuthContext } from "../auth/context.ts";
@@ -36,7 +37,7 @@ export class TaigaApiToolExecutor implements ToolExecutor {
   ) {
     this.allowedHosts = runtime.outboundAllowedHosts ?? [];
     this.outboundFetch = runtime.outboundFetch;
-    this.apiBaseUrl = cfg.apiBaseUrl.replace(/\/+$/, "");
+    this.apiBaseUrl = trimTrailingSlashes(cfg.apiBaseUrl);
     this.allowedPrivateHosts = cfg.allowPrivateAddress
       ? [new URL(this.apiBaseUrl).hostname]
       : [];

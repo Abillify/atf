@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 /**
  * openapi.ts
@@ -31,7 +32,7 @@ import type { Request } from "express";
  */
 export function resolveOpenApiServerUrl(req: Request): string {
   const envUrl = process.env["PUBLIC_URL"];
-  if (envUrl) return envUrl.replace(/\/+$/, "");
+  if (envUrl) return trimTrailingSlashes(envUrl);
   const fwdProto = req.headers["x-forwarded-proto"];
   const proto =
     typeof fwdProto === "string"

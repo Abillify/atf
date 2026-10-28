@@ -5,6 +5,7 @@ import {
   resolveOperationalProfile,
   type OperationalProfile,
   type ServerTlsConfig,
+  trimTrailingSlashes,
 } from "@atf/security-kit";
 import { FTS_CONFIG_NAME_RE, isAllowedFtsLanguage } from "./collection-ddl.js";
 
@@ -975,7 +976,7 @@ export function loadConfig(): Config {
     }
 
     return {
-      issuer: issuer.replace(/\/+$/, ""),
+      issuer: trimTrailingSlashes(issuer),
       clientId: clientId as string,
       clientSecret: clientSecret as string,
       redirectUri: optionalString("OIDC_REDIRECT_URI"),
@@ -1186,7 +1187,7 @@ export function loadConfig(): Config {
     converterUrl === null
       ? null
       : {
-          url: converterUrl.replace(/\/+$/, ""),
+          url: trimTrailingSlashes(converterUrl),
           token: optionalString("CONVERTER_TOKEN"),
           caCertFile: optionalString("CONVERTER_CA_CERT_FILE"),
           timeoutMs: parseNonNegIntEnv("CONVERTER_TIMEOUT_MS", 900_000),

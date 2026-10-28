@@ -182,13 +182,17 @@ export function createSharepointSource(
   /** RS256 self-signed assertion for the certificate client-credentials flow. */
   function clientAssertion(audience: string): string {
     const pem = options.certificatePem ?? "";
-    const certMatch = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/.exec(pem);
-    if (certMatch === null) {
+    // indexOf instead of a lazy regex, which backtracked quadratically on
+    // many BEGIN markers without an END.
+    const begin = pem.indexOf("-----BEGIN CERTIFICATE-----");
+    const endMarker = "-----END CERTIFICATE-----";
+    const end = begin === -1 ? -1 : pem.indexOf(endMarker, begin);
+    if (end === -1) {
       throw new SourceRejectedError(
         "sharepoint: certificateFile must contain the certificate alongside the private key",
       );
     }
-    const cert = new X509Certificate(certMatch[0]);
+    const cert = new X509Certificate(pem.slice(begin, end + endMarker.length));
     // `fingerprint` is the colon-separated SHA-1 hex digest; x5t needs the
     // raw digest bytes, base64url-encoded.
     const fingerprintBytes = Buffer.from(cert.fingerprint.replaceAll(":", ""), "hex");

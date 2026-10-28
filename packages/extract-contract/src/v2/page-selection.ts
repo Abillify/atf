@@ -39,7 +39,8 @@ const PAGE_SELECTION_RE = /^(\d{1,7})?(-)?(\d{1,7})?$/;
  */
 export function parsePageSelection(value: string): PageSelection | null {
   // Blanks around the dash are tolerated ("3 - 10"); blanks inside a number are not.
-  const text = value.trim().replace(/\s*-\s*/g, "-");
+  // Split and trim instead of `/\s*-\s*/g`, which backtracks quadratically on long blank runs.
+  const text = value.trim().split("-").map((part) => part.trim()).join("-");
   if (text === "" || text === "-") return null;
   const match = PAGE_SELECTION_RE.exec(text);
   if (match === null) return null;

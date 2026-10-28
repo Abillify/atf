@@ -16,6 +16,7 @@ import {
   resolveOperationalProfile,
   withMaskedChildBindings,
   createServerWithOptionalTls,
+  trimTrailingSlashes,
 } from "@atf/security-kit";
 import {
   createTracer,
@@ -158,7 +159,7 @@ interface PrebuiltBreakers {
  */
 function resolveServerUrl(req: Request, port: number): string {
   const envUrl = process.env["PUBLIC_URL"];
-  if (envUrl) return envUrl.replace(/\/+$/, ""); // strip trailing slash
+  if (envUrl) return trimTrailingSlashes(envUrl); // strip trailing slash
 
   // Attempt to infer from incoming request headers (works behind a reverse proxy)
   const proto =

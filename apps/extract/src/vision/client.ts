@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 /**
  * client.ts
@@ -233,7 +234,7 @@ export function createVisionClient(
   config: VisionClientConfig,
   logger: Logger,
 ): VisionClient {
-  const endpoint = `${config.visionUrl.replace(/\/+$/, "")}/v1/chat/completions`;
+  const endpoint = `${trimTrailingSlashes(config.visionUrl)}/v1/chat/completions`;
   const budgets =
     config.visionMaxTokenVariants.length > 0
       ? config.visionMaxTokenVariants
@@ -693,7 +694,7 @@ export function createVisionClient(
       // The models listing is the cheapest endpoint every OpenAI-compatible
       // server exposes; a chat completion would spend tokens on a health check.
       const response = await fetch(
-        `${config.visionUrl.replace(/\/+$/, "")}/v1/models`,
+        `${trimTrailingSlashes(config.visionUrl)}/v1/models`,
         {
           headers: headers(),
           signal: controller.signal,

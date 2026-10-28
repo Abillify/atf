@@ -27,6 +27,7 @@
  */
 
 import { isHostAllowed } from "../egress/addresses.ts";
+import { trimTrailingSlashes } from "../url-trim.ts";
 
 export interface OidcDiscoveryDocument {
   issuer: string;
@@ -252,7 +253,7 @@ export function createDiscoveryClient(
     const issuerMatches =
       document.issuer === issuer ||
       (options.issuerMatch === "trailing-slash" &&
-        document.issuer.replace(/\/+$/, "") === issuer.replace(/\/+$/, ""));
+        trimTrailingSlashes(document.issuer) === trimTrailingSlashes(issuer));
     if (!issuerMatches) {
       throw new DiscoveryError(
         `discovery document issuer "${document.issuer}" does not match configured issuer`,

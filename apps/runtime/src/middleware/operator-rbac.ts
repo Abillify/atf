@@ -204,7 +204,7 @@ export interface OperatorAuthorizerOptions {
 
 function extractBearer(authHeader: string | undefined): string | null {
   if (authHeader === undefined) return null;
-  const m = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+  const m = /^Bearer\s+(\S.*)$/i.exec(authHeader.trim());
   return m ? (m[1] ?? "").trim() : null;
 }
 

@@ -168,7 +168,7 @@ function decodeEntities(value: string): string {
 export function normalizeInlineText(value: string): string {
 	return decodeEntities(
 		value
-			.replace(/<br\s*\/?\s*>/gi, " ")
+			.replace(/<br\s*(?:\/\s*)?>/gi, " ")
 			.replace(/<[^>]*>/g, " ")
 			.replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
 			.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")

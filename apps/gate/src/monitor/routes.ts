@@ -65,7 +65,7 @@ function safeTokenEqual(a: string, b: string): boolean {
 }
 
 function bearerMatches(req: Request, token: string): boolean {
-  const presented = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
+  const presented = /^Bearer\s+(\S.*)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
   return presented !== undefined && safeTokenEqual(presented, token);
 }
 

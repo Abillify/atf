@@ -7,6 +7,8 @@
  * network in unit tests.
  */
 
+import { trimTrailingChar } from "../text-trim.js";
+
 /** Minimal fetch surface used by the auth module. */
 export type FetchLike = (
   url: string,
@@ -46,7 +48,7 @@ export async function discover(
   issuer: string,
   fetchImpl: FetchLike,
 ): Promise<OidcDiscovery> {
-  const url = `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`;
+  const url = `${trimTrailingChar(issuer, "/")}/.well-known/openid-configuration`;
   let response: Awaited<ReturnType<FetchLike>>;
   try {
     response = await fetchImpl(url, { method: "GET" });

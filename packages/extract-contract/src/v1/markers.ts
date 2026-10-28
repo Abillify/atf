@@ -325,6 +325,32 @@ export function parsePageAttribute(rawAttrs: string): number | undefined {
 }
 
 /**
+ * The raw value of the first `bbox` / `data-bbox` attribute: `[...]`,
+ * `"..."`, `'...'` or an unquoted run up to whitespace or `>`. An opening
+ * bracket or quote without its closing counterpart falls back to the unquoted
+ * form. Scanned with indexOf instead of one alternation regex, which
+ * backtracked quadratically on many unterminated `bbox=[` occurrences.
+ */
+function readBoundingBoxValue(rawAttrs: string): string | undefined {
+  const key = /(?:^|\s)(?:bbox|data-bbox)\s*=\s*/gi;
+  for (let match = key.exec(rawAttrs); match !== null; match = key.exec(rawAttrs)) {
+    const at = match.index + match[0].length;
+    const first = rawAttrs[at];
+    if (first === "[") {
+      const close = rawAttrs.indexOf("]", at + 1);
+      if (close > at + 1) return rawAttrs.slice(at + 1, close);
+    } else if (first === '"' || first === "'") {
+      const close = rawAttrs.indexOf(first, at + 1);
+      if (close !== -1) return rawAttrs.slice(at + 1, close);
+    }
+    let end = at;
+    while (end < rawAttrs.length && !/[\s>]/.test(rawAttrs[end] as string)) end++;
+    if (end > at) return rawAttrs.slice(at, end);
+  }
+  return undefined;
+}
+
+/**
  * Extract the `bbox` attribute from a raw attribute string.
  *
  * Accepts `bbox="[a, b, c, d]"`, `bbox=[a b c d]` and semicolon separators, for
@@ -334,11 +360,7 @@ export function parsePageAttribute(rawAttrs: string): number | undefined {
 export function parseBoundingBoxAttribute(
   rawAttrs: string,
 ): BoundingBox | undefined {
-  const match =
-    /(?:^|\s)(?:bbox|data-bbox)\s*=\s*(?:\[([^\]]+)\]|"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(
-      rawAttrs,
-    );
-  const raw = match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4];
+  const raw = readBoundingBoxValue(rawAttrs);
   if (raw === undefined || raw.trim() === "") return undefined;
   const values = raw
     .replace(/^\[|\]$/g, "")

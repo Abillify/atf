@@ -192,3 +192,4 @@ export {
   redactLogString,
   withMaskedChildBindings,
 } from "./log-redact.ts";
+export { trimTrailingSlashes } from "./url-trim.ts";

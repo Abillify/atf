@@ -18,6 +18,10 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **ReDoS**: regular expressions that backtracked quadratically or exponentially on crafted input are replaced by linear scans or unambiguous patterns: trailing-slash trimming of issuers and URLs (new `trimTrailingSlashes` in the Security_Kit), the Bearer header parser in Gate and Runtime, the Gate monitor's JSON highlighter, HTML/Markdown normalisation in Search, figure and bbox parsing and page selections in `@atf/extract-contract` (2.4.1), and the S3 listing, AWS INI and certificate parsing in the Outpost.
+
 ### Added
 
 - **CI**: the test jobs start a Redis 8.2 and run the Redis-backed stores and rate limiters against it with the real client (`TEST_REDIS_URL`): Gate approvals, pending approvals, webhook replay, transaction ledger, monitor cluster bridge, per-identity and IP rate limits, and the Security_Kit GCRA backend used by Search and Extract.
@@ -224,7 +228,6 @@ here, in `0.19.2`.
 
 ### Security
 
-- **Images**: the `atf-extract` runtime base moved to the current
   `debian:bookworm-slim` digest, which carries `perl-base`
   5.36.0-7+deb12u4 and closes CVE-2026-13221, CVE-2026-42496, and
   CVE-2026-8376 (all CRITICAL, flagged by the CI image scan).
@@ -353,7 +356,6 @@ here, in `0.19.2`.
 
 ### Documentation
 
-- **Images**: `DEPLOYMENT.md`, `DEVELOPMENT.md`, and `docs/IMAGE-LICENSES.md`
   now name the `oven/bun` 1.4.3 base the production Dockerfiles actually pin,
   instead of the previous 1.4.2.
 

@@ -83,7 +83,7 @@ function extractToken(
   queryToken: string | undefined,
 ): string {
   if (authHeader !== undefined) {
-    const m = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+    const m = /^Bearer\s+(\S.*)$/i.exec(authHeader.trim());
     if (m !== null) return (m[1] ?? "").trim();
   }
   return queryToken ?? "";

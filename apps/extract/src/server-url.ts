@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 /**
  * server-url.ts
@@ -43,7 +44,7 @@ function firstHeaderValue(raw: string | string[] | undefined): string | undefine
 export function createServerUrlResolver(
   options: ServerUrlOptions,
 ): (req: Request) => string {
-  const configured = options.publicUrl?.replace(/\/+$/, "") ?? null;
+  const configured = options.publicUrl == null ? null : trimTrailingSlashes(options.publicUrl);
 
   return (req: Request): string => {
     if (configured !== null) return configured;

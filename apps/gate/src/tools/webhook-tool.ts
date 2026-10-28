@@ -87,7 +87,7 @@ export class WebhookToolExecutor implements ToolExecutor {
     if (auth.type === "none") return { ok: true };
 
     if (auth.type === "bearer") {
-      const presented = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
+      const presented = /^Bearer\s+(\S.*)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
       if (!presented || !auth.token) return { ok: false, status: 401, reason: "missing bearer token" };
       if (!safeEqual(presented, auth.token)) return { ok: false, status: 401, reason: "invalid bearer token" };
       return { ok: true };

@@ -289,7 +289,7 @@
     },
     "packages/extract-contract": {
       "name": "@atf/extract-contract",
-      "version": "2.4.0",
+      "version": "2.4.1",
       "dependencies": {
         "zod": "4.6.7",
       },

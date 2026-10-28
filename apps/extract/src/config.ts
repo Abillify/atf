@@ -20,6 +20,7 @@ import {
   resolveOperationalProfile,
   type OperationalProfile,
   type ServerTlsConfig,
+  trimTrailingSlashes,
 } from "@atf/security-kit";
 
 export interface UiBffConfig {
@@ -1001,7 +1002,7 @@ export function loadConfig(): Config {
     }
 
     return {
-      issuer: issuer.replace(/\/+$/, ""),
+      issuer: trimTrailingSlashes(issuer),
       clientId: clientId as string,
       clientSecret: clientSecret as string,
       redirectUri: optionalString("OIDC_REDIRECT_URI"),
@@ -1222,7 +1223,7 @@ export function loadConfig(): Config {
     const url = optionalString("SEARCH_URL");
     if (!url) return null;
     return {
-      url: url.replace(/\/+$/, ""),
+      url: trimTrailingSlashes(url),
       token: optionalString("SEARCH_TOKEN"),
       caCertFile: optionalString("SEARCH_CA_CERT_FILE"),
       collection: optionalString("SEARCH_COLLECTION") ?? "documents",
@@ -1264,7 +1265,7 @@ export function loadConfig(): Config {
   }
 
   // ── Required fields ─────────────────────────────────────────────────────────
-  const visionUrl = requireString("VISION_URL").replace(/\/+$/, "");
+  const visionUrl = trimTrailingSlashes(requireString("VISION_URL"));
   const visionModel = requireString("VISION_MODEL");
 
   // ── Server ──────────────────────────────────────────────────────────────────

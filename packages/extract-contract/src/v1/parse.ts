@@ -215,7 +215,7 @@ function extractFigures(
   // Remove residual wrapper tags and the "None" placeholder the legacy prompt
   // produced for figure-free pages.
   rest = rest
-    .replace(/<figures\b[^>]*>\s*(?:none|n\/a|keine)?\s*<\/figures\s*>/gi, "")
+    .replace(/<figures\b[^>]*>\s*(?:(?:none|n\/a|keine)\s*)?<\/figures\s*>/gi, "")
     .replace(/<\/?figures\b[^>]*>/gi, "");
 
   return { figures, rest };

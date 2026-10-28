@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+import { trimTrailingSlashes } from "@atf/security-kit";
 
 import { z } from "zod";
 
@@ -431,7 +432,7 @@ export const AuthorizationConfigSchema = z
 
 /** Issuer identifiers compare without trailing slashes (`https://id.example/` = `https://id.example`). */
 export function normalizeIssuer(issuer: string): string {
-  return issuer.trim().replace(/\/+$/, "");
+  return trimTrailingSlashes(issuer.trim());
 }
 
 export const TenantIsolationConfigSchema = z

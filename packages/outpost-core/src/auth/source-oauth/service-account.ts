@@ -12,6 +12,7 @@
  * `_FILE` path can validate input before storing it.
  */
 
+import { trimTrailingChar } from "../../text-trim.js";
 import { createSign } from "node:crypto";
 import type { FetchLike } from "../idp.js";
 import { GOOGLE_TOKEN_ENDPOINT, GDRIVE_SCOPE } from "./providers.js";
@@ -67,7 +68,7 @@ export function parseServiceAccountKey(json: string): ParseKeyResult {
 
 /** base64url without padding. */
 const b64url = (input: string | Buffer): string =>
-  Buffer.from(input).toString("base64url").replace(/=+$/, "");
+  trimTrailingChar(Buffer.from(input).toString("base64url"), "=");
 
 export interface AssertionDeps {
   /** Seconds since epoch (injected for tests). */

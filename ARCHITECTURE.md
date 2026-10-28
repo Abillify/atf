@@ -312,7 +312,7 @@ with Zod validation and its own tests, plus five shared implementation packages
 | `@atf/evidence-contract` | 1.1.1 | 1.0.0 | Evidence and lineage compatibility records |
 | `@atf/schema-compatibility` | 1.0.0 | — | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | — | Explicit adapters between the contracts above |
-| `@atf/extract-contract` | 2.4.0 | 2.4.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath (wire 1.1.0) |
+| `@atf/extract-contract` | 2.4.1 | 2.4.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath (wire 1.1.0) |
 | `@atf/erasure-contract` | 1.0.1 | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
 
 The package version tracks the package; the wire constant is the version written into
