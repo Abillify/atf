@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "f84caff69ceba98c29151842e90c7d31200cc5c2b9ce69d837f3ad433e844584"
+        "value": "2fbb8d18d0b00fc070cfb0a4e4e954c7d3dcd60a2923694e92c0326ad389c987"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -2793,16 +2793,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fbun@1.4.0",
+      "bom-ref": "pkg:npm/%40types%2Fbun@1.4.4",
       "group": "@types",
       "name": "bun",
-      "version": "1.4.0",
+      "version": "1.4.4",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Fbun@1.4.0",
+      "purl": "pkg:npm/%40types%2Fbun@1.4.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5132,15 +5132,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/bun-types@1.4.0",
+      "bom-ref": "pkg:npm/bun-types@1.4.4",
       "name": "bun-types",
-      "version": "1.4.0",
+      "version": "1.4.4",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/bun-types@1.4.0",
+      "purl": "pkg:npm/bun-types@1.4.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
