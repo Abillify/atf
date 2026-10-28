@@ -1115,7 +1115,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `server.allowedHosts` | array | — | DNS-rebinding protection: list of hostnames (without port) that are allowed in the incoming Host header. Requests with a different hostname are rejected with 403. Typical values: ["localhost", "myserver.internal"]. Leave empty (default) to skip the check. |
 | `server.cors` | object | — | CORS configuration for the MCP and monitoring endpoints. |
 | `server.cors.enabled` | boolean | `false` | — |
-| `server.cors.origins` | array | — | Origins allowed in CORS pre-flight. "*" allows any origin. |
+| `server.cors.origins` | array | — | Origins allowed in CORS pre-flight. "*" allows any origin, but then without credentials (cookies). |
 | `server.host` | string | `"0.0.0.0"` | — |
 | `server.mcp2026` | object | — | Native stateless MCP 2026-07-28 HTTP endpoint (kept separate from mcpPath). |
 | `server.mcp2026.enabled` | boolean | `true` | — |

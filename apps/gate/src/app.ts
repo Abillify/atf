@@ -340,10 +340,14 @@ export async function buildApp(
   // ── CORS ────────────────────────────────────────────────────────────────────
   if (config.server.cors.enabled) {
     const origins = config.server.cors.origins;
+    // "*" answers any origin with a literal `*` and without credentials;
+    // reflecting the caller's origin together with credentials would let any
+    // site send cookie-authenticated requests. An explicit list keeps credentials.
+    const anyOrigin = origins.includes("*");
     app.use(
       cors({
-        origin: origins.includes("*") ? true : origins,
-        credentials: true,
+        origin: anyOrigin ? "*" : origins,
+        credentials: !anyOrigin,
         // MCP session id is exchanged via a custom response header.
         exposedHeaders: ["Mcp-Session-Id"],
         allowedHeaders: [

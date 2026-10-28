@@ -194,7 +194,7 @@ export function checkProductionReadiness(
 
   if (config.server.cors.enabled && config.server.cors.origins.includes("*")) {
     flag(
-      "server.cors.origins includes '*' with credentials enabled — set an explicit origin allow-list.",
+      "server.cors.origins includes '*' (any origin may call the Gate) — set an explicit origin allow-list.",
     );
   }
 

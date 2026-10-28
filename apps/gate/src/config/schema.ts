@@ -98,7 +98,7 @@ export const ServerConfigSchema = z.object({
   cors: z
     .object({
       enabled: boolish.default(false),
-      /** Origins allowed in CORS pre-flight. "*" allows any origin. */
+      /** Origins allowed in CORS pre-flight. "*" allows any origin, but then without credentials (cookies). */
       origins: z.array(z.string()).default([]),
     })
     .default({ enabled: false, origins: [] }),

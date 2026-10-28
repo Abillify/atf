@@ -291,9 +291,10 @@ describe("Edge middleware · allowedHosts and rate limiting", () => {
       const res = await fetch(`http://127.0.0.1:${port}/healthz`, {
         headers: { Origin: "https://app.example.com" },
       });
-      // With origins ["*"] + credentials, the cors layer reflects the request
-      // origin (literal "*" is invalid alongside credentials).
-      expect(res.headers.get("access-control-allow-origin")).toBe("https://app.example.com");
+      // With origins ["*"] the cors layer answers a literal "*" and never
+      // allows credentials, so no site can send cookie-authenticated calls.
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(res.headers.get("access-control-allow-credentials")).toBeNull();
     } finally {
       server.close();
       await handle.shutdown();
