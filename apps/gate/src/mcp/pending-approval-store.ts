@@ -219,7 +219,7 @@ const CLAIM_KEY_PREFIX = "mcpgate:approval:claim:";
  * key already exists). The `PENDING_APPROVAL_CREATE` marker lets the
  * unit-test fake recognise and interpret exactly this script.
  */
-const CREATE_WITH_LIMIT_SCRIPT = `PENDING_APPROVAL_CREATE
+const CREATE_WITH_LIMIT_SCRIPT = `-- PENDING_APPROVAL_CREATE
 -- KEYS[1]=tenant index, KEYS[2]=entry key
 -- ARGV[1]=cutoff, ARGV[2]=maxPending, ARGV[3]=entry JSON, ARGV[4]=entry TTL ms,
 -- ARGV[5]=createdAt, ARGV[6]=requestState, ARGV[7]=index TTL ms
@@ -227,7 +227,8 @@ redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
 if tonumber(redis.call("ZCARD", KEYS[1])) >= tonumber(ARGV[2]) then
   return 0
 end
-if redis.call("SET", KEYS[2], ARGV[3], "NX", "PX", ARGV[4]) ~= "OK" then
+-- SET NX answers a status table when it writes and false when the key exists.
+if not redis.call("SET", KEYS[2], ARGV[3], "NX", "PX", ARGV[4]) then
   return -1
 end
 redis.call("ZADD", KEYS[1], ARGV[5], ARGV[6])

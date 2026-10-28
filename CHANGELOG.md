@@ -17,6 +17,9 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+### Fixed
+
+- **Gate** (approvals): with a Redis URL and the default `policies.approval.maxPending`, creating a pending approval always failed with "approval store unavailable", because the create script did not compile on Redis (and would have reported every write as a duplicate). Human-approval flows on a shared Redis work again.
 
 ## [0.21.0] - 2026-10-27
 
