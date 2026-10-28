@@ -20,7 +20,7 @@ Production images are built from `deploy/images/Dockerfile.<service>` by the
 | `atf-runtime` | `oven/bun:1.4.4-distroless` (Debian distroless) | none beyond the distroless base |
 | `atf-search` | `oven/bun:1.4.4-distroless` | none beyond the distroless base |
 | `atf-gate` | `oven/bun:1.4.4-distroless` | none beyond the distroless base |
-| `atf-control` | `node:26-alpine` (Alpine) | none beyond the Alpine base |
+| `atf-control` | `node:26.12.1-alpine` (Alpine) | none beyond the Alpine base |
 | `atf-extract` | `debian:bookworm-slim` | poppler, LibreOffice, fonts (see below) |
 | Quickstart (`runtime`, `control`, `search`, `gate`) | `oven/bun:1.4.4` (Debian) | none beyond the Debian base |
 | Quickstart `extract` | `oven/bun:1.4.4` (Debian) | same package set as `atf-extract` |

@@ -11,8 +11,8 @@
         "./browser": "./src/browser.ts"
     },
     "engines": {
-        "bun": ">=1.4.0 <2",
-        "node": ">=26 <27"
+        "bun": ">=1.4.4 <2",
+        "node": ">=26.12.1 <27"
     },
     "scripts": {
         "typecheck": "tsc --noEmit",
@@ -25,7 +25,7 @@
         "undici": "8.12.3"
     },
     "devDependencies": {
-        "@types/bun": "1.4.0",
+        "@types/bun": "1.4.4",
         "fast-check": "4.10.2",
         "typescript": "7.0.2"
     }

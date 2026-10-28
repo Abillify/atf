@@ -8,8 +8,8 @@
   <a href="https://github.com/abillify/atf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/abillify/atf/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Elastic-2.0" src="https://img.shields.io/badge/license-Elastic--2.0-blue"></a>
   <a href="CHANGELOG.md"><img alt="Release: 0.21.0" src="https://img.shields.io/badge/release-0.21.0-orange"></a>
-  <img alt="Bun 1.4.0" src="https://img.shields.io/badge/bun-1.4.0-black">
-  <img alt="Node 26" src="https://img.shields.io/badge/node-26-brightgreen">
+  <img alt="Bun 1.4.4" src="https://img.shields.io/badge/bun-1.4.4-black">
+  <img alt="Node 26.12.1" src="https://img.shields.io/badge/node-26.12.1-brightgreen">
   <img alt="TypeScript 7" src="https://img.shields.io/badge/typescript-7.0.2-3178c6">
   <a href="sbom.cdx.json"><img alt="SBOM: CycloneDX 1.6" src="https://img.shields.io/badge/SBOM-CycloneDX%201.6-informational"></a>
 </p>
@@ -305,8 +305,8 @@ bun run test
 bun run build
 ```
 
-Bun 1.4.0 is the only package manager and task runner; npm, pnpm, and yarn are not supported.
-Node.js 26 is the supported Node major. Target one workspace with
+Bun 1.4.4 is the only package manager and task runner; npm, pnpm, and yarn are not supported.
+Node.js 26 (at least 26.12.1) is the supported Node major. Target one workspace with
 `bun run --filter @atf/runtime test`.
 
 The full list of gates CI runs is in [DEVELOPMENT.md](DEVELOPMENT.md#the-gates).

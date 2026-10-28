@@ -25,11 +25,11 @@ docker exec -it outpost atf-outpost confirm-deletes <sourceId>
 
 ## Application artifacts
 
-- Runtime and Gate are Bun applications (toolchain pin 1.4.0; the production images in
-  `deploy/images/` run the digest-pinned Bun 1.4.4 base, a patch release inside the declared
-  `engines` range — see `DEVELOPMENT.md`).
+- Runtime and Gate are Bun applications (Bun 1.4.4, the same version as the toolchain pin; the
+  production images in `deploy/images/` use the digest-pinned `oven/bun:1.4.4` base — see
+  `DEVELOPMENT.md`).
 - Search is Bun-native and additionally supports `bun run --filter @atf/search build:node` for a Node.js 26 artifact. That build keeps the native module `sharp` external, so the Node image must install `sharp` (the version pinned in `apps/search/package.json`) for its target platform next to the artifact.
-- Control is built with Bun and deployed on Node.js 26 from the Next.js standalone output.
+- Control is built with Bun and deployed on Node.js 26.12.1 from the Next.js standalone output.
 
 Production Dockerfiles live under `deploy/images/` (one per service, pinned base-image
 digests, non-root). Orchestration beyond the reference Helm chart below — network fabric,

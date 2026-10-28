@@ -300,7 +300,7 @@ const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 	},
 	{
 		packagePattern: /^bun-types$/,
-		expectedVersion: "1.4.0",
+		expectedVersion: "1.4.4",
 		expectedLicense: "MIT",
 		expectedRepository: "https://github.com/oven-sh/bun",
 		files: ["licenses/declared-MIT-no-upstream-copyright.txt"],

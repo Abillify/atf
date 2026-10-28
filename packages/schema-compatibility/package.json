@@ -6,11 +6,11 @@
   "license": "Elastic-2.0",
   "type": "module",
   "exports": {".": "./src/index.ts"},
-  "engines": {"bun": ">=1.4.0 <2", "node": ">=26 <27"},
+  "engines": {"bun": ">=1.4.4 <2", "node": ">=26.12.1 <27"},
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build": "bun build ./src/index.ts --outdir ./dist --target bun"
   },
-  "devDependencies": {"@types/bun": "1.4.0", "typescript": "7.0.2"}
+  "devDependencies": {"@types/bun": "1.4.4", "typescript": "7.0.2"}
 }

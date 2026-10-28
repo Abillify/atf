@@ -24,8 +24,8 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun"
   },
   "engines": {
-    "bun": ">=1.4.0 <2",
-    "node": ">=26 <27"
+    "bun": ">=1.4.4 <2",
+    "node": ">=26.12.1 <27"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.125",
@@ -57,7 +57,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.4",
     "fast-check": "4.10.2",
     "typescript": "7.0.2"
   }

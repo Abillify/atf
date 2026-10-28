@@ -37,6 +37,7 @@ releases:
 - **Dependencies**: `redis` 6.3.0 (Gate, Search, Extract). The client now speaks RESP3 by default, applies a 5 s command timeout and negotiates maintenance notifications; it needs Redis 6 or later on the server (tested against 7.4 and 8.2). `jsdom` 30 for the Control tests.
 - **Gate**: `rate-limit-redis` 6.0.2 is a regular dependency and ships in the image, so `server.rateLimit.store.type: redis` works without installing anything; before, the stock image refused to start with that setting because the package was missing.
 - **Licensing**: `BlueOak-1.0.0` and `CC0-1.0` are allowed on their own; both come only from jsdom, a test dependency of Control.
+- **Toolchain**: Bun 1.4.4 everywhere: `packageManager`, CI and release `BUN_VERSION`, `@types/bun` 1.4.4, and `engines.bun` `>=1.4.4 <2` in every workspace (before: toolchain 1.4.0, images 1.4.4). Node.js is pinned to 26.12.1 (`.nvmrc`, `.node-version`, CI `NODE_VERSION`, `engines.node` `>=26.12.1 <27`); the Control and Outpost images name `node:26.12.1-alpine` explicitly (same digest as before).
 
 ### Fixed
 

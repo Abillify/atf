@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: 1.4.0
-  NODE_VERSION: 26
+  BUN_VERSION: 1.4.4
+  NODE_VERSION: 26.12.1
 
 jobs:
   # Cheap, fast gates. Kept separate so a missing SPDX header or a stale generated artifact

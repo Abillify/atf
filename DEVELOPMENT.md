@@ -2,18 +2,19 @@
 
 ## Toolchain
 
-- Bun 1.4.0 — the only package manager and task runner
-- Node.js 26 — the supported compatibility baseline and the runtime for Node-backed artifacts
+- Bun 1.4.4 — the only package manager and task runner
+- Node.js 26.12.1 or a later 26.x release — the supported compatibility baseline and the runtime for Node-backed artifacts
 - TypeScript 7.0.2 — pinned as a workspace dependency
 - Docker with Compose v2 — for the local multi-service stack
 
 Versions are declared in `package.json`, `.nvmrc`, and `.node-version`. Do not use npm, pnpm, or
 yarn; the workspace resolves exclusively from `bun.lock`.
 
-The toolchain pin (`packageManager`, CI `BUN_VERSION`) is Bun 1.4.0. The production images under
-`deploy/images/` intentionally build and run on the digest-pinned `oven/bun:1.4.4` base: a patch
-release inside the declared `engines` range (`>=1.4.0 <2`). Both are pinned on purpose; change
-them deliberately, not as a side effect.
+The toolchain pin (`packageManager`, CI `BUN_VERSION`) and the digest-pinned `oven/bun` base of
+the images under `deploy/images/` are both Bun 1.4.4; `engines.bun` is `>=1.4.4 <2`. Node is
+pinned to 26.12.1 (`.nvmrc`, `.node-version`, CI `NODE_VERSION`, the `node:26.12.1-alpine` image
+bases; `engines.node` is `>=26.12.1 <27`). Change these pins together and deliberately, not as a
+side effect.
 
 ```bash
 bun install --frozen-lockfile
@@ -107,7 +108,7 @@ the image build containers do not ship cargo. CI separately
 generates commit-specific `linux-x64` and `darwin-arm64` workspace artifacts and inventories
 the five final Quickstart image targets from inside each image. To refresh the committed Linux
 x64 reference from a macOS host, run the generator inside a `linux/amd64` container with cargo
-(for example `rust:1-bookworm` plus Bun 1.4.0) using the same flags as the CI job, and commit
+(for example `rust:1-bookworm` plus Bun 1.4.4) using the same flags as the CI job, and commit
 the resulting `THIRD_PARTY_NOTICES.md` and `sbom.cdx.json`. For an intentional local
 platform artifact, use an isolated output directory, for example:
 

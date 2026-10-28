@@ -13,7 +13,7 @@
 	"bugs": {
 		"url": "https://github.com/Abillify/atf/issues"
 	},
-	"packageManager": "bun@1.4.0",
+	"packageManager": "bun@1.4.4",
 	"workspaces": [
 		"apps/*",
 		"packages/*",
@@ -73,7 +73,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",
-		"@types/bun": "1.4.0",
+		"@types/bun": "1.4.4",
 		"knip": "6.43.0",
 		"typescript": "7.0.2"
 	},
@@ -89,7 +89,7 @@
 		"zod": "4.6.7"
 	},
 	"engines": {
-		"bun": ">=1.4.0 <2",
-		"node": ">=26 <27"
+		"bun": ">=1.4.4 <2",
+		"node": ">=26.12.1 <27"
 	}
 }

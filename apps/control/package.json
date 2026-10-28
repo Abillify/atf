@@ -18,8 +18,8 @@
     "test:e2e:perf:ci": "playwright test --config playwright.performance.config.ts"
   },
   "engines": {
-    "bun": ">=1.4.0 <2",
-    "node": ">=26 <27"
+    "bun": ">=1.4.4 <2",
+    "node": ">=26.12.1 <27"
   },
   "dependencies": {
     "@atf/canonical-json": "workspace:1.0.1",

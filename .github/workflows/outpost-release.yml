@@ -44,8 +44,8 @@ permissions: {}
 
 env:
   OUTPOST_UPDATER_REPO: ${{ vars.OUTPOST_UPDATER_REPO }}
-  BUN_VERSION: 1.4.0
-  NODE_VERSION: 26
+  BUN_VERSION: 1.4.4
+  NODE_VERSION: 26.12.1
 
 jobs:
   guard:
