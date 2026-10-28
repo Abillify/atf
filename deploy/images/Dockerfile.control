@@ -31,8 +31,13 @@ RUN bun run --filter @atf/control build
 
 FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS runtime
 ENV NODE_ENV=production
+# The standalone server runs on plain `node`; the npm, npx and corepack the
+# base image bundles are never used and only ship their own dependency tree
+# (undici, brace-expansion, ...) into the image, so they are removed.
 RUN addgroup -g 65532 atf \
-    && adduser -u 65532 -G atf -D -h /tmp atf
+    && adduser -u 65532 -G atf -D -h /tmp atf \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 WORKDIR /app
 # With outputFileTracingRoot at the workspace root, the standalone server ends
 # up at apps/control/server.js inside the bundle, with the hoisted

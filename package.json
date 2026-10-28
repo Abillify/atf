@@ -79,6 +79,7 @@
 	},
 	"overrides": {
 		"adm-zip": "0.6.1",
+		"body-parser": "2.4.0",
 		"esbuild": "0.28.2",
 		"fast-uri": "3.1.7",
 		"postcss": "8.5.32",
