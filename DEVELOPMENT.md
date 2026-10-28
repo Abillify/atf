@@ -163,6 +163,7 @@ variables so a plain `bun run test` stays green without them:
 | Variable | Enables |
 | --- | --- |
 | `TEST_POSTGRES_URL` | PostgreSQL-backed tests: Runtime (audit two-replica, receipt-log sink), Search integration suites, Extract, and the Gate pagination property test (Property 10) |
+| `TEST_REDIS_URL` | Redis-backed tests with the real `redis` client: the Gate stores (approvals, pending approvals, webhook replay, transaction ledger, monitor cluster bridge, rate limits) and the Security_Kit GCRA backend in Search. The database behind the URL is flushed; use a disposable Redis |
 | `DATABASE_URL` | Runtime durable-store integration tests (`db/__tests__/pg-integration.test.ts`, `cluster-limits.integration.test.ts`); not set in CI |
 | `RUN_MODEL_INTEGRATION` | Runtime tests against a real model provider |
 | `MCPGATE_LLM_E2E`, `LLM_BASE_URL` | Gate end-to-end tests against a local model server |
@@ -185,6 +186,13 @@ docker run --rm -d --name atf-test-pg -p 5432:5432 \
   -e POSTGRES_DB=atf_test -e POSTGRES_USER=atf -e POSTGRES_PASSWORD=atf-local-only \
   pgvector/pgvector:0.8.1-pg18
 export TEST_POSTGRES_URL=postgres://atf:atf-local-only@127.0.0.1:5432/atf_test
+```
+
+A Redis for local runs (CI uses the same image):
+
+```bash
+docker run --rm -d --name atf-test-redis -p 6379:6379 redis:8.2-alpine
+export TEST_REDIS_URL=redis://127.0.0.1:6379/15
 ```
 
 Control's Playwright suites need a running stack:

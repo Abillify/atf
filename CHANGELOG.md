@@ -17,6 +17,11 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+
+### Added
+
+- **CI**: the test jobs start a Redis 8.2 and run the Redis-backed stores and rate limiters against it with the real client (`TEST_REDIS_URL`): Gate approvals, pending approvals, webhook replay, transaction ledger, monitor cluster bridge, per-identity and IP rate limits, and the Security_Kit GCRA backend used by Search and Extract.
+
 ### Changed
 
 - **Dependencies**: `redis` 6.3.0 (Gate, Search, Extract). The client now speaks RESP3 by default, applies a 5 s command timeout and negotiates maintenance notifications; it needs Redis 6 or later on the server (tested against 7.4 and 8.2). `jsdom` 30 for the Control tests.

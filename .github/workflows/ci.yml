@@ -216,9 +216,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # Real Redis for the Redis-backed stores and rate limiters (Gate,
+      # Search/Extract via the Security_Kit GCRA backend). Tests flush db 15.
+      redis:
+        image: redis:8.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       TEST_POSTGRES_URL: postgres://atf:atf-ci-only@127.0.0.1:5432/atf_test
       POSTGRES_URL: postgres://atf:atf-ci-only@127.0.0.1:5432/atf_test
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
