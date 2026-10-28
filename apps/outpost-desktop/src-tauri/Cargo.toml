@@ -1,6 +1,6 @@
 [package]
 name = "atf-outpost-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "ATF Extract Outpost desktop host"
 authors = ["Abillify Technology GmbH"]
 edition = "2021"
