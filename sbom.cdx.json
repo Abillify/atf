@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "e37399b474ce320b7954f022f01c6b643699986e4762e143ac9ec50cf8e48d47"
+        "value": "f84caff69ceba98c29151842e90c7d31200cc5c2b9ce69d837f3ad433e844584"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -4934,15 +4934,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/body-parser@2.3.0",
+      "bom-ref": "pkg:npm/body-parser@2.4.0",
       "name": "body-parser",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/body-parser@2.3.0",
+      "purl": "pkg:npm/body-parser@2.4.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18632,15 +18632,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/undici@7.29.1",
+      "bom-ref": "pkg:npm/undici@7.30.1",
       "name": "undici",
-      "version": "7.29.1",
+      "version": "7.30.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/undici@7.29.1",
+      "purl": "pkg:npm/undici@7.30.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
