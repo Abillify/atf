@@ -1082,6 +1082,21 @@ export function createApp(
       .send(buildOpenApiYaml(serverUrl));
   });
 
+  // ── Rate limit ────────────────────────────────────────────────────────────
+  // Every route registered from here on is limited per client IP
+  // (RATE_LIMIT). The probes, /metrics, the evidence JWKS and the OpenAPI
+  // documents above stay unlimited for orchestrators and scrapers. The MCP
+  // endpoints are exempt as well: their callers are services (the Gate,
+  // Runtime) that bundle many users behind one IP and enforce their own
+  // per-identity limits.
+  const mcpPaths = new Set(["/mcp", config.mcp2026Path]);
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (mcpPaths.has(req.path)) {
+      next();
+      return;
+    }
+    rateLimiter.middleware(req, res, next);
+  });
   app.get("/", webAuthMiddleware, (_req: Request, res: Response) => {
     res.status(200).type("html").send(getTestPageHtml());
   });
@@ -1109,7 +1124,6 @@ export function createApp(
   );
   ui.post(
     "/ingest",
-    rateLimiter.middleware,
     uiMutationGuard,
     authorizeWrite,
     metadataMiddleware,
@@ -1118,7 +1132,6 @@ export function createApp(
   );
   ui.post(
     "/ingest-stream",
-    rateLimiter.middleware,
     uiMutationGuard,
     authorizeWrite,
     metadataMiddleware,
@@ -1131,7 +1144,6 @@ export function createApp(
   );
   ui.post(
     "/search",
-    rateLimiter.middleware,
     authorizeRead,
     metadataMiddleware,
     collectionAccessHeader,
@@ -1139,7 +1151,6 @@ export function createApp(
   );
   ui.delete(
     "/delete",
-    rateLimiter.middleware,
     uiMutationGuard,
     authorizeDelete,
     metadataMiddleware,
@@ -1241,7 +1252,6 @@ export function createApp(
   // res.locals). The document reference is the URL-encoded :ref path param.
   app.post(
     "/v2/documents/:ref/revisions",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1249,7 +1259,6 @@ export function createApp(
   );
   app.put(
     "/v2/documents/:ref/revisions/:rev/batches/:seq",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1261,7 +1270,6 @@ export function createApp(
   );
   app.get(
     "/v2/documents/:ref/revisions/:rev",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessHeader,
@@ -1269,7 +1277,6 @@ export function createApp(
   );
   app.post(
     "/v2/documents/:ref/revisions/:rev/segments/:n/commit",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1277,7 +1284,6 @@ export function createApp(
   );
   app.post(
     "/v2/documents/:ref/revisions/:rev/commit",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1285,7 +1291,6 @@ export function createApp(
   );
   app.post(
     "/v2/documents/:ref/revisions/:rev/heartbeat",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1293,7 +1298,6 @@ export function createApp(
   );
   app.delete(
     "/v2/documents/:ref/revisions/:rev",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeDelete,
     collectionAccessHeader,
@@ -1303,7 +1307,6 @@ export function createApp(
   // ── v2 source identification (dedup + version chains) ────────────────────
   app.post(
     "/v2/sources/identify",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessHeader,
@@ -1311,7 +1314,6 @@ export function createApp(
   );
   app.get(
     "/v2/documents/:ref/sources",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessHeader,
@@ -1319,7 +1321,6 @@ export function createApp(
   );
   app.get(
     "/v2/documents/:ref/diff",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessQuery,
@@ -1327,7 +1328,6 @@ export function createApp(
   );
   app.post(
     "/v2/citations/check",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessCitations,
@@ -1341,7 +1341,6 @@ export function createApp(
   // read (Requirement 14.5).
   app.put(
     "/v2/assets/:assetId",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     collectionAccessAsset,
@@ -1353,7 +1352,6 @@ export function createApp(
   );
   app.get(
     "/v2/assets/:assetId",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessAsset,
@@ -1361,7 +1359,6 @@ export function createApp(
   );
   app.head(
     "/v2/assets/:assetId",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     collectionAccessAsset,
@@ -1370,7 +1367,6 @@ export function createApp(
 
   app.post(
     "/ingest",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
@@ -1393,7 +1389,6 @@ export function createApp(
     // scope → collection-ACL chain is unchanged.
     app.post(
       "/ingest-file",
-      rateLimiter.middleware,
       authMiddleware,
       authorizeWrite,
       collectionAccessHeader,
@@ -1409,7 +1404,6 @@ export function createApp(
   }
   app.post(
     "/ingest-batch",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
@@ -1418,7 +1412,6 @@ export function createApp(
   );
   app.post(
     "/ingest-stream",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
@@ -1431,7 +1424,6 @@ export function createApp(
   );
   app.post(
     "/search",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     metadataMiddleware,
@@ -1443,7 +1435,6 @@ export function createApp(
   // untouched (Requirement 13.7).
   app.post(
     "/v2/search",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     metadataMiddleware,
@@ -1454,7 +1445,6 @@ export function createApp(
   // behind the same chain as /v2/search.
   app.post(
     "/v2/retrieve",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     metadataMiddleware,
@@ -1463,14 +1453,12 @@ export function createApp(
   );
   app.post(
     "/evaluations/retrieval",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeRead,
     retrievalEvaluationHandler,
   );
   app.delete(
     "/delete",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeDelete,
     metadataMiddleware,
@@ -1482,7 +1470,6 @@ export function createApp(
   // invocation ledger. The body is parsed by the global JSON parser.
   app.post(
     "/v1/erasure",
-    rateLimiter.middleware,
     authMiddleware,
     authorizeErasure,
     createErasureHandler({

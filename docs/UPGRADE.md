@@ -641,6 +641,7 @@ Changes since 0.21.0 that need operator attention:
 
 1. Gate, Search, Extract: the `redis` client 6 speaks RESP3 and needs Redis 6 or later on the server; Redis 5 and older refuse the handshake. Tested against Redis 7.4 and 8.2. Commands now time out after 5 s (none of the stores uses blocking commands).
 2. Search, Extract: with `RATE_LIMIT_REDIS_URL` the shared rate limit was not enforced before (every Redis check failed open); it now is, across all replicas together. Check `RATE_LIMIT` (and `RENDER_RATE_LIMIT` in Extract) against your real traffic before rolling out. Gate: with `server.rateLimit.perIdentity.store.type: redis`, MCP calls were refused (fail closed) and are now let through within the limit.
+3. Search: the IP rate limit (`RATE_LIMIT`, default 120 requests per minute) now also covers the read routes (`/documents`, `/document`, `/summaries`, `/folders`, `/collection-stats`), the collection admin routes, `/ui` and the browser login. A client that polls these routes from one IP above the limit gets 429; raise `RATE_LIMIT` (or call through the Gate) if that is expected traffic. The MCP endpoints stay unlimited here. Extract limits `POST /login` and the OIDC routes the same way.
 
 ### Not yet shared between replicas (roadmap)
 

@@ -20,6 +20,7 @@ releases:
 
 ### Security
 
+- **Search, Extract**: every API route is rate limited per client IP (`RATE_LIMIT`). Before, only the ingest, search and v2 routes were; the read routes (`/documents`, `/document`, `/summaries`, …), the collection admin routes, `/ui`, the browser login (`POST /login`, which checks a token) and the OIDC routes were not. Health probes, `/metrics`, the evidence JWKS and the OpenAPI documents stay unlimited, and so do Search's MCP endpoints, whose callers (Gate, Runtime) bundle many users behind one IP and limit per identity themselves.
 - **ReDoS**: regular expressions that backtracked quadratically or exponentially on crafted input are replaced by linear scans or unambiguous patterns: trailing-slash trimming of issuers and URLs (new `trimTrailingSlashes` in the Security_Kit), the Bearer header parser in Gate and Runtime, the Gate monitor's JSON highlighter, HTML/Markdown normalisation in Search, figure and bbox parsing and page selections in `@atf/extract-contract` (2.4.1), and the S3 listing, AWS INI and certificate parsing in the Outpost.
 
 ### Added

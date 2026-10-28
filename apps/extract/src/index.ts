@@ -804,7 +804,9 @@ export function createApp(
     }),
   );
 
-  app.get("/", webAuth, (_req: Request, res: Response) => {
+  // Browser entry points are limited like the API: /login checks a token,
+  // so it must not be open to unthrottled guessing.
+  app.get("/", rateLimiter.middleware, webAuth, (_req: Request, res: Response) => {
     res
       .status(200)
       .type("html")
@@ -821,13 +823,14 @@ export function createApp(
 
   app.post(
     "/login",
+    rateLimiter.middleware,
     createLoginHandler(config.monitorToken, config.trustProxy),
   );
 
   if (oidcProvider !== null) {
-    app.get("/auth/login", oidcProvider.loginHandler);
-    app.get("/auth/callback", oidcProvider.callbackHandler);
-    app.get("/auth/logout", oidcProvider.logoutHandler);
+    app.get("/auth/login", rateLimiter.middleware, oidcProvider.loginHandler);
+    app.get("/auth/callback", rateLimiter.middleware, oidcProvider.callbackHandler);
+    app.get("/auth/logout", rateLimiter.middleware, oidcProvider.logoutHandler);
   }
 
   // ── Machine API ───────────────────────────────────────────────────────────
