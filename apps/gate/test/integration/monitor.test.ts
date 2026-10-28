@@ -207,7 +207,7 @@ describe("Monitor dashboard · token session and CSP", () => {
     expect(csp).not.toContain("unsafe-eval");
     expect(csp).not.toMatch(/script-src[^;]*unsafe-inline/);
     const html = await res.text();
-    const scripts = html.match(/<script[^>]*>/g) ?? [];
+    const scripts = html.match(/<script\b[^>]*>/gi) ?? [];
     expect(scripts.length).toBeGreaterThan(0);
     for (const tag of scripts) expect(tag).toContain(`nonce="${nonce}"`);
     expect(html).not.toMatch(/\son[a-z]+=["']/);

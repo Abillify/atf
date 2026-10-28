@@ -313,7 +313,7 @@ export function htmlTableToMarkdown(html: string): string {
 	});
 	const width = Math.max(...matrix.map((r) => r.length));
 	const escaped = matrix.map((r) =>
-		Array.from({ length: width }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|")),
+		Array.from({ length: width }, (_, i) => (r[i] ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|")),
 	);
 	const line = (r: string[]) => `| ${r.join(" | ")} |`;
 	const header = escaped[0];

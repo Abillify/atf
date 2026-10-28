@@ -85,7 +85,7 @@ describe("expandOpenApiImports", () => {
   it("uses an explicit baseUrl override", () => {
     const tools = expand({ baseUrl: "https://staging.example.com" });
     const req = (tools[0].request as Record<string, unknown>).url as string;
-    expect(req.startsWith("https://staging.example.com")).toBe(true);
+    expect(new URL(req).origin).toBe("https://staging.example.com");
   });
 
   it("parses a JSON spec (format auto-detected)", () => {

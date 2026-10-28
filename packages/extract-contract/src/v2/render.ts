@@ -50,7 +50,7 @@ function cellText(cell: Cell): string {
 
 /** Escape a cell for a Markdown table (pipes and newlines break the grid). */
 function escapeCell(text: string): string {
-  return text.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+  return text.replace(/\r?\n/g, " ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").trim();
 }
 
 /** Render rows as a Markdown pipe table with the given header rows flattened. */

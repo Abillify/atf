@@ -187,7 +187,7 @@ describe("PromptFileEditor", () => {
       ),
     );
     render(<PromptFileEditor systemPrompt={`#[[file:${FILE}]]`} token="t" />);
-    await screen.findByText(new RegExp(`Prompt file ${FILE.replace(/[.]/g, "\\.")} not found`));
+    await screen.findByText(new RegExp(`Prompt file ${FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} not found`));
     expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
   });
 

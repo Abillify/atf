@@ -56,7 +56,11 @@ type JsonSchema = {
   $ref?: string;
 };
 
-/** Escapes a table cell (pipes, newlines). */
+/**
+ * Escapes a table cell (pipes, newlines). Backslashes are left alone on
+ * purpose: the cells hold code spans, where GFM keeps a backslash literal, so
+ * doubling it would corrupt examples such as `\\d`.
+ */
 function cell(text: string): string {
   return text.replace(/\|/g, "\\|").replace(/\n+/g, " ");
 }

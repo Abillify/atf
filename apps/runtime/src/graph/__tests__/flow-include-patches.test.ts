@@ -178,3 +178,14 @@ describe("flow loading with $include.patches", () => {
     expect(flow?.nodes.map((n) => n.id).sort()).toEqual(["researcher", "router", "writer"]);
   });
 });
+
+describe("deepMergePatch · prototype keys", () => {
+  test("ignores __proto__, constructor and prototype from a parsed patch", () => {
+    const target: Record<string, unknown> = { a: { b: 1 } };
+    const patch = JSON.parse('{"__proto__":{"polluted":true},"a":{"constructor":{"prototype":{"x":1}},"c":2}}');
+    deepMergePatch(target, patch);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(target)).toBe(Object.prototype);
+    expect(target).toEqual({ a: { b: 1, c: 2 } });
+  });
+});

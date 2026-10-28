@@ -157,6 +157,8 @@ export function deepMergePatch(
   patch: Record<string, unknown>,
 ): void {
   for (const [key, value] of Object.entries(patch)) {
+    // A patch comes from a flow file: never let it reach the prototype chain.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (value === null) {
       delete target[key];
     } else if (isPlainObject(value) && isPlainObject(target[key])) {

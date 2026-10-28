@@ -152,8 +152,10 @@ export function createSearchHandler(
     try {
       const searchStartTime = Date.now();
       // 1. Body
-      let body = req.body as string;
-      if (!body || body.trim() === "") {
+      // The text parser yields a string; any other parser (a JSON body, a
+      // repeated field) yields an object or array, which is rejected here.
+      let body: string = typeof req.body === "string" ? req.body : "";
+      if (body.trim() === "") {
         res.status(400).json({ error: "Request body must not be empty" });
         return;
       }

@@ -11,7 +11,7 @@
  * so the desktop host (Rust) can supply it while tests use a fake.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 
 /** Loopback host for the redirect — always `127.0.0.1` (3.1). */
 export const LOOPBACK_HOST = "127.0.0.1";
@@ -32,10 +32,10 @@ export function generateCodeVerifier(length = 43): string {
   if (length < 43 || length > 128) {
     throw new RangeError("code_verifier length must be between 43 and 128");
   }
-  const bytes = randomBytes(length);
+  // randomInt draws uniformly; `byte % 66` would favour the first 58 characters.
   let out = "";
   for (let i = 0; i < length; i++) {
-    out += VERIFIER_CHARSET[(bytes[i] ?? 0) % VERIFIER_CHARSET.length];
+    out += VERIFIER_CHARSET[randomInt(VERIFIER_CHARSET.length)];
   }
   return out;
 }

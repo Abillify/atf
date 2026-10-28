@@ -48,7 +48,18 @@ const themeInitScript = `(function(){try{var t=localStorage.getItem('aiperator_t
  * set; in the default mode (token) the HTML stays identical to before.
  */
 function sessionModeFlagScript(): string {
-  return `(function(){window[${JSON.stringify(CONTROL_SESSION_MODE_GLOBAL)}]='bff';})();`;
+  return `(function(){window[${scriptStringLiteral(CONTROL_SESSION_MODE_GLOBAL)}]='bff';})();`;
+}
+
+/**
+ * A JSON string literal that is also safe inside an inline `<script>`: the
+ * characters that could close the element or break the line are escaped.
+ */
+function scriptStringLiteral(value: string): string {
+  return JSON.stringify(value).replace(
+    /[<>/\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 /**

@@ -64,15 +64,19 @@ const IFRAME_RE = /<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi;
 const SELF_CLOSING_IFRAME_RE = /<iframe\b[^>]*\/>/gi;
 
 export function stripRenderedArtifacts(text: string): string {
-  return (
-    text
+  // Repeat until nothing changes: one pass could splice a new block together
+  // from the remains of a removed one (`<ifr<iframe></iframe>ame>`).
+  let previous: string;
+  let current = text;
+  do {
+    previous = current;
+    current = current
       .replace(TOOL_CALLS_DETAILS_RE, "")
       .replace(IFRAME_RE, "")
-      .replace(SELF_CLOSING_IFRAME_RE, "")
-      // Collapse the blank lines left behind so the surviving prose stays clean.
-      .replace(/\n{3,}/g, "\n\n")
-      .trim()
-  );
+      .replace(SELF_CLOSING_IFRAME_RE, "");
+  } while (current !== previous);
+  // Collapse the blank lines left behind so the surviving prose stays clean.
+  return current.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**

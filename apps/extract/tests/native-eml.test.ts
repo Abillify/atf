@@ -344,3 +344,11 @@ describe("format detection", () => {
     expect(resolved.ok).toBe(false);
   });
 });
+
+describe("htmlToText · nested markup", () => {
+  it("strips tags until none are left, so removal cannot splice a new tag together", () => {
+    const text = htmlToText("<p>a<scr<script>x</script>ipt>alert(1)</p><!-<!-- c -->- d -->");
+    expect(text).not.toMatch(/<script/i);
+    expect(text).not.toContain("<!--");
+  });
+});

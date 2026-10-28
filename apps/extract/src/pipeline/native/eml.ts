@@ -518,10 +518,26 @@ function decodeEntities(text: string): string {
  * and everything after it) are marked with a `>` prefix so
  * {@link stripQuotedReply} removes them like plain-text quotes.
  */
+/**
+ * Applies `re` until the string stops changing, so a removal cannot splice a
+ * new match together (`<scr<script></script>ipt>` → `<script>` after one pass).
+ */
+function replaceToFixedPoint(value: string, re: RegExp, replacement: string): string {
+	let previous: string;
+	let current = value;
+	do {
+		previous = current;
+		current = current.replace(re, replacement);
+	} while (current !== previous);
+	return current;
+}
+
 export function htmlToText(html: string): string {
-	let s = html
-		.replace(/<!--[\s\S]*?-->/g, "")
-		.replace(/<(head|style|script|title|xml)\b[\s\S]*?<\/\1\s*>/gi, "");
+	let s = replaceToFixedPoint(
+		replaceToFixedPoint(html, /<!--[\s\S]*?-->/g, ""),
+		/<(head|style|script|title|xml)\b[\s\S]*?<\/\1\s*>/gi,
+		"",
+	);
 	// Outlook: everything from the reply header on is the quoted thread.
 	s = s.replace(/<div[^>]*id=["']?(?:divRplyFwdMsg|appendonsend)["']?[\s\S]*$/i, (m) => `<blockquote type="cite">${m}</blockquote>`);
 	// Quoted blocks → marker lines.
@@ -532,7 +548,7 @@ export function htmlToText(html: string): string {
 	s = s.replace(/<div\b[^>]*class=["'][^"']*gmail_quote[^"']*["'][^>]*>/gi, "\n\u0001QUOTE_START\u0001\n");
 	s = s
 		.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => {
-			const label = text.replace(/<[^>]+>/g, "").trim();
+			const label = replaceToFixedPoint(text, /<[^>]+>/g, "").trim();
 			if (href.startsWith("mailto:") || label === "" || label === href || href.startsWith("#")) return label;
 			return `${label} (${href})`;
 		})
@@ -541,8 +557,8 @@ export function htmlToText(html: string): string {
 		.replace(/<\/(td|th)>/gi, " \t")
 		.replace(/<\/(p|div|tr|h[1-6]|li|ul|ol|table|blockquote|pre|section|article|header|footer)>/gi, "\n")
 		.replace(/<(p|div|tr|h[1-6]|table|pre|section|article)\b[^>]*>/gi, "\n")
-		.replace(/<hr\b[^>]*>/gi, "\n")
-		.replace(/<[^>]+>/g, "");
+		.replace(/<hr\b[^>]*>/gi, "\n");
+	s = replaceToFixedPoint(s, /<[^>]+>/g, "");
 	s = decodeEntities(s);
 	const lines = s.split(/\r?\n/).map((l) => l.replace(/[ \t ]+/g, " ").trim());
 	// Everything after a quote marker is quoted history.

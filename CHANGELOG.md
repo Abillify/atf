@@ -23,6 +23,8 @@ releases:
 - **Search, Extract**: every API route is rate limited per client IP (`RATE_LIMIT`). Before, only the ingest, search and v2 routes were; the read routes (`/documents`, `/document`, `/summaries`, …), the collection admin routes, `/ui`, the browser login (`POST /login`, which checks a token) and the OIDC routes were not. Health probes, `/metrics`, the evidence JWKS and the OpenAPI documents stay unlimited, and so do Search's MCP endpoints, whose callers (Gate, Runtime) bundle many users behind one IP and limit per identity themselves.
 - **Gate**: `server.cors.origins: ["*"]` now answers a literal `*` without `Access-Control-Allow-Credentials`; before, it reflected any origin together with credentials, so any site could send cookie-authenticated requests. An explicit origin list keeps credentials.
 - **Extract** (`/v2/uploads/{id}`): an id that is not a server-issued UUID is answered with 404 before it reaches a scratch-file path, and scratch files are confined to the scratch directory (Express decodes `%2F` in route parameters).
+- **Runtime** (flows): `$include.patches` ignore `__proto__`, `constructor` and `prototype` keys.
+- **Outpost**: the PKCE `code_verifier` is drawn uniformly from its alphabet (before, `byte % 66` favoured the first 58 characters).
 - **ReDoS**: regular expressions that backtracked quadratically or exponentially on crafted input are replaced by linear scans or unambiguous patterns: trailing-slash trimming of issuers and URLs (new `trimTrailingSlashes` in the Security_Kit), the Bearer header parser in Gate and Runtime, the Gate monitor's JSON highlighter, HTML/Markdown normalisation in Search, figure and bbox parsing and page selections in `@atf/extract-contract` (2.4.1), and the S3 listing, AWS INI and certificate parsing in the Outpost.
 
 ### Added
@@ -39,6 +41,9 @@ releases:
 
 - **Gate** (approvals): with a Redis URL and the default `policies.approval.maxPending`, creating a pending approval always failed with "approval store unavailable", because the create script did not compile on Redis (and would have reported every write as a duplicate). Human-approval flows on a shared Redis work again.
 - **Search, Extract, Gate** (rate limits): the shared Redis GCRA backend passed numbers to the Redis client, which accepts only strings, so every check failed. Search and Extract failed open (no shared limit with `RATE_LIMIT_REDIS_URL`), and the Gate per-identity limit with `store.type: redis` failed closed (every MCP call refused).
+- **Search** (`/ingest`, `/search`): a body that is not text (a JSON object or array) is rejected with 400 instead of failing with a type error.
+- **Extract** (email): HTML-to-text conversion and the Runtime's artifact stripping remove tags until none are left, so a removal cannot splice a new `<script>` or `<iframe>` together.
+- **Search, Extract-contract** (tables): a backslash in a Markdown table cell is escaped before the pipe, so `a\|b` no longer splits the cell.
 
 ## [0.21.0] - 2026-10-27
 

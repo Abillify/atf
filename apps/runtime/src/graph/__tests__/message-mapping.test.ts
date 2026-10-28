@@ -484,3 +484,11 @@ describe("coreMessagesToText", () => {
     expect(text).toContain("user: hello [image]");
   });
 });
+
+describe("stripRenderedArtifacts · nested markup", () => {
+  test("removes iframes until none are left", () => {
+    const out = stripRenderedArtifacts("ok <ifr<iframe src=x></iframe>ame src=y></iframe> end");
+    expect(out).not.toMatch(/<iframe/i);
+    expect(out).toContain("ok");
+  });
+});

@@ -309,7 +309,7 @@ function figureTag(figure: CorpusFigure): string {
 
 function renderTable(rows: string[][]): string {
 	if (rows.length === 0) return "";
-	const escapeCell = (cell: string) => cell.replace(/\|/g, "\\|");
+	const escapeCell = (cell: string) => cell.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 	const head = `| ${rows[0].map(escapeCell).join(" | ")} |`;
 	const separator = `| ${rows[0].map(() => "---").join(" | ")} |`;
 	const body = rows

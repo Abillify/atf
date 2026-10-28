@@ -133,7 +133,6 @@ function cleanDoc(block: string | undefined): string | undefined {
 		.map((line) => line.replace(/^\s*\*ID?\s?/, "").replace(/^\s*\*\s?/, ""))
 		.join(" ")
 		.replace(/\s+/g, " ")
-		.replace(/`/g, "`")
 		.trim();
 	return text === "" ? undefined : text;
 }
@@ -161,7 +160,7 @@ function lastAdjacentDocBlock(text: string): string | undefined {
 	if (open === -1) return undefined;
 	// Reject a block that already closed earlier: the last `*/` must be the block's own.
 	const candidate = trimmed.slice(open);
-	if (candidate.indexOf("*/") !== candidate.length - 2) return undefined;
+	if (!candidate.endsWith("*/") || candidate.indexOf("*/") !== candidate.length - 2) return undefined;
 	return candidate;
 }
 
