@@ -635,6 +635,12 @@ Changes since 0.20.0 that need operator attention:
 6. Runtime: migration 51 rewrites JSONB values that earlier versions stored as JSON string scalars in `erasure_requests`, `tenants`, `eval_runs` and `eval_matrix_runs`, so erasure receipts are found by id again. It only touches string scalars that hold a JSON object or array and runs once at startup with the other migrations.
 7. Outpost (`sharepoint`): runs that start from the stored delta link no longer treat unmentioned items as deleted. Sources that ran with `mirrorDelete` off may hold items marked `deleted-in-source` that still exist in SharePoint; they are uploaded again on their next change. To restore them at once, delete the source's `deltaLink` from the Outpost state, so the next run lists the whole library.
 
+### 0.21 → next
+
+Changes since 0.21.0 that need operator attention:
+
+2. Search, Extract: with `RATE_LIMIT_REDIS_URL` the shared rate limit was not enforced before (every Redis check failed open); it now is, across all replicas together. Check `RATE_LIMIT` (and `RENDER_RATE_LIMIT` in Extract) against your real traffic before rolling out. Gate: with `server.rateLimit.perIdentity.store.type: redis`, MCP calls were refused (fail closed) and are now let through within the limit.
+
 ### Not yet shared between replicas (roadmap)
 
 These are known single-process behaviours, not defects of a correct single-replica

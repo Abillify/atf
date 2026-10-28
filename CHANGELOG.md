@@ -20,6 +20,7 @@ releases:
 ### Fixed
 
 - **Gate** (approvals): with a Redis URL and the default `policies.approval.maxPending`, creating a pending approval always failed with "approval store unavailable", because the create script did not compile on Redis (and would have reported every write as a duplicate). Human-approval flows on a shared Redis work again.
+- **Search, Extract, Gate** (rate limits): the shared Redis GCRA backend passed numbers to the Redis client, which accepts only strings, so every check failed. Search and Extract failed open (no shared limit with `RATE_LIMIT_REDIS_URL`), and the Gate per-identity limit with `store.type: redis` failed closed (every MCP call refused).
 
 ## [0.21.0] - 2026-10-27
 

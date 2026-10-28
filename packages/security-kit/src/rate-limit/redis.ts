@@ -88,7 +88,8 @@ export function createRedisRateLimitBackend(
     try {
       const raw = (await client.eval(GCRA_LUA, {
         keys: [`${keyPrefix}:${key}`],
-        arguments: [emissionUs, fillUs, cost, nowUs],
+        // The redis client accepts only string or Buffer arguments.
+        arguments: [String(emissionUs), String(fillUs), String(cost), String(nowUs)],
       })) as (number | string)[];
       const allowed = Number(raw[0]) === 1;
       return {
