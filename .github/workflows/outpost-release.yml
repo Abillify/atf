@@ -600,4 +600,7 @@ jobs:
             assets+=("$file")
           done < <(find artifacts -type f \
               \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.sig' \) | sort)
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "${assets[@]}"
+          # --latest=false: Outpost releases share this repository with the
+          # product releases (v*), and "Latest" must keep pointing at the
+          # product. Without it every Outpost release took the badge.
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --latest=false "${assets[@]}"
