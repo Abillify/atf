@@ -10,7 +10,7 @@
  * Dropbox markers (6.8).
  */
 
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -433,5 +433,55 @@ describe("local source: open with the path guard (15.5)", () => {
         noSignal,
       ),
     ).rejects.toThrow(/path guard rejected/);
+  });
+
+  // Folders copied from macOS keep NFD names; Linux filesystems compare
+  // bytes, so the NFC quellId alone would not find them.
+  it("opens files whose on-disk names are NFD (quellId stays NFC)", async () => {
+    const dir = path.join(tmpDir, "nfd");
+    const folderNfd = "Unterlagen Qualita\u0308tsmanagement";
+    const fileNfd = "Gespra\u0308chsprotokoll.pdf";
+    await mkdir(path.join(dir, folderNfd), { recursive: true });
+    await writeFile(path.join(dir, folderNfd, fileNfd), enc("protokoll"));
+
+    const adapter = createLocalSource({ root: dir });
+    const result = await collectListing(adapter, noSignal);
+    expect(result.kind).toBe("complete");
+    if (result.kind !== "complete") return;
+    const quellId = "Unterlagen Qualit\u00e4tsmanagement/Gespr\u00e4chsprotokoll.pdf";
+    expect(result.items.map((i) => i.quellId)).toEqual([quellId]);
+
+    const [item] = result.items;
+    if (item === undefined) throw new Error("listing is empty");
+    expect(dec(await readAll(await adapter.open(item, noSignal)))).toBe("protokoll");
+    // A journal-reconstructed item (no listing in this run) opens the same way.
+    expect(
+      dec(
+        await readAll(
+          await adapter.open(
+            { quellId, name: "Gespr\u00e4chsprotokoll.pdf", size: 9, modified: new Date(), marker: "m" },
+            noSignal,
+          ),
+        ),
+      ),
+    ).toBe("protokoll");
+  });
+
+  it("rejects a quellId that matches two different on-disk names", async () => {
+    const dir = path.join(tmpDir, "ambiguous");
+    await mkdir(dir, { recursive: true });
+    // Both normalize to NFC "\u00c5.txt", neither is that exact name.
+    await writeFile(path.join(dir, "\u212b.txt"), enc("angstrom"));
+    await writeFile(path.join(dir, "A\u030a.txt"), enc("a-ring"));
+    // Normalization-insensitive filesystems (APFS, NTFS) keep only one entry.
+    if ((await readdir(dir)).length < 2) return;
+
+    const adapter = createLocalSource({ root: dir });
+    await expect(
+      adapter.open(
+        { quellId: "\u00c5.txt", name: "\u00c5.txt", size: 1, modified: new Date(), marker: "m" },
+        noSignal,
+      ),
+    ).rejects.toThrow(/path guard rejected .*ambiguous/);
   });
 });

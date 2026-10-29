@@ -21,6 +21,7 @@ releases:
 ### Fixed
 
 - **Outpost** (release): an Outpost release (`outpost-v*`) is no longer marked as the repository's "Latest" release, which belongs to the product releases (`v*`).
+- **Outpost** (`local`, 0.1.2): files whose on-disk names are not NFC, typically folders copied from macOS (NFD), could not be opened on Linux and failed with "path guard rejected … candidate path not resolvable". `open` now maps the NFC `quellId` back to the on-disk name segment by segment before the path guard runs. The `quellId` and thus the document reference stay NFC, so nothing is re-ingested under a new reference. Two different entries with the same NFC form are rejected as ambiguous.
 
 ## [0.22.0] - 2026-10-28
 
