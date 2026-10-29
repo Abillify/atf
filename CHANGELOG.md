@@ -18,6 +18,10 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Outpost** (release): an Outpost release (`outpost-v*`) is no longer marked as the repository's "Latest" release, which belongs to the product releases (`v*`).
+
 ## [0.22.0] - 2026-10-28
 
 ### Security
