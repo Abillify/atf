@@ -415,6 +415,14 @@ export class McpToolDispatcher {
     nested = false,
     /** Stable logical identity supplied by the parent action for child ledger binding. */
     logicalActionId?: string,
+    /**
+     * Gate-internal approval enrichment (policy `approval.lookup`). It runs before
+     * the action exists, so there is no transaction token or parent context to
+     * bind it to; it skips the TransactionFabric and is restricted to read tools.
+     * Nested composite/router steps inherit it, so each step is checked too.
+     * Never reachable from protocol input.
+     */
+    approvalLookup = false,
   ): Promise<ToolResult> {
     const { registry, bus, identityRateLimiter } = this.deps;
     const { name } = input;
@@ -561,6 +569,19 @@ export class McpToolDispatcher {
 
     const requiredScopes = registry.requiredScopesOf(name);
     const access = registry.accessOf(name) ?? "read";
+    // Fail closed: skipping the fabric is only acceptable for a read-only lookup.
+    if (approvalLookup && access !== "read") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Approval lookup tool '${name}' must be read-only.`,
+          },
+        ],
+        isError: true,
+        structuredContent: { code: "APPROVAL_LOOKUP_NOT_READ_ONLY" },
+      };
+    }
     const policy = this.policy();
     // One rule scan per call resolves effect, rule and evidence requirement (Req 6.3).
     const decision = preflighted
@@ -675,12 +696,16 @@ export class McpToolDispatcher {
                 structuredContent: { code: "INVOCATION_CONTEXT_MISMATCH" },
               });
             }
+            // Steps of a composite/router approval lookup inherit the lookup
+            // mode: no fabric (there is no parent transaction), and every step
+            // must itself be read-only.
             return this.callTool(
               { name: nestedName, arguments: nestedArgs, _meta: input._meta },
               nestedSignal,
               false,
               true,
               nestedOptions.logicalActionId,
+              approvalLookup,
             );
           },
           () => run(fabricSignal),
@@ -689,7 +714,7 @@ export class McpToolDispatcher {
         `mcp.tool_call ${name}`,
         { "mcpgate.tool": name, "mcpgate.username": this.context.username },
         () =>
-          this.deps.transactionFabric
+          this.deps.transactionFabric && !approvalLookup
             ? this.deps.transactionFabric.execute({
                 token: transactionToken,
                 tool: name,

@@ -453,7 +453,10 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       }
       // Regulierte Aktion (Req 1.4): the decision is only presented as saved
       // once it is durably audited — otherwise 503 (never a success without a
-      // trail, even though the approval itself is already consumed).
+      // trail). The approval itself is already consumed at this point and the
+      // tool call proceeds accordingly, so the page must say that the decision
+      // took effect and only the audit entry is missing — a retry would just
+      // show the resolved state.
       if (auditLog !== undefined) {
         try {
           await auditLog.recordRequired({
@@ -466,9 +469,9 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
         } catch {
           return ctx.html(
             approvalShell(
-              `<div class="tool">⚠️ Audit unavailable</div>` +
-                `<div class="note">The decision could not be recorded in the ` +
-                `audit trail and was therefore not confirmed. Please retry.</div>`,
+              `<div class="tool">⚠️ ${approved ? "Approved" : "Denied"} — audit entry missing</div>` +
+                `<div class="note">The decision took effect, but it could not be ` +
+                `recorded in the audit trail. Please inform your operator.</div>`,
             ),
             AUDIT_UNAVAILABLE_STATUS,
           );

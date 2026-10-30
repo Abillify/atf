@@ -2,8 +2,8 @@ apiVersion: v2
 name: atf
 description: ATF (Aiperator Trust Fabric) production stack - runtime, gate, search, extract and control as vendored subcharts.
 type: application
-version: 0.22.0
-appVersion: "0.22.0"
+version: 0.23.0
+appVersion: "0.23.0"
 keywords:
   - atf
   - trust-fabric
@@ -13,14 +13,14 @@ sources:
   - https://github.com/abillify/atf
 dependencies:
   - name: atf-common
-    version: 0.22.0
+    version: 0.23.0
   - name: runtime
-    version: 0.22.0
+    version: 0.23.0
   - name: gate
-    version: 0.22.0
+    version: 0.23.0
   - name: search
-    version: 0.22.0
+    version: 0.23.0
   - name: extract
-    version: 0.22.0
+    version: 0.23.0
   - name: control
-    version: 0.22.0
+    version: 0.23.0

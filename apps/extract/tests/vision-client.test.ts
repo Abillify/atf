@@ -108,6 +108,29 @@ describe("createVisionClient", () => {
     });
   });
 
+  it("sends enable_thinking from VISION_ENABLE_THINKING, alone or with reasoning_effort", async () => {
+    // Qwen-style templates ignore reasoning_effort; only enable_thinking turns
+    // their thinking block off.
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) => completion("<markdown>ok</markdown>"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createVisionClient({ ...CONFIG, visionEnableThinking: false }, testLogger).analyzePage(PAGE);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1].body)).chat_template_kwargs).toEqual({
+      enable_thinking: false,
+    });
+
+    await createVisionClient(
+      { ...CONFIG, visionReasoningEffort: "low", visionEnableThinking: true },
+      testLogger,
+    ).analyzePage(PAGE);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1].body)).chat_template_kwargs).toEqual({
+      reasoning_effort: "low",
+      enable_thinking: true,
+    });
+  });
+
   describe("truncation escalates the token budget", () => {
     it("moves to the next budget rather than repeating the identical request", async () => {
       // Retrying identically would produce the identical truncation.

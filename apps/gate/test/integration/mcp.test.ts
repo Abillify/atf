@@ -375,11 +375,11 @@ describe("MCP integration · native stateless 2026-07-28 HTTP", () => {
     const body = (await response.json()) as { result: Record<string, unknown> };
     expect(body.result).toMatchObject({
       resultType: "complete",
-      serverInfo: { name: "mcpgate", version: "0.22.0" },
+      serverInfo: { name: "mcpgate", version: "0.23.0" },
       protocolVersion: "2026-07-28",
       service: {
         name: "mcpgate",
-        version: "0.22.0",
+        version: "0.23.0",
         endpoint: "/mcp/v2026",
         transport: "stateless-http",
       },
@@ -390,7 +390,7 @@ describe("MCP integration · native stateless 2026-07-28 HTTP", () => {
         requestMetadata: ["transaction", "trace", "deadline"],
       },
       capabilities: { tools: { list: true, call: true } },
-      _meta: { serverInfo: { name: "mcpgate", version: "0.22.0" } },
+      _meta: { serverInfo: { name: "mcpgate", version: "0.23.0" } },
     });
     expect(JSON.stringify(body)).not.toContain("subscriptions");
     expect((await fetch(`http://127.0.0.1:${port}/mcp/v2026`)).status).toBe(405);
@@ -754,5 +754,271 @@ describe("MCP integration · stateless governance, primitives, and tasks", () =>
       taskId: started.result.task.taskId,
     });
     expect(crossTenant.status).toBe(404);
+  });
+});
+
+describe("MCP integration · approval lookup with required transaction enforcement", () => {
+  let handle: AppHandle;
+  let server: Server;
+  let port: number;
+  let fakeDb: FakeDb;
+  const secret = "approval-lookup-transaction-secret-0123456789";
+  const previous = {
+    enforcement: process.env.MCPGATE_TRANSACTION_ENFORCEMENT,
+    secret: process.env.MCPGATE_TRANSACTION_HS256_SECRET,
+    issuer: process.env.MCPGATE_TRANSACTION_ISSUER,
+    audience: process.env.MCPGATE_TRANSACTION_AUDIENCE,
+  };
+
+  const transactionToken = (jti: string) => {
+    const now = Math.floor(Date.now() / 1000);
+    return new SignJWT({
+      version: "v1",
+      iss: "aiperator",
+      aud: "mcpgate",
+      iat: now,
+      exp: now + 60,
+      jti,
+      executionId: `${jti}-exec`,
+      invocationId: `${jti}-invocation`,
+      scopes: ["tools:read"],
+      groups: [],
+      budget: {},
+      delegationChain: [],
+      trace: {},
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "at+jwt" })
+      .sign(new TextEncoder().encode(secret));
+  };
+
+  const request = (method: string, params: Record<string, unknown>) => {
+    const requestState =
+      method === "io.modelcontextprotocol/approvals/resolve" ? params.requestState : undefined;
+    return fetch(`http://127.0.0.1:${port}/mcp/v2026`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": method,
+        ...(method === "tools/call" ? { "Mcp-Name": String(params.name) } : {}),
+        ...(typeof requestState === "string" ? { "Mcp-Request-State": requestState } : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+        _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+      }),
+    });
+  };
+
+  beforeAll(async () => {
+    process.env.MCPGATE_TRANSACTION_ENFORCEMENT = "required";
+    process.env.MCPGATE_TRANSACTION_HS256_SECRET = secret;
+    process.env.MCPGATE_TRANSACTION_ISSUER = "aiperator";
+    process.env.MCPGATE_TRANSACTION_AUDIENCE = "mcpgate";
+    const lookupSchema = {
+      type: "object",
+      properties: { id: { type: "integer" } },
+      required: ["id"],
+    };
+    fakeDb = new FakeDb({ main: [{ id: 7, total: 11 }] });
+    handle = await buildApp(
+      baseConfig({
+        tools: [
+          { ...DB_TOOL, name: "approved_orders", access: "write", inputSchema: lookupSchema },
+          { ...DB_TOOL, name: "approved_orders_lookup", expose: false, access: "read", inputSchema: lookupSchema },
+          { ...DB_TOOL, name: "writing_lookup", expose: false, access: "write", inputSchema: lookupSchema },
+          { ...DB_TOOL, name: "badly_enriched", access: "write", inputSchema: lookupSchema },
+          { ...DB_TOOL, name: "composite_enriched", access: "write", inputSchema: lookupSchema },
+          { ...DB_TOOL, name: "hidden_write_enriched", access: "write", inputSchema: lookupSchema },
+          {
+            name: "composite_lookup",
+            type: "composite",
+            expose: false,
+            access: "read",
+            inputSchema: lookupSchema,
+            steps: [{ id: "row", tool: "approved_orders_lookup", arguments: { id: ":param.id" } }],
+          },
+          {
+            // Declared read, but one step writes: must fail closed per step.
+            name: "composite_hidden_write",
+            type: "composite",
+            expose: false,
+            access: "read",
+            inputSchema: lookupSchema,
+            steps: [{ id: "row", tool: "writing_lookup", arguments: { id: ":param.id" } }],
+          },
+        ],
+        policies: {
+          defaultEffect: "allow",
+          approval: { secret: "approval-lookup-approval-secret", ttlMs: 300_000, maxPending: 10 },
+          rules: [
+            {
+              effect: "approval",
+              match: { tool: "approved_orders" },
+              approval: {
+                title: "Approve order",
+                message: "Approve order {{args.id}} for {{lookup.total}}?",
+                lookup: { tool: "approved_orders_lookup", arguments: { id: "{{args.id}}" } },
+              },
+            },
+            {
+              effect: "approval",
+              match: { tool: "badly_enriched" },
+              approval: {
+                title: "Approve",
+                message: "Approve {{lookup.total}}?",
+                lookup: { tool: "writing_lookup", arguments: { id: "{{args.id}}" } },
+              },
+            },
+            {
+              effect: "approval",
+              match: { tool: "composite_enriched" },
+              approval: {
+                title: "Approve",
+                message: "Approve composite {{lookup.total}}?",
+                lookup: { tool: "composite_lookup", arguments: { id: "{{args.id}}" } },
+              },
+            },
+            {
+              effect: "approval",
+              match: { tool: "hidden_write_enriched" },
+              approval: {
+                title: "Approve",
+                message: "Approve {{lookup.total}}?",
+                lookup: { tool: "composite_hidden_write", arguments: { id: "{{args.id}}" } },
+              },
+            },
+          ],
+        },
+      }),
+      { db: fakeDb },
+    );
+    ({ server, port } = await listen(handle.app));
+  });
+
+  afterAll(async () => {
+    server.close();
+    await handle.shutdown();
+    for (const [key, value] of Object.entries({
+      MCPGATE_TRANSACTION_ENFORCEMENT: previous.enforcement,
+      MCPGATE_TRANSACTION_HS256_SECRET: previous.secret,
+      MCPGATE_TRANSACTION_ISSUER: previous.issuer,
+      MCPGATE_TRANSACTION_AUDIENCE: previous.audience,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("enriches the approval without a lookup token and keeps the action token usable", async () => {
+    const token = await transactionToken("approval-lookup-jti");
+    const call = (meta: Record<string, unknown> = {}) =>
+      request("tools/call", {
+        name: "approved_orders",
+        arguments: { id: 7 },
+        _meta: { "transaction/token": token, ...meta },
+      });
+
+    const pending = await call();
+    expect(pending.status).toBe(200);
+    const pendingBody = (await pending.json()) as {
+      result: { resultType: string; inputRequests: Array<Record<string, unknown>> };
+    };
+    expect(pendingBody.result.resultType).toBe("input_required");
+    expect(pendingBody.result.inputRequests[0]).toMatchObject({
+      type: "approval",
+      message: "Approve order 7 for 11?",
+    });
+    const callsAfterLookup = fakeDb.calls.length;
+
+    const resolved = await request("io.modelcontextprotocol/approvals/resolve", {
+      requestState: String(pendingBody.result.inputRequests[0]?.requestState),
+      decision: "approved",
+      approver: "operator@example.test",
+    });
+    expect(resolved.status).toBe(200);
+    const { approvalToken } = ((await resolved.json()) as { result: { approvalToken: string } }).result;
+
+    // The same transaction token still authorizes the gated action itself.
+    const approved = await call({ "io.modelcontextprotocol/approvalToken": approvalToken });
+    const approvedBody = (await approved.json()) as {
+      result: { resultType: string; isError?: boolean };
+    };
+    expect(approvedBody.result.resultType).toBe("complete");
+    expect(approvedBody.result.isError).not.toBe(true);
+    expect(fakeDb.calls.length).toBe(callsAfterLookup + 1);
+  });
+
+  it("still requires a transaction token for the approved action itself", async () => {
+    const pending = await request("tools/call", { name: "approved_orders", arguments: { id: 7 } });
+    const pendingBody = (await pending.json()) as {
+      result: { resultType: string; inputRequests: Array<Record<string, unknown>> };
+    };
+    expect(pendingBody.result.resultType).toBe("input_required");
+    const resolved = await request("io.modelcontextprotocol/approvals/resolve", {
+      requestState: String(pendingBody.result.inputRequests[0]?.requestState),
+      decision: "approved",
+      approver: "operator@example.test",
+    });
+    const { approvalToken } = ((await resolved.json()) as { result: { approvalToken: string } }).result;
+
+    const before = fakeDb.calls.length;
+    const response = await request("tools/call", {
+      name: "approved_orders",
+      arguments: { id: 7 },
+      _meta: { "io.modelcontextprotocol/approvalToken": approvalToken },
+    });
+    const body = (await response.json()) as {
+      result: { isError?: boolean; content?: unknown };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content).toEqual([{ type: "text", text: "Transaction token required" }]);
+    expect(fakeDb.calls.length).toBe(before);
+  });
+
+  it("fails closed when the configured lookup tool is not read-only", async () => {
+    const before = fakeDb.calls.length;
+    const response = await request("tools/call", {
+      name: "badly_enriched",
+      arguments: { id: 7 },
+      _meta: { "transaction/token": await transactionToken("write-lookup-jti") },
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      error: { code: -32603, message: "Approval lookup failed" },
+    });
+    expect(fakeDb.calls.length).toBe(before);
+  });
+
+  it("runs a composite lookup whose steps are read-only", async () => {
+    const response = await request("tools/call", {
+      name: "composite_enriched",
+      arguments: { id: 7 },
+      _meta: { "transaction/token": await transactionToken("composite-lookup-jti") },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result: { resultType: string; inputRequests: Array<Record<string, unknown>> };
+    };
+    expect(body.result.resultType).toBe("input_required");
+    expect(body.result.inputRequests[0]).toMatchObject({ message: "Approve composite 11?" });
+  });
+
+  it("fails closed when a composite lookup step is not read-only", async () => {
+    const before = fakeDb.calls.length;
+    const response = await request("tools/call", {
+      name: "hidden_write_enriched",
+      arguments: { id: 7 },
+      _meta: { "transaction/token": await transactionToken("composite-write-jti") },
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      error: { code: -32603, message: "Approval lookup failed" },
+    });
+    expect(fakeDb.calls.length).toBe(before);
   });
 });

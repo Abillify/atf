@@ -18,7 +18,11 @@
  * deterministically without sleeping.
  */
 
-import type { ErasureJobTargetFilter } from "../src/persistence/extract-queries.js";
+import {
+  ACTIVE_JOB_STATUSES,
+  type ErasureJobTargetFilter,
+  WAITING_JOB_STATUSES,
+} from "../src/persistence/extract-queries.js";
 import type { ExtractStore } from "../src/persistence/index.js";
 import {
   type AssetOutboxRow,
@@ -29,8 +33,10 @@ import {
   type ErasureLedgerState,
   type Fence,
   type JobRow,
+  type JobStatusSummaryRow,
   LeaseLostError,
   type NewJob,
+  type PageStageCountRow,
   type PageStageRow,
   type StageStatus,
   type StageUnit,
@@ -382,15 +388,81 @@ export function createFakeJobStore(): FakeJobStore {
       return known;
     },
 
-    async listJobs(limit, offset) {
+    async listJobs(limit, offset, options) {
+      const statuses = options?.statuses ?? [];
+      const rank = (status: string): number =>
+        (ACTIVE_JOB_STATUSES as readonly string[]).includes(status)
+          ? 0
+          : (WAITING_JOB_STATUSES as readonly string[]).includes(status)
+            ? 1
+            : 2;
+      const newest = (a: JobRow, b: JobRow): number =>
+        b.created_at.getTime() - a.created_at.getTime() ||
+        (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+      // Mirrors QUEUE_ORDER: active, then waiting (both oldest first), then
+      // the finished ones by most recent update.
+      const queue = (a: JobRow, b: JobRow): number => {
+        const ra = rank(a.status);
+        const rb = rank(b.status);
+        if (ra !== rb) return ra - rb;
+        if (ra < 2) return a.created_at.getTime() - b.created_at.getTime() || (a.id < b.id ? -1 : 1);
+        return b.updated_at.getTime() - a.updated_at.getTime() || (a.id < b.id ? -1 : 1);
+      };
       return [...jobs.values()]
-        .sort(
-          (a, b) =>
-            b.created_at.getTime() - a.created_at.getTime() ||
-            (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
-        )
+        .filter((row) => statuses.length === 0 || statuses.includes(row.status))
+        .sort(options?.order === "queue" ? queue : newest)
         .slice(offset, offset + limit)
         .map(copy);
+    },
+    async countJobs(statuses) {
+      const wanted = statuses ?? [];
+      return [...jobs.values()].filter((row) => wanted.length === 0 || wanted.includes(row.status)).length;
+    },
+    async jobStatusSummary() {
+      const groups = new Map<string, JobStatusSummaryRow>();
+      for (const row of jobs.values()) {
+        const key = `${row.status}|${row.pause_reason ?? ""}`;
+        const g = groups.get(key) ?? {
+          status: row.status,
+          pause_reason: row.pause_reason,
+          jobs: 0,
+          tokens_used: 0,
+          cost_usd: 0,
+          pages: 0,
+          oldest_created_at: null,
+        };
+        g.jobs = Number(g.jobs) + 1;
+        g.tokens_used = Number(g.tokens_used) + Number(row.tokens_used);
+        g.cost_usd = Number(g.cost_usd) + Number(row.cost_usd);
+        g.pages = Number(g.pages) + Number(row.page_count ?? 0);
+        if (g.oldest_created_at === null || row.created_at < g.oldest_created_at) g.oldest_created_at = row.created_at;
+        groups.set(key, g);
+      }
+      return [...groups.values()];
+    },
+    async activePageProgress() {
+      let done = 0;
+      let total = 0;
+      for (const row of jobs.values()) {
+        if (!(ACTIVE_JOB_STATUSES as readonly string[]).includes(row.status)) continue;
+        total += Number(row.page_count ?? 0);
+        for (const st of stages.page.values()) {
+          if (st.job_id === row.id && st.stage === "emitted" && st.status === "done") done += 1;
+        }
+      }
+      return { done, total };
+    },
+    async pageStageCounts(jobIds) {
+      const groups = new Map<string, PageStageCountRow>();
+      for (const st of stages.page.values()) {
+        if (!jobIds.includes(st.job_id)) continue;
+        const key = `${st.job_id}|${st.stage}|${st.status}`;
+        const g = groups.get(key) ?? { job_id: st.job_id, stage: st.stage, status: st.status, n: 0, first_at: st.created_at };
+        g.n = Number(g.n) + 1;
+        if (st.created_at < g.first_at) g.first_at = st.created_at;
+        groups.set(key, g);
+      }
+      return [...groups.values()];
     },
 
     async sourceDigestsByReference(
@@ -467,9 +539,10 @@ export function createFakeJobStore(): FakeJobStore {
       });
     },
 
-    async consumeJobTokens(id, tokens, fence) {
+    async consumeJobTokens(id, tokens, fence, costUsd) {
       return updateJob(id, fence, (row) => {
         row.tokens_used = Number(row.tokens_used) + tokens;
+        row.cost_usd = Number(row.cost_usd) + (costUsd ?? 0);
       });
     },
 
@@ -498,6 +571,7 @@ export function createFakeJobStore(): FakeJobStore {
           Number(row.tokens_reserved) - settlement.reserved,
         );
         row.tokens_used = Number(row.tokens_used) + settlement.used;
+        row.cost_usd = Number(row.cost_usd) + (settlement.costUsd ?? 0);
       });
     },
 
@@ -683,6 +757,7 @@ export function createFakeJobStore(): FakeJobStore {
             Number(row.tokens_reserved) - settlement.reserved,
           );
           row.tokens_used = Number(row.tokens_used) + settlement.used;
+          row.cost_usd = Number(row.cost_usd) + (settlement.costUsd ?? 0);
           row.updated_at = now();
           job = copy(row);
         }

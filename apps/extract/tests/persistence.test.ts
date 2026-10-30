@@ -408,6 +408,43 @@ describeIfPg("extract-store · real PostgreSQL", () => {
     expect(next[0]?.id).toBe(ids[0]);
   });
 
+  it("lists in queue order with a status filter, counts, summarises and folds stage counts", async () => {
+    const tag = crypto.randomUUID().slice(0, 8);
+    const ids = { queued: crypto.randomUUID(), running: crypto.randomUUID(), done: crypto.randomUUID() };
+    for (const [name, id] of Object.entries(ids)) {
+      await store.createJob({ id, reference: `tests/overview-${tag}-${name}.pdf`, source_sha256: "e".repeat(64) });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await store.setJobStatus(ids.running, "processing");
+    await store.setJobPageCount(ids.running, 3);
+    await store.setJobStatus(ids.done, "completed");
+    await store.consumeJobTokens(ids.done, 1_000, undefined, 0.5);
+    await store.upsertStage("page", {
+      job_id: ids.running, page: 1, stage: "emitted", input_hash: "h", status: "done",
+      output: null, next_attempt_at: null, error: null,
+    });
+
+    const active = await store.listJobs(10, 0, { order: "queue", statuses: ["processing"] });
+    expect(active.map((r) => r.id)).toContain(ids.running);
+    expect(active.every((r) => r.status === "processing")).toBe(true);
+    const queue = await store.listJobs(1000, 0, { order: "queue" });
+    const seeded: string[] = Object.values(ids);
+    const order = queue.map((r) => r.id).filter((id) => seeded.includes(id));
+    expect(order).toEqual([ids.running, ids.queued, ids.done]);
+    expect(await store.countJobs(["processing"])).toBe(active.length);
+
+    const counts = await store.pageStageCounts([ids.running, ids.queued]);
+    expect(counts).toEqual([
+      expect.objectContaining({ job_id: ids.running, stage: "emitted", status: "done", n: "1" }),
+    ]);
+    const summary = await store.jobStatusSummary();
+    const completed = summary.filter((g) => g.status === "completed").reduce((sum, g) => sum + Number(g.cost_usd), 0);
+    expect(completed).toBeGreaterThanOrEqual(0.5);
+    const pages = await store.activePageProgress();
+    expect(pages.total).toBeGreaterThanOrEqual(3);
+    expect(pages.done).toBeGreaterThanOrEqual(1);
+    expect(Number((await store.getJob(ids.done))?.cost_usd)).toBeCloseTo(0.5);
+  });
   it("knownEmailMessageIds finds recorded Message-IDs of the collection, not of failed jobs", async () => {
     const collection = `mail-${crypto.randomUUID()}`;
     const ok = crypto.randomUUID();

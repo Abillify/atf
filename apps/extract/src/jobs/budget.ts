@@ -18,8 +18,9 @@
  * together or not at all. A crashed worker's reservations are dropped by the
  * next claim, which owns no calls in flight.
  *
- * A job with no cap uses `unlimitedBudget` from the stage runner instead — this
- * ledger is only constructed when `token_budget IS NOT NULL`.
+ * Every job gets this ledger, capped or not: an uncapped job (`token_budget IS
+ * NULL`) always reserves and never warns, but still books `tokens_used` and
+ * `cost_usd`, so the job overview reports what a run consumed.
  */
 
 import type { ExtractStore } from "../persistence/index.js";
@@ -92,11 +93,11 @@ export function createDbBudgetLedger(store: ExtractStore, jobId: string, fence?:
         Number(job.token_budget) - Number(job.tokens_used) - Number(job.tokens_reserved ?? 0),
       );
     },
-    async consume(tokens) {
+    async consume(tokens, costUsd) {
       if (tokens <= 0) return;
       // The atomic increment returns the updated row, so we learn the new total
       // and the budget without a second read racing another stage's spend.
-      const updated = await store.consumeJobTokens(jobId, tokens, fence);
+      const updated = await store.consumeJobTokens(jobId, tokens, fence, costUsd ?? 0);
       await warnIfCrossed(updated, tokens);
     },
     async reserve(tokens) {

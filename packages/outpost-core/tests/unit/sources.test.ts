@@ -439,8 +439,8 @@ describe("local source: open with the path guard (15.5)", () => {
   // bytes, so the NFC quellId alone would not find them.
   it("opens files whose on-disk names are NFD (quellId stays NFC)", async () => {
     const dir = path.join(tmpDir, "nfd");
-    const folderNfd = "Unterlagen Qualita\u0308tsmanagement";
-    const fileNfd = "Gespra\u0308chsprotokoll.pdf";
+    const folderNfd = "U\u0308bersicht Pru\u0308fungen";
+    const fileNfd = "Bericht.pdf";
     await mkdir(path.join(dir, folderNfd), { recursive: true });
     await writeFile(path.join(dir, folderNfd, fileNfd), enc("protokoll"));
 
@@ -448,7 +448,7 @@ describe("local source: open with the path guard (15.5)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    const quellId = "Unterlagen Qualit\u00e4tsmanagement/Gespr\u00e4chsprotokoll.pdf";
+    const quellId = "\u00dcbersicht Pr\u00fcfungen/Bericht.pdf";
     expect(result.items.map((i) => i.quellId)).toEqual([quellId]);
 
     const [item] = result.items;
@@ -459,7 +459,7 @@ describe("local source: open with the path guard (15.5)", () => {
       dec(
         await readAll(
           await adapter.open(
-            { quellId, name: "Gespr\u00e4chsprotokoll.pdf", size: 9, modified: new Date(), marker: "m" },
+            { quellId, name: "Bericht.pdf", size: 9, modified: new Date(), marker: "m" },
             noSignal,
           ),
         ),

@@ -1715,6 +1715,29 @@ export const MIGRATIONS: readonly Migration[] = [
       repairStringScalarJsonSql("eval_matrix_runs", "payload"),
     ],
   },
+  {
+    version: 52,
+    name: "audit_log append grants for the operator role",
+    statements: [
+      // PostgresAuditLog writes the hash chain on the operator pool
+      // (withOperator). rls-setup only granted SELECT on all tables to
+      // aiperator_operator, so every durable audit write (approvals, key
+      // rotation, erasure, …) failed with "permission denied" and the
+      // regulated routes answered 503 AUDIT_UNAVAILABLE. Append-only:
+      // INSERT plus the id sequence, never UPDATE/DELETE.
+      `DO $do$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
+           EXECUTE 'GRANT INSERT, SELECT ON audit_log TO aiperator_operator';
+           EXECUTE 'REVOKE UPDATE, DELETE ON audit_log FROM aiperator_operator';
+           IF to_regclass('public.audit_log_id_seq') IS NOT NULL THEN
+             EXECUTE 'GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq TO aiperator_operator';
+           END IF;
+         END IF;
+       END
+       $do$`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => Math.max(m.version, max),

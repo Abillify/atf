@@ -263,6 +263,12 @@ const RLS_SETUP_STATEMENTS: readonly string[] = [
                WHERE table_schema = 'public' AND table_name = 'audit_log') THEN
        EXECUTE 'REVOKE UPDATE, DELETE ON public.audit_log FROM aiperator_app';
        EXECUTE 'REVOKE UPDATE, DELETE ON public.audit_log FROM aiperator_operator';
+       -- PostgresAuditLog appends the chain on the operator pool: INSERT and
+       -- the id sequence are required (migration 52 repeats this).
+       EXECUTE 'GRANT INSERT ON public.audit_log TO aiperator_operator';
+       IF to_regclass('public.audit_log_id_seq') IS NOT NULL THEN
+         EXECUTE 'GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO aiperator_operator';
+       END IF;
      END IF;
    END
    $$`,

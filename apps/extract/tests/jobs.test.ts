@@ -616,3 +616,128 @@ describe("auth", () => {
     expect(withAuth.status).toBe(201);
   });
 });
+
+describe("GET /v2/jobs · queue order, status filter, total and progress", () => {
+  async function seedQueue(baseUrl: string) {
+    const ids: Record<string, string> = {};
+    for (const name of ["oldQueued", "done", "running", "newQueued", "pausedJob"]) {
+      ids[name] = (await createJob(baseUrl, { reference: name })).body.jobId;
+      fakeStore.advance(1000);
+    }
+    await fakeStore.setJobStatus(ids["done"] as string, "completed");
+    await fakeStore.setJobStatus(ids["running"] as string, "processing");
+    await fakeStore.setJobStatus(ids["pausedJob"] as string, "paused", "dependency");
+    return ids;
+  }
+
+  it("order=queue lists active jobs first, then waiting ones oldest first, then finished", async () => {
+    const baseUrl = await buildApp();
+    const ids = await seedQueue(baseUrl);
+    const res = await request(baseUrl).get("/v2/jobs?order=queue");
+    expect(res.status).toBe(200);
+    expect(res.body.order).toBe("queue");
+    expect(res.body.total).toBe(5);
+    expect(res.body.jobs.map((j: { jobId: string }) => j.jobId)).toEqual([
+      ids["running"],
+      ids["oldQueued"],
+      ids["newQueued"],
+      ids["pausedJob"],
+      ids["done"],
+    ]);
+  });
+
+  it("filters by status groups and lists, and counts the filtered total", async () => {
+    const baseUrl = await buildApp();
+    const ids = await seedQueue(baseUrl);
+    const active = await request(baseUrl).get("/v2/jobs?status=active");
+    expect(active.body.total).toBe(1);
+    expect(active.body.jobs.map((j: { jobId: string }) => j.jobId)).toEqual([ids["running"]]);
+    const waiting = await request(baseUrl).get("/v2/jobs?status=waiting&order=queue");
+    expect(waiting.body.total).toBe(3);
+    expect(waiting.body.jobs.map((j: { jobId: string }) => j.jobId)).toEqual([
+      ids["oldQueued"],
+      ids["newQueued"],
+      ids["pausedJob"],
+    ]);
+    const list = await request(baseUrl).get("/v2/jobs?status=completed,paused&limit=1");
+    expect(list.body.total).toBe(2);
+    expect(list.body.jobs).toHaveLength(1);
+  });
+
+  it("rejects an unknown status or order with 400", async () => {
+    const baseUrl = await buildApp();
+    expect((await request(baseUrl).get("/v2/jobs?status=running")).status).toBe(400);
+    expect((await request(baseUrl).get("/v2/jobs?order=oldest")).status).toBe(400);
+  });
+
+  it("include=progress folds per-stage progress into each row", async () => {
+    const baseUrl = await buildApp();
+    const ids = await seedQueue(baseUrl);
+    const running = ids["running"] as string;
+    await fakeStore.setJobPageCount(running, 2);
+    for (const page of [1, 2]) {
+      await fakeStore.upsertStage("page", {
+        job_id: running,
+        page,
+        stage: "vision1",
+        input_hash: "h",
+        status: "done",
+        output: null,
+        next_attempt_at: null,
+        error: null,
+      });
+    }
+    await fakeStore.upsertStage("page", {
+      job_id: running,
+      page: 1,
+      stage: "emitted",
+      input_hash: "h",
+      status: "done",
+      output: null,
+      next_attempt_at: null,
+      error: null,
+    });
+    const res = await request(baseUrl).get("/v2/jobs?order=queue&include=progress");
+    const row = res.body.jobs[0];
+    expect(row.jobId).toBe(running);
+    expect(row.progress.vision1).toEqual({ done: 2, total: 2, failed: 0 });
+    expect(row.progress.emitted).toEqual({ done: 1, total: 2, failed: 0 });
+    // Without the flag the list stays the plain jobs scan.
+    const plain = await request(baseUrl).get("/v2/jobs?order=queue");
+    expect(plain.body.jobs[0].progress).toBeUndefined();
+  });
+});
+
+describe("GET /v2/jobs/summary", () => {
+  it("counts jobs per status and pause reason and sums their consumption", async () => {
+    const baseUrl = await buildApp();
+    const a = (await createJob(baseUrl, { reference: "a" })).body.jobId as string;
+    fakeStore.advance(1000);
+    const b = (await createJob(baseUrl, { reference: "b" })).body.jobId as string;
+    fakeStore.advance(1000);
+    const c = (await createJob(baseUrl, { reference: "c" })).body.jobId as string;
+    await fakeStore.setJobStatus(b, "processing");
+    await fakeStore.setJobPageCount(b, 4);
+    await fakeStore.setJobStatus(c, "paused", "budget");
+    await fakeStore.consumeJobTokens(b, 1_000, undefined, 0.25);
+
+    const res = await request(baseUrl).get("/v2/jobs/summary");
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(res.body.byStatus).toEqual({ queued: 1, processing: 1, paused: 1 });
+    expect(res.body.pausedByReason).toEqual({ budget: 1 });
+    expect(res.body.active).toBe(1);
+    expect(res.body.waiting).toBe(2);
+    expect(res.body.tokensUsed).toBe(1_000);
+    expect(res.body.costUsd).toBeCloseTo(0.25);
+    expect(res.body.activePages).toEqual({ done: 0, total: 4 });
+    expect(res.body.oldestWaitingAt).toBe(fakeStore.peek(a)?.created_at.toISOString());
+  });
+
+  it("is not shadowed by the single-job route", async () => {
+    const baseUrl = await buildApp();
+    const res = await request(baseUrl).get("/v2/jobs/summary");
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+  });
+});

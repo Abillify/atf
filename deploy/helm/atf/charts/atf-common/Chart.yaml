@@ -2,5 +2,5 @@ apiVersion: v2
 name: atf-common
 description: Shared template helpers for the ATF service subcharts. Library chart, renders no manifests of its own.
 type: library
-version: 0.22.0
-appVersion: "0.22.0"
+version: 0.23.0
+appVersion: "0.23.0"

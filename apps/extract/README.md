@@ -239,7 +239,8 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 | Route | Purpose |
 | --- | --- |
 | `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `filename` (types the source; defaults to the reference), `collection`, `pages` (a window of the source, see below), `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`, `title`, `tags`, `metadata`, `link`, `sourceLabel`. 201 with the queued job |
-| `GET /v2/jobs` | List jobs newest first (`limit` 1–100, default 25; `offset`) |
+| `GET /v2/jobs` | List jobs (`limit` 1–100, default 25; `offset`). `order=newest` (default) or `queue` (active jobs, then waiting ones oldest first, then finished ones); `status` filters by a comma list of statuses or the groups `active`/`waiting`; `include=progress` adds per-stage `progress` and `etaSeconds` per row. The response carries `total` for paging |
+| `GET /v2/jobs/summary` | Queue overview: jobs per status and pause reason, `active`/`waiting` totals, summed `tokensUsed`/`costUsd`, emitted pages of the active jobs and the oldest waiting job |
 | `GET /v2/jobs/{id}` | Status, per-stage progress, warnings (a failed job carries its cause), tokens, cost and ETA. A non-UUID id is a 404 |
 | `GET /v2/jobs/{id}/figures` | The figure blocks of the staged page records (`figureId`, `page`, `bbox`, `kind`, `caption`, `description`, `assetId`) and the `sourceSha256`; crops render on demand via `POST /v2/render` |
 | `POST /v2/jobs/{id}/pause` | Hold a queued or running job |
@@ -248,7 +249,7 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 | `POST /v2/jobs/{id}/retry-failed` | Re-queue only the failed units |
 | `POST /v2/jobs/{id}/reparse` | Re-apply the parser to persisted raw model responses, with no new model calls |
 
-`GET /v2/jobs` and `GET /v2/jobs/{id}/figures` need `extract.admin`. `GET /v2/jobs/{id}`
+`GET /v2/jobs`, `GET /v2/jobs/summary` and `GET /v2/jobs/{id}/figures` need `extract.admin`. `GET /v2/jobs/{id}`
 needs `extract.admin`, or `extract.ingest` when the caller created the job: jobs record their
 originator (`created_by_subject`, `created_by_tenant`, schema migration 3), and a job of
 another subject or tenant answers with the same 404 as an unknown id. Jobs created before
@@ -592,6 +593,8 @@ worth deciding deliberately:
 | `SUBPROCESS_CPU_LIMIT_S` | 900 | `prlimit --cpu` per converter call on Linux, SIGKILL on breach; 0 disables |
 | `UPLOAD_MEMORY_THRESHOLD_BYTES` | 8388608 | Larger multipart uploads are spooled to `TEMP_DIR/uploads` instead of the heap; 0 spools every upload |
 | `VISION_SUPPORTS_JSON_SCHEMA` | false | Sends `response_format: json_schema`; a provider that rejects it falls back to the tag format |
+| `VISION_ENABLE_THINKING` | (unset) | Sent as `chat_template_kwargs.enable_thinking` only when set. Qwen-style chat templates ignore `VISION_REASONING_EFFORT`; `false` turns their thinking block off. Setting or changing it changes the pipeline stand, so `pin` jobs pause for an operator decision |
+| `VISION_INPUT_TOKEN_COST` / `VISION_OUTPUT_TOKEN_COST` | 0.15 / 0.6 | USD per million tokens of the vision model. Every model call books its tokens and their price into the job's `tokensUsed`/`costUsd`, with or without a `tokenBudget`; give local models comparison prices so the job overview stays meaningful |
 
 Hardening against hostile documents (see [Security](#security)):
 
@@ -662,6 +665,8 @@ without a database, so a bad value fails early:
 | `SUMMARY_MAX_TOKENS` | 512 | Output budget per summary |
 | `SUMMARY_MAX_RETRIES` | 3 | |
 | `SUMMARY_REASONING_EFFORT` | (unset) | Forwarded as `chat_template_kwargs` only when set |
+| `SUMMARY_ENABLE_THINKING` | (unset) | Sent as `chat_template_kwargs.enable_thinking` only when set |
+| `SUMMARY_INPUT_TOKEN_COST` / `SUMMARY_OUTPUT_TOKEN_COST` | 0 / 0 | USD per million tokens of the summary model, booked into the job cost like the vision prices |
 
 ## Tests
 

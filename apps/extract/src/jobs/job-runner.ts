@@ -123,11 +123,11 @@ import {
   createStageRunner,
   isStageOutput,
   recordModelResponse,
-  unlimitedBudget,
   type BudgetLedger,
   type StageExecution,
   type StageOutput,
   type StageRunner,
+  type ModelPricing,
 } from "./stage-runner.js";
 import {
   RESTARTABLE_STAGES,
@@ -186,6 +186,12 @@ import { createSummaryGenerator, type SummaryGenerator } from "../summary/genera
 import type { EmitOutcome } from "./emitter.js";
 
 /** The per-page stages, in order. The last one is the scheduler's cursor. */
+
+/** Spread helper: attach a model's prices to a stage budget when configured. */
+function pricingOf(pricing: ModelPricing | undefined): { pricing?: ModelPricing } {
+  return pricing !== undefined ? { pricing } : {};
+}
+
 export const RENDER_STAGE = "render";
 export const VISION1_STAGE = "vision1";
 export const CROPS_STAGE = "crops";
@@ -293,6 +299,13 @@ export interface JobRunnerConfig {
    * summary model call. Default 512 when omitted.
    */
   summaryTokenEstimate?: number | undefined;
+  /**
+   * USD per million tokens of the vision model (VISION_INPUT/OUTPUT_TOKEN_COST),
+   * booked into the job's `cost_usd` per call. Omitted books tokens only.
+   */
+  visionPricing?: ModelPricing | undefined;
+  /** USD per million tokens of the summary model (SUMMARY_INPUT/OUTPUT_TOKEN_COST). */
+  summaryPricing?: ModelPricing | undefined;
   /**
    * JOB_MAX_TRANSIENT_WAIT_MS: how long a run keeps retrying
    * a transiently failing dependency (vision, text LLM, Search) in place, with
@@ -749,10 +762,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           }
         : {}),
     });
-    const budget: BudgetLedger =
-      job.token_budget !== null
-        ? createDbBudgetLedger(store, job.id, fence)
-        : unlimitedBudget;
+    // Every job books its spend on the row; an uncapped ledger never refuses
+    // a reservation, so `token_budget IS NULL` still means "no limit".
+    const budget: BudgetLedger = createDbBudgetLedger(store, job.id, fence);
     // The tenant/day axis: independent of the
     // per-job token ledger above, this caps how many VLM pages the owning
     // tenant may spend today across ALL its jobs. A job without a tenant is
@@ -781,6 +793,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             model: `${config.summaryModel ?? ""}|stand:${scope().standKey}`,
             budget,
             tokenEstimate: config.summaryTokenEstimate ?? 512,
+            ...(config.summaryPricing !== undefined ? { pricing: config.summaryPricing } : {}),
           })
         : null;
 
@@ -2744,7 +2757,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         // The input hash pins render DPI + model + page; a resume with the same
         // stand reuses the checkpoint. The source sha256 anchors the content.
         inputHash: visionInputHash,
-        budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate },
+        budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate, ...pricingOf(config.visionPricing) },
         fn: async () => {
           let rendered: Awaited<ReturnType<PreparedSource["render"]>>;
           try {
@@ -3484,7 +3497,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       ]),
       ...(sourceCopy !== null
         ? {}
-        : { budget: { ledger: budget, estimatedTokens: config.summaryTokenEstimate ?? 512 } }),
+        : { budget: { ledger: budget, estimatedTokens: config.summaryTokenEstimate ?? 512, ...pricingOf(config.summaryPricing) } }),
       fn: async () => {
         if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
         try {
@@ -3587,7 +3600,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         inputHash,
         ...(sourceCopy !== null
           ? {}
-          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate } }),
+          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate, ...pricingOf(config.visionPricing) } }),
         fn: async () => {
           if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
           // Render the figure-DPI crop once per figure (reusing the figure-DPI
@@ -3790,7 +3803,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         inputHash,
         ...(sourceCopy !== null
           ? {}
-          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate } }),
+          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate, ...pricingOf(config.visionPricing) } }),
         fn: async () => {
           if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
           if (tilePage === null) {

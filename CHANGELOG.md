@@ -18,7 +18,22 @@ releases:
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-30
+
+### Added
+
+- **Extract**: `VISION_ENABLE_THINKING` and `SUMMARY_ENABLE_THINKING` send `chat_template_kwargs.enable_thinking` (alone or next to `reasoning_effort`). Qwen-style chat templates ignore `reasoning_effort` and switch their thinking block only with `enable_thinking`. Unset sends nothing, as before; a set value is part of the pipeline stand, so `pin` jobs pause when it changes.
+- **Extract**: `SUMMARY_INPUT_TOKEN_COST` / `SUMMARY_OUTPUT_TOKEN_COST` (USD per million tokens, default 0) price the summary model next to the existing `VISION_*_TOKEN_COST`.
+- **Extract** (`GET /v2/jobs`): `order=queue` lists the jobs a worker drives first, then the waiting ones (queued, paused) oldest first, then the finished ones; `status` filters by statuses or the groups `active`/`waiting`; `include=progress` adds per-stage `progress` and `etaSeconds` to each row with one grouped query; the response carries `total`. New `GET /v2/jobs/summary`: jobs per status and pause reason, summed tokens and cost, the emitted pages of the active jobs and the oldest waiting job.
+- **Extract** (operator console, Jobs): a queue header with those counts (a tile filters the list), page navigation instead of "load more", the queue order by default, server-side status filter, page size, and live updates every 2/5/15 s (on by default) with per-row page progress, current stage and ETA.
+
 ### Fixed
+
+- **Runtime** (audit): durable audit writes no longer fail with a separate operator database role. `PostgresAuditLog` appends the hash chain on the operator pool (`DATABASE_OPERATOR_URL`), but `rls-setup` had only granted `aiperator_operator` SELECT on `audit_log`. Every regulated action (approval decisions, key rotation, erasure, flow publish …) therefore answered 503 `AUDIT_UNAVAILABLE` and wrote no audit entry. Schema version 52 grants `INSERT` on `audit_log` and the id sequence (still no UPDATE/DELETE), and `rls-setup` does the same for new databases. A failed required audit write is now logged with its cause.
+- **Runtime** (approvals): when the audit write fails after an approval decision, the in-chat widget now states that the decision took effect and only the audit entry is missing. Before, it said the decision was "not confirmed" and asked for a retry, although the approval was already consumed and the tool call went ahead.
+- **Gate** (approvals): approval rules with `approval.lookup` work again when `MCPGATE_TRANSACTION_ENFORCEMENT=required`. The Gate ran the internal lookup through the TransactionFabric without a transaction token, so it was rejected ("Transaction token required"), the approval request failed with "Approval lookup failed" and the caller only saw a generic tool error. The lookup now runs as read-only approval enrichment outside the fabric (still through policy, scopes, rate limit and audit), the caller's transaction token stays reserved for the gated action, and a lookup tool that is not `access: read` is rejected. Composite and router lookups work the same way: their steps inherit the lookup mode, and every step must be read-only too.
+- **Extract**: `cost_usd` was never written, so every job reported $0, and a job without `tokenBudget` did not book its tokens either. Every model call (failed attempts included) now books its tokens and their price, from the response's prompt/completion split, into the job row.
+- **Extract** (operator console): the progress bars of the job list and the per-stage detail were never drawn (inline elements ignore width and height).
 
 - **Outpost** (release): an Outpost release (`outpost-v*`) is no longer marked as the repository's "Latest" release, which belongs to the product releases (`v*`).
 - **Outpost** (`local`, 0.1.2): files whose on-disk names are not NFC, typically folders copied from macOS (NFD), could not be opened on Linux and failed with "path guard rejected … candidate path not resolvable". `open` now maps the NFC `quellId` back to the on-disk name segment by segment before the path guard runs. The `quellId` and thus the document reference stay NFC, so nothing is re-ingested under a new reference. Two different entries with the same NFC form are rejected as ambiguous.
@@ -4593,7 +4608,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/Abillify/atf/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Abillify/atf/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Abillify/atf/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Abillify/atf/compare/v0.19.3...v0.20.0

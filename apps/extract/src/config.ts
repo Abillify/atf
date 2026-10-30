@@ -334,6 +334,16 @@ export interface SummaryConfig {
    * reject unknown fields).
    */
   reasoningEffort: string | null;
+  /**
+   * SUMMARY_ENABLE_THINKING — forwarded as `chat_template_kwargs.enable_thinking`
+   * (Qwen-style chat templates switch their thinking block with it). Unset
+   * means the field is not sent.
+   */
+  enableThinking?: boolean | null;
+  /** SUMMARY_INPUT_TOKEN_COST — USD per million input tokens, for reporting. Default 0. */
+  inputTokenCost?: number;
+  /** SUMMARY_OUTPUT_TOKEN_COST — USD per million output tokens. Default 0. */
+  outputTokenCost?: number;
 }
 
 /** Where converted documents are pushed when ingest is requested. */
@@ -405,6 +415,13 @@ export interface Config {
    * matters because strict servers reject unknown fields.
    */
   visionReasoningEffort: string | null; // VISION_REASONING_EFFORT
+  /**
+   * VISION_ENABLE_THINKING — forwarded as `chat_template_kwargs.enable_thinking`
+   * (Qwen-style chat templates switch their thinking block with it). Unset
+   * means the field is not sent; `false` turns thinking off on models whose
+   * template ignores `reasoning_effort`.
+   */
+  visionEnableThinking?: boolean | null; // VISION_ENABLE_THINKING
   /**
    * VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces
    * `response_format: json_schema` on chat completions. Fail-closed like the
@@ -914,6 +931,19 @@ export function loadConfig(): Config {
     return defaultVal;
   }
 
+  /**
+   * A tri-state boolean: unset (or empty) is `null` so the caller can leave
+   * the field out of a request entirely. An unrecognised value throws, because
+   * silently not sending a switch the operator set is worse than not starting.
+   */
+  function parseOptionalBoolEnv(name: string): boolean | null {
+    const raw = (process.env[name] ?? "").trim().toLowerCase();
+    if (!raw) return null;
+    if (["1", "true", "yes", "on"].includes(raw)) return true;
+    if (["0", "false", "no", "off"].includes(raw)) return false;
+    throw new Error(`${name} must be true or false, got "${process.env[name]}"`);
+  }
+
   function parseEnumEnv<T extends string>(
     name: string,
     allowed: readonly T[],
@@ -1261,6 +1291,9 @@ export function loadConfig(): Config {
       maxTokens: parseIntEnv("SUMMARY_MAX_TOKENS", 512, { min: 1 }),
       maxRetries: parseNonNegIntEnv("SUMMARY_MAX_RETRIES", 3),
       reasoningEffort: optionalString("SUMMARY_REASONING_EFFORT"),
+      enableThinking: parseOptionalBoolEnv("SUMMARY_ENABLE_THINKING"),
+      inputTokenCost: parseFloatEnv("SUMMARY_INPUT_TOKEN_COST", 0, { min: 0, max: 1_000 }),
+      outputTokenCost: parseFloatEnv("SUMMARY_OUTPUT_TOKEN_COST", 0, { min: 0, max: 1_000 }),
     };
   }
 
@@ -1303,6 +1336,7 @@ export function loadConfig(): Config {
   );
   const visionMaxRetries = parseNonNegIntEnv("VISION_MAX_RETRIES", 3);
   const visionReasoningEffort = optionalString("VISION_REASONING_EFFORT");
+  const visionEnableThinking = parseOptionalBoolEnv("VISION_ENABLE_THINKING");
   const visionSupportsJsonSchema = parseBoolEnv(
     "VISION_SUPPORTS_JSON_SCHEMA",
     false,
@@ -1620,6 +1654,7 @@ export function loadConfig(): Config {
     visionMaxTokenVariants,
     visionMaxRetries,
     visionReasoningEffort,
+    visionEnableThinking,
     visionSupportsJsonSchema,
     visionInputTokenCost,
     visionOutputTokenCost,

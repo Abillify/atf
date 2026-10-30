@@ -191,10 +191,15 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
       const validation = validateArgs(executor.definition.inputSchema, lookupArgs);
       if (!validation.ok) throw new Error("Approval lookup arguments are invalid");
       // Through the dispatcher so the lookup is subject to policy, rate limit and audit.
+      // The caller's transaction token belongs to the gated action (and must stay
+      // unconsumed for its later execution), so the lookup runs as read-only
+      // approval enrichment outside the TransactionFabric.
       const lookupResult = await dispatcher.callTool(
         { name: presentation.lookup.tool, arguments: lookupArgs },
         undefined,
         false,
+        true,
+        undefined,
         true,
       );
       if (lookupResult.isError) throw new Error("Approval lookup failed");

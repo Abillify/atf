@@ -46,6 +46,7 @@ import {
   summarySystemPrompt,
   type SummaryScope,
 } from "./prompts.js";
+import { chatTemplateKwargs } from "../chat-template-kwargs.js";
 
 /** Token usage reported by the model (0 when the server omits it). */
 export interface SummaryUsage {
@@ -174,9 +175,7 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
       stream: false,
       // Only sent when configured: strict servers reject unknown fields, so an
       // unconditional chat_template_kwargs breaks every request against them.
-      ...(config.reasoningEffort !== null
-        ? { chat_template_kwargs: { reasoning_effort: config.reasoningEffort } }
-        : {}),
+      ...chatTemplateKwargs(config.reasoningEffort, config.enableThinking ?? null),
     };
   }
 
