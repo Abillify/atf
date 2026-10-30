@@ -39,13 +39,14 @@ import { randomUUID } from "node:crypto";
 import type { Request, RequestHandler, Response, Router } from "express";
 import express from "express";
 import type { Logger } from "pino";
-import { jobRequestSchema, parsePageSelection, resumePolicySchema } from "@atf/extract-contract/v2";
+import { jobRequestSchema, jobStatusSchema, parsePageSelection, resumePolicySchema } from "@atf/extract-contract/v2";
 import { conflict, notFound, validationError } from "../errors.js";
 import { canReadJob } from "../authorize.js";
 import type { ExtractStore } from "../persistence/index.js";
-import type { JobRow, OperatorTransition } from "../persistence/types.js";
+import type { JobRow, OperatorTransition, PageStageCountRow } from "../persistence/types.js";
+import { ACTIVE_JOB_STATUSES, WAITING_JOB_STATUSES } from "../persistence/extract-queries.js";
 import type { SourceStore } from "../source-store.js";
-import { toJobView } from "../jobs/job-view.js";
+import { toJobView, toJobViewWithCounts } from "../jobs/job-view.js";
 import { getPrincipal } from "../request-principal.js";
 import { sanitizeFilename } from "../upload.js";
 import { resolveAcl, setAclAppliedHeader } from "./ingest.js";
@@ -219,11 +220,103 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
     return Math.min(max, Math.max(min, value));
   }
 
+  /**
+   * `status` filter: a comma list of job statuses, or the groups `active`
+   * (a worker drives the job) and `waiting` (queued or paused). Unknown values
+   * are a 400 rather than an empty list, so a typo is not mistaken for "no jobs".
+   */
+  function readStatusFilter(req: Request): string[] | undefined {
+    const raw = req.query["status"];
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    const out = new Set<string>();
+    for (const part of raw.split(",").map((p) => p.trim()).filter(Boolean)) {
+      if (part === "active") for (const s of ACTIVE_JOB_STATUSES) out.add(s);
+      else if (part === "waiting") for (const s of WAITING_JOB_STATUSES) out.add(s);
+      else if (jobStatusSchema.safeParse(part).success) out.add(part);
+      else throw validationError("Invalid status filter", { status: part });
+    }
+    return [...out];
+  }
+
   async function listJobs(req: Request, res: Response): Promise<void> {
     const limit = readIntParam(req, "limit", 25, 1, 100);
     const offset = readIntParam(req, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
-    const rows = await store.listJobs(limit, offset);
-    res.status(200).json({ jobs: rows.map((row) => toJobView(row)), limit, offset });
+    const orderRaw = req.query["order"];
+    if (orderRaw !== undefined && orderRaw !== "newest" && orderRaw !== "queue") {
+      throw validationError("Invalid order", { order: orderRaw });
+    }
+    const order = orderRaw === "queue" ? "queue" : "newest";
+    const statuses = readStatusFilter(req);
+    // `include=progress` folds per-stage progress and an ETA into every row
+    // with ONE grouped query over the page's jobs; without it the list stays
+    // a plain scan of `jobs`.
+    const includeProgress =
+      typeof req.query["include"] === "string" &&
+      req.query["include"].split(",").map((p) => p.trim()).includes("progress");
+    const listOptions = { order, ...(statuses !== undefined ? { statuses } : {}) } as const;
+    const [rows, total] = await Promise.all([
+      store.listJobs(limit, offset, listOptions),
+      store.countJobs(statuses),
+    ]);
+    let jobs: ReturnType<typeof toJobView>[];
+    if (includeProgress && rows.length > 0) {
+      const counts = await store.pageStageCounts(rows.map((row) => row.id));
+      const byJob = new Map<string, PageStageCountRow[]>();
+      for (const group of counts) {
+        const list = byJob.get(group.job_id) ?? [];
+        list.push(group);
+        byJob.set(group.job_id, list);
+      }
+      jobs = rows.map((row) => toJobViewWithCounts(row, byJob.get(row.id) ?? []));
+    } else {
+      jobs = rows.map((row) => toJobView(row));
+    }
+    res.status(200).json({ jobs, limit, offset, total, order });
+  }
+
+  // ── GET /v2/jobs/summary ──────────────────────────────────────────────────
+  // The header of the job overview: how many jobs sit in which status (paused
+  // ones by reason), what all jobs consumed, the oldest waiting job and the
+  // page progress of the active ones. Grouped scans only, no row payloads.
+  const summaryHandler: RequestHandler = (req, res, next) => {
+    void jobsSummary(req, res).catch(next);
+  };
+  async function jobsSummary(_req: Request, res: Response): Promise<void> {
+    const [groups, pages] = await Promise.all([store.jobStatusSummary(), store.activePageProgress()]);
+    const byStatus: Record<string, number> = {};
+    const pausedByReason: Record<string, number> = {};
+    let total = 0;
+    let tokensUsed = 0;
+    let costUsd = 0;
+    let oldestWaiting: number | null = null;
+    for (const g of groups) {
+      const n = Number(g.jobs);
+      total += n;
+      byStatus[g.status] = (byStatus[g.status] ?? 0) + n;
+      if (g.status === "paused") {
+        const reason = g.pause_reason ?? "unknown";
+        pausedByReason[reason] = (pausedByReason[reason] ?? 0) + n;
+      }
+      tokensUsed += Number(g.tokens_used);
+      costUsd += Number(g.cost_usd);
+      if ((WAITING_JOB_STATUSES as readonly string[]).includes(g.status) && g.oldest_created_at !== null) {
+        const t = new Date(g.oldest_created_at).getTime();
+        if (oldestWaiting === null || t < oldestWaiting) oldestWaiting = t;
+      }
+    }
+    const count = (list: readonly string[]): number => list.reduce((sum, s) => sum + (byStatus[s] ?? 0), 0);
+    res.status(200).json({
+      total,
+      byStatus,
+      pausedByReason,
+      active: count(ACTIVE_JOB_STATUSES),
+      waiting: count(WAITING_JOB_STATUSES),
+      tokensUsed,
+      costUsd,
+      activePages: pages,
+      oldestWaitingAt: oldestWaiting !== null ? new Date(oldestWaiting).toISOString() : null,
+      generatedAt: new Date().toISOString(),
+    });
   }
 
   // ── GET /v2/jobs/{id} ─────────────────────────────────────────────────────
@@ -457,6 +550,8 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
 
   router.post("/", createHandler);
   router.get("/", listHandler);
+  // Before "/:id": the id route answers 404 for anything that is not a UUID.
+  router.get("/summary", summaryHandler);
   router.get("/:id", getHandler);
   router.get("/:id/figures", figuresHandler);
   router.post("/:id/pause", actionHandler("pause"));

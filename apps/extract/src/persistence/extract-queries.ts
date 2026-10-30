@@ -170,13 +170,148 @@ export function knownEmailMessageIdsQuery(
 	};
 }
 
-export function listJobsQuery(limit: number, offset: number): Query {
-	return {
-		text: `
+/** The job statuses a worker is actively driving (claimed, lease held). */
+export const ACTIVE_JOB_STATUSES = [
+	"preparing",
+	"processing",
+	"emitting",
+	"committing",
+] as const;
+
+/** Waiting for a worker or an operator: not active, not terminal. */
+export const WAITING_JOB_STATUSES = ["queued", "paused"] as const;
+
+/** Sort and filter of the job overview list. */
+export interface JobListOptions {
+	/**
+	 * `newest` (default): created_at DESC. `queue`: the jobs being worked on
+	 * first, then the waiting ones — both oldest first, the order the queue
+	 * drains in — then the finished ones, most recently finished first.
+	 */
+	order?: "newest" | "queue";
+	/** Only these statuses; omitted or empty means every status. */
+	statuses?: readonly string[];
+}
+
+function statusFilter(
+	values: unknown[],
+	statuses: readonly string[] | undefined,
+): string {
+	if (statuses === undefined || statuses.length === 0) return "";
+	values.push([...statuses]);
+	return `WHERE status = ANY($${values.length}::text[])`;
+}
+
+const QUEUE_ORDER = `
+       ORDER BY CASE
+                  WHEN status IN (${ACTIVE_JOB_STATUSES.map((s) => `'${s}'`).join(", ")}) THEN 0
+                  WHEN status IN (${WAITING_JOB_STATUSES.map((s) => `'${s}'`).join(", ")}) THEN 1
+                  ELSE 2
+                END,
+                CASE
+                  WHEN status IN (${[...ACTIVE_JOB_STATUSES, ...WAITING_JOB_STATUSES].map((s) => `'${s}'`).join(", ")})
+                  THEN created_at
+                END ASC NULLS LAST,
+                updated_at DESC,
+                id`;
+
+export function listJobsQuery(
+	limit: number,
+	offset: number,
+	options: JobListOptions = {},
+): Query {
+	if (options.order !== "queue" && (options.statuses ?? []).length === 0) {
+		return {
+			text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.jobs
        ORDER BY created_at DESC, id DESC
        LIMIT $1 OFFSET $2`,
-		values: [limit, offset],
+			values: [limit, offset],
+		};
+	}
+	const values: unknown[] = [limit, offset];
+	const where = statusFilter(values, options.statuses);
+	const order =
+		options.order === "queue"
+			? QUEUE_ORDER
+			: `
+       ORDER BY created_at DESC, id DESC`;
+	return {
+		text: `
+      SELECT * FROM ${EXTRACT_SCHEMA}.jobs
+       ${where}${order}
+       LIMIT $1 OFFSET $2`,
+		values,
+	};
+}
+
+/** The number of jobs `listJobsQuery` pages over (same status filter). */
+export function countJobsQuery(statuses?: readonly string[]): Query {
+	const values: unknown[] = [];
+	const where = statusFilter(values, statuses);
+	return {
+		text: `
+      SELECT COUNT(*)::bigint AS total FROM ${EXTRACT_SCHEMA}.jobs
+       ${where}`,
+		values,
+	};
+}
+
+/**
+ * Per status (and pause reason): how many jobs, what they consumed, how many
+ * pages they hold and the oldest creation time — the header of the job
+ * overview. One grouped scan of `jobs`, no stage join.
+ */
+export function jobStatusSummaryQuery(): Query {
+	return {
+		text: `
+      SELECT status,
+             pause_reason,
+             COUNT(*)::bigint                    AS jobs,
+             COALESCE(SUM(tokens_used), 0)::bigint AS tokens_used,
+             COALESCE(SUM(cost_usd), 0)          AS cost_usd,
+             COALESCE(SUM(page_count), 0)::bigint AS pages,
+             MIN(created_at)                     AS oldest_created_at
+        FROM ${EXTRACT_SCHEMA}.jobs
+       GROUP BY status, pause_reason`,
+		values: [],
+	};
+}
+
+/**
+ * Pages of the active jobs that reached the terminal page stage, against the
+ * pages those jobs hold — the overall progress bar of the overview header.
+ */
+export function activePageProgressQuery(): Query {
+	return {
+		text: `
+      SELECT COALESCE(SUM(j.page_count), 0)::bigint AS total,
+             COALESCE(SUM((
+               SELECT COUNT(*) FROM ${EXTRACT_SCHEMA}.page_stages ps
+                WHERE ps.job_id = j.id AND ps.stage = 'emitted' AND ps.status = 'done'
+             )), 0)::bigint AS done
+        FROM ${EXTRACT_SCHEMA}.jobs j
+       WHERE j.status IN (${ACTIVE_JOB_STATUSES.map((s) => `'${s}'`).join(", ")})`,
+		values: [],
+	};
+}
+
+/**
+ * Stage checkpoint counts of a set of jobs, grouped by job/stage/status, with
+ * the first checkpoint time per group. Enough to fold per-stage progress and
+ * an ETA for every row of one list page with a single grouped query instead
+ * of loading every checkpoint row.
+ */
+export function pageStageCountsQuery(jobIds: readonly string[]): Query {
+	return {
+		text: `
+      SELECT job_id, stage, status,
+             COUNT(*)::bigint AS n,
+             MIN(created_at)  AS first_at
+        FROM ${EXTRACT_SCHEMA}.page_stages
+       WHERE job_id = ANY($1::uuid[])
+       GROUP BY job_id, stage, status`,
+		values: [[...jobIds]],
 	};
 }
 
@@ -257,12 +392,15 @@ export function consumeJobTokensQuery(
 	id: string,
 	tokens: number,
 	fence?: Fence,
+	costUsd = 0,
 ): Query {
-	const values: unknown[] = [id, tokens];
+	const values: unknown[] = [id, tokens, costUsd];
 	return {
 		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
-         SET tokens_used = tokens_used + $2, updated_at = NOW()
+         SET tokens_used = tokens_used + $2,
+             cost_usd    = cost_usd + $3,
+             updated_at  = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
 		values,
@@ -332,16 +470,18 @@ export function settleJobTokensQuery(
 	id: string,
 	reserved: number,
 	used: number,
+	costUsd = 0,
 ): Query {
 	return {
 		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET tokens_reserved = GREATEST(0, tokens_reserved - $2),
              tokens_used     = tokens_used + $3,
+             cost_usd        = cost_usd + $4,
              updated_at      = NOW()
        WHERE id = $1
       RETURNING *`,
-		values: [id, reserved, used],
+		values: [id, reserved, used, costUsd],
 	};
 }
 

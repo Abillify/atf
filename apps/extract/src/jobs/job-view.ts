@@ -15,7 +15,7 @@
  */
 
 import type { Job, StageProgress } from "@atf/extract-contract/v2";
-import type { JobRow, PageStageRow, StageStatus } from "../persistence/types.js";
+import type { JobRow, PageStageCountRow, PageStageRow, StageStatus } from "../persistence/types.js";
 import { identityOf } from "./identity.js";
 
 /** The per-page stages, in pipeline order. */
@@ -47,14 +47,29 @@ export function computeProgress(
   stages: readonly PageStageRow[],
   pageCount: number | null,
 ): StageProgress {
+  return computeProgressFromCounts(
+    stages.map((row) => ({ stage: row.stage, status: row.status, n: 1 })),
+    pageCount,
+  );
+}
+
+/**
+ * The same fold over pre-aggregated `(stage, status, n)` groups, as the list
+ * route reads them with one grouped query for a whole page of jobs.
+ */
+export function computeProgressFromCounts(
+  counts: ReadonlyArray<{ stage: string; status: string; n: number | string }>,
+  pageCount: number | null,
+): StageProgress {
   const progress: StageProgress = {};
   const byStage = new Map<string, { done: number; failed: number; seen: number }>();
-  for (const row of stages) {
-    const bucket = byStage.get(row.stage) ?? { done: 0, failed: 0, seen: 0 };
-    bucket.seen += 1;
-    if (row.status === "done") bucket.done += 1;
-    else if (row.status === "failed") bucket.failed += 1;
-    byStage.set(row.stage, bucket);
+  for (const group of counts) {
+    const n = Number(group.n);
+    const bucket = byStage.get(group.stage) ?? { done: 0, failed: 0, seen: 0 };
+    bucket.seen += n;
+    if (group.status === "done") bucket.done += n;
+    else if (group.status === "failed") bucket.failed += n;
+    byStage.set(group.stage, bucket);
   }
   for (const stage of PAGE_STAGES) {
     const bucket = byStage.get(stage);
@@ -200,6 +215,30 @@ export function toJobView(
       job.duplicateOf = identity.duplicateOf;
     }
   }
+  return job;
+}
+
+/**
+ * The list-route variant of {@link toJobView}: progress and ETA folded from
+ * the grouped stage counts of this job instead of its checkpoint rows.
+ */
+export function toJobViewWithCounts(
+  row: JobRow,
+  counts: readonly PageStageCountRow[],
+  now: number = Date.now(),
+): Job {
+  const job = toJobView(row);
+  const progress = computeProgressFromCounts(counts, row.page_count);
+  job.progress = progress;
+  let firstMs: number | null = null;
+  for (const group of counts) {
+    const t = new Date(group.first_at).getTime();
+    if (Number.isFinite(t) && (firstMs === null || t < firstMs)) firstMs = t;
+  }
+  job.etaSeconds =
+    firstMs !== null
+      ? estimateEtaSeconds(row, progress, now, firstMs)
+      : estimateEtaSeconds(row, progress, now);
   return job;
 }
 

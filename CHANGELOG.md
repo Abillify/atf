@@ -18,7 +18,17 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Extract**: `VISION_ENABLE_THINKING` and `SUMMARY_ENABLE_THINKING` send `chat_template_kwargs.enable_thinking` (alone or next to `reasoning_effort`). Qwen-style chat templates ignore `reasoning_effort` and switch their thinking block only with `enable_thinking`. Unset sends nothing, as before; a set value is part of the pipeline stand, so `pin` jobs pause when it changes.
+- **Extract**: `SUMMARY_INPUT_TOKEN_COST` / `SUMMARY_OUTPUT_TOKEN_COST` (USD per million tokens, default 0) price the summary model next to the existing `VISION_*_TOKEN_COST`.
+- **Extract** (`GET /v2/jobs`): `order=queue` lists the jobs a worker drives first, then the waiting ones (queued, paused) oldest first, then the finished ones; `status` filters by statuses or the groups `active`/`waiting`; `include=progress` adds per-stage `progress` and `etaSeconds` to each row with one grouped query; the response carries `total`. New `GET /v2/jobs/summary`: jobs per status and pause reason, summed tokens and cost, the emitted pages of the active jobs and the oldest waiting job.
+- **Extract** (operator console, Jobs): a queue header with those counts (a tile filters the list), page navigation instead of "load more", the queue order by default, server-side status filter, page size, and live updates every 2/5/15 s (on by default) with per-row page progress, current stage and ETA.
+
 ### Fixed
+
+- **Extract**: `cost_usd` was never written, so every job reported $0, and a job without `tokenBudget` did not book its tokens either. Every model call (failed attempts included) now books its tokens and their price, from the response's prompt/completion split, into the job row.
+- **Extract** (operator console): the progress bars of the job list and the per-stage detail were never drawn (inline elements ignore width and height).
 
 - **Outpost** (release): an Outpost release (`outpost-v*`) is no longer marked as the repository's "Latest" release, which belongs to the product releases (`v*`).
 - **Outpost** (`local`, 0.1.2): files whose on-disk names are not NFC, typically folders copied from macOS (NFD), could not be opened on Linux and failed with "path guard rejected … candidate path not resolvable". `open` now maps the NFC `quellId` back to the on-disk name segment by segment before the path guard runs. The `quellId` and thus the document reference stay NFC, so nothing is re-ingested under a new reference. Two different entries with the same NFC form are rejected as ambiguous.

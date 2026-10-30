@@ -56,7 +56,10 @@ describe("getUiPageHtml · Jobs tab", () => {
     expect(html).toContain('role="tablist"');
     // The refresh + load-more controls are present for pagination.
     expect(html).toContain('id="jobs-refresh-btn"');
-    expect(html).toContain('id="jobs-more-btn"');
+    // Paging is a labelled pager (top and bottom), not a "load more" button.
+    expect(html).not.toContain('id="jobs-more-btn"');
+    expect(html).toContain('id="jobs-pager-top"');
+    expect(html).toContain('aria-label="Seiten der Job-Liste"');
     // The client script wires the /ui/jobs cookie-authenticated path and
     // renders accessible progress bars for the per-stage detail.
     expect(html).toContain('/ui/jobs');
@@ -113,6 +116,18 @@ describe("getUiPageHtml · Document Intelligence v2", () => {
     const v1 = render({ jobsEnabled: false });
     expect(v1).not.toContain('id="ingest-dedup"');
     expect(v1).not.toContain('id="ingest-source-modified"');
+  });
+
+  it("shows the queue header, server-side order/filter/paging and live updates", () => {
+    const html = render({ jobsEnabled: true });
+    expect(html).toContain('id="jobs-summary"');
+    expect(html).toContain('JOBS_PATH + "/summary"');
+    expect(html).toContain('id="jobs-order"');
+    expect(html).toContain('<option value="queue" selected>');
+    expect(html).toContain('id="jobs-page-size"');
+    // Live refresh is on by default and the list asks for progress.
+    expect(html).toContain('id="jobs-auto-refresh" checked');
+    expect(html).toContain('"include=progress"');
   });
 
   it("offers reparse, resume-with-policy and the job filter", () => {

@@ -966,6 +966,56 @@ export function buildOpenApiSpec(
           "403": { description: "Missing the extract.ingest scope" },
         },
       },
+      get: {
+        summary: "List jobs",
+        description:
+          "Paginated job overview (`extract.admin`). `order=newest` (default) lists by creation " +
+          "time, newest first. `order=queue` lists the jobs a worker is driving first, then the " +
+          "waiting ones (queued, paused) — both oldest first, the order the queue drains in — then " +
+          "the finished ones, most recently updated first. `status` filters by a comma list of job " +
+          "statuses or the groups `active` and `waiting`; an unknown value is a 400. `total` counts " +
+          "the jobs the filter matches. `include=progress` adds per-stage `progress` and `etaSeconds` " +
+          "to every row (one grouped stage query per page); without it a row carries neither.",
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
+          { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0, default: 0 } },
+          { name: "order", in: "query", required: false, schema: { type: "string", enum: ["newest", "queue"], default: "newest" } },
+          { name: "status", in: "query", required: false, schema: { type: "string" }, description: "Comma list of job statuses, or `active` / `waiting`." },
+          { name: "include", in: "query", required: false, schema: { type: "string", enum: ["progress"] } },
+        ],
+        responses: {
+          "200": {
+            description: "`{ jobs: Job[], limit, offset, total, order }`",
+            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          },
+          "400": {
+            description: "Invalid `status` or `order`",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.admin scope" },
+        },
+      },
+    };
+
+    paths["/v2/jobs/summary"] = {
+      get: {
+        summary: "Job queue overview",
+        description:
+          "Counts per status (`byStatus`) and paused jobs per reason (`pausedByReason`), the " +
+          "`active` and `waiting` totals, `tokensUsed` and `costUsd` summed over all jobs, " +
+          "`activePages` (`done`: pages of the active jobs through the terminal page stage, " +
+          "`total`: their page count) and `oldestWaitingAt`, the creation time of the oldest " +
+          "queued or paused job. Grouped scans only (`extract.admin`).",
+        responses: {
+          "200": {
+            description: "Queue overview",
+            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.admin scope" },
+        },
+      },
     };
 
     paths["/v2/jobs/{id}"] = {

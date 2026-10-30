@@ -37,6 +37,34 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("enable_thinking switch", () => {
+    it("is unset (not sent) by default", () => {
+      const config = loadTestConfig();
+      expect(config.visionEnableThinking).toBeNull();
+    });
+    it("parses VISION_ENABLE_THINKING and SUMMARY_ENABLE_THINKING", () => {
+      const config = loadTestConfig({
+        VISION_ENABLE_THINKING: "false",
+        SUMMARY_URL: "http://llm:8000/v1/chat/completions",
+        SUMMARY_MODEL: "m",
+        SUMMARY_ENABLE_THINKING: "true",
+      });
+      expect(config.visionEnableThinking).toBe(false);
+      expect(config.summary?.enableThinking).toBe(true);
+    });
+    it("rejects a value that is not a boolean instead of silently not sending it", () => {
+      expect(() => loadTestConfig({ VISION_ENABLE_THINKING: "nein" })).toThrow(/VISION_ENABLE_THINKING/);
+    });
+  });
+  describe("token prices", () => {
+    it("reads the summary prices, default 0", () => {
+      const base = { SUMMARY_URL: "http://llm:8000/v1/chat/completions", SUMMARY_MODEL: "m" };
+      expect(loadTestConfig(base).summary?.inputTokenCost).toBe(0);
+      const priced = loadTestConfig({ ...base, SUMMARY_INPUT_TOKEN_COST: "1", SUMMARY_OUTPUT_TOKEN_COST: "5" });
+      expect(priced.summary?.inputTokenCost).toBe(1);
+      expect(priced.summary?.outputTokenCost).toBe(5);
+    });
+  });
   describe("emitter geometry (progressive visibility)", () => {
     it("commits a segment every 100 pages (250 before) with 20-page batches", () => {
       const { emitter } = loadTestConfig();

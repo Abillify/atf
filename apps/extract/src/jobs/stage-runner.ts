@@ -175,8 +175,8 @@ export class BudgetExhaustedError extends Error {
 export interface BudgetLedger {
   /** Remaining tokens (budget − used − reserved), or `null` when uncapped. */
   remaining(): Promise<number | null>;
-  /** Record `tokens` as spent after a successful model call. */
-  consume(tokens: number): Promise<void>;
+  /** Record `tokens` (and their USD cost) as spent after a successful model call. */
+  consume(tokens: number, costUsd?: number): Promise<void>;
   /** Atomically reserve `tokens`; false when the budget cannot cover them. */
   reserve?(tokens: number): Promise<boolean>;
   /** Return a reservation that was not settled through a checkpoint. */
@@ -215,6 +215,36 @@ export interface StageWork<Parsed = unknown, Raw = unknown> {
    * budget after success. Omit or `0` for a model-free stage.
    */
   tokensUsed?: number;
+  /**
+   * The prompt/completion split of {@link tokensUsed}, for pricing a model call
+   * that does not report through {@link recordModelResponse} (the summary
+   * client). A captured response takes precedence.
+   */
+  usage?: { promptTokens: number; completionTokens: number };
+}
+
+/**
+ * USD per million tokens of the model a stage calls (`*_INPUT_TOKEN_COST` /
+ * `*_OUTPUT_TOKEN_COST`). Local models carry comparison prices so the job cost
+ * stays meaningful; 0/0 books tokens without a cost.
+ */
+export interface ModelPricing {
+  inputPerMillion: number;
+  outputPerMillion: number;
+}
+
+/** USD of one model call's tokens at `pricing`; 0 without a price. */
+export function priceTokens(
+  pricing: ModelPricing | undefined,
+  promptTokens: number,
+  completionTokens: number,
+): number {
+  if (pricing === undefined) return 0;
+  const cost =
+    (Math.max(0, promptTokens) * pricing.inputPerMillion +
+      Math.max(0, completionTokens) * pricing.outputPerMillion) /
+    1_000_000;
+  return Number.isFinite(cost) && cost > 0 ? cost : 0;
 }
 
 /** The work a stage performs when its checkpoint must be (re)computed. */
@@ -354,7 +384,7 @@ export interface RunStageOptions<Parsed = unknown, Raw = unknown> {
    * estimate cannot be reserved, {@link BudgetExhaustedError} is raised BEFORE
    * `fn` runs, so no model call happens on an exhausted budget.
    */
-  budget?: { ledger: BudgetLedger; estimatedTokens: number };
+  budget?: { ledger: BudgetLedger; estimatedTokens: number; pricing?: ModelPricing };
 }
 
 /** The result of a stage: the checkpoint row and whether it was reused. */
@@ -451,17 +481,18 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
     budget: RunStageOptions["budget"],
     reserved: number,
     used: number,
+    costUsd = 0,
   ): Promise<PageStageRow> {
     const ledger = budget?.ledger;
     if (ledger?.settleInCheckpoint !== undefined && (reserved > 0 || used > 0)) {
-      const settlement: TokenSettlement = { reserved, used };
+      const settlement: TokenSettlement = { reserved, used, ...(costUsd > 0 ? { costUsd } : {}) };
       const { stage, job } = await store.completeStage(unit, row, fence, settlement);
       if (job !== null) await ledger.settleInCheckpoint.onSettled(job, used);
       return stage;
     }
     const { stage } = await store.completeStage(unit, row, fence);
     if (ledger !== undefined) {
-      if (used > 0) await ledger.consume(used);
+      if (used > 0) await ledger.consume(used, costUsd);
       if (reserved > 0) await ledger.release?.(reserved);
     }
     return stage;
@@ -549,6 +580,12 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
     } catch (err) {
       const captured = capture.response;
       const used = captured?.totalTokens ?? 0;
+      // A failed attempt still paid for its responses.
+      const failedCost = priceTokens(
+        budget?.pricing,
+        captured?.promptTokens ?? 0,
+        captured?.completionTokens ?? 0,
+      );
       if (err instanceof LeaseLostError || deps.signal?.aborted === true) {
         // The lease is gone: write nothing. The next holder's claim drops the
         // reservation.
@@ -591,6 +628,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
           budget,
           reserved,
           used,
+          failedCost,
         );
         await store.appendJobWarning(key.job_id, unitWarning(unit, key, perm.warning), fence);
         logger.warn(
@@ -619,6 +657,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
         budget,
         reserved,
         used,
+        failedCost,
       );
       logger.warn(
         { jobId: key.job_id, page: key.page, stage: key.stage, attempt, nextAttemptAt },
@@ -635,6 +674,15 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
       ...(deps.stand !== undefined ? { stand: deps.stand } : {}),
     };
     const used = Math.max(work.tokensUsed ?? 0, 0);
+    // Price the call from the captured split (vision) or the stage's own
+    // report (summary); a stage that only knows a total is priced as output,
+    // the conservative side of the two rates.
+    const captured = capture.response;
+    const split =
+      captured !== null && captured.promptTokens + captured.completionTokens > 0
+        ? { promptTokens: captured.promptTokens, completionTokens: captured.completionTokens }
+        : (work.usage ?? { promptTokens: 0, completionTokens: used });
+    const costUsd = budget !== undefined ? priceTokens(budget.pricing, split.promptTokens, split.completionTokens) : 0;
     const row = await persist(
       unit,
       {
@@ -648,6 +696,7 @@ export function createStageRunner(deps: StageRunnerDeps): StageRunner {
       budget,
       reserved,
       budget !== undefined ? used : 0,
+      costUsd,
     );
     observe(key, unit, "done", startedAt, used);
     return { row, parsed: work.parsed, reused: false };

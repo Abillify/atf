@@ -54,6 +54,7 @@ import {
   TransientStageError,
   type BudgetLedger,
   type StageRunner,
+  type ModelPricing,
 } from "../jobs/stage-runner.js";
 import type { ClosedOutlineNode } from "../jobs/docpass/outline.js";
 import type { DocumentPass } from "../jobs/docpass/document-pass.js";
@@ -74,6 +75,8 @@ export interface SummaryGeneratorDeps {
   budget: BudgetLedger;
   /** Rough per-summary token estimate for the pre-call budget guard. */
   tokenEstimate: number;
+  /** USD per million tokens of the summary model, booked per call. */
+  pricing?: ModelPricing;
 }
 
 /** The generator's surface, driven by the ordered document pass. */
@@ -94,7 +97,7 @@ export interface SummaryGenerator {
 
 /** Create a summary generator. Only wired when `SUMMARY_URL` is configured. */
 export function createSummaryGenerator(deps: SummaryGeneratorDeps): SummaryGenerator {
-  const { client, stageRunner, logger, jobId, sourceSha256, model, budget, tokenEstimate } = deps;
+  const { client, stageRunner, logger, jobId, sourceSha256, model, budget, tokenEstimate, pricing } = deps;
 
   /** The stage key for a summary of a given scope+id. */
   function stageKey(scope: SummaryScope, id: string, page: number): StageKey {
@@ -137,7 +140,7 @@ export function createSummaryGenerator(deps: SummaryGeneratorDeps): SummaryGener
       unit: "page",
       key: stageKey(scope, id, page),
       inputHash: inputHash(scope, id, content),
-      budget: { ledger: budget, estimatedTokens: tokenEstimate },
+      budget: { ledger: budget, estimatedTokens: tokenEstimate, ...(pricing !== undefined ? { pricing } : {}) },
       fn: async () => {
         let summary: string;
         let tokensUsed = 0;

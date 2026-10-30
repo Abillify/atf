@@ -38,7 +38,7 @@ import {
 	type MigrationLogger,
 	runExtractMigrations,
 } from "./extract-ddl.js";
-import type { StageKey } from "./extract-queries.js";
+import type { JobListOptions, StageKey } from "./extract-queries.js";
 import * as q from "./extract-queries.js";
 import {
 	type AssetOutboxRow,
@@ -51,10 +51,12 @@ import {
 	type ErasureLedgerState,
 	type Fence,
 	type JobRow,
+	type JobStatusSummaryRow,
 	LeaseLostError,
 	type NewJob,
 	type OperatorTransition,
 	type OutboxStatus,
+	type PageStageCountRow,
 	type PageStageRow,
 	type StageUnit,
 	type StageUpsert,
@@ -111,7 +113,15 @@ export interface ExtractStore {
    * Reads only the `jobs` table — no per-stage join — so the
    * list stays cheap regardless of the page count of each job.
    */
-  listJobs(limit: number, offset: number): Promise<JobRow[]>;
+  listJobs(limit: number, offset: number, options?: JobListOptions): Promise<JobRow[]>;
+  /** How many jobs {@link listJobs} pages over with the same status filter. */
+  countJobs(statuses?: readonly string[]): Promise<number>;
+  /** Per status and pause reason: counts, consumption, pages, oldest job. */
+  jobStatusSummary(): Promise<JobStatusSummaryRow[]>;
+  /** Emitted pages against the pages of the active jobs. */
+  activePageProgress(): Promise<{ done: number; total: number }>;
+  /** Grouped page-stage checkpoint counts of the given jobs. */
+  pageStageCounts(jobIds: readonly string[]): Promise<PageStageCountRow[]>;
   /**
    * The non-terminal jobs of one reference in one collection (extract-outpost
    * E2). `DELETE /v2/documents/{reference}` cancels these
@@ -197,6 +207,7 @@ export interface ExtractStore {
     id: string,
     tokens: number,
     fence?: Fence,
+    costUsd?: number,
   ): Promise<JobRow | null>;
   /**
    * Atomically reserve `tokens` of the job's budget. Returns the updated row,
@@ -739,7 +750,18 @@ export function createExtractStore(
       return row;
     },
     getJob: (id) => one<JobRow>(q.getJobQuery(id)),
-    listJobs: (limit, offset) => run<JobRow>(q.listJobsQuery(limit, offset)),
+    listJobs: (limit, offset, options) => run<JobRow>(q.listJobsQuery(limit, offset, options)),
+    async countJobs(statuses) {
+      const rows = await run<{ total: string | number }>(q.countJobsQuery(statuses));
+      return Number(rows[0]?.total ?? 0);
+    },
+    jobStatusSummary: () => run<JobStatusSummaryRow>(q.jobStatusSummaryQuery()),
+    async activePageProgress() {
+      const rows = await run<{ done: string | number; total: string | number }>(q.activePageProgressQuery());
+      return { done: Number(rows[0]?.done ?? 0), total: Number(rows[0]?.total ?? 0) };
+    },
+    pageStageCounts: async (jobIds) =>
+      jobIds.length === 0 ? [] : run<PageStageCountRow>(q.pageStageCountsQuery(jobIds)),
     sourceDigestsByReference: async (
       reference,
       collection,
@@ -803,8 +825,8 @@ export function createExtractStore(
       oneFenced<JobRow>(q.setJobRevisionQuery(id, revisionId, fence), fence),
     setJobReference: (id, reference, fence) =>
       oneFenced<JobRow>(q.setJobReferenceQuery(id, reference, fence), fence),
-    consumeJobTokens: (id, tokens, fence) =>
-      oneFenced<JobRow>(q.consumeJobTokensQuery(id, tokens, fence), fence),
+    consumeJobTokens: (id, tokens, fence, costUsd) =>
+      oneFenced<JobRow>(q.consumeJobTokensQuery(id, tokens, fence, costUsd ?? 0), fence),
     reserveJobTokens: (id, tokens, fence) =>
       fencedTx(fence, "update", async (client) => {
         const rows = await exec<JobRow>(
@@ -817,7 +839,7 @@ export function createExtractStore(
       fencedTx(fence, "update", async (client) => {
         const rows = await exec<JobRow>(
           client,
-          q.settleJobTokensQuery(id, settlement.reserved, settlement.used),
+          q.settleJobTokensQuery(id, settlement.reserved, settlement.used, settlement.costUsd ?? 0),
         );
         return rows[0] ?? null;
       }),
@@ -930,6 +952,7 @@ export function createExtractStore(
                   row.job_id,
                   settlement.reserved,
                   settlement.used,
+                  settlement.costUsd ?? 0,
                 ),
               )
             )[0] ?? null;

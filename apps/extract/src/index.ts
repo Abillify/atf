@@ -397,6 +397,7 @@ export function createApp(
         visionMaxTokenVariants: config.visionMaxTokenVariants,
         visionMaxRetries: config.visionMaxRetries,
         visionReasoningEffort: config.visionReasoningEffort,
+        visionEnableThinking: config.visionEnableThinking ?? null,
         visionSupportsJsonSchema: config.visionSupportsJsonSchema,
       },
       logger,
@@ -687,6 +688,12 @@ export function createApp(
       extra: {
         pageLabel: config.pageLabel,
         pipelineRevision: PIPELINE_REVISION,
+        // Only when set: an unset switch must leave the stand (and every
+        // pinned job) unchanged, while turning thinking on or off changes the
+        // vision output and therefore trips the resume policy.
+        ...(config.visionEnableThinking !== undefined && config.visionEnableThinking !== null
+          ? { visionEnableThinking: config.visionEnableThinking }
+          : {}),
         blockModel: MARKDOWN_BLOCKS_VERSION,
         ...(overrides.converterIdentity !== undefined
           ? { converter: overrides.converterIdentity }
@@ -1126,6 +1133,19 @@ export function createApp(
         // The budget estimate mirrors the summary output budget; a summary call
         // is far cheaper than a vision page, so it reuses the same guard shape.
         summaryTokenEstimate: config.summary?.maxTokens ?? 512,
+        // Token prices (USD per million) booked into every job's cost_usd.
+        visionPricing: {
+          inputPerMillion: config.visionInputTokenCost,
+          outputPerMillion: config.visionOutputTokenCost,
+        },
+        ...(config.summary !== null
+          ? {
+              summaryPricing: {
+                inputPerMillion: config.summary.inputTokenCost ?? 0,
+                outputPerMillion: config.summary.outputTokenCost ?? 0,
+              },
+            }
+          : {}),
         // JOB_MAX_TRANSIENT_WAIT_MS: retry a dependency outage
         // in place with backoff before pausing on dependency with auto-resume.
         maxTransientWaitMs: config.jobWorker.maxTransientWaitMs,

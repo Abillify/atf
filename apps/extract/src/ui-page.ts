@@ -558,29 +558,46 @@ const JOBS_PANEL_HTML = `
       <p class="panel-title">Job-Übersicht</p>
       <p class="panel-desc">Laufende und abgeschlossene Verarbeitungs-Jobs (GET /v2/jobs). Zeile anklicken für Details je Stufe, Identität, Revision, Warnungen, Kosten, Restzeit und Seitenvorschau. Aktionen: Pause, Fortsetzen (auch mit Resume-Policy), Retry fehlgeschlagener Einheiten, Reparse, Abbruch.</p>
 
+      <section class="jobs-summary" id="jobs-summary" aria-label="Warteschlange im Überblick">
+        <div class="coll-empty">Lade Überblick …</div>
+      </section>
+
       <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1.25rem;flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary" id="jobs-refresh-btn">↺ Aktualisieren</button>
-        <label class="checkbox-label"><input type="checkbox" id="jobs-auto-refresh" /> Automatisch aktualisieren <span class="hint">(alle 5 s)</span></label>
+        <label class="checkbox-label"><input type="checkbox" id="jobs-auto-refresh" checked /> Live</label>
+        <select id="jobs-auto-interval" aria-label="Aktualisierungsintervall" style="width:auto">
+          <option value="2000">alle 2 s</option>
+          <option value="5000" selected>alle 5 s</option>
+          <option value="15000">alle 15 s</option>
+        </select>
         <select id="jobs-filter-status" aria-label="Nach Status filtern" style="width:auto">
           <option value="">alle Status</option>
           <option value="active">aktiv</option>
+          <option value="waiting">wartend (Warteschlange + pausiert)</option>
           <option value="queued">in Warteschlange</option>
           <option value="paused">pausiert</option>
           <option value="completed">abgeschlossen</option>
           <option value="failed">fehlgeschlagen</option>
           <option value="cancelled">abgebrochen</option>
         </select>
-        <input type="text" id="jobs-filter-text" aria-label="Nach Referenz oder Job-ID filtern" placeholder="Referenz / Job-ID filtern" style="width:auto;flex:1;min-width:180px" />
+        <select id="jobs-order" aria-label="Sortierung" style="width:auto">
+          <option value="queue" selected>Warteschlange: aktive und älteste zuerst</option>
+          <option value="newest">neueste zuerst</option>
+        </select>
+        <select id="jobs-page-size" aria-label="Jobs pro Seite" style="width:auto">
+          <option value="25" selected>25 / Seite</option>
+          <option value="50">50 / Seite</option>
+          <option value="100">100 / Seite</option>
+        </select>
+        <input type="text" id="jobs-filter-text" aria-label="Aktuelle Seite nach Referenz oder Job-ID filtern" placeholder="Referenz / Job-ID (aktuelle Seite)" style="width:auto;flex:1;min-width:180px" />
         <span id="jobs-status" style="font-size:0.78rem;color:#64748b;"></span>
       </div>
 
       <div class="visually-hidden" id="jobs-live" role="status" aria-live="polite"></div>
 
+      <nav class="jobs-pager" aria-label="Seiten der Job-Liste" id="jobs-pager-top"></nav>
       <div id="jobs-output"><div class="coll-empty">Noch nicht geladen. Auf „Aktualisieren" klicken.</div></div>
-
-      <div style="display:flex;gap:0.75rem;align-items:center;margin-top:1.25rem;flex-wrap:wrap;">
-        <button type="button" class="btn btn-secondary" id="jobs-more-btn" style="display:none">Mehr laden</button>
-      </div>
+      <nav class="jobs-pager" aria-label="Seiten der Job-Liste (unten)" id="jobs-pager-bottom"></nav>
     </div>`;
 
 const CSS = `
@@ -712,7 +729,7 @@ input[type="number"] { max-width: 160px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .jobs-list { display: flex; flex-direction: column; gap: 0.6rem; }
 .job-item { border: 1px solid #2d3748; border-radius: 10px; overflow: hidden; background: #141824; }
-.job-head { display: grid; grid-template-columns: 1.4rem minmax(0,2fr) auto minmax(120px,1fr) auto auto; gap: 0.75rem; align-items: center; padding: 0.7rem 1rem; cursor: pointer; user-select: none; }
+.job-head { display: grid; grid-template-columns: 1.4rem minmax(0,2fr) auto minmax(120px,1fr) auto auto auto; gap: 0.75rem; align-items: center; padding: 0.7rem 1rem; cursor: pointer; user-select: none; }
 .job-chevron { color: #475569; font-size: 0.72rem; transition: transform 0.2s; }
 .job-item.open .job-chevron { transform: rotate(90deg); }
 .job-ref { color: #e2e8f0; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -726,10 +743,32 @@ input[type="number"] { max-width: 160px; }
 .job-status.failed    { background: rgba(239,68,68,0.1);   color: #fca5a5; border: 1px solid rgba(239,68,68,0.25); }
 .job-status.paused    { background: rgba(71,85,105,0.2);   color: #cbd5e1; border: 1px solid #334155; }
 .job-status.cancelled { background: rgba(71,85,105,0.2);   color: #94a3b8; border: 1px solid #334155; }
-.job-mini-progress { height: 8px; background: #1e293b; border-radius: 999px; overflow: hidden; min-width: 80px; }
-.job-mini-bar { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+.job-mini-progress { display: block; height: 8px; background: #1e293b; border-radius: 999px; overflow: hidden; min-width: 80px; }
+.job-mini-bar { display: block; height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); }
 .job-mini-bar.done { background: linear-gradient(90deg, #10b981, #059669); }
 .job-cost { font-size: 0.72rem; color: #94a3b8; font-family: "JetBrains Mono","Fira Code",monospace; white-space: nowrap; text-align: right; }
+.job-pages { font-size: 0.7rem; color: #94a3b8; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.job-stage-now { font-size: 0.68rem; color: #64748b; white-space: nowrap; }
+.job-mini-progress.indeterminate .job-mini-bar { width: 30% !important; animation: jobsindet 1.4s ease-in-out infinite; }
+@keyframes jobsindet { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .job-mini-progress.indeterminate .job-mini-bar { animation: none; width: 100% !important; opacity: 0.4; } }
+.jobs-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.6rem; margin-bottom: 1.25rem; }
+.jobs-tile { background: #141824; border: 1px solid #2d3748; border-radius: 10px; padding: 0.65rem 0.8rem; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.jobs-tile:hover, .jobs-tile:focus-visible { border-color: #6366f1; outline: none; }
+.jobs-tile[aria-pressed="true"] { border-color: #8b5cf6; background: rgba(99,102,241,0.08); }
+.jobs-tile.static { cursor: default; }
+.jobs-tile.static:hover { border-color: #2d3748; }
+.jobs-tile-label { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 0.25rem; }
+.jobs-tile-value { display: block; font-size: 1.25rem; font-weight: 600; color: #e2e8f0; font-variant-numeric: tabular-nums; }
+.jobs-tile-sub { display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.2rem; }
+.jobs-tile.wide { grid-column: span 2; }
+.jobs-tile .job-mini-progress { margin-top: 0.45rem; }
+.jobs-pager { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; font-size: 0.78rem; color: #94a3b8; }
+.jobs-pager:empty { display: none; }
+.jobs-pager button { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; font-size: 0.75rem; cursor: pointer; padding: 0.3rem 0.65rem; border-radius: 6px; }
+.jobs-pager button[disabled] { opacity: 0.4; cursor: not-allowed; }
+.jobs-pager button[aria-current="page"] { border-color: #8b5cf6; color: #a78bfa; }
+.jobs-pager .pager-info { margin-left: auto; }
 .job-eta { font-size: 0.72rem; color: #64748b; white-space: nowrap; text-align: right; }
 .job-body { display: none; border-top: 1px solid #2d3748; padding: 1rem; }
 .job-item.open .job-body { display: block; }
@@ -741,8 +780,8 @@ input[type="number"] { max-width: 160px; }
 .job-stages { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
 .job-stage { background: #0f1117; border: 1px solid #2d3748; border-radius: 8px; padding: 0.6rem 0.75rem; }
 .job-stage-name { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 0.4rem; }
-.job-stage-track { height: 6px; background: #1e293b; border-radius: 999px; overflow: hidden; margin-bottom: 0.35rem; }
-.job-stage-fill { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+.job-stage-track { display: block; height: 6px; background: #1e293b; border-radius: 999px; overflow: hidden; margin-bottom: 0.35rem; }
+.job-stage-fill { display: block; height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); }
 .job-stage-fill.failed { background: linear-gradient(90deg, #ef4444, #b91c1c); }
 .job-stage-fill.done { background: linear-gradient(90deg, #10b981, #059669); }
 .job-stage-count { font-size: 0.72rem; color: #cbd5e1; font-family: "JetBrains Mono","Fira Code",monospace; }
@@ -889,9 +928,19 @@ const JS = `
   function isTerminalStatus(status) { return TERMINAL_STATUSES.indexOf(status) >= 0; }
 
   function overallRatio(job) {
-    // The mean done/total across the stages that report a total — the same
-    // shape the detail view shows, collapsed to one bar for the list row.
+    // Pages through the terminal stage are the honest measure; before the
+    // first page gets there, the mean over the stages that have started.
+    // Stages a run never uses (no rows) would only drag the bar down.
     if (!job.progress) return job.status === "completed" ? 1 : 0;
+    if (job.status === "completed") return 1;
+    var emitted = job.progress.emitted;
+    if (emitted && emitted.total > 0 && emitted.done > 0) return Math.min(1, emitted.done / emitted.total);
+    var started = [];
+    PAGE_STAGES.forEach(function (s) {
+      var p = job.progress[s];
+      if (p && p.total > 0 && p.done + p.failed > 0) started.push(Math.min(1, p.done / p.total));
+    });
+    if (started.length) return started.reduce(function (a, b) { return a + b; }, 0) / started.length;
     var ratios = [];
     PAGE_STAGES.forEach(function (s) {
       var p = job.progress[s];
@@ -908,6 +957,42 @@ const JS = `
       parts.push(job.tokensUsed + (typeof job.tokenBudget === "number" ? "/" + job.tokenBudget : "") + " Tok");
     }
     return parts.join(" · ") || "—";
+  }
+
+  var ACTIVE_STATUSES = ["preparing", "processing", "emitting", "committing"];
+  function isActiveStatus(status) { return ACTIVE_STATUSES.indexOf(status) >= 0; }
+
+  // Pages that reached the terminal page stage, or null without progress data.
+  function pagesEmitted(job) {
+    var p = job.progress && job.progress.emitted;
+    return p && typeof p.done === "number" ? p.done : null;
+  }
+
+  // The furthest started stage that is not complete yet — what the job works
+  // on now. Stages without any finished unit are skipped: a run does not use
+  // every stage, and an untouched one is not where the job stands.
+  function currentStage(job) {
+    if (!job.progress || !isActiveStatus(job.status)) return "";
+    var found = "";
+    for (var i = 0; i < PAGE_STAGES.length; i++) {
+      var p = job.progress[PAGE_STAGES[i]];
+      if (p && p.total > 0 && p.done + p.failed > 0 && p.done + p.failed < p.total) found = PAGE_STAGES[i];
+    }
+    return found;
+  }
+
+  function fmtUsd(value) {
+    if (typeof value !== "number" || !isFinite(value)) return "—";
+    return "$" + (value >= 100 ? value.toFixed(0) : value >= 1 ? value.toFixed(2) : value.toFixed(4));
+  }
+
+  function fmtAge(iso) {
+    if (!iso) return "—";
+    var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return s + " s";
+    if (s < 3600) return Math.round(s / 60) + " min";
+    if (s < 86400) return (s / 3600).toFixed(1) + " h";
+    return (s / 86400).toFixed(1) + " d";
   }
 
   function fmtEta(job) {
@@ -1036,7 +1121,7 @@ const JS = `
       var panel = $("panel-" + target);
       if (panel) panel.classList.add("active");
       if (target === "health") loadHealth();
-      if (target === "jobs") loadJobs();
+      if (target === "jobs") refreshJobs(true);
     });
   });
 
@@ -1988,17 +2073,28 @@ const JS = `
     var ratio = overallRatio(job);
     var barDone = job.status === "completed";
     var statusText = statusLabel(job.status) + (job.pauseReason ? " (" + job.pauseReason + ")" : "");
-    var pages = typeof job.pageCount === "number" ? job.pageCount + " S." : "—";
+    var pagesDone = pagesEmitted(job);
+    var pages = typeof job.pageCount === "number"
+      ? (pagesDone !== null ? pagesDone + "/" + job.pageCount + " S." : job.pageCount + " S.")
+      : "—";
     var pct = Math.round(ratio * 100);
+    // A worker holds the job but no stage has finished yet: show motion
+    // instead of an empty bar that reads as "stuck".
+    var indeterminate = isActiveStatus(job.status) && pct === 0;
+    var stageNow = currentStage(job);
 
     el.innerHTML =
       '<div class="job-head" role="button" tabindex="0" aria-expanded="' + (jobsExpanded[job.jobId] ? "true" : "false") + '" aria-label="Job ' + escapeHtml(job.reference) + ', Status ' + escapeHtml(statusText) + '">' +
         '<span class="job-chevron" aria-hidden="true">▶</span>' +
-        '<span class="job-ref" title="' + escapeHtml(job.reference) + '">' + escapeHtml(job.reference) + "</span>" +
+        '<span class="job-ref" title="' + escapeHtml(job.reference) + '">' + escapeHtml(job.reference) +
+          (stageNow ? ' <span class="job-stage-now">· ' + escapeHtml(stageNow) + "</span>" : "") +
+        "</span>" +
         '<span class="job-status ' + escapeHtml(job.status) + '">' + escapeHtml(statusText) + "</span>" +
-        '<span class="job-mini-progress" role="progressbar" aria-label="Fortschritt gesamt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-valuetext="' + pct + ' Prozent, ' + escapeHtml(pages) + '">' +
+        '<span class="job-mini-progress' + (indeterminate ? " indeterminate" : "") + '" role="progressbar" aria-label="Fortschritt gesamt" aria-valuemin="0" aria-valuemax="100"' +
+          (indeterminate ? ' aria-valuetext="läuft, noch keine Stufe abgeschlossen"' : ' aria-valuenow="' + pct + '" aria-valuetext="' + pct + ' Prozent, ' + escapeHtml(pages) + '"') + ">" +
           '<span class="job-mini-bar' + (barDone ? " done" : "") + '" style="width:' + pct + '%"></span>' +
         "</span>" +
+        '<span class="job-pages">' + escapeHtml(pages) + "</span>" +
         '<span class="job-cost">' + escapeHtml(fmtCost(job)) + "</span>" +
         '<span class="job-eta">' + escapeHtml(fmtEta(job)) + "</span>" +
       "</div>" +
@@ -2333,54 +2429,171 @@ const JS = `
     return wrap;
   }
 
-  // Client-side filter over the loaded rows (the list API pages newest-first
-  // and takes no filter).
+  // Text filter over the rows of the current page. Status, order and paging
+  // are server-side (GET /ui/jobs?status=&order=&offset=), so they hold
+  // across every page.
   function applyJobsFilter() {
-    var status = ($("jobs-filter-status") || {}).value || "";
     var text = (($("jobs-filter-text") || {}).value || "").trim().toLowerCase();
     var shown = 0;
     var total = 0;
     document.querySelectorAll("#jobs-output .job-item").forEach(function (el) {
       total += 1;
-      var st = el.dataset.status || "";
-      var okStatus = !status || (status === "active" ? !isTerminalStatus(st) && st !== "paused" && st !== "queued" : st === status);
-      var okText = !text || (el.dataset.search || "").indexOf(text) >= 0;
-      var visible = okStatus && okText;
+      var visible = !text || (el.dataset.search || "").indexOf(text) >= 0;
       el.style.display = visible ? "" : "none";
       if (visible) shown += 1;
     });
     return { shown: shown, total: total };
   }
 
-  async function loadJobs(append) {
+  // ── Header: queue overview (GET /ui/jobs/summary) ──────────────────────────
+  var SUMMARY_TILES = [
+    { key: "active", label: "Aktiv", filter: "active" },
+    { key: "queued", label: "In Warteschlange", filter: "queued" },
+    { key: "paused", label: "Pausiert", filter: "paused" },
+    { key: "completed", label: "Abgeschlossen", filter: "completed" },
+    { key: "failed", label: "Fehlgeschlagen", filter: "failed" },
+    { key: "cancelled", label: "Abgebrochen", filter: "cancelled" }
+  ];
+
+  function tileHtml(label, value, sub, filter, extraClass) {
+    var current = ($("jobs-filter-status") || {}).value || "";
+    var isButton = filter !== null;
+    var tag = isButton ? "button" : "div";
+    return "<" + tag + (isButton ? ' type="button" data-filter="' + escapeHtml(filter) + '" aria-pressed="' + (current === filter ? "true" : "false") + '"' : "") +
+      ' class="jobs-tile' + (isButton ? "" : " static") + (extraClass ? " " + extraClass : "") + '"' +
+      (isButton ? ' aria-label="' + escapeHtml(label + ": " + value + (sub ? ", " + sub : "") + ". Liste danach filtern") + '"' : "") + ">" +
+      '<span class="jobs-tile-label">' + escapeHtml(label) + "</span>" +
+      '<span class="jobs-tile-value">' + escapeHtml(String(value)) + "</span>" +
+      (sub ? '<span class="jobs-tile-sub">' + escapeHtml(sub) + "</span>" : "") +
+      "</" + tag + ">";
+  }
+
+  function renderSummary(s) {
+    var el = $("jobs-summary");
+    if (!el) return;
+    var by = s.byStatus || {};
+    var html = tileHtml("Gesamt", s.total || 0, null, "", "");
+    SUMMARY_TILES.forEach(function (t) {
+      var value = t.key === "active" ? (s.active || 0) : (by[t.key] || 0);
+      var sub = null;
+      if (t.key === "active") {
+        sub = ACTIVE_STATUSES.filter(function (st) { return by[st]; }).map(function (st) { return by[st] + " " + statusLabel(st); }).join(", ") || null;
+      }
+      if (t.key === "paused" && s.pausedByReason) {
+        sub = Object.keys(s.pausedByReason).map(function (r) { return s.pausedByReason[r] + "× " + r; }).join(", ") || null;
+      }
+      if (t.key === "queued" && s.oldestWaitingAt && (by.queued || by.paused)) sub = "älteste wartet seit " + fmtAge(s.oldestWaitingAt);
+      html += tileHtml(t.label, value, sub, t.filter, "");
+    });
+    var ap = s.activePages || { done: 0, total: 0 };
+    var apPct = ap.total > 0 ? Math.round((ap.done / ap.total) * 100) : 0;
+    html += '<div class="jobs-tile static wide">' +
+      '<span class="jobs-tile-label">Seiten der aktiven Jobs</span>' +
+      '<span class="jobs-tile-value">' + escapeHtml(ap.done + " / " + ap.total) + "</span>" +
+      '<span class="job-mini-progress" role="progressbar" aria-label="Seitenfortschritt der aktiven Jobs" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + apPct + '"><span class="job-mini-bar" style="width:' + apPct + '%"></span></span>' +
+      "</div>";
+    html += tileHtml("Kosten gesamt", fmtUsd(s.costUsd), (s.tokensUsed || 0).toLocaleString() + " Tokens", null, "");
+    el.innerHTML = html;
+    el.querySelectorAll("button[data-filter]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var sel = $("jobs-filter-status");
+        if (!sel) return;
+        sel.value = sel.value === btn.dataset.filter ? "" : btn.dataset.filter;
+        jobsOffset = 0;
+        refreshJobs(true);
+      });
+    });
+  }
+
+  async function loadJobsSummary() {
+    try {
+      var res = await jobsFetch(JOBS_PATH + "/summary");
+      var data = await readJson(res);
+      if (!res.ok) {
+        var el = $("jobs-summary");
+        if (el) el.innerHTML = '<div class="coll-error">Überblick nicht lesbar: ' + escapeHtml(errorText(data, res)) + "</div>";
+        return;
+      }
+      renderSummary(data);
+    } catch (err) {
+      /* The list shows the network error; the header keeps its last state. */
+    }
+  }
+
+  // ── Pager ─────────────────────────────────────────────────────────────────
+  function renderPager(total) {
+    var pages = Math.max(1, Math.ceil(total / jobsLimit));
+    var current = Math.floor(jobsOffset / jobsLimit) + 1;
+    var first = total === 0 ? 0 : jobsOffset + 1;
+    var last = Math.min(total, jobsOffset + jobsLimit);
+    // A window of page buttons around the current one.
+    var from = Math.max(1, current - 2);
+    var to = Math.min(pages, from + 4);
+    from = Math.max(1, to - 4);
+    function btn(label, page, disabled, aria, isCurrent) {
+      return '<button type="button" data-page="' + page + '"' + (disabled ? " disabled" : "") +
+        (isCurrent ? ' aria-current="page"' : "") + ' aria-label="' + escapeHtml(aria) + '">' + escapeHtml(label) + "</button>";
+    }
+    var html = btn("«", 1, current <= 1, "Erste Seite") + btn("‹", current - 1, current <= 1, "Vorherige Seite");
+    for (var p = from; p <= to; p++) html += btn(String(p), p, false, "Seite " + p, p === current);
+    html += btn("›", current + 1, current >= pages, "Nächste Seite") + btn("»", pages, current >= pages, "Letzte Seite");
+    html += '<span class="pager-info">' + escapeHtml(first + "–" + last + " von " + total + " Jobs · Seite " + current + " von " + pages) + "</span>";
+    ["jobs-pager-top", "jobs-pager-bottom"].forEach(function (id) {
+      var nav = $(id);
+      if (!nav) return;
+      nav.innerHTML = total > 0 ? html : "";
+      nav.querySelectorAll("button[data-page]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var page = Number(b.dataset.page);
+          if (!(page >= 1)) return;
+          jobsOffset = (page - 1) * jobsLimit;
+          refreshJobs(true);
+        });
+      });
+    });
+  }
+
+  // ── List (GET /ui/jobs) ───────────────────────────────────────────────────
+  function jobsQuery() {
+    var params = ["limit=" + jobsLimit, "offset=" + jobsOffset, "include=progress"];
+    var order = ($("jobs-order") || {}).value || "queue";
+    params.push("order=" + encodeURIComponent(order));
+    var status = ($("jobs-filter-status") || {}).value || "";
+    if (status) params.push("status=" + encodeURIComponent(status));
+    return JOBS_PATH + "?" + params.join("&");
+  }
+
+  // "visible" shows the spinner (a user action); a live tick replaces the
+  // rows in place so the list does not flicker every few seconds.
+  async function loadJobs(visible) {
     if (jobsLoading) return;
     jobsLoading = true;
     var out = $("jobs-output");
     var statusEl = $("jobs-status");
-    var moreBtn = $("jobs-more-btn");
-    if (!append) { jobsOffset = 0; out.innerHTML = '<div class="coll-spinner">Lade Jobs …</div>'; }
+    if (visible !== false && !out.querySelector(".jobs-list")) out.innerHTML = '<div class="coll-spinner">Lade Jobs …</div>';
     try {
-      var res = await jobsFetch(JOBS_PATH + "?limit=" + jobsLimit + "&offset=" + jobsOffset);
-      var data = await res.json();
-      if (!res.ok) { out.innerHTML = '<div class="coll-error">' + escapeHtml(data.error || ("HTTP " + res.status)) + "</div>"; return; }
+      var res = await jobsFetch(jobsQuery());
+      var data = await readJson(res);
+      if (!res.ok) { out.innerHTML = '<div class="coll-error">' + escapeHtml(errorText(data, res)) + "</div>"; return; }
       var jobs = Array.isArray(data.jobs) ? data.jobs : [];
-      var list;
-      if (append) {
-        list = out.querySelector(".jobs-list");
-        if (!list) { list = document.createElement("div"); list.className = "jobs-list"; out.innerHTML = ""; out.append(list); }
-      } else {
-        out.innerHTML = "";
-        if (!jobs.length) { out.innerHTML = '<div class="coll-empty">Keine Jobs vorhanden.</div>'; }
-        list = document.createElement("div"); list.className = "jobs-list";
-        out.append(list);
+      var total = typeof data.total === "number" ? data.total : jobs.length;
+      // The filter shrank the list under the current page: step back.
+      if (!jobs.length && total > 0 && jobsOffset > 0) {
+        jobsOffset = Math.max(0, (Math.ceil(total / jobsLimit) - 1) * jobsLimit);
+        jobsLoading = false;
+        return loadJobs(visible);
       }
+      var list = document.createElement("div");
+      list.className = "jobs-list";
       jobs.forEach(function (job) { list.append(renderJobRow(job)); });
+      out.innerHTML = "";
+      if (!jobs.length) out.innerHTML = '<div class="coll-empty">Keine Jobs für diese Auswahl.</div>';
+      else out.append(list);
+      renderPager(total);
       var counts = applyJobsFilter();
-      statusEl.textContent = "HTTP " + res.status + " · " + new Date().toLocaleTimeString() +
-        (counts.shown !== counts.total ? " · " + counts.shown + " von " + counts.total + " angezeigt" : "");
-      jobsLive(jobs.length + " Job(s) geladen.");
-      if (moreBtn) moreBtn.style.display = jobs.length >= jobsLimit ? "" : "none";
-      jobsOffset += jobs.length;
+      statusEl.textContent = "Stand " + new Date().toLocaleTimeString() +
+        (counts.shown !== counts.total ? " · " + counts.shown + " von " + counts.total + " auf dieser Seite" : "");
+      if (visible !== false) jobsLive(total + " Job(s), Seite " + (Math.floor(jobsOffset / jobsLimit) + 1) + " geladen.");
     } catch (err) {
       out.innerHTML = '<div class="coll-error">Netzwerkfehler: ' + escapeHtml(err && err.message ? err.message : String(err)) + "</div>";
     } finally {
@@ -2388,24 +2601,44 @@ const JS = `
     }
   }
 
+  function refreshJobs(visible) {
+    loadJobsSummary();
+    return loadJobs(visible);
+  }
+
+  // ── Live updates ──────────────────────────────────────────────────────────
+  // Polls the header and the visible page while the Jobs tab is shown and the
+  // document is visible. Open job details refresh with their rows.
+  function restartJobsTimer() {
+    if (jobsAutoTimer) { clearInterval(jobsAutoTimer); jobsAutoTimer = null; }
+    var auto = $("jobs-auto-refresh");
+    if (!auto || !auto.checked) return;
+    var ms = Number((($("jobs-auto-interval") || {}).value) || 5000);
+    jobsAutoTimer = setInterval(function () {
+      var panel = $("panel-jobs");
+      if (!panel || !panel.classList.contains("active") || document.hidden) return;
+      refreshJobs(false);
+    }, ms > 0 ? ms : 5000);
+  }
+
   var jobsRefreshBtn = $("jobs-refresh-btn");
-  if (jobsRefreshBtn) jobsRefreshBtn.addEventListener("click", function () { loadJobs(false); });
-  var jobsMoreBtn = $("jobs-more-btn");
-  if (jobsMoreBtn) jobsMoreBtn.addEventListener("click", function () { loadJobs(true); });
+  if (jobsRefreshBtn) jobsRefreshBtn.addEventListener("click", function () { refreshJobs(true); });
   var jobsFilterStatus = $("jobs-filter-status");
-  if (jobsFilterStatus) jobsFilterStatus.addEventListener("change", applyJobsFilter);
+  if (jobsFilterStatus) jobsFilterStatus.addEventListener("change", function () { jobsOffset = 0; refreshJobs(true); });
+  var jobsOrder = $("jobs-order");
+  if (jobsOrder) jobsOrder.addEventListener("change", function () { jobsOffset = 0; loadJobs(true); });
+  var jobsPageSize = $("jobs-page-size");
+  if (jobsPageSize) jobsPageSize.addEventListener("change", function () {
+    jobsLimit = Number(jobsPageSize.value) || 25;
+    jobsOffset = 0;
+    loadJobs(true);
+  });
   var jobsFilterText = $("jobs-filter-text");
   if (jobsFilterText) jobsFilterText.addEventListener("input", applyJobsFilter);
   var jobsAuto = $("jobs-auto-refresh");
-  if (jobsAuto) jobsAuto.addEventListener("change", function () {
-    if (jobsAuto.checked) {
-      jobsAutoTimer = setInterval(function () {
-        var panel = $("panel-jobs");
-        if (panel && panel.classList.contains("active")) loadJobs(false);
-      }, 5000);
-    } else if (jobsAutoTimer) {
-      clearInterval(jobsAutoTimer); jobsAutoTimer = null;
-    }
-  });
+  if (jobsAuto) jobsAuto.addEventListener("change", restartJobsTimer);
+  var jobsAutoInterval = $("jobs-auto-interval");
+  if (jobsAutoInterval) jobsAutoInterval.addEventListener("change", restartJobsTimer);
+  restartJobsTimer();
 })();
 `;

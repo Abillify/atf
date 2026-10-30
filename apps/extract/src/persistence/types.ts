@@ -69,11 +69,36 @@ export class LeaseLostError extends Error {
  * booked in the same transaction that persists the stage result, so a crash
  * can never record the checkpoint without its cost (or vice versa).
  */
+/** One group of the job overview header (`jobStatusSummaryQuery`). */
+export interface JobStatusSummaryRow {
+  status: string;
+  pause_reason: string | null;
+  jobs: number | string;
+  tokens_used: number | string;
+  cost_usd: number | string;
+  pages: number | string;
+  oldest_created_at: Date | null;
+}
+
+/** Stage checkpoint counts of one job/stage/status group (`pageStageCountsQuery`). */
+export interface PageStageCountRow {
+  job_id: string;
+  stage: string;
+  status: string;
+  n: number | string;
+  first_at: Date;
+}
+
 export interface TokenSettlement {
   /** Tokens reserved before the call; released by this settlement. */
   reserved: number;
   /** Tokens actually consumed; added to `tokens_used`. */
   used: number;
+  /**
+   * USD of the consumed tokens at the configured model prices; added to
+   * `cost_usd`. Omitted or 0 for a call without a price.
+   */
+  costUsd?: number;
 }
 
 /**

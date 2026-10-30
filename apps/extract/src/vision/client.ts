@@ -56,6 +56,7 @@ import {
   pass2ResponseFormat,
   type ResponseFormat,
 } from "./schema.js";
+import { chatTemplateKwargs } from "../chat-template-kwargs.js";
 
 export interface VisionClientConfig {
   /** Base URL; `/v1/chat/completions` is appended. */
@@ -71,6 +72,8 @@ export interface VisionClientConfig {
   /** Transient-failure retries per budget. */
   visionMaxRetries: number;
   visionReasoningEffort: string | null;
+  /** `chat_template_kwargs.enable_thinking`; null leaves the field out. */
+  visionEnableThinking?: boolean | null;
   /**
    * Capability flag: the provider enforces `response_format: json_schema`
    * Fail-closed — off unless the operator says
@@ -276,13 +279,7 @@ export function createVisionClient(
       top_p: config.visionTopP,
       // Only sent when configured: strict servers reject unknown fields, so an
       // unconditional chat_template_kwargs breaks every request against them.
-      ...(config.visionReasoningEffort !== null
-        ? {
-            chat_template_kwargs: {
-              reasoning_effort: config.visionReasoningEffort,
-            },
-          }
-        : {}),
+      ...chatTemplateKwargs(config.visionReasoningEffort, config.visionEnableThinking ?? null),
       // Same reasoning: `response_format` rides only on the capability flag,
       // and requestOnce drops it for the process if the server rejects it.
       ...(responseFormat !== undefined && schemaAccepted
