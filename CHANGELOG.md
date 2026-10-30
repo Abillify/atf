@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-30
+
 ### Added
 
 - **Extract**: `VISION_ENABLE_THINKING` and `SUMMARY_ENABLE_THINKING` send `chat_template_kwargs.enable_thinking` (alone or next to `reasoning_effort`). Qwen-style chat templates ignore `reasoning_effort` and switch their thinking block only with `enable_thinking`. Unset sends nothing, as before; a set value is part of the pipeline stand, so `pin` jobs pause when it changes.
@@ -4606,7 +4608,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/Abillify/atf/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Abillify/atf/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Abillify/atf/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Abillify/atf/compare/v0.19.3...v0.20.0
