@@ -428,7 +428,8 @@ describeIfPg("extract-store · real PostgreSQL", () => {
     expect(active.map((r) => r.id)).toContain(ids.running);
     expect(active.every((r) => r.status === "processing")).toBe(true);
     const queue = await store.listJobs(1000, 0, { order: "queue" });
-    const order = queue.map((r) => r.id).filter((id) => Object.values(ids).includes(id));
+    const seeded: string[] = Object.values(ids);
+    const order = queue.map((r) => r.id).filter((id) => seeded.includes(id));
     expect(order).toEqual([ids.running, ids.queued, ids.done]);
     expect(await store.countJobs(["processing"])).toBe(active.length);
 
