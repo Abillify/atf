@@ -28,6 +28,7 @@ releases:
 ### Fixed
 
 - **Runtime** (audit): durable audit writes no longer fail with a separate operator database role. `PostgresAuditLog` appends the hash chain on the operator pool (`DATABASE_OPERATOR_URL`), but `rls-setup` had only granted `aiperator_operator` SELECT on `audit_log`. Every regulated action (approval decisions, key rotation, erasure, flow publish …) therefore answered 503 `AUDIT_UNAVAILABLE` and wrote no audit entry. Schema version 52 grants `INSERT` on `audit_log` and the id sequence (still no UPDATE/DELETE), and `rls-setup` does the same for new databases. A failed required audit write is now logged with its cause.
+- **Runtime** (approvals): when the audit write fails after an approval decision, the in-chat widget now states that the decision took effect and only the audit entry is missing. Before, it said the decision was "not confirmed" and asked for a retry, although the approval was already consumed and the tool call went ahead.
 - **Extract**: `cost_usd` was never written, so every job reported $0, and a job without `tokenBudget` did not book its tokens either. Every model call (failed attempts included) now books its tokens and their price, from the response's prompt/completion split, into the job row.
 - **Extract** (operator console): the progress bars of the job list and the per-stage detail were never drawn (inline elements ignore width and height).
 
