@@ -1,6 +1,6 @@
 {
   "name": "@atf/outpost-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Locally-operated sync agent core: mirrors local folders, S3, Google Drive and Dropbox into ATF Extract collections. Pure logic plus I/O adapters behind interfaces, shared by the Docker runtime and the desktop sidecar.",
   "author": "Abillify Technology GmbH <info@abillify.me>",

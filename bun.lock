@@ -121,9 +121,9 @@
     },
     "apps/outpost": {
       "name": "@atf/outpost",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
-        "@atf/outpost-core": "workspace:0.1.1",
+        "@atf/outpost-core": "workspace:0.1.2",
         "pino": "10.4.0",
       },
       "devDependencies": {
@@ -137,7 +137,7 @@
     },
     "apps/outpost-desktop": {
       "name": "@atf/outpost-desktop",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@tauri-apps/api": "2.12.4",
         "lucide-react": "1.62.0",
@@ -328,7 +328,7 @@
     },
     "packages/outpost-core": {
       "name": "@atf/outpost-core",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@atf/extract-contract": "workspace:2.4.0",
         "chokidar": "6.0.0",

@@ -1,6 +1,6 @@
 {
   "name": "@atf/outpost-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "ATF Extract Outpost Desktop application",
   "author": "Abillify Technology GmbH <info@abillify.me>",
