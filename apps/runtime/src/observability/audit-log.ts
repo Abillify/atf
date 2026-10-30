@@ -612,6 +612,13 @@ export class PostgresAuditLog implements AuditLog {
     } catch (err) {
       this.failures += 1;
       this.onWriteFailure?.();
+      // The caller only maps the rejection to 503 AUDIT_UNAVAILABLE; without
+      // this log the cause (missing table, missing grant, DB outage) would be
+      // invisible to the operator.
+      this.logger?.error("Failed to persist required audit entry", {
+        action: entry.action,
+        error: err instanceof Error ? err.message : String(err),
+      });
       throw err;
     }
   }
