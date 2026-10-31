@@ -1166,7 +1166,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `server.sessions.sweepIntervalMs` | number | `60000` | How often the idle sweep runs. Default: 60 s. |
 | `server.ssePath` | string | `"/sse"` | — |
 | `server.trustProxy` | boolean \| number | `1` | Value for Express' `trust proxy` setting (Req 6.12). Determines how the real client IP is derived from `X-Forwarded-For`, which the per-IP rate limiter keys on. - `false` / `0`: trust no proxy — direct exposure, `req.ip` is the socket address (spoofable `X-Forwarded-For` headers are ignored). - `1` (default): trust exactly one proxy hop, as before this was configurable. - `N`: trust the N outermost hops when behind a chain of N proxies. - `true`: trust all hops — only safe when every upstream is trusted; express-rate-limit warns about the permissive setting. Env override: `TRUST_PROXY` (same contract as the search app). |
-| `server.version` | string | `"0.24.0"` | — |
+| `server.version` | string | `"0.24.1"` | — |
 | `skills` | array | — | — |
 | `skills[].description` | string | `""` | — |
 | `skills[].instructions` | string | — | — |

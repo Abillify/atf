@@ -61,7 +61,11 @@
  * No `any` at module boundaries.
  */
 
-import type { LlmConfig, LlmPoolStrategy } from "../types/flow.js";
+import type {
+  LlmConfig,
+  LlmPoolStickiness,
+  LlmPoolStrategy,
+} from "../types/flow.js";
 
 /**
  * Monotonic round-robin cursors keyed by pool identity. Values grow without
@@ -409,8 +413,10 @@ export function buildPoolCandidateChain(
   const leaves =
     isBusy !== undefined ? demoteBusyLeaves(expanded, isBusy) : expanded;
   // Stickiness is applied once, to the final FLAT chain of the outermost pool,
-  // so a pinned leaf stays first regardless of nested sub-pool expansion.
-  const sticky = config.pool?.sticky;
+  // so a pinned leaf stays first regardless of nested sub-pool expansion. The
+  // mode may be declared on the outer pool or on a nested sub-pool (a
+  // `fallback` wrapper around a sticky round-robin pool), see poolStickiness.
+  const sticky = poolStickiness(config);
   if (
     options.stickyKey !== undefined &&
     (sticky === "execution" || sticky === "conversation") &&
@@ -419,6 +425,24 @@ export function buildPoolCandidateChain(
     return applyStickiness(leaves, cursorKey, options.stickyKey, isBusy);
   }
   return leaves;
+}
+
+/**
+ * Effective stickiness of a (possibly nested) pool: the outer pool's own
+ * `sticky` when it declares one, otherwise the first `execution`/
+ * `conversation` mode found depth-first in its sub-pools. So a `fallback`
+ * pool `[ sticky-rr(a, b, c), d ]` pins like its sticky sub-pool. An explicit
+ * `sticky: "none"` on the outer pool disables it.
+ */
+export function poolStickiness(config: LlmConfig): LlmPoolStickiness | undefined {
+  const pool = config.pool;
+  if (pool === undefined || !Array.isArray(pool.candidates)) return undefined;
+  if (pool.sticky !== undefined) return pool.sticky;
+  for (const candidate of pool.candidates) {
+    const nested = poolStickiness(candidate);
+    if (nested === "execution" || nested === "conversation") return nested;
+  }
+  return undefined;
 }
 
 function expandPoolCandidateChain(
@@ -455,8 +479,9 @@ function expandPoolCandidateChain(
     ) {
       // Nested sub-pool: resolve by ITS OWN strategy, with an independent
       // cursor keyed off this candidate's position and signature.
+      // Stickiness and load are applied by the outermost call only.
       const childKey = `${cursorKey}>>${poolSignature(candidate.pool.candidates)}`;
-      leaves.push(...buildPoolCandidateChain(candidate, childKey, options));
+      leaves.push(...expandPoolCandidateChain(candidate, childKey, options));
     } else {
       leaves.push(candidate);
     }

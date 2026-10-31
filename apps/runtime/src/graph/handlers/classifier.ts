@@ -46,6 +46,7 @@ import {
   buildPoolCandidateChain,
   poolLeafConfigs,
   poolSignature,
+  poolStickiness,
 } from "../model-pool.js";
 import { claimEndpoint, poolLoadOptions } from "../endpoint-load.js";
 import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
@@ -224,7 +225,7 @@ export function createClassifierNodeHandler(
     // attempt re-derives its per-model strategy (structured-output mode, prompt
     // cache) from the capability registry, so a mixed pool (local + cloud)
     // routes each member correctly.
-    const sticky = llmConfig.pool?.sticky;
+    const sticky = poolStickiness(llmConfig);
     const stickyKey =
       sticky === "conversation"
         ? (runtime.poolSticky?.conversation ?? runtime.poolSticky?.execution)

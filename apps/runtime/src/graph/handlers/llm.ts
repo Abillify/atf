@@ -44,6 +44,7 @@ import {
   buildPoolCandidateChain,
   poolLeafConfigs,
   poolSignature,
+  poolStickiness,
 } from "../model-pool.js";
 import { claimEndpoint, poolLoadOptions } from "../endpoint-load.js";
 
@@ -183,7 +184,7 @@ export function createLlmNodeHandler(
     // llmConfig entirely, which drops any pool by design.
     let poolChain: LlmConfig[] | undefined;
     if (llmConfig?.pool !== undefined) {
-      const sticky = llmConfig.pool.sticky;
+      const sticky = poolStickiness(llmConfig);
       const stickyKey =
         sticky === "conversation"
           ? (runtime.poolSticky?.conversation ?? runtime.poolSticky?.execution)

@@ -2,8 +2,8 @@ apiVersion: v2
 name: gate
 description: ATF Gate - MCP/HTTP tool gateway.
 type: application
-version: 0.24.0
-appVersion: "0.24.0"
+version: 0.24.1
+appVersion: "0.24.1"
 dependencies:
   - name: atf-common
-    version: 0.24.0
+    version: 0.24.1

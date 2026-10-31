@@ -2,8 +2,8 @@ apiVersion: v2
 name: extract
 description: ATF Extract - document conversion and vision extraction.
 type: application
-version: 0.24.0
-appVersion: "0.24.0"
+version: 0.24.1
+appVersion: "0.24.1"
 dependencies:
   - name: atf-common
-    version: 0.24.0
+    version: 0.24.1
