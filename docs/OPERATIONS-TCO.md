@@ -247,7 +247,10 @@ one server), not to the CPU of the Runtime pod.
 session) to one pool member. On single-slot servers — one model per GPU, with
 a prefix cache that is per process — this reuses the cached prefix across the
 calls of an execution instead of paying it cold on every call; round-robin
-across replicas defeats that cache.
+across replicas defeats that cache. A pinned single-slot server that is busy,
+though, would make the call wait in its queue; with `maxConcurrent` (and
+`loadProbe: "llama-slots"` for load from other clients) on the provider the
+call moves to a free member instead and the pin follows it.
 
 **Answer-ready retrieval.** `retrieve_for_answer` packs evidence into a token
 budget (`packEvidence`): the answering model receives at most that many

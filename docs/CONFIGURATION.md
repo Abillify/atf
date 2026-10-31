@@ -801,7 +801,9 @@ DEFAULT_LLM='{"provider":"eu-openai","model":"a-chat-model"}'
 FALLBACK_LLM='{"provider":"local","model":"a-local-model"}'
 ```
 
-Optional provider fields: `url`, `apiKey`, `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `resourceName`, `apiVersion`, `local`, `keepAlive`. Supported `protocol` values are `openai`, `google`, `anthropic`, `azure`, `bedrock`, and `ollama`.
+Optional provider fields: `url`, `apiKey`, `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `resourceName`, `apiVersion`, `local`, `keepAlive`, `maxConcurrent`, `loadProbe`. Supported `protocol` values are `openai`, `google`, `anthropic`, `azure`, `bedrock`, and `ollama`.
+
+`maxConcurrent` is the number of requests the endpoint serves at once (for example `1` for a llama.cpp server with one slot). A model pool skips such a member while it is at capacity and sends the call to a free member, even when a sticky pool pinned the execution or conversation to the busy one; the pin then moves to the member that served the call. If every limited member is busy, the pool order stays as it is. The load is what this Runtime process has in flight to the endpoint (counted for the `openai` and `ollama` protocols). `loadProbe: "llama-slots"` adds llama.cpp's live `GET /slots` state (instance URL without `/v1`), so requests from other clients count as well; the probe is cached for 0.5 s and falls back to the local count when it fails. Without `maxConcurrent` an endpoint is never treated as busy.
 
 `local: true` is an explicit operator assertion that the endpoint is trusted and on-premises. It is never inferred from the URL, because a private-looking hostname is not evidence of a private network.
 

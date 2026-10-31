@@ -40,7 +40,12 @@ import { filterLlmParameters } from "../llm-factory.js";
 import { buildClassificationNamespaces } from "../classification-access.js";
 import { coreMessagesToText } from "../message-mapping.js";
 
-import { buildPoolCandidateChain, poolSignature } from "../model-pool.js";
+import {
+  buildPoolCandidateChain,
+  poolLeafConfigs,
+  poolSignature,
+} from "../model-pool.js";
+import { claimEndpoint, poolLoadOptions } from "../endpoint-load.js";
 
 import {
   parseRoutingConfig,
@@ -185,6 +190,11 @@ export function createLlmNodeHandler(
           : sticky === "execution"
             ? runtime.poolSticky?.execution
             : undefined;
+      // Busy-aware selection: single-slot members only take the call while
+      // idle (no-op unless a leaf's provider sets `maxConcurrent`).
+      const load = await poolLoadOptions(
+        poolLeafConfigs(llmConfig).map((leaf) => leaf.provider),
+      );
       const chain = buildPoolCandidateChain(
         llmConfig,
         `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool.candidates)}`,
@@ -193,10 +203,12 @@ export function createLlmNodeHandler(
             runtime.providerCircuitBreaker?.getState(candidate.provider)
               .state !== "open",
           ...(stickyKey !== undefined ? { stickyKey } : {}),
+          ...(load !== undefined ? load : {}),
         },
       );
       const primary = chain[0];
       if (primary !== undefined) {
+        if (load !== undefined) claimEndpoint(primary.provider);
         poolChain = chain;
         llmConfig = { ...primary, pool: llmConfig.pool };
       }

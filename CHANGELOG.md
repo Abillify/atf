@@ -18,6 +18,10 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Runtime** (model pools): busy-aware member selection for single-slot servers. A `PROVIDERS` entry can set `maxConcurrent` (requests the endpoint serves at once, e.g. `1` for llama.cpp with one slot) and `loadProbe: "llama-slots"`. A pool then only sends a call to such a member while it has capacity: a busy member moves behind the free ones (it stays a failover), and a sticky pool (`sticky: execution | conversation`) whose pinned member is busy uses the free member and moves the pin there. The load is the requests this Runtime process has in flight to the endpoint (counted at the HTTP transport for the `openai`/`ollama` protocols), pools' pending selections, and with `loadProbe` llama.cpp's live `GET /slots` state, which also sees other clients (cached 0.5 s, 400 ms timeout; a failed probe falls back to the local count). If every limited member is busy, the order stays unchanged. Providers without `maxConcurrent` behave as before.
+
 ## [0.23.0] - 2026-10-30
 
 ### Added
