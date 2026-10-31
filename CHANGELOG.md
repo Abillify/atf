@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-31
+
 ### Fixed
 
 - **Runtime** (model pools): `sticky` declared on a nested sub-pool now takes effect. The `llm` and `classifier` handlers only read the outer pool's `sticky`, so the common shape `fallback[ sticky round-robin(a, b, c), d ]` never pinned: every call of a conversation rotated to the next member and lost the prefix cache. The effective mode is now the outer pool's `sticky` or, if it declares none, the first one found in its sub-pools (`sticky: none` on the outer pool still disables it), and stickiness and load are applied once to the final chain.
@@ -4622,7 +4624,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/Abillify/atf/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/Abillify/atf/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Abillify/atf/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Abillify/atf/compare/v0.21.0...v0.22.0

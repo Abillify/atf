@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ATF Extract",
-    "version": "0.24.0",
+    "version": "0.24.1",
     "x-wire-version": "1.1.0",
     "summary": "Document-to-Markdown extraction against the atf-extract contract",
     "description": "Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into the canonical Markdown defined by `atf-extract/1.1.0`: `## Seite N` page markers, `<figure id bbox page>` entries with normalised geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells.\n\nEach page is rendered and passed to a vision model together with its text layer. The text layer is authoritative for wording; the rendered page is authoritative for structure.",
