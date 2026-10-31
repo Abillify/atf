@@ -593,6 +593,12 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   (`execution`) or on the model that answered the conversation (`conversation`, across
   executions), which is what a provider's prefix cache rewards. Failover still applies —
   the failed-over model becomes the sticky one.
+- **Busy-aware pools for single-slot servers.** A provider with `maxConcurrent` in `PROVIDERS`
+  (for example `1` for a llama.cpp server with one slot) only gets a pool call while it has
+  capacity. A busy member moves behind the free ones and stays a failover; a sticky pin on a
+  busy member moves to the free member that serves the call. The load is what the Runtime
+  process has in flight, plus — with `loadProbe: "llama-slots"` — llama.cpp's live `/slots`
+  state, which also covers other clients of the same server.
 - **Provider key pool.** Multiple keys per provider with automatic quarantine on error, which
   spreads provider-side rate limits.
 - **Three cache layers.** Response cache, semantic cache for equivalent-meaning requests, and

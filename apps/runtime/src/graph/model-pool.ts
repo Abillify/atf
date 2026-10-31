@@ -39,6 +39,11 @@
  * a bounded LRU map with a TTL — process-local like the cursors, and losing
  * them is harmless.
  *
+ * Load (`options.isBusy`, see `endpoint-load.ts`): a leaf whose endpoint is at
+ * its `maxConcurrent` capacity moves behind the free leaves, and a sticky pin
+ * on a busy leaf moves to the free primary. Single-slot servers therefore only
+ * receive a call while they are idle; the busy leaf remains a failover.
+ *
  * A config with no `pool` yields a single-element chain `[config]`, so callers
  * get uniform handling whether or not a pool is in play. The returned chain is
  * always a FLAT list of concrete leaf configs.
@@ -120,16 +125,28 @@ export function applyStickiness(
   ordered: LlmConfig[],
   poolKey: string,
   stickyKey: string,
+  isBusy?: (candidate: LlmConfig) => boolean,
 ): LlmConfig[] {
   if (ordered.length === 0) return ordered;
   const now = Date.now();
   pruneStickyEntries(now);
   const key = `${poolKey}|${stickyKey}`;
   const entry = stickySelections.get(key);
-  const stickyIndex =
+  let stickyIndex =
     entry === undefined || now - entry.touchedAt > STICKY_TTL_MS
       ? -1
       : ordered.findIndex((leaf) => leafKeyOf(leaf) === entry.leafKey);
+  // A pinned leaf that is busy while the head is free gives way: the call goes
+  // to the free head and the pin moves there (its prefix cache now lives on
+  // the new leaf). When the head is busy too, every leaf is, and the pin wins.
+  if (
+    stickyIndex > 0 &&
+    isBusy !== undefined &&
+    isBusy(ordered[stickyIndex]) &&
+    !isBusy(ordered[0])
+  ) {
+    stickyIndex = -1;
+  }
   if (stickyIndex <= 0) {
     // No usable sticky leaf (none yet, expired, or the pinned leaf dropped
     // out of the chain): the head becomes the new sticky leaf.
@@ -161,6 +178,31 @@ export interface PoolSelectionOptions {
    * chains. Omit to disable stickiness for this call.
    */
   stickyKey?: string;
+  /**
+   * Load check (see `endpoint-load.ts`). A busy leaf moves behind the free
+   * leaves of the final chain — keeping the relative order within both groups,
+   * so it stays a failover — and a sticky pin on a busy leaf moves to the free
+   * primary. When every leaf is busy the order is unchanged.
+   */
+  isBusy?: (candidate: LlmConfig) => boolean;
+}
+
+/**
+ * Moves busy leaves behind the free ones, stable within both groups. Returns
+ * the input unchanged when no leaf or every leaf is busy.
+ */
+export function demoteBusyLeaves(
+  leaves: LlmConfig[],
+  isBusy: (candidate: LlmConfig) => boolean,
+): LlmConfig[] {
+  if (leaves.length <= 1) return leaves;
+  const free: LlmConfig[] = [];
+  const busy: LlmConfig[] = [];
+  for (const leaf of leaves) {
+    (isBusy(leaf) ? busy : free).push(leaf);
+  }
+  if (free.length === 0 || busy.length === 0) return leaves;
+  return [...free, ...busy];
 }
 
 /**
@@ -360,7 +402,12 @@ export function buildPoolCandidateChain(
   cursorKey: string,
   options: PoolSelectionOptions = {},
 ): LlmConfig[] {
-  const leaves = expandPoolCandidateChain(config, cursorKey, options);
+  // Load is applied once, to the final chain of the outermost pool, so nested
+  // sub-pools are expanded without it.
+  const { isBusy, ...expandOptions } = options;
+  const expanded = expandPoolCandidateChain(config, cursorKey, expandOptions);
+  const leaves =
+    isBusy !== undefined ? demoteBusyLeaves(expanded, isBusy) : expanded;
   // Stickiness is applied once, to the final FLAT chain of the outermost pool,
   // so a pinned leaf stays first regardless of nested sub-pool expansion.
   const sticky = config.pool?.sticky;
@@ -369,7 +416,7 @@ export function buildPoolCandidateChain(
     (sticky === "execution" || sticky === "conversation") &&
     leaves.length > 0
   ) {
-    return applyStickiness(leaves, cursorKey, options.stickyKey);
+    return applyStickiness(leaves, cursorKey, options.stickyKey, isBusy);
   }
   return leaves;
 }

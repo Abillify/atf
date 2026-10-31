@@ -18,6 +18,16 @@ releases:
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-31
+
+### Added
+
+- **Runtime** (model pools): busy-aware member selection for single-slot servers. A `PROVIDERS` entry can set `maxConcurrent` (requests the endpoint serves at once, e.g. `1` for llama.cpp with one slot) and `loadProbe: "llama-slots"`. A pool then only sends a call to such a member while it has capacity: a busy member moves behind the free ones (it stays a failover), and a sticky pool (`sticky: execution | conversation`) whose pinned member is busy uses the free member and moves the pin there. The load is the requests this Runtime process has in flight to the endpoint (counted at the HTTP transport for the `openai`/`ollama` protocols), pools' pending selections, and with `loadProbe` llama.cpp's live `GET /slots` state, which also sees other clients (cached 0.5 s, 400 ms timeout; a failed probe falls back to the local count). If every limited member is busy, the order stays unchanged. Providers without `maxConcurrent` behave as before.
+
+### Changed
+
+- **CI/release**: the macOS jobs (`Workspace inventory (darwin-arm64)` in CI and release, the Outpost macOS bundles) run on `macos-15`. GitHub retires the `macos-14` image on 2026-11-02, and its scheduled brownouts cancelled release runs before that.
+
 ## [0.23.0] - 2026-10-30
 
 ### Added
@@ -4608,7 +4618,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/Abillify/atf/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Abillify/atf/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Abillify/atf/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Abillify/atf/compare/v0.20.0...v0.21.0

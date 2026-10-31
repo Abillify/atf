@@ -801,7 +801,9 @@ DEFAULT_LLM='{"provider":"eu-openai","model":"a-chat-model"}'
 FALLBACK_LLM='{"provider":"local","model":"a-local-model"}'
 ```
 
-Optional provider fields: `url`, `apiKey`, `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `resourceName`, `apiVersion`, `local`, `keepAlive`. Supported `protocol` values are `openai`, `google`, `anthropic`, `azure`, `bedrock`, and `ollama`.
+Optional provider fields: `url`, `apiKey`, `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `resourceName`, `apiVersion`, `local`, `keepAlive`, `maxConcurrent`, `loadProbe`. Supported `protocol` values are `openai`, `google`, `anthropic`, `azure`, `bedrock`, and `ollama`.
+
+`maxConcurrent` is the number of requests the endpoint serves at once (for example `1` for a llama.cpp server with one slot). A model pool skips such a member while it is at capacity and sends the call to a free member, even when a sticky pool pinned the execution or conversation to the busy one; the pin then moves to the member that served the call. If every limited member is busy, the pool order stays as it is. The load is what this Runtime process has in flight to the endpoint (counted for the `openai` and `ollama` protocols). `loadProbe: "llama-slots"` adds llama.cpp's live `GET /slots` state (instance URL without `/v1`), so requests from other clients count as well; the probe is cached for 0.5 s and falls back to the local count when it fails. Without `maxConcurrent` an endpoint is never treated as busy.
 
 `local: true` is an explicit operator assertion that the endpoint is trusted and on-premises. It is never inferred from the URL, because a private-looking hostname is not evidence of a private network.
 
@@ -1164,7 +1166,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `server.sessions.sweepIntervalMs` | number | `60000` | How often the idle sweep runs. Default: 60 s. |
 | `server.ssePath` | string | `"/sse"` | — |
 | `server.trustProxy` | boolean \| number | `1` | Value for Express' `trust proxy` setting (Req 6.12). Determines how the real client IP is derived from `X-Forwarded-For`, which the per-IP rate limiter keys on. - `false` / `0`: trust no proxy — direct exposure, `req.ip` is the socket address (spoofable `X-Forwarded-For` headers are ignored). - `1` (default): trust exactly one proxy hop, as before this was configurable. - `N`: trust the N outermost hops when behind a chain of N proxies. - `true`: trust all hops — only safe when every upstream is trusted; express-rate-limit warns about the permissive setting. Env override: `TRUST_PROXY` (same contract as the search app). |
-| `server.version` | string | `"0.23.0"` | — |
+| `server.version` | string | `"0.24.0"` | — |
 | `skills` | array | — | — |
 | `skills[].description` | string | `""` | — |
 | `skills[].instructions` | string | — | — |

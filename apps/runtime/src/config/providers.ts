@@ -111,6 +111,21 @@ export interface ProviderInstance {
    * which run through the runtime egress transport.
    */
   keepAlive?: boolean;
+  /**
+   * Requests this endpoint serves at once (e.g. `1` for a llama.cpp server
+   * with one slot). Model pools skip the member while it is at capacity and
+   * use a free member instead, also against a sticky pin
+   * (see `src/graph/endpoint-load.ts`). Omitted = no limit, never busy. Counted
+   * for the `openai`/`ollama` protocols, which run through the runtime
+   * transport.
+   */
+  maxConcurrent?: number;
+  /**
+   * Live load source in addition to the process-local count. `"llama-slots"`
+   * reads llama.cpp's `GET /slots` (instance URL without `/v1`), which also
+   * sees requests from other clients. Only used with `maxConcurrent`.
+   */
+  loadProbe?: "llama-slots";
 }
 
 /**
@@ -138,6 +153,10 @@ const ProviderInstanceSchema = z
     local: z.boolean().optional(),
     keepAlive: z.boolean().optional(),
     keep_alive: z.boolean().optional(),
+    maxConcurrent: z.number().int().min(1).max(1024).optional(),
+    max_concurrent: z.number().int().min(1).max(1024).optional(),
+    loadProbe: z.enum(["llama-slots"]).optional(),
+    load_probe: z.enum(["llama-slots"]).optional(),
   })
   .transform((raw): ProviderInstance => {
     const pick = (
@@ -153,6 +172,8 @@ const ProviderInstanceSchema = z
     const resourceName = pick(raw.resourceName, raw.resource_name);
     const apiVersion = pick(raw.apiVersion, raw.api_version);
     const keepAlive = raw.keepAlive ?? raw.keep_alive;
+    const maxConcurrent = raw.maxConcurrent ?? raw.max_concurrent;
+    const loadProbe = raw.loadProbe ?? raw.load_probe;
     return {
       name: raw.name,
       protocol: raw.protocol,
@@ -166,6 +187,8 @@ const ProviderInstanceSchema = z
       ...(apiVersion !== undefined ? { apiVersion } : {}),
       ...(raw.local !== undefined ? { local: raw.local } : {}),
       ...(keepAlive !== undefined ? { keepAlive } : {}),
+      ...(maxConcurrent !== undefined ? { maxConcurrent } : {}),
+      ...(loadProbe !== undefined ? { loadProbe } : {}),
     };
   });
 

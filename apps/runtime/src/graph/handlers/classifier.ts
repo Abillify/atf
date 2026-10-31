@@ -42,7 +42,12 @@ import {
   buildClassificationNamespaces,
 } from "../classification-access.js";
 import { getModelCapabilities } from "../model-capabilities.js";
-import { buildPoolCandidateChain, poolSignature } from "../model-pool.js";
+import {
+  buildPoolCandidateChain,
+  poolLeafConfigs,
+  poolSignature,
+} from "../model-pool.js";
+import { claimEndpoint, poolLoadOptions } from "../endpoint-load.js";
 import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
 import type { AgentState } from "../graph-engine.js";
 
@@ -226,6 +231,14 @@ export function createClassifierNodeHandler(
         : sticky === "execution"
           ? runtime.poolSticky?.execution
           : undefined;
+    // Busy-aware selection: single-slot members only take the call while idle
+    // (no-op unless a leaf's provider sets `maxConcurrent`).
+    const load =
+      llmConfig.pool !== undefined
+        ? await poolLoadOptions(
+            poolLeafConfigs(llmConfig).map((leaf) => leaf.provider),
+          )
+        : undefined;
     const poolChain = buildPoolCandidateChain(
       llmConfig,
       `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool?.candidates ?? [])}`,
@@ -234,8 +247,12 @@ export function createClassifierNodeHandler(
           runtime.providerCircuitBreaker?.getState(candidate.provider).state !==
           "open",
         ...(stickyKey !== undefined ? { stickyKey } : {}),
+        ...(load !== undefined ? load : {}),
       },
     );
+    if (load !== undefined && poolChain[0] !== undefined) {
+      claimEndpoint(poolChain[0].provider);
+    }
     let lastAttemptError = "classifier model call failed";
 
     // Debug trace: record the structured classification decision. `schema` and

@@ -2,8 +2,8 @@ apiVersion: v2
 name: control
 description: ATF Control - web administration UI.
 type: application
-version: 0.23.0
-appVersion: "0.23.0"
+version: 0.24.0
+appVersion: "0.24.0"
 dependencies:
   - name: atf-common
-    version: 0.23.0
+    version: 0.24.0

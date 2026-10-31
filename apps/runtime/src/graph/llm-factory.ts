@@ -28,6 +28,7 @@ import {
 } from "../config/providers.js";
 import { parseBedrockByokCredentials } from "./tenant-provider-keys.js";
 import { egressFetch, egressFetchWithoutKeepAlive } from "../security/egress.js";
+import { trackEndpointLoad } from "./endpoint-load.js";
 import { createLlmTransportFetch } from "./llm-transport.js";
 
 // ---------------------------------------------------------------------------
@@ -527,12 +528,18 @@ export function createLlmProvider(
   // Egress_Guard by default (SSRF-safe), overridable in tests. Keep-alive is
   // configurable; the single connect-retry always uses a fresh connection.
   const keepAlive = resolveLlmKeepAlive(instance, appConfig);
-  const baseFetch = createLlmTransportFetch({
-    ...selectLlmTransportFetches(keepAlive, options?.fetch),
-    provider: config.provider,
-    model: config.model,
-    keepAlive,
-  });
+  // In-flight accounting for busy-aware pools (`maxConcurrent` instances
+  // only; a no-op wrapper otherwise). Outside the connect-retry, so one
+  // logical request counts once.
+  const baseFetch = trackEndpointLoad(
+    config.provider,
+    createLlmTransportFetch({
+      ...selectLlmTransportFetches(keepAlive, options?.fetch),
+      provider: config.provider,
+      model: config.model,
+      keepAlive,
+    }),
+  );
   const protocol = resolveProviderProtocol(config.provider);
   if (protocol === undefined) throw new UnknownProviderError(config.provider);
   // Optional `chat_template_kwargs` (e.g. `{ enable_thinking: false }`) sourced
