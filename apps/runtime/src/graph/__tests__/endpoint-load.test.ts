@@ -15,7 +15,11 @@ import {
   slotsProbeUrl,
   trackEndpointLoad,
 } from "../endpoint-load.js";
-import { buildPoolCandidateChain, resetPoolCursors } from "../model-pool.js";
+import {
+  buildPoolCandidateChain,
+  poolStickiness,
+  resetPoolCursors,
+} from "../model-pool.js";
 import {
   ProviderInstancesSchema,
   setProviderRegistry,
@@ -271,6 +275,67 @@ describe("busy-aware pool selection", () => {
       buildPoolCandidateChain(pool("conversation"), "k", { ...load, stickyKey: "c1" })[0]
         ?.provider,
     ).toBe("slot2");
+  });
+
+  test("a fallback pool around a sticky sub-pool pins and moves the pin on load", async () => {
+    // Deployment shape: fast-pool = fallback[ sticky weighted-rr(llm1, llm2, llm3), qwen3.6 ].
+    const FALLBACK: LlmConfig = { provider: "wide", model: "fallback-model" };
+    const inner: LlmConfig = {
+      ...LLM1,
+      pool: {
+        strategy: "weighted-round-robin",
+        sticky: "conversation",
+        candidates: [LLM1, LLM2, { ...LLM3, weight: 2 }],
+      },
+    };
+    const outer: LlmConfig = {
+      ...LLM1,
+      pool: { strategy: "fallback", candidates: [inner, FALLBACK] },
+    };
+    expect(poolStickiness(outer)).toBe("conversation");
+    const idle = slotsFetch({ "http://192.0.2.1:8000": false, "http://192.0.2.1:8002": false });
+    let load = await poolLoadOptions(["slot1", "slot2", "wide"], idle.fetch);
+    const first = buildPoolCandidateChain(outer, "outer", { ...load, stickyKey: "c9" })[0]
+      ?.provider;
+    // Idle: the conversation stays on its first member although the inner
+    // weighted round-robin rotates on every call.
+    for (let i = 0; i < 5; i++) {
+      expect(
+        buildPoolCandidateChain(outer, "outer", { ...load, stickyKey: "c9" })[0]?.provider,
+      ).toBe(first);
+    }
+    // Its member becomes busy: the call goes elsewhere and stays there.
+    if (first === "slot1" || first === "slot2") {
+      resetEndpointLoad();
+      const busyState =
+        first === "slot1"
+          ? { "http://192.0.2.1:8000": true, "http://192.0.2.1:8002": false }
+          : { "http://192.0.2.1:8000": false, "http://192.0.2.1:8002": true };
+      load = await poolLoadOptions(["slot1", "slot2", "wide"], slotsFetch(busyState).fetch);
+      const moved = buildPoolCandidateChain(outer, "outer", { ...load, stickyKey: "c9" })[0]
+        ?.provider;
+      expect(moved).not.toBe(first);
+      resetEndpointLoad();
+      load = await poolLoadOptions(["slot1", "slot2", "wide"], idle.fetch);
+      expect(
+        buildPoolCandidateChain(outer, "outer", { ...load, stickyKey: "c9" })[0]?.provider,
+      ).toBe(moved);
+    }
+  });
+
+  test("an explicit sticky: none on the outer pool disables nested stickiness", () => {
+    const inner: LlmConfig = {
+      ...LLM1,
+      pool: { strategy: "round-robin", sticky: "conversation", candidates: [LLM1, LLM2] },
+    };
+    const outer: LlmConfig = {
+      ...LLM1,
+      pool: { strategy: "fallback", sticky: "none", candidates: [inner, LLM3] },
+    };
+    expect(poolStickiness(outer)).toBe("none");
+    const a = buildPoolCandidateChain(outer, "o2", { stickyKey: "c1" })[0]?.provider;
+    const b = buildPoolCandidateChain(outer, "o2", { stickyKey: "c1" })[0]?.provider;
+    expect(a).not.toBe(b);
   });
 
   test("without load options the order is unchanged", () => {
