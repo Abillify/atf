@@ -13,7 +13,7 @@
     },
     "apps/control": {
       "name": "@atf/control",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
         "@atf/security-kit": "workspace:1.4.0",
@@ -49,7 +49,7 @@
     },
     "apps/extract": {
       "name": "@atf/extract",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
         "@atf/erasure-contract": "workspace:1.0.1",
@@ -85,7 +85,7 @@
     },
     "apps/gate": {
       "name": "@atf/gate",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
         "@atf/erasure-contract": "workspace:1.0.1",
@@ -158,7 +158,7 @@
     },
     "apps/runtime": {
       "name": "@atf/runtime",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "5.0.125",
         "@ai-sdk/anthropic": "4.0.89",
@@ -196,7 +196,7 @@
     },
     "apps/search": {
       "name": "@atf/search",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@atf/canonical-json": "workspace:1.0.1",
         "@atf/erasure-contract": "workspace:1.0.1",
@@ -231,7 +231,7 @@
     },
     "integration/system": {
       "name": "@atf/system-integration",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@atf/contract-adapter": "workspace:1.0.0",
         "@atf/evidence-contract": "workspace:1.1.1",
