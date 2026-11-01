@@ -309,15 +309,27 @@ function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`;
 }
 
-/** The one line the model sees in place of an offloaded image. */
+/**
+ * The one line the model sees in place of an offloaded image.
+ *
+ * `editToolName` names a media tool that can *change* this picture (a media
+ * tool with `mode: image-edit`). It is mentioned because the reference is
+ * otherwise only presented as something to read: without the hint, a model asked
+ * to "make the logo bigger" has the right handle in front of it and no reason to
+ * believe it is an input anywhere.
+ */
 export function imageReferencePlaceholder(
   info: ImageRefInfo,
   toolName: string = IMAGE_INSPECTION_TOOL_NAME,
+  editToolName?: string,
 ): string {
   return (
     `[image ref=${info.ref} type=${info.mediaType} size=${formatBytes(info.bytes)}] ` +
     `The image is not visible to you. Call ${toolName}(image="${info.ref}", ` +
-    `question="…") to inspect it, and quote ${info.ref} when you refer to it.`
+    `question="…") to inspect it, and quote ${info.ref} when you refer to it.` +
+    (typeof editToolName === "string" && editToolName !== ""
+      ? ` To change this image, call ${editToolName}(image="${info.ref}", prompt="…").`
+      : "")
   );
 }
 
@@ -404,6 +416,7 @@ export function offloadInlineImages(
   messages: readonly ModelMessage[],
   registry: ImageRefRegistry,
   toolName: string = IMAGE_INSPECTION_TOOL_NAME,
+  editToolName?: string,
 ): OffloadInlineImagesResult {
   const result: OffloadInlineImagesResult = {
     messages: [],
@@ -468,6 +481,7 @@ export function offloadInlineImages(
             bytes: payload.bytes.byteLength,
           },
           toolName,
+          editToolName,
         ),
       });
     }
@@ -488,6 +502,52 @@ export function offloadInlineImages(
     );
   }
   return result;
+}
+
+/**
+ * Park every inline image in the registry *without* rewriting the prompt.
+ *
+ * {@link offloadInlineImages} replaces the bytes with a placeholder, which is
+ * what a text-only host model needs. A vision-capable responder is different:
+ * removing its images would take away input it demonstrably uses, while leaving
+ * them inline means an `image-edit` media tool has no `img-N` to name. This
+ * pass gives both — the model keeps seeing the picture, and the run gains a
+ * reference for the same bytes.
+ *
+ * Because the registry dedupes on content hash, the reference a later
+ * {@link offloadInlineImages} or tool-result registration produces for the same
+ * picture is identical, so the two passes never disagree about what `img-N`
+ * means.
+ */
+export function registerInlineImages(
+  messages: readonly ModelMessage[],
+  registry: ImageRefRegistry,
+): { registered: number; refs: string[] } {
+  const refs: string[] = [];
+  let registered = 0;
+  const scan = (parts: readonly unknown[]): void => {
+    for (const raw of parts) {
+      if (raw === null || typeof raw !== "object") continue;
+      const part = raw as Record<string, unknown>;
+      if (part.type === "tool-result" && part.output !== null) {
+        const value = (part.output as Record<string, unknown>).value;
+        if (Array.isArray(value)) scan(value);
+        continue;
+      }
+      if (!isImagePart(part)) continue;
+      const payload = imagePayloadOf(part);
+      if (payload === undefined) continue;
+      const ref = registry.register(payload.bytes, payload.mediaType);
+      if (ref === undefined) continue;
+      registered += 1;
+      if (!refs.includes(ref)) refs.push(ref);
+    }
+  };
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (Array.isArray(content)) scan(content);
+  }
+  return { registered, refs };
 }
 
 /**

@@ -39,6 +39,7 @@ import {
 import { modelKey as modelKeyOf } from "../cost-router.js";
 import {
   offloadInlineImages,
+  registerInlineImages,
   inlineImageBytes,
   IMAGE_INSPECTION_TOOL_NAME,
 } from "../image-reference.js";
@@ -81,6 +82,7 @@ export async function buildLlmMessages(params: {
     | "activeToolKeys"
     | "imageInspectionEnabled"
     | "imageInspectionToolName"
+    | "imageEditToolName"
   >;
 }): Promise<{ messagesWithSystemPrompt: ModelMessage[] }> {
   const {
@@ -99,6 +101,7 @@ export async function buildLlmMessages(params: {
     activeToolKeys,
     imageInspectionEnabled,
     imageInspectionToolName,
+    imageEditToolName,
   } = params.tools;
   const dropRagContext =
     (node.config as { dropRagContext?: boolean } | undefined)
@@ -410,9 +413,7 @@ export async function buildLlmMessages(params: {
         // Compact repeated entries in list lines (e.g. taiga's duplicated
         // "Known epics") before injecting — this text is re-sent on every
         // agent-loop step, so trimming it saves input tokens per turn.
-        blocks.push(
-          `### ${server}\n${dedupeGuidanceListLines(instr.trim())}`,
-        );
+        blocks.push(`### ${server}\n${dedupeGuidanceListLines(instr.trim())}`);
       }
     }
     if (blocks.length > 0) {
@@ -468,10 +469,7 @@ export async function buildLlmMessages(params: {
   let messagesWithSystemPrompt: ModelMessage[];
   if (effectiveSystemPrompt) {
     const firstCoreMessage = coreMessages[0];
-    if (
-      firstCoreMessage !== undefined &&
-      firstCoreMessage.role === "system"
-    ) {
+    if (firstCoreMessage !== undefined && firstCoreMessage.role === "system") {
       const existingContent = firstCoreMessage.content;
       const existing =
         typeof existingContent === "string"
@@ -552,6 +550,7 @@ export async function buildLlmMessages(params: {
       messagesWithSystemPrompt,
       runtime.imageRefs,
       imageInspectionToolName,
+      imageEditToolName,
     );
     if (offloaded.offloaded > 0) {
       messagesWithSystemPrompt = offloaded.messages;
@@ -591,6 +590,36 @@ export async function buildLlmMessages(params: {
         details: { unresolved: offloaded.unresolved },
       });
       throw new Error("IMAGE_INSPECTION_REMOTE_IMAGE_UNAVAILABLE");
+    }
+  } else if (
+    imageEditToolName !== undefined &&
+    runtime.imageRefs !== undefined
+  ) {
+    // A node with an `image-edit` media tool but no `config.imageInspection`.
+    // Such a node is typically a vision-capable responder: it reads the attached
+    // picture directly, so replacing the bytes with a placeholder would take
+    // away input it demonstrably uses. The edit tool still needs an `img-N` for
+    // the same picture, so park a copy and leave the prompt untouched — the
+    // model sees the image, and `edit_image` resolves the newest one.
+    const parked = registerInlineImages(
+      messagesWithSystemPrompt,
+      runtime.imageRefs,
+    );
+    if (parked.registered > 0) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "info",
+        code: "llm_images_registered",
+        message:
+          `Parked ${parked.registered} inline image(s) as ` +
+          `${parked.refs.join(", ")} for ${imageEditToolName}; the prompt keeps ` +
+          "the images because this node's model reads them directly.",
+        details: { registered: parked.registered, refs: parked.refs },
+      });
+      runtime.metrics.recordCounter(
+        "aiperator_image_register_total",
+        { node: node.id },
+        parked.registered,
+      );
     }
   }
 

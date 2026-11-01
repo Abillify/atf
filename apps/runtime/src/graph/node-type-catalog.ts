@@ -696,7 +696,12 @@ const LLM: NodeTypeDoc = {
         "Lets a cheap model answer first and regenerates the answer ONCE with `escalateTo` when the evidence is weak. The node runs again from the same input (tool loop included) with the stronger model, and the second answer replaces the first completely. It escalates when ANY condition in `when` holds: fewer distinct `[n]` citations than `minCitations` (default 1), a failed `sourcesCheck` (`sourcesCheckFailed`, default true), a best grounding score below `maxTopScore` (not checked unless set), or an answer cut off for length (`finishReasonLength`, default true). The first attempt's text (answer and reasoning) is held back until the decision is made: released unchanged when the answer stands, dropped when the node escalates — so the first token of a cascade node arrives after its first attempt. Tool calls of the first attempt are not undone, so use `cascade` on answering nodes whose tools only read. Diagnostic `cascade_escalated` lists the reasons; tokens of both attempts count toward budgets.",
       example: {
         escalateTo: { shortcut: "pro" },
-        when: { minCitations: 1, sourcesCheckFailed: true, maxTopScore: 0.35, finishReasonLength: true },
+        when: {
+          minCitations: 1,
+          sourcesCheckFailed: true,
+          maxTopScore: 0.35,
+          finishReasonLength: true,
+        },
       },
       fields: [
         {
@@ -710,7 +715,8 @@ const LLM: NodeTypeDoc = {
           key: "when",
           kind: "object",
           label: "Escalation conditions",
-          description: "Optional; the node escalates when ANY condition holds. Omitted conditions use their defaults.",
+          description:
+            "Optional; the node escalates when ANY condition holds. Omitted conditions use their defaults.",
           fields: [
             {
               key: "minCitations",
@@ -720,14 +726,16 @@ const LLM: NodeTypeDoc = {
               min: 0,
               max: 1000,
               default: 1,
-              description: "Escalate when the answer cites fewer distinct `[n]` sources than this. 0 switches the check off.",
+              description:
+                "Escalate when the answer cites fewer distinct `[n]` sources than this. 0 switches the check off.",
             },
             {
               key: "sourcesCheckFailed",
               kind: "boolean",
               label: "Escalate on a failed sources check",
               default: true,
-              description: "Escalate when `sourcesCheck` reports a problem (for example an unregistered `[n]`).",
+              description:
+                "Escalate when `sourcesCheck` reports a problem (for example an unregistered `[n]`).",
             },
             {
               key: "maxTopScore",
@@ -735,14 +743,16 @@ const LLM: NodeTypeDoc = {
               label: "Weak-evidence score",
               min: 0,
               max: 1,
-              description: "Escalate when the best grounding score of the run is below this value. Not checked when omitted or when no grounding score exists.",
+              description:
+                "Escalate when the best grounding score of the run is below this value. Not checked when omitted or when no grounding score exists.",
             },
             {
               key: "finishReasonLength",
               kind: "boolean",
               label: "Escalate on a length cut-off",
               default: true,
-              description: "Escalate when the answer was cut off because it reached the output length limit.",
+              description:
+                "Escalate when the answer was cut off because it reached the output length limit.",
             },
           ],
         },
@@ -994,12 +1004,19 @@ const LLM: NodeTypeDoc = {
       label: "Media generation tools",
       advanced: true,
       description:
-        "Tools that generate images/audio/video with their own model and stream the result straight to the user: an array of `{ name, llm, description?, promptDescription? }`. The hosting model only passes a `prompt`.",
+        "Tools that generate images/audio/video with their own model and stream the result straight to the user: an array of `{ name, llm, description?, promptDescription?, mode? }`. The hosting model only passes a `prompt` (plus, for `mode: image-edit`, an `img-N` image reference). `mode` selects the wire protocol: `chat` (default) runs a multimodal chat model; `image-generation`/`image-edit` call the OpenAI images API (`/images/generations`, `/images/edits`), which a dedicated image server (mflux, DALL·E, gpt-image) requires — optionally with `defaultSize` (`WxH`) and, for editing, `maxInputImages`.",
       example: [
         {
           name: "generate_image",
           llm: { shortcut: "gemini-image" },
           description: "Erzeugt ein Bild zur Beschreibung",
+        },
+        {
+          name: "edit_image",
+          mode: "image-edit",
+          defaultSize: "1024x1024",
+          llm: { shortcut: "mflux-image-edit" },
+          description: "Bearbeitet ein angehängtes Bild (img-N) laut Anweisung",
         },
       ],
     },

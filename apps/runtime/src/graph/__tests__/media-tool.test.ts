@@ -14,9 +14,16 @@
 import { describe, test, expect } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
 import type { Tool } from "ai";
-import { buildMediaTools, uniqueMediaToolKey } from "../agent-tools.js";
+import type { ImageModelV4, ImageModelV4Result } from "@ai-sdk/provider";
+import {
+  buildMediaTools,
+  editMediaToolNames,
+  uniqueMediaToolKey,
+} from "../agent-tools.js";
 import type { FlowNode } from "../../types/flow.js";
 import type { AppConfig } from "../../config/index.js";
+import { HashedImageRefRegistry } from "../image-reference.js";
+import { InMemoryMediaStore } from "../media-store.js";
 import { mkUsage } from "./v3-mock-helpers.js";
 
 const PROVIDER_ERROR_CANARY =
@@ -304,5 +311,558 @@ describe("uniqueMediaToolKey", () => {
 
   test("falls back to a default when the name is empty", () => {
     expect(uniqueMediaToolKey({}, "")).toBe("media_tool");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Images-API media tools (`mode: image-generation` / `image-edit`)
+//
+// A dedicated image server (mflux behind LiteLLM, DALL·E, gpt-image) answers
+// only on the OpenAI *images* API. The chat path above can never reach it — a
+// chat provider does not parse image output — so these tools run
+// `generateImage()` on an injected `ImageModelV4` instead. What is under test
+// is everything the mode adds around that call: reference resolution, the
+// newest-image fallback, the size passthrough, and the error vocabulary the
+// hosting model needs to recover.
+// ---------------------------------------------------------------------------
+
+/** What the injected image model was asked to do. */
+interface ImageCall {
+  prompt: string | undefined;
+  files: { type: string; mediaType: string; data: string | Uint8Array }[] | undefined;
+  size: string | undefined;
+  n: number;
+  seed: number | undefined;
+  aspectRatio: string | undefined;
+  providerOptions: unknown;
+}
+
+/**
+ * A minimal `ImageModelV4` returning one PNG, recording the call options it saw.
+ * `generateImage()` sniffs the media type from the bytes and defaults to
+ * `image/png`, so the payload here is a real (tiny) PNG header.
+ */
+function imageModelStub(
+  onCall: (call: ImageCall) => void | Promise<void>,
+  options?: { images?: string[]; usage?: ImageModelV4Result["usage"] },
+): ImageModelV4 {
+  return {
+    specificationVersion: "v4",
+    provider: "test.images",
+    modelId: "stub-image-model",
+    maxImagesPerCall: 4,
+    supportsFileInputs: true,
+    async doGenerate(call) {
+      await onCall(call as unknown as ImageCall);
+      const images = options?.images ?? [PNG_BASE64];
+      return {
+        images,
+        // An empty answer is final here. Without this the SDK classifies it as
+        // a retryable miss and re-calls the model until the retries run out.
+        ...(images.length === 0 ? { isRetryable: false } : {}),
+        warnings: [],
+        response: {
+          timestamp: new Date(0),
+          modelId: "stub-image-model",
+          headers: {},
+        },
+        ...(options?.usage !== undefined ? { usage: options.usage } : {}),
+      };
+    },
+  };
+}
+
+/** The base64 of a 1×1 PNG — enough for the SDK's media-type sniffing. */
+const PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+
+/** A node declaring one images-API media tool with the given mode. */
+function nodeWithImagesTool(
+  mode: "image-generation" | "image-edit",
+  overrides?: Record<string, unknown>,
+): FlowNode {
+  return {
+    id: "responder",
+    type: "llm",
+    config: {
+      mediaTools: [
+        {
+          name: mode === "image-edit" ? "edit_image" : "generate_image",
+          mode,
+          defaultSize: "1024x1024",
+          llm: { provider: "litellm", model: "qwen-image" },
+          ...overrides,
+        },
+      ],
+    },
+  };
+}
+
+function newRegistry(): HashedImageRefRegistry {
+  return new HashedImageRefRegistry({ store: new InMemoryMediaStore({}) });
+}
+
+/** Deterministic non-PNG bytes, used as a distinguishable "attached" picture. */
+function otherPngBytes(seed: number): Uint8Array {
+  const bytes = new Uint8Array(48);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = (seed * 7 + i) % 251;
+  return bytes;
+}
+
+type EditExecutableTool = Tool & {
+  execute: (
+    args: Record<string, unknown>,
+    opts: unknown,
+  ) => Promise<Record<string, unknown>>;
+};
+
+describe("media tools — images API (mode image-generation)", () => {
+  test("calls generateImage with the prompt and the configured size", async () => {
+    const calls: ImageCall[] = [];
+    const emitted: string[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+      emit: async (t) => {
+        emitted.push(t);
+      },
+    });
+    const tool = tools.generate_image as EditExecutableTool;
+    const result = await tool.execute({ prompt: "a red cat" }, {});
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).toBe("a red cat");
+    expect(calls[0]?.files).toBeUndefined();
+    expect(calls[0]?.size).toBe("1024x1024");
+    expect(result.status).toBe("ok");
+    expect(result.generated).toBe(1);
+    expect(emitted.join("")).toContain("data:image/png;base64,");
+  });
+
+  test("drops a malformed or too-small defaultSize instead of sending it", async () => {
+    const sizes: (string | undefined)[] = [];
+    for (const defaultSize of ["wide", "32x32", "1024X768", " 512 x 512 "]) {
+      const tools = buildMediaTools(
+        nodeWithImagesTool("image-generation", { defaultSize }),
+        {
+          appConfig: baseConfig,
+          llmProviderFactory: imageModelFactory("unused"),
+          imageProviderFactory: () =>
+            imageModelStub((c) => void sizes.push(c.size)),
+          emit: async () => {},
+        },
+      );
+      await (tools.generate_image as EditExecutableTool).execute(
+        { prompt: "x" },
+        {},
+      );
+    }
+    // Malformed and sub-64 sizes degrade to the server default (undefined);
+    // the accepted ones normalise to `WxH`.
+    expect(sizes).toEqual([undefined, undefined, "1024x768", "512x512"]);
+  });
+
+  test("parks the produced image as img-N and names the edit tool", async () => {
+    const registry = newRegistry();
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "a red cat" },
+      {},
+    );
+    expect(result.image_refs).toEqual(["img-1"]);
+    expect(String(result.message)).toContain("img-1");
+    expect(registry.resolve("img-1")).toBeDefined();
+  });
+
+  test("publishes a URL instead of a data-URI when publishMedia is wired", async () => {
+    const emitted: string[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      publishMedia: () => "https://media.test/abc.png",
+      emit: async (t) => {
+        emitted.push(t);
+      },
+    });
+    await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      {},
+    );
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain("![](https://media.test/abc.png)");
+  });
+
+  test("reports media_mode_unsupported for a provider without an images endpoint", async () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => {
+        throw new Error(
+          'Provider "googleai" (protocol google) has no OpenAI-compatible images endpoint.',
+        );
+      },
+      emit: async () => {},
+    });
+    const result = await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      {},
+    );
+    expect(result.error).toBe("media_mode_unsupported");
+    // A configuration mistake must name the provider so the operator fixes the
+    // flow rather than retrying the prompt.
+    expect(String(result.message)).toContain("googleai");
+  });
+
+  test("reports media_provider_error without leaking the failure detail", async () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => {
+        throw new Error(PROVIDER_ERROR_CANARY);
+      },
+      emit: async () => {},
+    });
+    const result = await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      {},
+    );
+    expect(result.error).toBe("media_provider_error");
+    expect(result.message).toBe("Could not initialise the media model.");
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_ERROR_CANARY);
+  });
+
+  test("reports media_generation_failed when the call throws", async () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () =>
+        imageModelStub(() => {
+          throw new Error(PROVIDER_ERROR_CANARY);
+        }),
+      emit: async () => {},
+    });
+    const result = await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      {},
+    );
+    expect(result.error).toBe("media_generation_failed");
+    expect(result.message).toBe("Media generation failed.");
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_ERROR_CANARY);
+  });
+
+  test("reports no_media when the model returns no image", async () => {
+    const emitted: string[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}, { images: [] }),
+      emit: async (t) => {
+        emitted.push(t);
+      },
+    });
+    const result = await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      {},
+    );
+    expect(emitted).toHaveLength(0);
+    expect(result.status).toBe("no_media");
+  });
+
+  test("counts the call in metrics even when the server reports no usage", async () => {
+    // mflux answers without a `usage` block. Dropping the sample there would
+    // make every self-hosted image generation invisible in the per-model
+    // metrics, which the chat path (Gemini) always reported.
+    const llmCalls: unknown[][] = [];
+    const spend: number[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      emit: async () => {},
+      metrics: {
+        recordLlmCall: (...a: unknown[]) => {
+          llmCalls.push(a);
+        },
+      } as never,
+      costTracker: {
+        record: async (_t: string, amount: number) => {
+          spend.push(amount);
+        },
+      } as never,
+      clientId: "acme",
+    });
+    await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      { toolCallId: "call-1" },
+    );
+    expect(llmCalls).toHaveLength(1);
+    expect(llmCalls[0]?.[0]).toBe("litellm");
+    expect(llmCalls[0]?.[1]).toBe("qwen-image");
+    expect(llmCalls[0]?.[3]).toBe(0);
+    expect(llmCalls[0]?.[4]).toBe(0);
+    // Zero tokens means zero cost, so spend accounting stays untouched.
+    expect(llmCalls[0]?.[5]).toBe(0);
+    expect(spend).toHaveLength(0);
+  });
+
+  test("accounts for tokens and cost when the server does report usage", async () => {
+    const llmCalls: unknown[][] = [];
+    const spend: number[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-generation"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () =>
+        imageModelStub(() => {}, {
+          usage: { inputTokens: 1_000, outputTokens: 2_000, totalTokens: 3_000 },
+        }),
+      emit: async () => {},
+      pricingOverrides: { "litellm/qwen-image": { prompt: 1, completion: 1 } },
+      metrics: {
+        recordLlmCall: (...a: unknown[]) => {
+          llmCalls.push(a);
+        },
+      } as never,
+      costTracker: {
+        record: async (_t: string, amount: number) => {
+          spend.push(amount);
+        },
+      } as never,
+      clientId: "acme",
+    });
+    await (tools.generate_image as EditExecutableTool).execute(
+      { prompt: "x" },
+      { toolCallId: "call-2" },
+    );
+    expect(llmCalls[0]?.[3]).toBe(1_000);
+    expect(llmCalls[0]?.[4]).toBe(2_000);
+    expect(spend).toEqual([0.003]);
+  });
+});
+
+describe("media tools — images API (mode image-edit)", () => {
+  test("resolves a named img-N and sends its bytes to the model", async () => {
+    const registry = newRegistry();
+    registry.register(otherPngBytes(3), "image/png");
+    const calls: ImageCall[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "mach das Logo größer", image: "img-1" },
+      {},
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).toBe("mach das Logo größer");
+    expect(calls[0]?.files).toHaveLength(1);
+    expect(calls[0]?.files?.[0]?.mediaType).toBe("image/png");
+    expect(calls[0]?.size).toBe("1024x1024");
+    expect(result.status).toBe("ok");
+  });
+
+  test("falls back to the newest image when no reference is named", async () => {
+    // A vision-capable host sees the attached picture and reasonably expects
+    // "mache das heller" to apply to it without quoting a handle it never got.
+    const registry = newRegistry();
+    registry.register(otherPngBytes(1), "image/png");
+    const newest = otherPngBytes(2);
+    registry.register(newest, "image/png");
+    const calls: ImageCall[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "heller" },
+      {},
+    );
+    expect(result.status).toBe("ok");
+    const sent = calls[0]?.files?.[0]?.data;
+    expect(sent instanceof Uint8Array ? Buffer.from(sent).toString("hex") : sent)
+      .toBe(Buffer.from(newest).toString("hex"));
+  });
+
+  test("reports no_image_available when nothing has been shown yet", async () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      imageRefs: newRegistry(),
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "heller" },
+      {},
+    );
+    expect(result.status).toBe("no_image_available");
+    expect(String(result.message)).toContain("kein Bild");
+  });
+
+  test("lists the live references when the model names an unknown one", async () => {
+    const registry = newRegistry();
+    registry.register(otherPngBytes(4), "image/png");
+    const calls: ImageCall[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "x", image: "img-9" },
+      {},
+    );
+    expect(result.status).toBe("unknown_image");
+    expect(String(result.message)).toContain("img-9");
+    expect(String(result.message)).toContain("img-1");
+    // The generation slot must not be spent on a request that cannot work.
+    expect(calls).toHaveLength(0);
+  });
+
+  test("fails closed without an image store rather than generating from text", async () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "x", image: "img-1" },
+      {},
+    );
+    expect(result.error).toBe("media_input_unavailable");
+  });
+
+  test("accepts several references up to maxInputImages", async () => {
+    const registry = newRegistry();
+    registry.register(otherPngBytes(5), "image/png");
+    registry.register(otherPngBytes(6), "image/png");
+    const calls: ImageCall[] = [];
+    const tools = buildMediaTools(
+      nodeWithImagesTool("image-edit", { maxInputImages: 3 }),
+      {
+        appConfig: baseConfig,
+        llmProviderFactory: imageModelFactory("unused"),
+        imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+        imageRefs: registry,
+        emit: async () => {},
+      },
+    );
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "verschmelze beide", image: ["img-1", "img-2"] },
+      {},
+    );
+    expect(result.status).toBe("ok");
+    expect(calls[0]?.files).toHaveLength(2);
+  });
+
+  test("reports the effective args as prompt plus resolved references", async () => {
+    const registry = newRegistry();
+    registry.register(otherPngBytes(7), "image/png");
+    const effective: string[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      imageRefs: registry,
+      emit: async () => {},
+      onEffectiveArgs: (_id, _name, argsJson) => {
+        effective.push(argsJson);
+      },
+    });
+    await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "heller", image: "img-1" },
+      { toolCallId: "call-3" },
+    );
+    expect(JSON.parse(effective[0] ?? "")).toEqual({
+      prompt: "heller",
+      image: ["img-1"],
+    });
+  });
+
+  test("advertises the image argument as optional", () => {
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      emit: async () => {},
+    });
+    const schema = (
+      tools.edit_image as {
+        inputSchema: { jsonSchema?: { required?: string[] } };
+      }
+    ).inputSchema.jsonSchema;
+    expect(schema?.required).toEqual(["prompt"]);
+  });
+});
+
+describe("editMediaToolNames", () => {
+  test("returns the keys of a node's edit-mode media tools", () => {
+    const node: FlowNode = {
+      id: "n",
+      type: "llm",
+      config: {
+        mediaTools: [
+          {
+            name: "generate_image",
+            mode: "image-generation",
+            llm: { provider: "litellm", model: "qwen-image" },
+          },
+          {
+            name: "edit_image",
+            mode: "image-edit",
+            llm: { provider: "litellm", model: "qwen-image-edit" },
+          },
+        ],
+      },
+    };
+    expect(editMediaToolNames(node)).toEqual(["edit_image"]);
+  });
+
+  test("is empty for a chat-mode node (the legacy default)", () => {
+    expect(editMediaToolNames(nodeWithMediaTool())).toEqual([]);
+  });
+
+  test("reports the de-duplicated key a colliding name actually gets", () => {
+    const node: FlowNode = {
+      id: "n",
+      type: "llm",
+      config: {
+        mediaTools: [
+          { name: "edit_image", llm: { provider: "google", model: "a" } },
+          {
+            name: "edit_image",
+            mode: "image-edit",
+            llm: { provider: "litellm", model: "b" },
+          },
+        ],
+      },
+    };
+    // The placeholder must name the tool the model can actually call.
+    expect(editMediaToolNames(node)).toEqual(["edit_image_2"]);
+    expect(Object.keys(buildMediaTools(node, {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("AAAA"),
+      emit: async () => {},
+    }))).toEqual(["edit_image", "edit_image_2"]);
+  });
+
+  test("is empty for a node without media tools", () => {
+    expect(editMediaToolNames({ id: "n", type: "llm" })).toEqual([]);
   });
 });

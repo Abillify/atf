@@ -77,7 +77,11 @@ need adaptation.
 - **Streaming and multimodality.** Token streaming over SSE, image and file inputs, and vision
   models. Image generation is available only when an `llm` node declares a `config.mediaTools`
   generation tool (or a configured provider returns native generated media); generated files
-  are served through Runtime's transient media route. There is no standalone `/images` API.
+  are served through Runtime's transient media route. There is no standalone `/images` API
+  *exposed by Runtime* — but a `mediaTools` entry with `mode: image-generation` or
+  `image-edit` *consumes* the OpenAI-compatible images API of an upstream image server
+  (`/images/generations`, `/images/edits`), which is how a dedicated generator such as mflux
+  (via LiteLLM) is reached; `mode: chat`, the default, keeps using the chat API.
   A text-only `llm` node can additionally declare `config.imageInspection`: inline images are
   then parked in a run-scoped, byte-owned reference registry and replaced by short `img-N`
   references. A minimal configuration is:

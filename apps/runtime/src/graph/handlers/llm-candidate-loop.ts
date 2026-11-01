@@ -106,6 +106,7 @@ interface CandidateLoopCtx {
   hasTools: boolean;
   imageInspectionEnabled: boolean;
   imageInspectionToolName: string;
+  imageEditToolName: string | undefined;
   maxAttempts: number;
   maxOutputChars: number;
   maxTokens: number | undefined;
@@ -156,6 +157,7 @@ export async function runCandidateLoop(
     hasTools,
     imageInspectionEnabled,
     imageInspectionToolName,
+    imageEditToolName,
     maxAttempts,
     maxOutputChars,
     maxTokens,
@@ -443,6 +445,7 @@ export async function runCandidateLoop(
             stepMessages,
             runtime.imageRefs,
             imageInspectionToolName,
+            imageEditToolName,
           );
           if (offloaded.unresolved > 0) {
             runtime.onNodeDiagnostic?.(node.id, {

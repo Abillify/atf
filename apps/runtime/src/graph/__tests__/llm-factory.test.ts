@@ -9,6 +9,8 @@
 import { afterEach, describe, test, expect } from "bun:test";
 import {
   createLlmProvider,
+  createImageProvider,
+  makeImageFetch,
   UnknownProviderError,
   injectChatTemplateKwargs,
   injectReasoningEffort,
@@ -19,7 +21,7 @@ import {
   selectLlmTransportFetches,
 } from "../llm-factory.js";
 import { egressFetch, egressFetchWithoutKeepAlive } from "../../security/egress.js";
-import { generateText } from "ai";
+import { generateText, generateImage } from "ai";
 import { setProviderRegistry } from "../../config/providers.js";
 import type { AppConfig } from "../../config/index.js";
 import type { LlmConfig } from "../../types/flow.js";
@@ -432,5 +434,226 @@ describe("selectLlmTransportFetches — real egress choice", () => {
     expect(pick(undefined, false)).toBe(egressFetchWithoutKeepAlive);
     expect(pick(true, false)).toBe(egressFetch);
     expect(pick(false, true)).toBe(egressFetchWithoutKeepAlive);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createImageProvider — the OpenAI *images* API surface
+//
+// A self-hosted image server (mflux on the Mac Studio, reached through a
+// gateway) implements /v1/images/generations and /v1/images/edits and nothing
+// else. The factory must hand back an ImageModelV4 on the same transport
+// discipline as chat, and refuse a protocol that has no such endpoint instead
+// of silently producing a model that can never answer.
+// ---------------------------------------------------------------------------
+
+describe("createImageProvider", () => {
+  afterEach(() => {
+    setProviderRegistry(undefined);
+  });
+
+  test("an openai provider yields an image model for the configured model id", () => {
+    setProviderRegistry([
+      { name: "litellm", protocol: "openai", url: "http://gateway:4000/v1", apiKey: "k" },
+    ]);
+    const m = createImageProvider({ provider: "litellm", model: "qwen-image" }, cfg());
+    expect(m.specificationVersion).toBe("v4");
+    expect(m.provider).toBe("openai.image");
+    expect(m.modelId).toBe("qwen-image");
+  });
+
+  test("a protocol without an images endpoint is refused by name", () => {
+    setProviderRegistry([
+      { name: "gemini", protocol: "google", apiKey: "x" },
+      { name: "aws", protocol: "bedrock", region: "eu-central-1" },
+      { name: "claude", protocol: "anthropic", apiKey: "y" },
+    ]);
+    for (const provider of ["gemini", "aws", "claude"]) {
+      expect(() =>
+        createImageProvider({ provider, model: "m" }, cfg()),
+      ).toThrow(/images endpoint/);
+    }
+  });
+
+  test("an unresolvable provider throws UnknownProviderError", () => {
+    setProviderRegistry([]);
+    expect(() =>
+      createImageProvider({ provider: "nope", model: "m" }, cfg()),
+    ).toThrow(UnknownProviderError);
+  });
+
+  test("an ollama host is normalised to its OpenAI-compatible /v1", () => {
+    setProviderRegistry([
+      { name: "ollama-box", protocol: "ollama", url: "http://box:11434" },
+      { name: "ollama-v1", protocol: "ollama", url: "http://box:11434/v1" },
+      { name: "ollama-api", protocol: "ollama", url: "http://box:11434/api/" },
+    ]);
+    for (const provider of ["ollama-box", "ollama-v1", "ollama-api"]) {
+      const m = createImageProvider({ provider, model: "x" }, cfg());
+      expect(m.provider).toBe("openai.image");
+      expect(m.modelId).toBe("x");
+    }
+  });
+
+  test("posts a generations request and reads the image back", async () => {
+    setProviderRegistry([
+      { name: "litellm", protocol: "openai", url: "http://gateway:4000/v1" },
+    ]);
+    const seen: { url: string; body: Record<string, unknown> }[] = [];
+    const stub = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      return new Response(
+        JSON.stringify({ created: 1, data: [{ b64_json: "AAAA" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const model = createImageProvider(
+      { provider: "litellm", model: "qwen-image" },
+      cfg(),
+      { fetch: stub },
+    );
+    const result = await generateImage({ model, prompt: "a red cat", maxRetries: 0 });
+    expect(result.images[0]?.base64).toBe("AAAA");
+    expect(seen[0]?.url).toBe("http://gateway:4000/v1/images/generations");
+    expect(seen[0]?.body.model).toBe("qwen-image");
+    expect(seen[0]?.body.prompt).toBe("a red cat");
+    // The tool streams the bytes itself, so b64 is the only usable response format.
+    expect(seen[0]?.body.response_format).toBe("b64_json");
+  });
+
+  test("an edit request goes out as multipart to /images/edits", async () => {
+    setProviderRegistry([
+      { name: "litellm", protocol: "openai", url: "http://gateway:4000/v1" },
+    ]);
+    const seen: { url: string; type: string }[] = [];
+    const stub = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({
+        url: String(input),
+        type: init?.body instanceof FormData ? "formdata" : typeof init?.body,
+      });
+      return new Response(
+        JSON.stringify({ created: 1, data: [{ b64_json: "BBBB" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const model = createImageProvider(
+      { provider: "litellm", model: "qwen-image-edit" },
+      cfg(),
+      { fetch: stub },
+    );
+    const result = await generateImage({
+      model,
+      prompt: { images: [new Uint8Array([1, 2, 3])], text: "heller" },
+      maxRetries: 0,
+    });
+    expect(result.images[0]?.base64).toBe("BBBB");
+    expect(seen[0]?.url).toBe("http://gateway:4000/v1/images/edits");
+    expect(seen[0]?.type).toBe("formdata");
+  });
+
+  test("parameters.extraBody reaches the JSON body (mflux-only knobs)", async () => {
+    setProviderRegistry([
+      { name: "litellm", protocol: "openai", url: "http://gateway:4000/v1" },
+    ]);
+    let body: Record<string, unknown> = {};
+    const stub = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return new Response(JSON.stringify({ created: 1, data: [{ b64_json: "Qw==" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const model = createImageProvider(
+      {
+        provider: "litellm",
+        model: "qwen-image",
+        parameters: { extraBody: { num_inference_steps: 20, negative_prompt: "blur" } },
+      },
+      cfg(),
+      { fetch: stub },
+    );
+    await generateImage({ model, prompt: "x", maxRetries: 0 });
+    // The SDK has no typed field for these; the fetch layer is the only route.
+    expect(body.num_inference_steps).toBe(20);
+    expect(body.negative_prompt).toBe("blur");
+  });
+
+  test("a per-call key override wins over the registry key", async () => {
+    setProviderRegistry([
+      { name: "litellm", protocol: "openai", url: "http://gateway:4000/v1", apiKey: "pool" },
+    ]);
+    const seen: { auth: string | null } = { auth: null };
+    const stub = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+      seen.auth = new Headers(init?.headers).get("authorization");
+      return new Response(JSON.stringify({ created: 1, data: [{ b64_json: "RA==" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const model = createImageProvider({ provider: "litellm", model: "m" }, cfg(), {
+      fetch: stub,
+      apiKey: "byok",
+    });
+    await generateImage({ model, prompt: "x", maxRetries: 0 });
+    // BYOK has to reach the image server too, not just the chat pool.
+    expect(seen.auth).toBe("Bearer byok");
+  });
+});
+
+describe("makeImageFetch", () => {
+  test("is identity when there is nothing to inject", () => {
+    const base = (async () => new Response("")) as unknown as typeof fetch;
+    expect(makeImageFetch(undefined, base)).toBe(base);
+    expect(makeImageFetch({}, base)).toBe(base);
+  });
+
+  test("merges extraBody into a JSON body", async () => {
+    const seen: unknown[] = [];
+    const base = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.body);
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const wrapped = makeImageFetch({ steps: 30 }, base);
+    await wrapped("http://x/v1/images/generations", {
+      method: "POST",
+      body: JSON.stringify({ model: "m", steps: 4 }),
+    });
+    expect(JSON.parse(String(seen[0]))).toEqual({ model: "m", steps: 30 });
+  });
+
+  test("leaves a non-string body (multipart edit) untouched", async () => {
+    const form = new FormData();
+    form.append("prompt", "heller");
+    const seen: unknown[] = [];
+    const base = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.body);
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    await makeImageFetch({ steps: 30 }, base)("http://x/v1/images/edits", {
+      method: "POST",
+      body: form,
+    });
+    expect(seen[0]).toBe(form);
+  });
+
+  test("keeps every other init field intact", async () => {
+    const inits: RequestInit[] = [];
+    const base = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+      inits.push(init ?? {});
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const signal = new AbortController().signal;
+    await makeImageFetch({ a: 1 }, base)("http://x/y", {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(inits[0]?.method).toBe("POST");
+    expect(inits[0]?.signal).toBe(signal);
+    expect(inits[0]?.headers).toEqual({ "content-type": "application/json" });
   });
 });

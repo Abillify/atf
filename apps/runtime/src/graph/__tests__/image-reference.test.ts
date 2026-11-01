@@ -22,6 +22,7 @@ import {
   isImageMediaType,
   offloadInlineImages,
   parseAssetReference,
+  registerInlineImages,
 } from "../image-reference.js";
 import { InMemoryMediaStore } from "../media-store.js";
 
@@ -599,5 +600,122 @@ describe("parseAssetReference", () => {
     // x0 >= x1 and y0 >= y1 are both invalid (a zero/negative-area box).
     expect(parseAssetReference("asset:x#0.5,0.1,0.5,0.6")).toEqual({ ok: false });
     expect(parseAssetReference("asset:x#0.1,0.6,0.5,0.2")).toEqual({ ok: false });
+  });
+});
+
+describe("imageReferencePlaceholder — edit hint", () => {
+  test("points at the edit tool when one exists", () => {
+    const text = imageReferencePlaceholder(
+      { ref: "img-2", mediaType: "image/png", bytes: 2048 },
+      IMAGE_INSPECTION_TOOL_NAME,
+      "edit_image",
+    );
+    expect(text).toContain('edit_image(image="img-2", prompt=');
+    // The read path must still be advertised — an edit tool cannot answer
+    // "was ist darauf zu sehen?".
+    expect(text).toContain(`${IMAGE_INSPECTION_TOOL_NAME}(image="img-2"`);
+  });
+
+  test("stays silent about editing when the node has no edit tool", () => {
+    const text = imageReferencePlaceholder({
+      ref: "img-1",
+      mediaType: "image/png",
+      bytes: 2048,
+    });
+    expect(text).not.toContain("To change this image");
+  });
+});
+
+describe("registerInlineImages", () => {
+  test("parks the bytes while leaving the prompt untouched", () => {
+    const { registry } = registryWith();
+    const url = dataUrl(pngBytes(11));
+    const messages = [messageWithImage({ type: "image", image: url })];
+    const result = registerInlineImages(messages, registry);
+
+    expect(result.registered).toBe(1);
+    expect(result.refs).toEqual(["img-1"]);
+    // THE contract: a vision-capable responder keeps its input. Nothing may be
+    // rewritten, or the run silently loses the picture it demonstrably uses.
+    expect(JSON.stringify(messages)).toContain(url);
+    // …and the reference is resolvable for the edit tool.
+    expect(registry.resolve("img-1")?.mediaType).toBe("image/png");
+  });
+
+  test("is a no-op on a text-only turn", () => {
+    const { registry } = registryWith();
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "hallo" }] },
+    ] as unknown as ModelMessage[];
+    expect(registerInlineImages(messages, registry)).toEqual({
+      registered: 0,
+      refs: [],
+    });
+    expect(registry.list()).toHaveLength(0);
+  });
+
+  test("leaves a remote image unregistered (there are no bytes to park)", () => {
+    const { registry } = registryWith();
+    const result = registerInlineImages(
+      [
+        messageWithImage({
+          type: "image",
+          image: "https://example.test/a.png",
+        }),
+      ],
+      registry,
+    );
+    expect(result).toEqual({ registered: 0, refs: [] });
+  });
+
+  test("reaches an image nested inside a tool result", () => {
+    const { registry } = registryWith();
+    const url = dataUrl(pngBytes(12));
+    const result = registerInlineImages(
+      [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-result",
+              toolName: "screenshot",
+              output: { type: "json", value: [{ type: "image", image: url }] },
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[],
+      registry,
+    );
+    expect(result.refs).toEqual(["img-1"]);
+    expect(registry.resolve("img-1")).toBeDefined();
+  });
+
+  test("counts every image but yields one ref per distinct picture", () => {
+    const { registry } = registryWith();
+    const same = dataUrl(pngBytes(13));
+    const result = registerInlineImages(
+      [
+        messageWithImage({ type: "image", image: same }),
+        messageWithImage({ type: "image", image: same }),
+        messageWithImage({ type: "image", image: dataUrl(pngBytes(14)) }),
+      ],
+      registry,
+    );
+    // `registered` counts parked parts, `refs` the distinct pictures behind them.
+    expect(result.registered).toBe(3);
+    expect(result.refs).toEqual(["img-1", "img-2"]);
+  });
+
+  test("agrees with a later offload about what img-N means", () => {
+    // The two passes must never disagree: the register-only pass runs first for
+    // a vision-capable host, and a later offload (a text-only step, or the
+    // candidate loop) must hand out the SAME handle for the same bytes.
+    const { registry } = registryWith();
+    const url = dataUrl(pngBytes(15));
+    const messages = [messageWithImage({ type: "image", image: url })];
+    const first = registerInlineImages(messages, registry);
+    const offloaded = offloadInlineImages(messages, registry);
+    expect(offloaded.refs).toEqual(first.refs);
+    expect(offloaded.offloaded).toBe(1);
   });
 });

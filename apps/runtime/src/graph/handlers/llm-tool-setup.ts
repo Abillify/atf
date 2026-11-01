@@ -27,6 +27,7 @@ import {
   buildImageInspectionTools,
   buildClientTools,
   buildToolSelectionMetaTool,
+  editMediaToolNames,
   uniqueMediaToolKey,
 } from "../agent-tools.js";
 import { IMAGE_INSPECTION_TOOL_NAME } from "../image-reference.js";
@@ -192,7 +193,9 @@ export async function setupLlmTools(params: {
         // hooks to every tool the model may call.
         {
           templateContext: toolTemplateContext,
-          ...(runtime.stickyArgs !== undefined ? { stickyArgs: runtime.stickyArgs } : {}),
+          ...(runtime.stickyArgs !== undefined
+            ? { stickyArgs: runtime.stickyArgs }
+            : {}),
           ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
           ...(assistantToolJournal !== undefined
             ? { journal: assistantToolJournal }
@@ -224,7 +227,13 @@ export async function setupLlmTools(params: {
             resultMeta?: unknown,
           ) => {
             markTaintFromSearchLabels(runtime, node.id, sourceRef, toolContent);
-            markTaintFromUntrustedSource(runtime, node.id, sourceRef, toolContent, resultMeta);
+            markTaintFromUntrustedSource(
+              runtime,
+              node.id,
+              sourceRef,
+              toolContent,
+              resultMeta,
+            );
           },
           // Ref-handle indirection (config.refHandles): resolve the model's
           // short handles back to real references and mask references in
@@ -471,6 +480,12 @@ export async function setupLlmTools(params: {
     ...(runtime.publishMedia !== undefined
       ? { publishMedia: runtime.publishMedia }
       : {}),
+    // The same run-scoped registry `inspect_image` reads: a media tool with
+    // `mode: image-edit` resolves its `img-N` argument here, so the picture it
+    // edits is exactly the one the user attached or an earlier node produced.
+    ...(runtime.imageRefs !== undefined
+      ? { imageRefs: runtime.imageRefs }
+      : {}),
     emit: (token: string) => runtime.onToken(node.id, token),
     ...(runtime.setGenAiAttributes !== undefined
       ? { setGenAiAttributes: runtime.setGenAiAttributes }
@@ -490,6 +505,39 @@ export async function setupLlmTools(params: {
       for (const k of Object.keys(mediaTools)) activeToolKeys.add(k);
     }
   }
+  // An `image-edit` media tool is useless without the run's image registry —
+  // there is nothing to resolve its `img-N` argument against. The tool itself
+  // fails closed per call (`media_input_unavailable`); this says so once at
+  // node setup, in the same shape as `image_inspection_unavailable` below, so
+  // the operator sees the misconfiguration instead of a mysterious tool error.
+  if (runtime.imageRefs === undefined) {
+    const editTools = (
+      (node.config as { mediaTools?: unknown[] } | undefined)?.mediaTools ?? []
+    ).filter(
+      (mt) =>
+        (mt as { mode?: string } | null)?.mode === "image-edit" &&
+        typeof (mt as { name?: string } | null)?.name === "string",
+    );
+    if (editTools.length > 0) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: "media_edit_unavailable",
+        message:
+          `Node ${node.id} declares ${editTools.length} media tool(s) with ` +
+          "mode image-edit but no media store is configured, so image " +
+          "references cannot be resolved. Set MEDIA_BASE_URL / enable the " +
+          "media store, or remove the mode.",
+      });
+    }
+  }
+  // The edit tool a host model can call to change a picture it can see. Only
+  // advertised when the run actually has an image registry to resolve it
+  // against; the placeholder and the register-only offload pass below use this
+  // name so the model is pointed at a tool that exists.
+  const editToolKeys =
+    runtime.imageRefs !== undefined ? editMediaToolNames(node) : [];
+  const imageEditToolName =
+    editToolKeys.length > 0 ? editToolKeys[0] : undefined;
 
   // Client tool-call passthrough. A node may opt out with `config.clientTools:
   // false` even when client tools are globally enabled — e.g. a RAG-only flow
@@ -667,5 +715,6 @@ export async function setupLlmTools(params: {
     clientToolKeys,
     imageInspectionEnabled,
     imageInspectionToolName,
+    imageEditToolName,
   };
 }
