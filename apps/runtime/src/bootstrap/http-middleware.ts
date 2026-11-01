@@ -5,8 +5,8 @@
  * HTTP middleware stack bootstrap (extracted verbatim from index.ts, 18.3).
  *
  * Builds the Hono app and installs the full middleware chain in its original
- * order: CORS → approval-widget embedding → secure headers → CSRF →
- * request logging/tracing → body limit → pre-auth rate limit → legacy rate
+ * order: CORS → approval-widget embedding → media embedding → secure headers →
+ * CSRF → request logging/tracing → body limit → pre-auth rate limit → legacy rate
  * limit → auth → post-auth rate limit. The API-key resolver is returned so
  * later route groups (e.g. Flow-as-MCP at /mcp) can reuse the exact same
  * resolver instance.
@@ -28,6 +28,7 @@ import {
   type AuthContext,
 } from "../middleware/auth.js";
 import { approvalWidgetEmbeddingMiddleware } from "../middleware/approval-widget-embedding.js";
+import { mediaEmbeddingMiddleware } from "../middleware/media-embedding.js";
 import { csrfProtection } from "../middleware/csrf-protection.js";
 import {
   rateLimitMiddleware,
@@ -92,6 +93,10 @@ export function createHttpMiddleware(
   // applied the rest of the response hardening.
   app.use("*", approvalWidgetEmbeddingMiddleware);
 
+  // Media responses must be embeddable cross-origin by Open WebUI chat
+  // messages; see media-embedding.ts for why CORP has to be relaxed there.
+  app.use("/v1/media/*", mediaEmbeddingMiddleware);
+
   // Security response headers (CSP omitted deliberately — this is a JSON API
   // plus a separately-deployed dashboard, not an HTML-serving origin here, so
   // a restrictive `default-src 'none'` would need per-route tuning to avoid
@@ -100,7 +105,9 @@ export function createHttpMiddleware(
   // other header Hono's `secureHeaders()` sets by default — HSTS,
   // X-Content-Type-Options, X-Frame-Options, Referrer-Policy,
   // Cross-Origin-*-Policy, X-DNS-Prefetch-Control, X-Download-Options,
-  // X-Permitted-Cross-Domain-Policies — applies with no per-route exceptions.
+  // X-Permitted-Cross-Domain-Policies — applies as-is; the only per-route
+  // exceptions are the Cross-Origin-Resource-Policy relaxations documented
+  // above (approval widget, media).
   app.use("*", secureHeaders());
 
   // CSRF protection for form-submittable POSTs — see csrf-protection.ts.

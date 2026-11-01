@@ -22,14 +22,19 @@ import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import { csrfProtection } from "../csrf-protection.js";
 import { approvalWidgetEmbeddingMiddleware } from "../approval-widget-embedding.js";
+import { mediaEmbeddingMiddleware } from "../media-embedding.js";
 
 function buildApp(): Hono {
   const app = new Hono();
   app.use("*", approvalWidgetEmbeddingMiddleware);
+  app.use("/v1/media/*", mediaEmbeddingMiddleware);
   app.use("*", secureHeaders());
   app.use("*", csrfProtection());
   app.post("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
   app.get("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
+  app.get("/v1/media/:id", (ctx) => ctx.body(new Uint8Array([1]), 200, {
+    "Content-Type": "image/png",
+  }));
   app.delete("/eval/cases/:id", (ctx) => ctx.json({ removed: true }));
   app.post("/webhooks/git", (ctx) => ctx.json({ ok: true }));
   app.get("/monitoring/approvals/:id/widget", (ctx) => {
@@ -74,6 +79,23 @@ describe("secureHeaders()", () => {
     const app = buildApp();
     const res = await app.request("https://api.example.com/v1/chat/completions");
     expect(res.headers.get("X-Powered-By")).toBeNull();
+  });
+
+  test("lets /v1/media/* be embedded as a cross-origin <img>", async () => {
+    const app = buildApp();
+    const res = await app.request("https://api.example.com/v1/media/abc.png");
+    // secureHeaders() writes `same-origin` after the route resolves; the media
+    // middleware is registered before it so its post-next() write wins.
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("cross-origin");
+    // Everything else stays hardened.
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+  });
+
+  test("keeps CORP same-origin on non-media routes", async () => {
+    const app = buildApp();
+    const res = await app.request("https://api.example.com/v1/chat/completions");
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
   });
 });
 
