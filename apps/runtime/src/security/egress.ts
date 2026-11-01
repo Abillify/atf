@@ -28,8 +28,11 @@
  * The transport mirrors `apps/gate/src/tools/outbound.ts` (node:http(s) with a
  * pinned `lookup` hook, `Readable.toWeb` streaming body, real `Response`),
  * extended with redirect-following-with-revalidation and the size limit.
- * Request bodies must be buffered (string/Buffer/Uint8Array/URLSearchParams);
- * a `Request` input carrying a stream body is rejected.
+ * Request bodies are always buffered before the socket opens: scalar shapes
+ * (string/Buffer/Uint8Array/URLSearchParams) are used as they are, and
+ * `FormData`/`Blob`/stream bodies — including the multipart body of an image
+ * edit call — are serialised through a throwaway `Request`, so a caller can
+ * never smuggle bytes past the policy.
  *
  * {@link RuntimeEgress.fetchWithoutKeepAlive} applies the identical policy but
  * opens a fresh socket per request (dedicated `keepAlive: false` agents) —
@@ -307,11 +310,27 @@ export function createRuntimeEgress(
       headers.set(key, value);
     });
 
-    let body = normalizeRequestBody(
-      init?.body ??
-        (typeof input === "string" || input instanceof URL ? null : input.body),
-      typeof input === "string" || input instanceof URL ? undefined : input,
+    // Policy first, body second: a request that is rejected must never consume
+    // (and thereby exhaust) a one-shot body such as a ReadableStream. The hop
+    // loop re-validates, which is cheap and keeps redirect handling intact.
+    const blockedBeforeBody = validate(url);
+    if (blockedBeforeBody) throw new Error(blockedBeforeBody);
+
+    // The body is normalised before the first hop (and therefore before any
+    // socket is opened), so a redirect re-sends the very same bytes.
+    const requestInput =
+      typeof input === "string" || input instanceof URL ? undefined : input;
+    const normalized = await normalizeRequestBody(
+      init?.body ?? requestInput?.body ?? null,
+      requestInput,
     );
+    let body = normalized.bytes;
+    // A multipart body carries its boundary inside the content type, which the
+    // caller cannot know — `fetch` derives it from the FormData. Use the derived
+    // value only when the caller declared no content type of its own.
+    if (normalized.contentType !== undefined && !headers.has("content-type")) {
+      headers.set("content-type", normalized.contentType);
+    }
 
     const redirectMode = init?.redirect ?? defaultRedirect;
     const signal =
@@ -359,23 +378,70 @@ export function createRuntimeEgress(
   };
 }
 
-function normalizeRequestBody(
+/**
+ * Serialise a request body into the bytes to write to the socket, plus the
+ * content type the platform derived for it (if any).
+ *
+ * The transport writes a buffered body, so every shape `fetch` accepts has to be
+ * flattened first. `FormData` (the multipart body of an OpenAI
+ * `POST /images/edits` call) and `Blob` are serialised through a throwaway
+ * `Request`: the body is only ever read from the in-memory parts, never sent,
+ * which also yields the `multipart/form-data; boundary=…` content type the
+ * server needs — a caller cannot supply that boundary itself. A `ReadableStream`
+ * body is drained here for the same reason. Buffering happens before the socket
+ * is opened, so no byte leaves the process during normalisation and the SSRF
+ * policy is unaffected.
+ *
+ * Async because reading a `FormData`/`Blob`/stream body is async; the caller
+ * normalises once, before the first hop, so a redirect re-sends identical bytes.
+ */
+async function normalizeRequestBody(
   body: BodyInit | null | undefined,
   requestInput?: Request,
-): Buffer | string | undefined {
+): Promise<NormalizedBody> {
   if (body === undefined || body === null) {
-    // A Request input may still carry a stream body we cannot buffer.
+    // A Request input may still carry a body we have to drain before writing.
     if (requestInput !== undefined && requestInput.body !== null) {
-      throw new Error("egress transport only accepts buffered request bodies");
+      return { bytes: await bufferViaRequest(requestInput) };
     }
-    return undefined;
+    return {};
   }
-  if (typeof body === "string") return body;
-  if (body instanceof URLSearchParams) return body.toString();
-  if (Buffer.isBuffer(body)) return body;
-  if (body instanceof Uint8Array) return Buffer.from(body);
-  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (typeof body === "string") return { bytes: body };
+  if (body instanceof URLSearchParams) return { bytes: body.toString() };
+  if (Buffer.isBuffer(body)) return { bytes: body };
+  if (body instanceof Uint8Array) return { bytes: Buffer.from(body) };
+  if (body instanceof ArrayBuffer) return { bytes: Buffer.from(body) };
+  // FormData, Blob, ReadableStream and any other web body shape: let the
+  // platform serialise it once, then take the bytes and its content type out.
+  if (
+    body instanceof FormData ||
+    body instanceof Blob ||
+    body instanceof ReadableStream
+  ) {
+    const request = new Request("http://127.0.0.1/", { method: "POST", body });
+    // Read the derived content type BEFORE consuming the body: a runtime drops
+    // the generated `multipart/form-data; boundary=…` header once the body has
+    // been read, and the boundary is exactly what the server needs.
+    const contentType = request.headers.get("content-type") ?? undefined;
+    return { bytes: await bufferViaRequest(request), contentType };
+  }
   throw new Error("egress transport only accepts buffered request bodies");
+}
+
+interface NormalizedBody {
+  /** The bytes to write, or `undefined` for a bodyless request. */
+  bytes?: Buffer | string;
+  /**
+   * Content type derived while serialising, used only when the caller declared
+   * none. `undefined` for bodies whose type the caller must supply (a string or
+   * `URLSearchParams` keeps `fetch` semantics: no content type is invented).
+   */
+  contentType?: string;
+}
+
+/** Read a `Request` body to completion without opening a connection. */
+async function bufferViaRequest(request: Request): Promise<Buffer> {
+  return Buffer.from(await request.arrayBuffer());
 }
 
 /** Enforce the response size limit on the (streaming) body. */
