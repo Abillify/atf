@@ -204,6 +204,47 @@ export interface MediaToolConfig {
   description?: string;
   /** Description of the single `prompt` argument the model must supply. */
   promptDescription?: string;
+  /**
+   * Wire protocol the tool uses for its own model.
+   *
+   *   - `chat` (default) — `generateText()` against a chat model that answers
+   *     with a media part. This is what a native multimodal chat model needs
+   *     (e.g. Google's image models with `responseModalities: ["IMAGE"]`).
+   *   - `image-generation` — the OpenAI **images** API
+   *     (`POST /images/generations`) via `generateImage()`. Required for every
+   *     dedicated image model behind an OpenAI-compatible gateway (mflux,
+   *     DALL·E, gpt-image, …): such a server implements no chat route at all,
+   *     and a chat provider can never return an image.
+   *   - `image-edit` — the same images API on `POST /images/edits`
+   *     (multipart), driven by `generateImage()` with an input image. The
+   *     input is one `img-N` reference (or a list of them, capped at 4) from
+   *     the run's image registry (see `image-reference.ts`), never inline
+   *     bytes, so the hosting text model never has to reproduce a payload.
+   *
+   * The two image modes need an image-capable *provider*: only a protocol with
+   * an image client (`openai`/`ollama`) is accepted, and the tool reports
+   * `media_mode_unsupported` otherwise.
+   */
+  mode?: "chat" | "image-generation" | "image-edit";
+  /**
+   * Description of the `image` argument (image-edit mode) shown to the hosting
+   * model. Should name the `img-N` reference form explicitly.
+   */
+  imageDescription?: string;
+  /**
+   * `WxH` sent to the images API, e.g. `"1024x1024"`. Only used by the image
+   * modes; the chat mode has no size parameter. Deliberately NOT a model-facing
+   * argument: an aspect-ratio string a model invents (`"square"`, `"1024*768"`)
+   * is rejected by every strict server, so the operator pins the size here.
+   */
+  defaultSize?: string;
+  /**
+   * Upper bound of input images an image-edit call accepts (image-edit mode
+   * only). Defaults to 1, because most edit endpoints apply only the first
+   * image; raise it for a server that composes several — the runtime caps the
+   * effective value at 4 regardless.
+   */
+  maxInputImages?: number;
   /** The generation model to run when the tool is invoked (its own model). */
   llm: LlmConfig;
 }

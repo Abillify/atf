@@ -16,6 +16,7 @@ import { createAzure } from "@ai-sdk/azure";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModel, EmbeddingModel } from "ai";
+import type { ImageModelV4 } from "@ai-sdk/provider";
 import type { LlmConfig } from "../types/flow.js";
 import type { AppConfig, EmbeddingConfig } from "../config/index.js";
 import { getModelCapabilities } from "./model-capabilities.js";
@@ -710,6 +711,129 @@ export function createLlmProvider(
       throw new UnknownProviderError(String(exhaustiveCheck));
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Image model factory (media tools on the OpenAI images API)
+// ---------------------------------------------------------------------------
+
+/**
+ * Protocols with an OpenAI-compatible **images** endpoint
+ * (`POST /v1/images/generations`, `POST /v1/images/edits`). Both are built on
+ * `@ai-sdk/openai`, which is the only client wired here that speaks that API in
+ * the shape self-hosted servers implement.
+ */
+const IMAGE_API_PROTOCOLS = new Set(["openai", "ollama"]);
+
+/**
+ * Creates an AI SDK **image model** (`ImageModelV4`) for a media tool declared
+ * with `mode: "image-generation"` or `"image-edit"`.
+ *
+ * Why this exists next to {@link createLlmProvider}: a dedicated image server
+ * (mflux on the Mac Studio, DALL·E, gpt-image, an OpenAI-compatible gateway in
+ * front of any of them) exposes the *images* API and no chat route, while a
+ * chat model — even a multimodal one reached through `@ai-sdk/openai`'s chat
+ * provider — can never return image bytes. So the media tool needs a different
+ * SDK surface (`generateImage()` + `provider.image(model)`), and that surface
+ * still needs the same transport discipline as chat: the Egress_Guard, the
+ * keep-alive setting, the single connect-retry, per-endpoint load accounting,
+ * and the placeholder key a self-hosted server expects.
+ *
+ * `extraBody` is forwarded at the fetch layer exactly as for chat, which is how
+ * server-specific image parameters (mflux's `num_inference_steps`,
+ * `negative_prompt`, `image_strength`) reach the request body — the SDK has no
+ * typed field for them.
+ *
+ * @throws {UnknownProviderError} When `config.provider` resolves to no protocol.
+ * @throws {Error} When the protocol has no images endpoint (see
+ *         {@link IMAGE_API_PROTOCOLS}); the caller turns this into a
+ *         `media_mode_unsupported` tool result.
+ */
+export function createImageProvider(
+  config: LlmConfig,
+  appConfig: AppConfig,
+  options?: LlmProviderOptions,
+): ImageModelV4 {
+  const overrideKey = options?.apiKey;
+  const instance = getProviderInstance(config.provider);
+  const keepAlive = resolveLlmKeepAlive(instance, appConfig);
+  const baseFetch = trackEndpointLoad(
+    config.provider,
+    createLlmTransportFetch({
+      ...selectLlmTransportFetches(keepAlive, options?.fetch),
+      provider: config.provider,
+      model: config.model,
+      keepAlive,
+    }),
+  );
+  const protocol = resolveProviderProtocol(config.provider);
+  if (protocol === undefined) throw new UnknownProviderError(config.provider);
+  if (!IMAGE_API_PROTOCOLS.has(protocol)) {
+    throw new Error(
+      `Provider "${config.provider}" (protocol ${protocol}) has no OpenAI-compatible ` +
+        `images endpoint; a media tool with mode image-generation/image-edit needs ` +
+        `one of: ${[...IMAGE_API_PROTOCOLS].join(", ")}.`,
+    );
+  }
+  const rawExtra = config.parameters?.extraBody;
+  const extraBody =
+    rawExtra !== null &&
+    typeof rawExtra === "object" &&
+    !Array.isArray(rawExtra)
+      ? (rawExtra as Record<string, unknown>)
+      : undefined;
+  // The images API is not a chat endpoint, so the reasoning/SSE interceptor is
+  // deliberately NOT applied — it would try to parse a JSON image answer as a
+  // chat completion. Only the body-level passthroughs are relevant, and
+  // `extraBody` is the one an image server can honor.
+  const fetch = makeImageFetch(extraBody, baseFetch);
+  if (protocol === "ollama") {
+    // Same normalisation as createLlmProvider's ollama case: the instance URL is
+    // the host, and Ollama's images API lives under its OpenAI-compatible /v1.
+    const rawBase = instance?.url ?? "http://localhost:11434";
+    const host = rawBase.replace(/\/(api|v1)\/?$/, "").replace(/\/$/, "");
+    return createOpenAI({
+      baseURL: `${host}/v1`,
+      apiKey: overrideKey ?? instance?.apiKey ?? "ollama",
+      fetch,
+    } as Parameters<typeof createOpenAI>[0]).image(config.model);
+  }
+  // A self-hosted server usually ignores the key but the SDK requires one (see
+  // the chat case above for the identical rule).
+  const apiKey =
+    overrideKey ??
+    instance?.apiKey ??
+    (instance?.url !== undefined ? "local" : undefined);
+  return createOpenAI({
+    ...(apiKey !== undefined ? { apiKey } : {}),
+    ...(instance?.url !== undefined ? { baseURL: instance.url } : {}),
+    fetch,
+  } as Parameters<typeof createOpenAI>[0]).image(config.model);
+}
+
+/**
+ * Fetch wrapper for the images API: merges `parameters.extraBody` into the JSON
+ * request body (see {@link injectExtraBody}) and leaves everything else —
+ * including the multipart body of an edit request — untouched.
+ */
+export function makeImageFetch(
+  extraBody?: Record<string, unknown>,
+  baseFetch: typeof fetch = egressFetch,
+): typeof fetch {
+  if (extraBody === undefined || Object.keys(extraBody).length === 0) {
+    return baseFetch;
+  }
+  const fn = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> =>
+    baseFetch(input, {
+      ...init,
+      ...(init?.body != null
+        ? { body: injectExtraBody(init.body, extraBody) }
+        : {}),
+    });
+  return fn as unknown as typeof fetch;
 }
 
 // ---------------------------------------------------------------------------

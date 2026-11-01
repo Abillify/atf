@@ -260,6 +260,7 @@ export function createLlmNodeHandler(
       clientToolKeys,
       imageInspectionEnabled,
       imageInspectionToolName,
+      imageEditToolName,
     } = await setupLlmTools({ runtime, node, state, resolved });
 
     const effectiveParams = filterLlmParameters(
@@ -322,6 +323,7 @@ export function createLlmNodeHandler(
         activeToolKeys,
         imageInspectionEnabled,
         imageInspectionToolName,
+        imageEditToolName,
       },
     });
 
@@ -665,6 +667,7 @@ export function createLlmNodeHandler(
       hasTools,
       imageInspectionEnabled,
       imageInspectionToolName,
+      imageEditToolName,
       maxAttempts,
       maxOutputChars,
       maxTokens,

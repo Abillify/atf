@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-01
+
+### Added
+
+- **Runtime** (media tools): a `mediaTools` entry declares the wire protocol its model speaks with `mode: chat` (default, unchanged) | `image-generation` | `image-edit`. The two image modes build an image model with `createImageProvider()` (`openai`/`ollama` only, with keep-alive, endpoint load tracking and the egress fetch) and call `/images/generations` or `/images/edits`, so a dedicated image server that exposes no chat route (mflux behind LiteLLM, DALL·E, gpt-image) can serve a media tool at all — previously every media tool went through `generateText()`, which only ever produced a picture because the Google provider honours `responseModalities`.
+- **Runtime** (media tools): `defaultSize` (`WxH`) pins the output size at the operator instead of the model — a ratio the model invents is rejected by every strict server — and `maxInputImages` caps an edit call at 1..4 pictures. `imageDescription` overrides the tool description shown to the hosting model.
+- **Runtime** (media tools): `img-N` references now resolve to images already present in the conversation even without `imageInspection`. `registerInlineImages()` parks the bytes without rewriting the messages, so a vision-capable responder still sees the picture while the edit tool resolves the reference. The `image` argument is optional: omitted, the newest image in the conversation is edited, which is what "mache es heller" means.
+
+### Fixed
+
+- **Runtime** (media tools): a server that answers with zero images raised `NoImageGeneratedError`, which was reported as `media_generation_failed` and invited the hosting model to retry the same prompt forever. It is now the terminal status `no_media`.
+- **Runtime** (metrics): `recordLlmCall()` sat inside the usage guard, so every image call — image servers send no usage at all — was invisible in Prometheus while costing real compute. The call count now records unconditionally; spend stays gated on `cost > 0`.
+
 ## [0.24.1] - 2026-10-31
 
 ### Fixed
@@ -4624,7 +4637,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/Abillify/atf/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/Abillify/atf/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/Abillify/atf/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Abillify/atf/compare/v0.22.0...v0.23.0

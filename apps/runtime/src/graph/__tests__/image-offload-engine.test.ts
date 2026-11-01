@@ -64,7 +64,28 @@ function flowWith(opts: {
   id: string;
   imageInspection?: boolean;
   visionInput?: boolean;
+  /** Adds media tools: a generate tool, and an edit tool when given. */
+  mediaTools?: { edit?: boolean };
 }): FlowDefinition {
+  const mediaTools =
+    opts.mediaTools === undefined
+      ? undefined
+      : [
+          {
+            name: "generate_image",
+            mode: "image-generation",
+            llm: { provider: "openai", model: "image-mock" },
+          },
+          ...(opts.mediaTools.edit === true
+            ? [
+                {
+                  name: "edit_image",
+                  mode: "image-edit",
+                  llm: { provider: "openai", model: "image-edit-mock" },
+                },
+              ]
+            : []),
+        ];
   return {
     id: opts.id,
     name: opts.id,
@@ -79,15 +100,16 @@ function flowWith(opts: {
             ? { parameters: { visionInput: true } }
             : {}),
         },
-        ...(opts.imageInspection === true
-          ? {
-              config: {
+        config: {
+          ...(opts.imageInspection === true
+            ? {
                 imageInspection: {
                   llm: { provider: "openai", model: "vision-mock" },
                 },
-              },
-            }
-          : {}),
+              }
+            : {}),
+          ...(mediaTools !== undefined ? { mediaTools } : {}),
+        },
       },
     ],
     edges: [],
@@ -311,5 +333,76 @@ describe("inline-image offload in the live llm handler", () => {
     expect(`${result.error ?? ""}${JSON.stringify(result.chunks)}`).toContain(
       "vision",
     );
+  });
+});
+
+/**
+ * A node with an `image-edit` media tool but no `imageInspection` block — the
+ * shape the Abby responder actually has. Its model is vision-capable and sees
+ * the attached picture today, so the bytes must stay inline; the edit tool
+ * nevertheless needs an `img-N` for the same picture, which the register-only
+ * pass supplies. Neither half may regress into the other.
+ */
+describe("image registration for an edit tool without offload", () => {
+  test("keeps the bytes inline and still parks a reference", async () => {
+    const media = spyMediaStore();
+    const result = await runFlow(
+      flowWith({ id: "register-only", visionInput: true, mediaTools: { edit: true } }),
+      imageMessages(),
+      { mediaStore: media.store },
+    );
+
+    expect(result.prompts).toHaveLength(1);
+    // No regression: a responder that can see keeps its input.
+    expect(result.prompts[0]).toContain(IMAGE_B64);
+    expect(result.prompts[0]).not.toContain("not visible to you");
+    // The edit tool can still resolve the picture the model is looking at.
+    expect(media.puts).toHaveLength(1);
+    expect(Buffer.from(media.puts[0].bytes).toString("base64")).toBe(IMAGE_B64);
+    expect(result.toolSets[0]).toContain("edit_image");
+  });
+
+  test("registers nothing for a node with only a generate tool", async () => {
+    const media = spyMediaStore();
+    const result = await runFlow(
+      flowWith({ id: "register-none", visionInput: true, mediaTools: {} }),
+      imageMessages(),
+      { mediaStore: media.store },
+    );
+
+    expect(result.prompts[0]).toContain(IMAGE_B64);
+    expect(media.puts).toHaveLength(0);
+    expect(result.toolSets[0]).not.toContain("edit_image");
+  });
+
+  test("an offloaded placeholder advertises the edit tool it can be used with", async () => {
+    const result = await runFlow(
+      flowWith({
+        id: "offload-edit-hint",
+        imageInspection: true,
+        mediaTools: { edit: true },
+      }),
+      imageMessages(),
+      { mediaStore: spyMediaStore().store },
+    );
+
+    expect(result.prompts[0]).not.toContain(IMAGE_B64);
+    // The prompt is serialized JSON, so the placeholder's quotes arrive escaped.
+    expect(result.prompts[0]).toContain('edit_image(image=\\"img-1\\"');
+    // The read path stays advertised alongside the edit hint.
+    expect(result.prompts[0]).toContain(
+      `${IMAGE_INSPECTION_TOOL_NAME}(image=\\"img-1\\"`,
+    );
+  });
+
+  test("an offloaded placeholder stays silent without an edit tool", async () => {
+    const result = await runFlow(
+      flowWith({ id: "offload-no-edit-hint", imageInspection: true, mediaTools: {} }),
+      imageMessages(),
+      { mediaStore: spyMediaStore().store },
+    );
+
+    expect(result.prompts[0]).toContain("img-1");
+    expect(result.prompts[0]).not.toContain("To change this image");
   });
 });
