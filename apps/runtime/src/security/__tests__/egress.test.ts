@@ -166,6 +166,85 @@ describe("createRuntimeEgress", () => {
     }
   });
 
+  // Regression: the OpenAI images SDK sends `POST /images/edits` as multipart
+  // FormData. The guard used to reject anything but a buffered body, which made
+  // the edit_image tool impossible to call at all.
+  test("posts a multipart FormData body with boundary and bytes intact", async () => {
+    const seen: Array<{
+      type?: string | string[];
+      length?: string;
+      body: Buffer;
+    }> = [];
+    const srv = await startServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        seen.push({
+          type: req.headers["content-type"],
+          length: req.headers["content-length"],
+          body: Buffer.concat(chunks),
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    try {
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const egress = loopbackEgress(srv.baseUrl);
+      for (const f of [egress.fetch, egress.fetchWithoutKeepAlive]) {
+        const form = new FormData();
+        form.append("model", "qwen-image-edit");
+        form.append("prompt", "mehr Kontrast");
+        form.append("image", new Blob([png], { type: "image/png" }), "in.png");
+        const res = await f(`${srv.baseUrl}/edits`, { method: "POST", body: form });
+        expect(res.status).toBe(200);
+      }
+      expect(seen).toHaveLength(2);
+      for (const entry of seen) {
+        // The boundary lives in the content type the platform derived from the
+        // FormData — the caller never supplies one.
+        expect(typeof entry.type).toBe("string");
+        const contentType = entry.type as string;
+        expect(contentType.startsWith("multipart/form-data; boundary=")).toBe(true);
+        const boundary = contentType.split("boundary=")[1] as string;
+        // The declared length is the exact byte count of the serialised body.
+        expect(entry.length).toBe(String(entry.body.byteLength));
+        const text = entry.body.toString("latin1");
+        expect(text.startsWith(`--${boundary}\r\n`)).toBe(true);
+        expect(text.trimEnd().endsWith(`--${boundary}--`)).toBe(true);
+        for (const field of ["model", "qwen-image-edit", "prompt", "mehr Kontrast"]) {
+          expect(text).toContain(field);
+        }
+        // The file part keeps its filename, content type and raw bytes.
+        expect(text).toContain('name="image"; filename="in.png"');
+        expect(text).toContain("Content-Type: image/png");
+        expect(entry.body.includes(png)).toBe(true);
+      }
+      // Both hops serialise independently, so each body matches its own boundary.
+      expect(seen[0]?.body.byteLength).toBe(seen[1]?.body.byteLength);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test("rejects a body shape that cannot be buffered", async () => {
+    const srv = await startServer((_req, res) => res.end("nope"));
+    try {
+      const egress = loopbackEgress(srv.baseUrl);
+      await expect(
+        egress.fetch(`${srv.baseUrl}/edits`, {
+          method: "POST",
+          body: { not: "a body" } as unknown as RequestInit["body"],
+        }),
+      ).rejects.toThrow(/only accepts buffered request bodies/);
+    } finally {
+      await srv.close();
+    }
+  });
+
   test("follows redirects and re-validates every hop", async () => {
     const srv = await startServer((req, res) => {
       if (req.url === "/start") {

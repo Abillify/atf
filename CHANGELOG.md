@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-11-01
+
+### Fixed
+
+- **Runtime** (egress): the guard rejected every request body it could not use as
+  it stood, so the multipart `FormData` an image edit needs failed with
+  `egress transport only accepts buffered request bodies` before a socket was
+  opened — `edit_image` could not reach any server at all. `FormData`, `Blob` and
+  stream bodies are now serialised through a throwaway `Request`, which also
+  supplies the `multipart/form-data; boundary=…` content type a caller cannot know.
+  Buffering happens before the socket opens and after the URL policy check, so a
+  rejected request still never sends a byte or consumes a one-shot body.
+
 ## [0.25.0] - 2026-11-01
 
 ### Added
@@ -4637,7 +4650,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.1...HEAD
+[0.25.1]: https://github.com/Abillify/atf/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/Abillify/atf/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/Abillify/atf/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/Abillify/atf/compare/v0.23.0...v0.24.0
