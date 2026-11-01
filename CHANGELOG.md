@@ -18,6 +18,22 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-11-01
+
+### Fixed
+
+- **Runtime** (media): `/v1/media/*` responses carried
+  `Cross-Origin-Resource-Policy: same-origin` from the global
+  `secureHeaders()` middleware, so a browser refused to render a media URL
+  embedded as an `<img>` from another origin — an Open WebUI chat answer with
+  `![](https://<atf-host>/v1/media/<id>.png)` showed only
+  "Bild nicht verfügbar" while the same URL opened fine when navigated to
+  directly (CORP does not apply to navigations). A `mediaEmbeddingMiddleware`
+  registered before `secureHeaders()` now sets
+  `Cross-Origin-Resource-Policy: cross-origin` on `GET /v1/media/*`; the route
+  stays auth-exempt by design (capability URLs with unguessable UUIDs and a
+  short TTL), and all other routes keep `same-origin`.
+
 ## [0.25.1] - 2026-11-01
 
 ### Fixed
@@ -4650,7 +4666,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.1...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.2...HEAD
+[0.25.2]: https://github.com/Abillify/atf/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/Abillify/atf/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/Abillify/atf/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/Abillify/atf/compare/v0.24.0...v0.24.1
