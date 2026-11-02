@@ -13,7 +13,7 @@
 
 import { describe, test, expect } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
-import type { Tool } from "ai";
+import type { ModelMessage, Tool } from "ai";
 import type { ImageModelV4, ImageModelV4Result } from "@ai-sdk/provider";
 import {
   buildMediaTools,
@@ -22,7 +22,10 @@ import {
 } from "../agent-tools.js";
 import type { FlowNode } from "../../types/flow.js";
 import type { AppConfig } from "../../config/index.js";
-import { HashedImageRefRegistry } from "../image-reference.js";
+import {
+  HashedImageRefRegistry,
+  rehydrateMediaRefs,
+} from "../image-reference.js";
 import { InMemoryMediaStore } from "../media-store.js";
 import { mkUsage } from "./v3-mock-helpers.js";
 
@@ -672,6 +675,49 @@ describe("media tools — images API (mode image-edit)", () => {
     expect(result.status).toBe("ok");
   });
 
+  test("resolves a quoted /v1/media URL to the same bytes", async () => {
+    // In a later turn the model has usually only seen the published URL, so it
+    // quotes that instead of the img-N handle.
+    const store = new InMemoryMediaStore({});
+    const registry = new HashedImageRefRegistry({ store });
+    const id = store.put(otherPngBytes(4), "image/png");
+    if (id === undefined) throw new Error("test setup: media rejected");
+    const calls: ImageCall[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub((c) => void calls.push(c)),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "schreib CCCP drauf", image: `https://example/v1/media/${id}.png` },
+      {},
+    );
+    expect(result.status).toBe("ok");
+    expect(calls[0]?.files).toHaveLength(1);
+  });
+
+  test("still reports unknown_image for a URL whose media is gone", async () => {
+    const registry = newRegistry();
+    registry.register(otherPngBytes(5), "image/png");
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () => imageModelStub(() => {}),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+    const result = await (tools.edit_image as EditExecutableTool).execute(
+      {
+        prompt: "x",
+        image: "https://example/v1/media/00000000-0000-4000-8000-000000000000.png",
+      },
+      {},
+    );
+    expect(result.status).toBe("unknown_image");
+  });
+
   test("falls back to the newest image when no reference is named", async () => {
     // A vision-capable host sees the attached picture and reasonably expects
     // "mache das heller" to apply to it without quoting a handle it never got.
@@ -864,5 +910,103 @@ describe("editMediaToolNames", () => {
 
   test("is empty for a node without media tools", () => {
     expect(editMediaToolNames({ id: "n", type: "llm" })).toEqual([]);
+  });
+});
+
+// Two-turn regression: generation in turn 1, edit in turn 2.
+// After rehydration the edit tool should resolve the published URL back to
+// img-1 and the model should call edit_image(image="img-1").
+describe("media tools — two-turn generation then edit (regression)", () => {
+  test("rehydrates a published URL back to img-1 so edit_image resolves", async () => {
+    const registry = newRegistry();
+    const store = new InMemoryMediaStore({});
+    const bytes = otherPngBytes(42);
+    const id = store.put(bytes, "image/png");
+    expect(id).toBeDefined();
+    const BASE = "https://aiperator.example";
+    const publishedUrl = `${BASE}/v1/media/${id}.png`;
+
+    // Turn 1: generate_image tool result (what the model saw after generation),
+    // mirroring the shape the engine persists: the tool output object sits one
+    // level inside the tool-result part.
+    const turn1ToolResult = {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call_b8763016",
+          toolName: "generate_image",
+          output: {
+            type: "json",
+            value: [
+              {
+                status: "ok",
+                generated: 1,
+                image_refs: ["img-1"],
+                message:
+                  'Generated 1 media file(s) and displayed it to the user. Do not repeat the media as text or a data URI. To change one of these images, call the image-edit tool with the reference img-1.',
+              },
+            ],
+          },
+        },
+        {
+          type: "text",
+          text: `\n\n![](${publishedUrl})\n\n`,
+        },
+      ],
+    } as unknown as ModelMessage;
+
+    // Turn 2: user asks to edit (no img-1 in the prompt — the model only
+    // saw the published URL in turn 1's assistant message).
+    const turn2User: ModelMessage = {
+      role: "user",
+      content: "schreib CCCP drauf",
+    };
+
+    const history: ModelMessage[] = [turn1ToolResult, turn2User];
+
+    // Rehydrate: this is what llm-message-build does before sending to the model.
+    const result = rehydrateMediaRefs(
+      history,
+      registry,
+      store,
+      BASE,
+      { editToolName: "edit_image" },
+    );
+
+    // The URL should have been replaced by a placeholder containing img-1.
+    expect(result.rehydrated).toBe(1);
+    expect(result.refs).toContain("img-1");
+    expect(result.unresolved).toBe(0);
+
+    // The rewritten assistant message should contain the placeholder text.
+    const rewritten = result.messages[0] as ModelMessage;
+    const content = rewritten.content as Array<{ type: string; text?: string }>;
+    const textPart = content.find((p) => p.type === "text");
+    expect(textPart?.text).toBeTypeOf("string");
+    expect(textPart?.text).toContain("img-1");
+    expect(textPart?.text).toContain("edit_image");
+
+    // Now build the edit tool with the rehydrated registry.
+    const editCalls: ImageCall[] = [];
+    const tools = buildMediaTools(nodeWithImagesTool("image-edit"), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("unused"),
+      imageProviderFactory: () =>
+        imageModelStub((c) => void editCalls.push(c)),
+      imageRefs: registry,
+      emit: async () => {},
+    });
+
+    // The model, seeing img-1 in the placeholder, calls edit_image(image="img-1").
+    const editResult = await (tools.edit_image as EditExecutableTool).execute(
+      { prompt: "mach das Logo größer", image: "img-1" },
+      {},
+    );
+
+    expect(editResult.status).toBe("ok");
+    expect(editCalls).toHaveLength(1);
+    expect(editCalls[0]?.files).toHaveLength(1);
+    expect(editCalls[0]?.files?.[0]?.mediaType).toBe("image/png");
   });
 });

@@ -23,6 +23,7 @@ import {
   offloadInlineImages,
   parseAssetReference,
   registerInlineImages,
+  rehydrateMediaRefs,
 } from "../image-reference.js";
 import { InMemoryMediaStore } from "../media-store.js";
 
@@ -179,6 +180,39 @@ describe("HashedImageRefRegistry", () => {
     expect(registry.register(bytes, "image/jpeg")).toBe("img-2");
     expect(registry.resolve("img-1")?.mediaType).toBe("image/png");
     expect(registry.resolve("img-2")?.mediaType).toBe("image/jpeg");
+  });
+
+  test("resolves a published media URL the model quoted back", () => {
+    const { registry, store } = registryWith();
+    const bytes = pngBytes(31);
+    const id = store.put(bytes, "image/png");
+    if (id === undefined) throw new Error("test setup: media rejected");
+    // Registered under img-1 by the generating turn; the model quotes the URL.
+    registry.register(bytes, "image/png");
+    expect(registry.resolve(`https://aiperator.example/v1/media/${id}.png`)).toBeDefined();
+    expect(registry.resolve(`/v1/media/${id}.png`)).toBeDefined();
+    expect(registry.resolve(`https://other.host/v1/media/${id}.png?x=1`)).toBeDefined();
+  });
+
+  test("resolves a published URL for media this run never registered", () => {
+    // A picture from an earlier turn (or another replica) is in the store but
+    // was never registered here; the URL alone must still be editable.
+    const { registry, store } = registryWith();
+    const id = store.put(pngBytes(32), "image/png");
+    if (id === undefined) throw new Error("test setup: media rejected");
+    const stored = registry.resolve(`https://aiperator.example/v1/media/${id}.png`);
+    expect(stored).toBeDefined();
+    expect(Array.from(stored?.data ?? [])).toEqual(Array.from(pngBytes(32)));
+  });
+
+  test("does not resolve a URL naming media the store does not hold", () => {
+    const { registry } = registryWith();
+    registry.register(pngBytes(33), "image/png");
+    expect(
+      registry.resolve("https://aiperator.example/v1/media/deadbeef-0000-4000-8000-000000000000.png"),
+    ).toBeUndefined();
+    // A hallucinated non-UUID path must not reach the store either.
+    expect(registry.resolve("https://aiperator.example/v1/media/img-1.png")).toBeUndefined();
   });
 
   test("reports decoded bytes, not base64 length", () => {
@@ -717,5 +751,204 @@ describe("registerInlineImages", () => {
     const offloaded = offloadInlineImages(messages, registry);
     expect(offloaded.refs).toEqual(first.refs);
     expect(offloaded.offloaded).toBe(1);
+  });
+});
+
+describe("rehydrateMediaRefs", () => {
+  const BASE = "https://aiperator.example";
+
+  /** Publishes bytes the way the engine does and returns their media URL. */
+  function publish(
+    store: InMemoryMediaStore,
+    bytes: Uint8Array,
+    mediaType = "image/png",
+    extension = "png",
+  ): string {
+    const id = store.put(bytes, mediaType);
+    if (id === undefined) throw new Error("test setup: media rejected");
+    return `${BASE}/v1/media/${id}.${extension}`;
+  }
+
+  function textMessages(
+    entries: Array<{ role: string; text: string }>,
+  ): ModelMessage[] {
+    return entries.map(
+      (e) =>
+        ({
+          role: e.role as ModelMessage["role"],
+          content: [{ type: "text", text: e.text }],
+        }) as ModelMessage,
+    );
+  }
+
+  function textOf(message: ModelMessage): string {
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    const parts = Array.isArray(content) ? content : [];
+    return parts.map((p) => ((p as { text?: string }).text ?? "")).join("");
+  }
+
+  test("replaces a published media URL with an editable reference", () => {
+    const { registry, store } = registryWith();
+    const url = publish(store, pngBytes(7));
+    const messages = textMessages([
+      { role: "user", text: "bild vom space shuttle" },
+      { role: "assistant", text: `![](${url}) Hier ist das Bild.` },
+      { role: "user", text: "schreib CCCP drauf" },
+    ]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE, {
+      editToolName: "edit_image",
+      inspectToolName: IMAGE_INSPECTION_TOOL_NAME,
+    });
+
+    expect(result.rehydrated).toBe(1);
+    expect(result.unresolved).toBe(0);
+    expect(result.refs).toEqual(["img-1"]);
+
+    const history = textOf(result.messages[1] as ModelMessage);
+    expect(history).not.toContain("/v1/media/");
+    expect(history).toContain("ref=img-1");
+    // The whole point of the pass: the model is told how to edit the picture.
+    expect(history).toContain('edit_image(image="img-1"');
+    // Untouched turns stay identical (prompt-prefix stability).
+    expect(result.messages[0]).toBe(messages[0]);
+    expect(result.messages[2]).toBe(messages[2]);
+  });
+
+  test("advertises the edit tool on a node without inspection", () => {
+    const { registry, store } = registryWith();
+    const url = publish(store, pngBytes(8));
+    const messages = textMessages([{ role: "assistant", text: url }]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE, {
+      editToolName: "edit_image",
+    });
+    const text = textOf(result.messages[0] as ModelMessage);
+    expect(result.rehydrated).toBe(1);
+    expect(text).toContain('edit_image(image="img-1"');
+    expect(text).not.toContain(IMAGE_INSPECTION_TOOL_NAME);
+  });
+
+  test("resolves each URL in one part to its own reference", () => {
+    const { registry, store } = registryWith();
+    const first = publish(store, pngBytes(1));
+    const second = publish(store, pngBytes(2), "image/jpeg", "jpg");
+    const messages = textMessages([
+      {
+        role: "assistant",
+        text: `first ![](${first}) second ![zwei](${second})`,
+      },
+    ]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE, {
+      editToolName: "edit_image",
+    });
+    const text = textOf(result.messages[0] as ModelMessage);
+    expect(result.rehydrated).toBe(2);
+    expect(result.refs).toEqual(["img-1", "img-2"]);
+    expect(text).toContain("ref=img-1");
+    expect(text).toContain("ref=img-2");
+    expect(text).toContain("type=image/jpeg");
+    expect(text).not.toContain("/v1/media/");
+  });
+
+  test("dedupes identical bytes published under two ids", () => {
+    const { registry, store } = registryWith();
+    const bytes = pngBytes(3);
+    const first = publish(store, bytes);
+    const second = publish(store, bytes);
+    const messages = textMessages([
+      { role: "assistant", text: first },
+      { role: "assistant", text: second },
+    ]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE);
+    expect(result.rehydrated).toBe(2);
+    expect(result.refs).toEqual(["img-1"]);
+  });
+
+  test("fails closed on an unknown media id", () => {
+    const { registry, store } = registryWith();
+    const messages = textMessages([
+      {
+        role: "assistant",
+        text: `![](${BASE}/v1/media/d876b5f5-c44d-4001-ad38-d066422f5f21.png) fertig`,
+      },
+    ]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE, {
+      editToolName: "edit_image",
+    });
+    expect(result.rehydrated).toBe(0);
+    expect(result.unresolved).toBe(1);
+    expect(result.refs).toEqual([]);
+    // The transcript keeps what the model was actually given.
+    expect(textOf(result.messages[0] as ModelMessage)).toContain("/v1/media/");
+  });
+
+  test("treats a media id past its TTL as unresolved", () => {
+    let nowMs = 1_700_000_000_000;
+    const { registry, store } = registryWith({
+      clock: () => nowMs,
+      ttlSeconds: 60,
+    });
+    const url = publish(store, pngBytes(9));
+    nowMs += 61_000;
+    const messages = textMessages([{ role: "assistant", text: url }]);
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE);
+    expect(result.rehydrated).toBe(0);
+    expect(result.unresolved).toBe(1);
+  });
+
+  test("rewrites plain string content and nested tool results", () => {
+    const { registry, store } = registryWith();
+    const url = publish(store, pngBytes(11));
+    const messages = [
+      { role: "assistant", content: `see ${url}` },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolName: "generate_image",
+            output: { value: [{ type: "text", text: `url ${url}` }] },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const result = rehydrateMediaRefs(messages, registry, store, BASE);
+    expect(result.rehydrated).toBe(2);
+    expect(textOf(result.messages[0] as ModelMessage)).toContain("ref=img-1");
+    const toolContent = (
+      result.messages[1] as unknown as {
+        content: Array<{ output: { value: Array<{ text?: string }> } }>;
+      }
+    ).content;
+    expect(toolContent[0]?.output.value[0]?.text).toContain("ref=img-1");
+  });
+
+  test("is a no-op when nothing matches", () => {
+    const { registry, store } = registryWith();
+    const messages = textMessages([
+      { role: "user", text: "wie war das nochmal?" },
+      { role: "assistant", text: "https://other.example/v1/media/x.png" },
+    ]);
+    const result = rehydrateMediaRefs(messages, registry, store, BASE, {
+      editToolName: "edit_image",
+    });
+    expect(result.rehydrated).toBe(0);
+    expect(result.unresolved).toBe(0);
+    expect(result.messages).toEqual(messages);
+  });
+
+  test("tolerates a trailing slash on the media base url", () => {
+    const { registry, store } = registryWith();
+    const url = publish(store, pngBytes(12));
+    const messages = textMessages([{ role: "assistant", text: url }]);
+    const result = rehydrateMediaRefs(messages, registry, store, `${BASE}/`);
+    expect(result.rehydrated).toBe(1);
   });
 });
