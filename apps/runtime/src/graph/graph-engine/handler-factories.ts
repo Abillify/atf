@@ -1027,6 +1027,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
       // `mediaBaseUrl`: the bytes are only ever read back in-process by the
       // `inspect_image` tool, never served to a browser.
       ...(runImageRefs !== undefined ? { imageRefs: runImageRefs } : {}),
+      // The byte store behind those references, so history URLs can be
+      // rehydrated into refs (see `rehydrateMediaRefs`).
+      ...(this.mediaStore !== undefined ? { mediaStore: this.mediaStore } : {}),
       ...(refHandles !== undefined ? { refHandles } : {}),
       // Memory of config.stickyArgs for this execution.
       stickyArgs: new Map<string, unknown>(),

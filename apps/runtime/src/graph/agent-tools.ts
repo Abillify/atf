@@ -1977,7 +1977,7 @@ export function buildMediaTools(
           : {}),
         description:
           mt.imageDescription ??
-          `Optionale Referenz des zu bearbeitenden Bildes im Format "img-N". ${
+          `Optionale Referenz des zu bearbeitenden Bildes im Format "img-N" (auch die gezeigte /v1/media/-URL wird akzeptiert). ${
             limit > 1
               ? `Mehrere Referenzen als Liste (max. ${limit}) werden gemeinsam als Ausgangspunkt verwendet.`
               : "Genau ein Bild."

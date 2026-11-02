@@ -40,6 +40,7 @@ import { modelKey as modelKeyOf } from "../cost-router.js";
 import {
   offloadInlineImages,
   registerInlineImages,
+  rehydrateMediaRefs,
   inlineImageBytes,
   IMAGE_INSPECTION_TOOL_NAME,
 } from "../image-reference.js";
@@ -526,6 +527,66 @@ export async function buildLlmMessages(params: {
           ...messagesWithSystemPrompt,
         ];
       }
+    }
+  }
+
+  // ── History media URLs → references ───────────────────────────────────
+  // Must run before the offload pass below: a `/v1/media/...` URL from an
+  // earlier turn is a remote string as far as `offloadInlineImages` is
+  // concerned, so an un-rehydrated history image would either be counted as an
+  // undecodable remote image (and fail the node) or, more often, simply reach
+  // the model as a dead link it cannot act on.
+  if (
+    runtime.imageRefs !== undefined &&
+    runtime.mediaStore !== undefined &&
+    runtime.appConfig.mediaBaseUrl !== undefined &&
+    (imageInspectionEnabled || imageEditToolName !== undefined)
+  ) {
+    const rehydrated = rehydrateMediaRefs(
+      messagesWithSystemPrompt,
+      runtime.imageRefs,
+      runtime.mediaStore,
+      runtime.appConfig.mediaBaseUrl,
+      {
+        editToolName: imageEditToolName,
+        inspectToolName: imageInspectionEnabled
+          ? imageInspectionToolName
+          : undefined,
+      },
+    );
+    if (rehydrated.rehydrated > 0 || rehydrated.unresolved > 0) {
+      messagesWithSystemPrompt = rehydrated.messages;
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: rehydrated.unresolved > 0 ? "warn" : "info",
+        code: "llm_images_rehydrated",
+        message:
+          `Rewrote ${rehydrated.rehydrated} conversation-history media URL(s) ` +
+          `into image references${
+            rehydrated.refs.length > 0
+              ? ` (${rehydrated.refs.join(", ")})`
+              : ""
+          }` +
+          (rehydrated.unresolved > 0
+            ? `; ${rehydrated.unresolved} URL(s) point at media this process no ` +
+              "longer holds (expired, evicted, or served by another replica) and " +
+              "were left as-is."
+            : "."),
+        details: {
+          rehydrated: rehydrated.rehydrated,
+          refs: rehydrated.refs,
+          unresolved: rehydrated.unresolved,
+        },
+      });
+      runtime.metrics.recordCounter(
+        "aiperator_image_rehydrate_total",
+        { node: node.id, outcome: "rehydrated" },
+        rehydrated.rehydrated,
+      );
+      runtime.metrics.recordCounter(
+        "aiperator_image_rehydrate_total",
+        { node: node.id, outcome: "unresolved" },
+        rehydrated.unresolved,
+      );
     }
   }
 

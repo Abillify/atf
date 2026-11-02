@@ -466,6 +466,15 @@ export interface ExecRuntime {
    */
   imageRefs?: import("./image-reference.js").ImageRefRegistry;
   /**
+   * The shared media byte store behind {@link publishMedia} and
+   * {@link imageRefs}. Exposed so a node can rehydrate a `/v1/media/<id>` URL
+   * that came back in conversation history: the URL is the only trace a
+   * previously generated image leaves in the next turn, and without the store
+   * the bytes behind it are unreachable, so an image-edit request has nothing
+   * to edit. Undefined when no media store is configured.
+   */
+  mediaStore?: import("./media-store.js").MediaStore;
+  /**
    * Run-scoped reference-handle registry (see `ref-handles.ts`). Created once
    * per execution when a node declares `config.refHandles: true`, so a handle
    * registered by one node's tool result resolves in every later tool call,
