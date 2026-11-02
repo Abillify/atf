@@ -44,6 +44,18 @@ import {
 
 const DEFAULT_IMAGE_REF_MAX_TOTAL_BYTES = 134_217_728; // 128 MiB
 
+/**
+ * The media id inside a published `/v1/media/<id>.<ext>` URL, or undefined.
+ * Deliberately host-agnostic: the path is the same whatever `mediaBaseUrl` was,
+ * so a URL quoted by a model resolves without knowing where it was served from.
+ */
+function mediaStoreIdOf(value: string): string | undefined {
+  const match = /\/v1\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\.[A-Za-z0-9]+)?(?:[?#].*)?$/u.exec(
+    value,
+  );
+  return match?.[1];
+}
+
 /** Default tool name models use to look a reference up again. */
 export const IMAGE_INSPECTION_TOOL_NAME = "inspect_image";
 
@@ -167,14 +179,26 @@ export class HashedImageRefRegistry implements ImageRefRegistry {
   resolve(ref: string): { data: Uint8Array; mediaType: string } | undefined {
     const wanted = ref.trim();
     if (wanted === "") return undefined;
+    // A model that was shown the published picture often quotes the URL rather
+    // than the handle, especially in a later turn. The `/v1/media/<id>.<ext>`
+    // path is host-independent, so it resolves without knowing the base URL.
+    const urlStoreId = mediaStoreIdOf(wanted);
     let storeId: string | undefined;
     for (const [id, info] of this.byStoreId) {
-      if (id === wanted || info.ref === wanted) {
+      if (id === (urlStoreId ?? wanted) || info.ref === wanted) {
         storeId = id;
         break;
       }
     }
-    if (storeId === undefined) return undefined;
+    if (storeId === undefined) {
+      // A published URL can also name a picture this run never registered —
+      // one generated before a restart, or by another replica. The bytes are
+      // already served publicly at that URL, so handing them to the edit tool
+      // grants nothing the caller did not already hold.
+      return urlStoreId === undefined
+        ? undefined
+        : this.store.get(urlStoreId);
+    }
     const resident = this.runData.get(storeId);
     if (resident !== undefined) return resident;
     const stored = this.store.get(storeId);
@@ -594,4 +618,202 @@ export function inlineImageBytes(messages: readonly ModelMessage[]): {
     if (Array.isArray(content)) scan(content);
   }
   return { totalBytes, maxBytes, count };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Rehydration of conversation-history media URLs into run-scoped image refs
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface RehydrateMediaRefsOptions {
+  /**
+   * Name of the media tool that can *change* the picture (`mode: image-edit`).
+   * This is the reason the pass exists: without it the model sees a dead URL
+   * where it should see an editable handle.
+   */
+  editToolName?: string;
+  /**
+   * Name of the inspection tool, when the node has one. Omitted for nodes that
+   * only carry a media-edit tool, so the note never advertises a tool the
+   * model cannot call.
+   */
+  inspectToolName?: string;
+}
+
+export interface RehydrateMediaRefsResult {
+  /** Rewritten messages; identical to the input when nothing matched. */
+  messages: ModelMessage[];
+  /** Number of URLs replaced by a reference. */
+  rehydrated: number;
+  /** Distinct refs the run gained, in registration order. */
+  refs: string[];
+  /** URLs that name a media id this process no longer holds. */
+  unresolved: number;
+}
+
+/**
+ * Turn `/v1/media/<id>.<ext>` URLs in conversation history back into
+ * run-scoped `img-N` references.
+ *
+ * A generated image reaches the model twice, in two different shapes. In the
+ * turn that created it, the tool result hands back `image_refs: ["img-1"]` and
+ * tells the model to edit through that handle. In every later turn the same
+ * picture survives only as the published URL inside the assistant's own
+ * markdown — the registry is per-execution, so `img-1` is long gone, and the
+ * URL is a remote string that {@link imagePayloadOf} deliberately refuses to
+ * decode. The model is therefore asked to "write CCCP on it" with no addressable
+ * image in front of it, and a capable-enough model answers that it did exactly
+ * that and invents a plausible-looking media URL.
+ *
+ * This pass closes that gap: it finds the published URLs, reads the bytes back
+ * out of the media store, registers them in the run's registry, and replaces
+ * the URL with the same placeholder an inline image gets — including the
+ * "call the edit tool with this ref" hint.
+ *
+ * Fails closed and stays honest: an id the store no longer holds (expired TTL,
+ * LRU-evicted, another replica, a restart) leaves the URL untouched and is
+ * counted in `unresolved`, so the transcript still shows what the model was
+ * actually given.
+ */
+export function rehydrateMediaRefs(
+  messages: readonly ModelMessage[],
+  registry: ImageRefRegistry,
+  store: MediaStore,
+  mediaBaseUrl: string,
+  options: RehydrateMediaRefsOptions = {},
+): RehydrateMediaRefsResult {
+  const result: RehydrateMediaRefsResult = {
+    messages: [],
+    rehydrated: 0,
+    refs: [],
+    unresolved: 0,
+  };
+  const base = mediaBaseUrl.trim();
+  if (base === "") return { ...result, messages: [...messages] };
+
+  // The published shape comes from the engine's media publisher:
+  // `<base>/v1/media/<uuid>.<ext>`. The extension is cosmetic on the route but
+  // part of the URL, so it has to be matched to be consumed.
+  const idSource =
+    `/v1/media/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.[A-Za-z0-9]+`;
+  // One alternation, markdown first: a markdown image is replaced whole —
+  // leaving `![](<placeholder>)` behind would put prose inside an image tag —
+  // and consuming it here stops the bare form from matching the same URL twice.
+  const baseSource = escapeRegExp(base.replace(/\/$/, ""));
+  const pattern = new RegExp(
+    `!\\[[^\\]]*\\]\\(\\s*${baseSource}${idSource}\\s*\\)|${baseSource}${idSource}`,
+    "gi",
+  );
+
+  const substitute = (text: string): string =>
+    text.replace(pattern, (match, markdownId?: string, bareId?: string) => {
+      const storeId = markdownId ?? bareId;
+      if (storeId === undefined) return match;
+      const stored = store.get(storeId);
+      if (stored === undefined) {
+        result.unresolved += 1;
+        return match;
+      }
+      const ref = registry.register(stored.data, stored.mediaType);
+      if (ref === undefined) {
+        result.unresolved += 1;
+        return match;
+      }
+      result.rehydrated += 1;
+      if (!result.refs.includes(ref)) result.refs.push(ref);
+      return rehydratedReferencePlaceholder(
+        { ref, mediaType: stored.mediaType, bytes: stored.data.byteLength },
+        options,
+      );
+    });
+
+  const rewriteParts = (parts: unknown[]): unknown[] => {
+    let changed = false;
+    const next: unknown[] = [];
+    for (const raw of parts) {
+      if (raw === null || typeof raw !== "object") {
+        next.push(raw);
+        continue;
+      }
+      const part = raw as Record<string, unknown>;
+      // History images a tool returned arrive one level down in a tool result.
+      if (part.type === "tool-result" && part.output !== null) {
+        const output = part.output as Record<string, unknown>;
+        if (Array.isArray(output.value)) {
+          const nested = rewriteParts(output.value);
+          if (nested !== output.value) {
+            changed = true;
+            next.push({ ...part, output: { ...output, value: nested } });
+            continue;
+          }
+        }
+        next.push(raw);
+        continue;
+      }
+      if (part.type !== "text" || typeof part.text !== "string") {
+        next.push(raw);
+        continue;
+      }
+      const rewritten = substitute(part.text);
+      if (rewritten === part.text) {
+        next.push(raw);
+        continue;
+      }
+      changed = true;
+      next.push({ ...part, text: rewritten });
+    }
+    return changed ? next : parts;
+  };
+
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") {
+      const rewritten = substitute(content);
+      result.messages.push(
+        rewritten === content
+          ? message
+          : ({ ...(message as object), content: rewritten } as ModelMessage),
+      );
+      continue;
+    }
+    if (!Array.isArray(content)) {
+      result.messages.push(message);
+      continue;
+    }
+    const nextContent = rewriteParts(content);
+    result.messages.push(
+      nextContent === content
+        ? message
+        : ({ ...(message as object), content: nextContent } as ModelMessage),
+    );
+  }
+  return result;
+}
+
+/**
+ * The note that replaces a history media URL. Mirrors
+ * {@link imageReferencePlaceholder} when the node can inspect images, and drops
+ * the inspection sentence when it cannot — a hint towards a tool that is not in
+ * the tool list is how a model ends up narrating a call instead of making one.
+ */
+function rehydratedReferencePlaceholder(
+  info: ImageRefInfo,
+  options: RehydrateMediaRefsOptions,
+): string {
+  const { inspectToolName, editToolName } = options;
+  if (typeof inspectToolName === "string" && inspectToolName !== "") {
+    return imageReferencePlaceholder(info, inspectToolName, editToolName);
+  }
+  return (
+    `[image ref=${info.ref} type=${info.mediaType} size=${formatBytes(info.bytes)}] ` +
+    `This image was generated earlier in this conversation and is available as ` +
+    `${info.ref}; quote ${info.ref} when you refer to it.` +
+    (typeof editToolName === "string" && editToolName !== ""
+      ? ` To change it, call ${editToolName}(image="${info.ref}", prompt="…").`
+      : "")
+  );
+}
+
+/** Escape a string for literal use inside a RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
