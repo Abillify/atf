@@ -18,6 +18,24 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.3] - 2026-11-02
+
+### Fixed
+
+- **Runtime** (media tools): an image generated in an earlier turn could not be
+  edited in a later one. Image references (`img-1`, `img-2`, …) live in a
+  per-execution registry, while conversation history only carries the published
+  `/v1/media/<id>` URL, so the next turn had nothing to resolve and the edit
+  tool was never offered a usable target — the model answered with a
+  fabricated media URL that looked like a completed edit. History messages are
+  now rehydrated: media URLs that still resolve in the media store are turned
+  back into image references before the prompt is built, and the reference
+  placeholder tells the model which edit tool to call.
+- **Runtime** (media tools): `edit_image` accepts the published
+  `/v1/media/<id>` URL directly in its `image` argument, so a model quoting the
+  URL from history edits the right image even when the reference handle was
+  lost. Unknown or expired media still fails closed with `unknown_image`.
+
 ## [0.25.2] - 2026-11-01
 
 ### Fixed
@@ -4666,7 +4684,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.2...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.3...HEAD
+[0.25.3]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.3
 [0.25.2]: https://github.com/Abillify/atf/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/Abillify/atf/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/Abillify/atf/compare/v0.24.1...v0.25.0
