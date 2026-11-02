@@ -32,9 +32,14 @@ function buildApp(): Hono {
   app.use("*", csrfProtection());
   app.post("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
   app.get("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
-  app.get("/v1/media/:id", (ctx) => ctx.body(new Uint8Array([1]), 200, {
-    "Content-Type": "image/png",
-  }));
+  // An expired/unknown id answers 404 and the CORP header must be consistent
+  // with the 200 case, otherwise a browser blocks the error body and the client
+  // sees a network failure instead of "image expired".
+  app.get("/v1/media/:id", (ctx) =>
+    ctx.req.param("id") === "missing.png"
+      ? ctx.json({ error: "not found" }, 404)
+      : ctx.body(new Uint8Array([1]), 200, { "Content-Type": "image/png" }),
+  );
   app.delete("/eval/cases/:id", (ctx) => ctx.json({ removed: true }));
   app.post("/webhooks/git", (ctx) => ctx.json({ ok: true }));
   app.get("/monitoring/approvals/:id/widget", (ctx) => {
@@ -95,6 +100,25 @@ describe("secureHeaders()", () => {
   test("keeps CORP same-origin on non-media routes", async () => {
     const app = buildApp();
     const res = await app.request("https://api.example.com/v1/chat/completions");
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+  });
+
+  test("relaxes CORP on a 404 media response too", async () => {
+    // Expired or unknown media ids answer 404; the header is written after
+    // next(), so it must survive the error status as well.
+    const app = buildApp();
+    const res = await app.request("https://api.example.com/v1/media/missing.png");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("cross-origin");
+  });
+
+  test("does not relax CORP for a HEAD media probe", async () => {
+    // The middleware guards on GET. A HEAD probe keeps the hardened value, so
+    // verifying the fix in production has to use GET, not `curl -sI`.
+    const app = buildApp();
+    const res = await app.request("https://api.example.com/v1/media/abc.png", {
+      method: "HEAD",
+    });
     expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
   });
 });
