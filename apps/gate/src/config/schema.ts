@@ -39,7 +39,7 @@ export const ServerConfigSchema = z.object({
   host: z.string().default("0.0.0.0"),
   port: z.coerce.number().int().positive().default(3000),
   name: z.string().default("mcpgate"),
-  version: z.string().default("0.25.3"),
+  version: z.string().default("0.25.4"),
   ssePath: z.string().default("/sse"),
   messagePath: z.string().default("/messages"),
   mcpPath: z.string().default("/mcp"),
