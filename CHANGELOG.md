@@ -18,7 +18,7 @@ releases:
 
 ## [Unreleased]
 
-## [0.25.3] - 2026-11-02
+## [0.25.4] - 2026-11-05
 
 ### Fixed
 
@@ -4684,8 +4684,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.3...HEAD
-[0.25.3]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.3
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.4...HEAD
+[0.25.4]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.4
 [0.25.2]: https://github.com/Abillify/atf/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/Abillify/atf/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/Abillify/atf/compare/v0.24.1...v0.25.0
