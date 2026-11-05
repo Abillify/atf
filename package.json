@@ -74,7 +74,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",
 		"@types/bun": "1.4.4",
-		"knip": "6.43.0",
+		"knip": "6.44.1",
 		"typescript": "7.0.2"
 	},
 	"overrides": {
