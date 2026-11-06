@@ -45,7 +45,7 @@
     "@atf/transaction-contract": "workspace:1.1.0",
     "@aws-sdk/client-bedrock-agent-runtime": "3.1161.0",
     "@huggingface/transformers": "4.3.2",
-    "@langchain/core": "1.3.2",
+    "@langchain/core": "1.3.4",
     "@langchain/langgraph": "1.6.0",
     "@langchain/langgraph-checkpoint": "1.2.2",
     "@modelcontextprotocol/sdk": "1.32.2",
