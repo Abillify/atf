@@ -18,6 +18,17 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.5] - 2026-11-06
+
+### Changed
+
+- **Dependencies**: workspace-wide dependency updates across all apps and
+  packages — AI SDK providers (`ai`, `@ai-sdk/*`), AWS SDK clients,
+  `@langchain/*`, `@huggingface/transformers`, `jose`, `express-rate-limit`,
+  `@babel/parser`, `@types/node`, and the Biome/knip toolchain. Container
+  base images (`node:26.13.0-alpine`, refreshed `debian:bookworm-slim` digest)
+  and the Tauri `Cargo.lock` were updated accordingly.
+
 ## [0.25.4] - 2026-11-05
 
 ### Fixed
@@ -4684,7 +4695,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.4...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.5...HEAD
+[0.25.5]: https://github.com/Abillify/atf/compare/v0.25.4...v0.25.5
 [0.25.4]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.4
 [0.25.2]: https://github.com/Abillify/atf/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/Abillify/atf/compare/v0.25.0...v0.25.1
