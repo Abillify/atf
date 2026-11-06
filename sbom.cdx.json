@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "66e15ee2fee85e5ea2119abd20b083fd260725a132b3bf25ebc15099e0aab1b2"
+        "value": "cbca9baa3eb58088f9059c36647dade5d857194486a3edd14936e77f7d37702f"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -76,16 +76,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.131",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.132",
       "group": "@ai-sdk",
       "name": "amazon-bedrock",
-      "version": "5.0.131",
+      "version": "5.0.132",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.131",
+      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.132",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -95,16 +95,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.95",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.96",
       "group": "@ai-sdk",
       "name": "anthropic",
-      "version": "4.0.95",
+      "version": "4.0.96",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.95",
+      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.96",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -114,16 +114,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.115",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.116",
       "group": "@ai-sdk",
       "name": "azure",
-      "version": "4.0.115",
+      "version": "4.0.116",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.115",
+      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.116",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -133,16 +133,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.78",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.79",
       "group": "@ai-sdk",
       "name": "deepseek",
-      "version": "3.0.78",
+      "version": "3.0.79",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.78",
+      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.79",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -152,16 +152,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.134",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.135",
       "group": "@ai-sdk",
       "name": "gateway",
-      "version": "4.0.134",
+      "version": "4.0.135",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.134",
+      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.135",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -171,16 +171,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.110",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.111",
       "group": "@ai-sdk",
       "name": "google",
-      "version": "4.0.110",
+      "version": "4.0.111",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.110",
+      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.111",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -190,16 +190,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.107",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.108",
       "group": "@ai-sdk",
       "name": "openai",
-      "version": "4.0.107",
+      "version": "4.0.108",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.107",
+      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.108",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -228,16 +228,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.73",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.74",
       "group": "@ai-sdk",
       "name": "provider-utils",
-      "version": "5.0.73",
+      "version": "5.0.74",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.73",
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.74",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1482,16 +1482,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.3.2",
+      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.3.4",
       "group": "@langchain",
       "name": "core",
-      "version": "1.3.2",
+      "version": "1.3.4",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Fcore@1.3.2",
+      "purl": "pkg:npm/%40langchain%2Fcore@1.3.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3927,15 +3927,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/ai@7.0.161",
+      "bom-ref": "pkg:npm/ai@7.0.162",
       "name": "ai",
-      "version": "7.0.161",
+      "version": "7.0.162",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/ai@7.0.161",
+      "purl": "pkg:npm/ai@7.0.162",
       "properties": [
         {
           "name": "atf:compliance:classification",
