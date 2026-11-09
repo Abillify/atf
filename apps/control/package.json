@@ -25,7 +25,7 @@
     "@atf/canonical-json": "workspace:1.0.1",
     "@atf/security-kit": "workspace:1.4.0",
     "@dagrejs/dagre": "3.1.3",
-    "@swc/helpers": "0.5.23",
+    "@swc/helpers": "0.5.24",
     "@tanstack/react-query": "5.105.0",
     "@xyflow/react": "12.12.0",
     "lucide-react": "1.62.0",
