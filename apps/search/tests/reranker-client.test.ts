@@ -474,3 +474,88 @@ describe("createRerankerClient — native rerank relevance_score scale", () => {
     if (result.ok) expect(result.result[0]?.score).toBe(0.9);
   });
 });
+
+describe("createRerankerClient — Authorization header (apiKey)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("native rerank endpoint sends Authorization: Bearer when apiKey is set", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.9 }] }),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await createRerankerClient({
+      rerankUrl: "http://gateway:4000/rerank",
+      rerankModel: "bge-reranker-v2-m3",
+      separator: "\n",
+      endpoint: "rerank",
+      documentsField: "documents",
+      apiKey: "sk-rerank-token",
+      logger,
+    }).rerank("q", ["a"]);
+
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer sk-rerank-token");
+  });
+
+  it("embeddings probe path sends Authorization: Bearer on every call", async () => {
+    // The bi-encoder path probes with the query, then embeds the documents —
+    // both requests must carry the key.
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
+        text: async () => "",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ embedding: [0.4, 0.5, 0.6] }] }),
+        text: async () => "",
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await createRerankerClient({
+      rerankUrl: "http://gateway:4000/v1/embeddings",
+      rerankModel: "bge-m3",
+      separator: "\n",
+      endpoint: "embeddings",
+      apiKey: "sk-embed-token",
+      logger,
+    }).rerank("q", ["a"]);
+
+    expect(result.ok).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    for (const call of mockFetch.mock.calls) {
+      const headers = (call[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers["Authorization"]).toBe("Bearer sk-embed-token");
+    }
+  });
+
+  it("omits Authorization when apiKey is not set", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.9 }] }),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await createRerankerClient({
+      rerankUrl: "http://llama-server:8082",
+      rerankModel: "m",
+      separator: "\n",
+      endpoint: "rerank",
+      logger,
+    }).rerank("q", ["a"]);
+
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBeUndefined();
+  });
+});

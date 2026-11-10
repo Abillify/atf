@@ -127,6 +127,49 @@ describe("createTokenCounter", () => {
     expect(seenBody).toEqual({ inputs: "abc" });
   });
 
+  it("sends Authorization: Bearer when apiKey is set", async () => {
+    let seenHeaders: Record<string, string> | undefined;
+    const fn: FetchLike = async (_url, init) => {
+      seenHeaders = init?.headers as Record<string, string>;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [teiTokens(3)],
+        text: async () => "",
+      };
+    };
+    const counter = createTokenCounter({
+      tokenizeUrl: "http://gateway:4000/tokenize",
+      enabled: true,
+      apiKey: "sk-tokenize-token",
+      logger,
+      fetchImpl: fn,
+    });
+    await counter.count("abc");
+    expect(seenHeaders?.["Authorization"]).toBe("Bearer sk-tokenize-token");
+  });
+
+  it("omits Authorization when apiKey is not set", async () => {
+    let seenHeaders: Record<string, string> | undefined;
+    const fn: FetchLike = async (_url, init) => {
+      seenHeaders = init?.headers as Record<string, string>;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [teiTokens(3)],
+        text: async () => "",
+      };
+    };
+    const counter = createTokenCounter({
+      tokenizeUrl: "http://tei:8080/tokenize",
+      enabled: true,
+      logger,
+      fetchImpl: fn,
+    });
+    await counter.count("abc");
+    expect(seenHeaders?.["Authorization"]).toBeUndefined();
+  });
+
   it("(b) serves a repeated count from cache without re-fetching", async () => {
     // Validates: Requirements 11.2
     const { fn, calls } = okFetch([teiTokens(9)]);

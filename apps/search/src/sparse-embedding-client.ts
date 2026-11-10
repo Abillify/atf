@@ -25,6 +25,12 @@ export interface SparseEmbeddingClientConfig {
   timeoutMs?: number;
   /** Optional circuit breaker shared across all calls from this client. */
   circuitBreaker?: CircuitBreaker;
+  /**
+   * Optional Bearer token. When set, sent as `Authorization: Bearer <token>`
+   * on the HTTP request (OpenAI-compatible servers such as a LiteLLM proxy).
+   * Ignored on the Bedrock code path.
+   */
+  apiKey?: string | null;
   inputTokenCost?: number;
   outputTokenCost?: number;
 }
@@ -94,6 +100,7 @@ export function createSparseEmbeddingClient(
     logger,
     timeoutMs = 30_000,
     circuitBreaker,
+    apiKey,
     inputTokenCost = 0,
     outputTokenCost = 0,
   } = config;
@@ -224,6 +231,7 @@ export function createSparseEmbeddingClient(
       const fetchHeaders: Record<string, string> = {
         "Content-Type": "application/json",
       };
+      if (apiKey) fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
       injectTraceHeaders(fetchHeaders);
       response = await fetch(endpoint, {
         method: "POST",

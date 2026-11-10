@@ -28,7 +28,7 @@
         "@atf/observability": "workspace:1.0.0",
         "@atf/security-kit": "workspace:1.4.0",
         "@atf/transaction-contract": "workspace:1.1.0",
-        "@aws-sdk/client-bedrock-runtime": "3.1161.0",
+        "@aws-sdk/client-bedrock-runtime": "3.1164.0",
         "@modelcontextprotocol/sdk": "1.32.2",
         "express": "5.3.0",
         "jose": "6.2.15",
@@ -49,6 +49,6 @@
         "fast-check": "4.10.2",
         "supertest": "7.3.1",
         "typescript": "7.0.2",
-        "vitest": "5.0.5"
+        "vitest": "5.1.0"
     }
 }

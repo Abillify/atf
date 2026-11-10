@@ -229,4 +229,47 @@ describe("createEmbeddingClient", () => {
       expect(result.error.code).toBe("LLM_INVALID_RESPONSE");
     }
   });
+
+  it("sends Authorization: Bearer when apiKey is set", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const client = createEmbeddingClient({
+      embedUrl: "http://llm:8080/v1/embeddings",
+      embedModel: "text-embedding-3-small",
+      apiKey: "sk-secret-token",
+      logger,
+    });
+
+    await client.embed("test input");
+
+    const call = mockFetch.mock.calls[0];
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer sk-secret-token");
+  });
+
+  it("omits Authorization when apiKey is not set", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const client = createEmbeddingClient({
+      embedUrl: "http://llm:8080/v1/embeddings",
+      embedModel: "text-embedding-3-small",
+      logger,
+    });
+
+    await client.embed("test input");
+
+    const call = mockFetch.mock.calls[0];
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers["Authorization"]).toBeUndefined();
+  });
 });

@@ -77,6 +77,11 @@ export interface TokenCounterConfig {
   inputField?: string;
   /** Optional correlation-ID accessor, forwarded as X-Request-Id (mirrors embedding-client). */
   getRequestId?: () => string | undefined;
+  /**
+   * Optional Bearer token. When set, sent as `Authorization: Bearer <token>`
+   * on the tokenize request (OpenAI-compatible servers such as a LiteLLM proxy).
+   */
+  apiKey?: string | null;
   /** Injectable fetch. Defaults to `globalThis.fetch`. Present for testing. */
   fetchImpl?: FetchLike;
 }
@@ -200,6 +205,7 @@ export function createTokenCounter(config: TokenCounterConfig): TokenCounter {
     cacheSize = 2_048,
     inputField = "inputs",
     getRequestId,
+    apiKey,
     fetchImpl,
   } = config;
 
@@ -231,6 +237,7 @@ export function createTokenCounter(config: TokenCounterConfig): TokenCounter {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const reqId = getRequestId?.();
       if (reqId) headers["X-Request-Id"] = reqId;
       injectTraceHeaders(headers);

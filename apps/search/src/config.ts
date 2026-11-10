@@ -51,6 +51,12 @@ export interface Config {
    * Default: "inputs".
    */
   embedInputField: string; // EMBED_INPUT_FIELD (default: "inputs")
+  /**
+   * Optional Bearer token for the embedding server (sent as
+   * `Authorization: Bearer <key>`). Required for OpenAI-compatible servers such
+   * as a LiteLLM proxy that reject unauthenticated calls. Ignored on Bedrock.
+   */
+  embedApiKey: string | null; // EMBED_API_KEY (optional)
   /** Optional secondary embedder, enabled only when its model is configured. */
   embedFallbackUrl: string | null; // EMBED_FALLBACK_URL
   embedFallbackModel: string | null; // EMBED_FALLBACK_MODEL (enables fallback; must equal EMBED_MODEL unless EMBED_FALLBACK_SAME_SPACE=true)
@@ -63,6 +69,12 @@ export interface Config {
    */
   embedFallbackSameSpace: boolean; // EMBED_FALLBACK_SAME_SPACE (default: false)
   embedFallbackInputField: string; // EMBED_FALLBACK_INPUT_FIELD (default: "input")
+  /**
+   * Bearer token for the fallback embedding server. Independent of
+   * `EMBED_API_KEY` (the fallback is often a different server with its own
+   * token). Ignored on Bedrock.
+   */
+  embedFallbackApiKey: string | null; // EMBED_FALLBACK_API_KEY (optional)
   /** Required vector dimension for both embedding paths when configured. */
   embedExpectedDimension: number | null; // EMBED_EXPECTED_DIMENSION (optional positive int)
   apiToken: string | null; // API_TOKEN (optional)
@@ -126,12 +138,21 @@ export interface Config {
    * Default: "texts".
    */
   rerankDocumentsField: string; // RERANK_DOCUMENTS_FIELD (default: "texts")
+  /**
+   * Optional Bearer token for the reranker server (sent as
+   * `Authorization: Bearer <key>` on the native rerank endpoint and the
+   * embeddings probe/bi-encoder/rank-pooling paths). Required for
+   * OpenAI-compatible servers such as a LiteLLM proxy.
+   */
+  rerankApiKey: string | null; // RERANK_API_KEY (optional)
   /** Optional secondary reranker, enabled only when its model is configured. */
   rerankFallbackUrl: string | null; // RERANK_FALLBACK_URL
   rerankFallbackModel: string | null; // RERANK_FALLBACK_MODEL (enables fallback)
   rerankFallbackInputSeparator: string; // RERANK_FALLBACK_SEPARATOR (default: "\n")
   rerankFallbackEndpoint: "embeddings" | "rerank"; // RERANK_FALLBACK_ENDPOINT
   rerankFallbackDocumentsField: string; // RERANK_FALLBACK_DOCUMENTS_FIELD
+  /** Bearer token for the fallback reranker server. Independent of `RERANK_API_KEY`. */
+  rerankFallbackApiKey: string | null; // RERANK_FALLBACK_API_KEY (optional)
 
   hybridSearch: boolean; // HYBRID_SEARCH (default: true)
   bodyLimit: string; // BODY_LIMIT (default: "10mb")
@@ -316,6 +337,12 @@ export interface Config {
   sparseUrl: string; // SPARSE_URL (default: EMBED_URL)
   /** SPLADE model name. Required to enable sparse search. */
   sparseModel: string | null; // SPARSE_MODEL (optional)
+  /**
+   * Optional Bearer token for the SPLADE server (sent as
+   * `Authorization: Bearer <key>`). Required for OpenAI-compatible servers such
+   * as a LiteLLM proxy. Ignored on Bedrock.
+   */
+  sparseApiKey: string | null; // SPARSE_API_KEY (optional)
   /** Vocabulary size of the SPLADE model. Default: 30522. */
   sparseVocabSize: number; // SPARSE_VOCAB_SIZE (default: 30522)
 
@@ -328,6 +355,12 @@ export interface Config {
    * counter uses the character heuristic.
    */
   tokenizeUrl: string | null; // TOKENIZE_URL (default: derived from EMBED_URL)
+  /**
+   * Optional Bearer token for the `/tokenize` endpoint (sent as
+   * `Authorization: Bearer <key>`). Needed when the tokenizer sits behind an
+   * authenticating proxy such as a LiteLLM gateway.
+   */
+  tokenizeApiKey: string | null; // TOKENIZE_API_KEY (optional)
   /**
    * Enable TEI `/tokenize` token counting. Off automatically for Bedrock (no
    * `/tokenize`). When disabled the token counter uses the character heuristic
@@ -1073,12 +1106,14 @@ export function loadConfig(): Config {
 
   // ── Simple optional fields ──────────────────────────────────────────────────
   const embedInputField = optionalString("EMBED_INPUT_FIELD") ?? "inputs";
+  const embedApiKey = optionalString("EMBED_API_KEY");
   const embedFallbackModel = optionalString("EMBED_FALLBACK_MODEL");
   const embedFallbackUrl = embedFallbackModel
     ? (optionalString("EMBED_FALLBACK_URL") ?? embedUrl)
     : null;
   const embedFallbackInputField =
     optionalString("EMBED_FALLBACK_INPUT_FIELD") ?? "input";
+  const embedFallbackApiKey = optionalString("EMBED_FALLBACK_API_KEY");
   // A fallback served by a DIFFERENT embedding model writes vectors into a
   // different space than the indexed ones: dimension equality (all the
   // fallback client can validate) does not mean vector-space equality, and
@@ -1534,6 +1569,7 @@ export function loadConfig(): Config {
   const rerankInputSeparator = optionalString("RERANK_SEPARATOR") ?? "\n";
   const rerankDocumentsField =
     optionalString("RERANK_DOCUMENTS_FIELD") ?? "texts";
+  const rerankApiKey = optionalString("RERANK_API_KEY");
   const rerankFallbackModel = optionalString("RERANK_FALLBACK_MODEL");
   const rerankFallbackUrl = rerankFallbackModel
     ? (optionalString("RERANK_FALLBACK_URL") ?? rerankUrl)
@@ -1542,6 +1578,7 @@ export function loadConfig(): Config {
     optionalString("RERANK_FALLBACK_SEPARATOR") ?? "\n";
   const rerankFallbackDocumentsField =
     optionalString("RERANK_FALLBACK_DOCUMENTS_FIELD") ?? "texts";
+  const rerankFallbackApiKey = optionalString("RERANK_FALLBACK_API_KEY");
   const rerankCandidateMultiplier = parseIntEnv(
     "RERANK_CANDIDATE_MULTIPLIER",
     4,
@@ -1605,6 +1642,7 @@ export function loadConfig(): Config {
   const summaryToken = optionalString("SUMMARY_TOKEN");
   const sparseUrl = resolveUrl("SPARSE_URL", embedUrl);
   const sparseModel = optionalString("SPARSE_MODEL");
+  const sparseApiKey = optionalString("SPARSE_API_KEY");
 
   // ── Token counting (TEI /tokenize) ──────────────────────────────────────
   // Derive the tokenize URL from EMBED_URL by reusing the origin and replacing
@@ -1627,6 +1665,7 @@ export function loadConfig(): Config {
   }
   const tokenizeUrl =
     optionalString("TOKENIZE_URL") ?? deriveTokenizeUrlFromEmbed(embedUrl);
+  const tokenizeApiKey = optionalString("TOKENIZE_API_KEY");
   // Enabled by default, but never for Bedrock and never without a usable URL.
   const tokenizeEnabled =
     !embedIsBedrock &&
@@ -1752,10 +1791,12 @@ export function loadConfig(): Config {
     embedModel,
     embedModelRevision,
     embedInputField,
+    embedApiKey,
     embedFallbackUrl,
     embedFallbackModel,
     embedFallbackSameSpace,
     embedFallbackInputField,
+    embedFallbackApiKey,
     embedExpectedDimension,
     apiToken,
     apiTokenNext,
@@ -1769,6 +1810,7 @@ export function loadConfig(): Config {
     defaultChunkOverlap,
     rerankUrl,
     rerankModel,
+    rerankApiKey,
     rerankBatchSize,
     rerankBatchConcurrency,
     rerankGlobalConcurrency,
@@ -1783,6 +1825,7 @@ export function loadConfig(): Config {
     rerankFallbackInputSeparator,
     rerankFallbackEndpoint,
     rerankFallbackDocumentsField,
+    rerankFallbackApiKey,
     hybridSearch,
     bodyLimit,
     maxQueryChars,
@@ -1827,8 +1870,10 @@ export function loadConfig(): Config {
     summaryMaxConcurrency,
     sparseUrl,
     sparseModel,
+    sparseApiKey,
     sparseVocabSize,
     tokenizeUrl,
+    tokenizeApiKey,
     tokenizeEnabled,
     tokenizeTimeoutMs,
     tokenizeCacheSize,
