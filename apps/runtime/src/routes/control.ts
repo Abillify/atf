@@ -431,18 +431,21 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
           400,
         );
       }
-      // Reviewer identity for the audit trail / widget. Precedence: an explicit
-      // ?by= override; then — on the OPEN plane (no RBAC), where the reviewer is
-      // the end user clicking their own in-chat widget — the user who triggered
-      // the request; then the authenticated operator identity. This replaces the
-      // generic "anonymous" fallback with the real person whenever we know them.
+      // Reviewer identity for the audit trail / widget. When the caller is an
+      // AUTHENTICATED operator (`via` is "token"/"jwt"), the authenticated
+      // identity is authoritative and `?by=` is ignored — otherwise a forged
+      // query parameter would attribute the decision to someone else, exactly
+      // the audit-falsification the POST handler already prevents. On the OPEN
+      // plane (no RBAC / a link-scoped actor), where the reviewer is the end
+      // user clicking their own in-chat widget, precedence is: an explicit
+      // `?by=`, then the user who triggered the request, then the actor name.
       const pending = (await approvalGate.listPending()).find(
         (p) => p.id === id,
       );
       const by =
-        ctx.req.query("by") ??
-        (actor.via === "open" ? pending?.requestedBy : undefined) ??
-        actor.name;
+        actor.via === "open"
+          ? (ctx.req.query("by") ?? pending?.requestedBy ?? actor.name)
+          : actor.name;
       const approved = decision === "approved";
       const ok = await approvalGate.resolve(id, { approved, by });
       if (!ok) {
@@ -464,7 +467,13 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
             role: actor.role,
             action: "approvals.resolve",
             target: id,
-            details: { approved, via: "link" },
+            details: {
+              approved,
+              via: "link",
+              // The identity the request was actually authenticated as, kept
+              // alongside (possibly different from) the reviewer name above.
+              authenticatedAs: actor.name,
+            },
           });
         } catch {
           return ctx.html(

@@ -18,6 +18,16 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Runtime** (approvals): the in-chat approval link
+  `GET /monitoring/approvals/:id/decide` accepted a `?by=` query parameter even
+  when the caller was an authenticated operator, so the resolved decision and
+  the audit entry could carry a freely chosen reviewer name. An authenticated
+  identity is now authoritative — `?by=` is ignored and the audit entry records
+  the real one in `details.authenticatedAs`. On the open plane (no RBAC) the
+  previous precedence is unchanged.
+
 ## [0.25.6] - 2026-11-10
 
 ### Fixed

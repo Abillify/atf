@@ -16,6 +16,7 @@ import type {
   ApprovalRegistry,
 } from "../../graph/approval-gate.js";
 import { signApprovalLinkToken } from "../../graph/approval-link.js";
+import { InMemoryAuditLog } from "../../observability/audit-log.js";
 import {
   createReplayService,
   InMemoryReplayStore,
@@ -239,6 +240,73 @@ describe("approval-link capability token (in-chat widget)", () => {
       `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(wrongToken)}`,
     );
     expect(res.status).toBe(401);
+  });
+
+  test("GET /:id/decide ignores ?by= when the caller is an authenticated operator", async () => {
+    // RBAC-authenticated operator `alice`: the query parameter must never
+    // overwrite the authenticated identity in the resolved decision or the
+    // audit trail (mirrors the POST handler's rule).
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const audit = new InMemoryAuditLog();
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+      auditLog: audit,
+      operatorAuth: createOperatorAuthorizer({
+        authRequired: true,
+        tokens: [{ token: "op-token-alice", role: "operator", name: "alice" }],
+      }),
+    });
+
+    const decision = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&by=bob`,
+      { headers: { Authorization: "Bearer op-token-alice" } },
+    );
+    expect(res.status).toBe(200);
+    const decided = await decision;
+    expect(decided.by).toBe("alice");
+
+    const records = await audit.list();
+    const resolve = records.find((r) => r.action === "approvals.resolve");
+    expect(resolve?.actor).toBe("alice");
+    expect(resolve?.details?.via).toBe("link");
+    expect(resolve?.details?.authenticatedAs).toBe("alice");
+  });
+
+  test("GET /:id/decide on the open plane still honours ?by=", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const audit = new InMemoryAuditLog();
+    const a = app({ approvalGate: gate, auditLog: audit });
+
+    const decision = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&by=carol`,
+    );
+    expect(res.status).toBe(200);
+    const decided = await decision;
+    expect(decided.by).toBe("carol");
+
+    const records = await audit.list();
+    const resolve = records.find((r) => r.action === "approvals.resolve");
+    expect(resolve?.details?.authenticatedAs).toBe("anonymous");
   });
 });
 
