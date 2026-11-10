@@ -1,6 +1,6 @@
 {
     "name": "@atf/search",
-    "version": "0.25.5",
+    "version": "0.25.6",
     "private": true,
     "author": "Abillify Technology GmbH <info@abillify.me>",
     "license": "Elastic-2.0",
