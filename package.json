@@ -64,6 +64,7 @@
 		"format": "bunx biome format --write",
 		"check:budgets": "bun run scripts/report-budgets.ts --report",
 		"check:budgets:ci": "bun run scripts/report-budgets.ts --enforce",
+		"preflight": "bun run scripts/release-preflight.ts --quick",
 		"release:preflight": "bun run scripts/release-preflight.ts",
 		"smoke:model-capabilities": "bun run --filter @atf/runtime smoke:model-capabilities",
 		"typecheck": "bun run --filter '*' typecheck",

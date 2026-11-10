@@ -86,6 +86,14 @@ releases:
   platform exposes ~130 environment variables; the generated reference lists
   several hundred. The comment no longer carries a number that goes stale on
   every release and points at `docs/CONFIGURATION.md` instead.
+- **Repo tooling** (`preflight`): `release-preflight.ts` gains `--quick`, which
+  runs the fast gates only — `verify:spdx`, `verify:version`, the three
+  generated-reference checks, `check:links`, `lint:baseline`, `typecheck`,
+  `test` — and skips the build, budgets, contracts, and the release-facing
+  tree and secret scans. `bun run preflight` is that mode, and CONTRIBUTING.md
+  now opens with it: the checklist asked for 21 commands where CI runs one
+  script, so contributors either ran a subset they remembered or paid for the
+  full release gate on a docs change. `--skip` works in both modes.
 
 ## [0.25.6] - 2026-11-10
 
