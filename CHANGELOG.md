@@ -73,6 +73,15 @@ releases:
   states the limit the old sentence was reaching for: the flag gates startup and
   readiness only, so deleting the policy file from a running instance still
   disables the policy until readiness or a restart reports it.
+- **Docs** (`docs/OPERATIONS-TCO.md`): the TCO guide told operators that Extract
+  sends **every page** to the vision model. On the v2 path the deterministic text
+  fast-path (`TEXT_FAST_PATH`, on by default) builds a `text` page's blocks from
+  the PDF text layer with no model call, and BPMN, e-mail and chart-free XLSX
+  are parsed natively without ever reaching it. §4.1 now describes which pages
+  reach the model and which do not, the ingest formula carries a
+  `fast_path_share` factor, the existing-controls list names the fast path and
+  the native parsers, and the previously unnumbered "Cost levers in the Runtime"
+  section is §7 with "Operating effort" following as §8.
 
 ## [0.25.6] - 2026-11-10
 

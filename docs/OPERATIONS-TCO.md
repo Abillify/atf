@@ -89,8 +89,34 @@ HA requirements outside the chart:
 
 ### 4.1 VLM tokens per page (Extract) — usually #1
 
-Extract sends **every page** of every ingested document to the vision model
-(OpenAI-compatible `VISION_URL`). The per-page token cost is set by:
+Extract does **not** send every page to the vision model
+(OpenAI-compatible `VISION_URL`). On the Document Intelligence v2 path the
+deterministic text fast-path (`TEXT_FAST_PATH`, default `true`) builds a `text`
+page's blocks straight from poppler's `-bbox-layout` geometry, at zero token
+cost, and only the pages that fail its gate reach the model. A page qualifies
+only when all of the following hold — on any doubt it falls back to vision,
+because silently dropping non-text content is worse than a missed fast path:
+
+- the page classified as `text` (not `scan`, `drawing` or `mixed`);
+- the S2 geometry is usable (real blocks, lines and words, positive page size);
+- no ink outside the text blocks beyond `TEXT_FAST_PATH_MAX_INK_RATIO`
+  (default 0.04) — more ink there means a diagram, stamp or scanned overlay the
+  text layer cannot represent;
+- an ink signal exists at all; without a rendered image the page cannot be
+  cleared, so vision handles it.
+
+Natively parsed formats skip rasterisation and the model entirely: BPMN and
+e-mail are read structurally (`native-bpmn`, `native-email`), and an XLSX
+without charts or drawings is emitted as native tables without a render. The
+eligibility decision is per page and logged with its reason, so a fast-path page
+and a vision page coexist in one document.
+
+Design estimates the fast path saves **40–70 % of vision time on text-heavy
+documents** (`apps/extract/src/pipeline/text-fast-path.ts`) — an estimate, not a
+measured constant, so measure your own corpus before budgeting with it. Set
+`TEXT_FAST_PATH=false` to force vision on every page, e.g. to compare quality.
+
+The per-page token cost of the pages that *do* go to the model is set by:
 
 - `RENDER_DPI` (default 200) — the raster resolution the model sees. Token
   counts of vision encoders grow roughly with pixel area: halving the DPI
@@ -116,18 +142,32 @@ Extract sends **every page** of every ingested document to the vision model
 **Formula:**
 
 ```
-cost_ingest = pages × (in_tokens_per_page × price_in
+cost_ingest = pages × (1 − fast_path_share)
+                    × (in_tokens_per_page × price_in
                      + out_tokens_per_page × price_out)
 ```
 
+`fast_path_share` is the fraction of an ingest's pages that the text fast-path
+clears — 0 for a scanned corpus, and for a text-heavy one the design estimate
+above would put it in the 0.4–0.7 range. Measure it rather than assuming it: the
+per-page decision and its fall-back reason are logged, so one representative run
+tells you the share for your own documents. Setting `TEXT_FAST_PATH=false`, or a
+strictly lower `TEXT_FAST_PATH_MAX_INK_RATIO`, moves it back toward 0.
+
 **Worked example (illustrative — replace with your measured numbers):** a
 30-page invoice at ~1 100 image+prompt tokens and ~350 output tokens per page,
-API prices $0.0021 / 1k in and $0.0063 / 1k out:
+API prices $0.0021 / 1k in and $0.0063 / 1k out, and no fast-path benefit (an
+invoice scan is not a `text` page — the conservative case):
 
 ```
 30 × (1.1 × 0.0021 + 0.35 × 0.0063) ≈ 30 × 0.0045 ≈ $0.14 per document
 10 000 documents/month ≈ $1 400/month  ← dominated entirely by the VLM
 ```
+
+The same 10 000 documents as text-heavy specifications, at a measured
+`fast_path_share` of 0.5, cost about half that — the line item is the share, not
+just the page count. Recall on the fast-path pages still needs your own
+`bun run eval:extract-quality` run before you trust the number.
 
 Self-hosted, the same driver becomes GPU-hours: pages/minute per vLLM replica
 is what you measure (vLLM metrics `num_requests_running` vs `--max-num-seqs`),
@@ -193,6 +233,10 @@ self-serve usage.
 
 ## 6. Cost controls that already exist in the product
 
+- `TEXT_FAST_PATH` (+ `TEXT_FAST_PATH_MAX_INK_RATIO`) — pages whose text layer is
+  complete are built deterministically with no vision call at all (§4.1). On by
+  default; the largest single reduction available on a text-heavy corpus.
+- Native parsers — BPMN, e-mail and chart-free XLSX never reach the model.
 - `MAX_PAGES` — hard cap on the pages one document/job may process (Extract, v1 and v2).
 - `VISION_BUDGET_PAGES_PER_DAY` — per-tenant daily VLM page budget (Extract; off by default, and not applied to jobs without a tenant).
 - `PAGE_CONCURRENCY` + vLLM `--max-num-seqs` — throttle how fast VLM capacity
@@ -206,7 +250,7 @@ self-serve usage.
 - Backups with tested restores — the cheapest insurance against the most
   expensive incident (corpus loss = full re-ingest = full VLM bill again).
 
-## Cost levers in the Runtime
+## 7. Cost levers in the Runtime
 
 Beyond the per-service knobs above, the Runtime ships flow-level levers that
 change what a flow execution costs. None of them has a universal right
@@ -257,7 +301,7 @@ budget (`packEvidence`): the answering model receives at most that many
 tokens of passages regardless of how many candidates matched, bounding the
 input side of the answer call per request.
 
-## 7. Operating effort
+## 8. Operating effort
 
 Recurring platform work is small compared to the inference bill, but it is
 not zero. The tasks below come from the runbooks (`runbooks/`); the effort
