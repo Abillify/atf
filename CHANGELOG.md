@@ -100,6 +100,15 @@ releases:
   thread rather than a process or container, and the name allowlist is a
   separate control from the sandbox. Both texts now say what is there and what
   is not, and link the ADR.
+- **Runtime** (PII vault): `PostgresPiiVaultStore.put` issued one `INSERT` per
+  entry, so a message that tokenized 1 200 spans cost 1 200 sequential queries
+  on the request path before the first provider call. Entries now go out as one
+  multi-row `INSERT … ON CONFLICT (token) DO NOTHING` per 500 entries — three
+  statements for the same message. Column order, the per-entry AAD binding
+  `(executionId, token)`, and the durability contract are unchanged: the first
+  failing statement stops the loop rather than retrying a down database 1 200
+  times, a warning is logged, and the in-memory mirror still resolves every
+  entry for the execution.
 - **Docs** (CAPABILITIES, ADR-0036): the PII vault section claimed the vault
   keeps PII out of provider calls without saying which paths it covers. A new
   "Boundaries" list states the current reach exactly: inbound message text and

@@ -13,6 +13,7 @@ import {
   InMemoryPiiVaultStore,
   PostgresPiiVaultStore,
   createPiiVault,
+  vaultInsertBatchRows,
 } from "../pii-vault.js";
 import type { PiiVault, PiiVaultConfig, PiiVaultStore } from "../pii-vault.js";
 import { SecretCipher } from "../secret-cipher.js";
@@ -201,6 +202,24 @@ function fakeDb(overrides: Partial<Database> = {}): Database {
   } as Database;
 }
 
+describe("vaultInsertBatchRows", () => {
+  it("batches at most 500 rows per statement", () => {
+    expect(vaultInsertBatchRows()).toBe(500);
+  });
+
+  it("shrinks below 500 when a row would carry many parameters", () => {
+    // 65 535 / 200 → 327 rows keeps the statement under the driver ceiling.
+    expect(vaultInsertBatchRows(200)).toBe(327);
+  });
+
+  it("never returns zero, even for an absurd parameter count", () => {
+    // A zero-size batch would loop forever in `put`.
+    expect(vaultInsertBatchRows(100_000)).toBe(1);
+    expect(vaultInsertBatchRows(0)).toBe(500);
+    expect(vaultInsertBatchRows(-1)).toBe(500);
+  });
+});
+
 describe("PostgresPiiVaultStore", () => {
   it("encrypts on put and decrypts on resolve via the DB path", async () => {
     const inserted: unknown[][] = [];
@@ -232,6 +251,114 @@ describe("PostgresPiiVaultStore", () => {
     await store.clear("exec-1");
     const resolved = await store.resolve("exec-1", "tok1");
     expect(resolved).toBe("secret@example.com");
+  });
+
+  it("writes 1 200 entries in three statements, not twelve hundred", async () => {
+    const statements: { text: string; params: unknown[] }[] = [];
+    const db = fakeDb({
+      query: (async (text: string, params?: readonly unknown[]) => {
+        if (/^INSERT/i.test(text.trim())) {
+          statements.push({ text, params: [...(params ?? [])] });
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    const entries = Array.from({ length: 1_200 }, (_unused, i) => ({
+      token: `tok${String(i).padStart(5, "0")}`,
+      type: "email" as const,
+      value: `user${String(i)}@example.com`,
+    }));
+    await store.put("exec-1", "tenant-a", entries);
+
+    expect(statements).toHaveLength(3);
+    const rowsPerStatement = statements.map((s) => s.params.length / 6);
+    expect(rowsPerStatement).toEqual([500, 500, 200]);
+    // Every statement stays under PostgreSQL's 65 535 parameter ceiling.
+    for (const s of statements) expect(s.params.length).toBeLessThan(65_535);
+    // ON CONFLICT is preserved so a duplicate token is still a no-op.
+    for (const s of statements) {
+      expect(s.text).toContain("ON CONFLICT (token) DO NOTHING");
+    }
+    // Placeholders restart at $1 in every statement (each is its own query) and
+    // run to 6 params × 200 rows.
+    const last = statements[2];
+    if (last === undefined) throw new Error("expected a third statement");
+    expect(last.text).toContain("($1, $2, $3, $4, $5, $6)");
+    expect(last.text).toContain("($1195, $1196, $1197, $1198, $1199, $1200)");
+    expect(last.text).not.toContain("$1201");
+  });
+
+  it("keeps the per-entry column order and AAD-bound ciphertext when batching", async () => {
+    const statements: { text: string; params: unknown[] }[] = [];
+    const db = fakeDb({
+      query: (async (text: string, params?: readonly unknown[]) => {
+        if (/^INSERT/i.test(text.trim())) {
+          statements.push({ text, params: [...(params ?? [])] });
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await store.put("exec-1", "tenant-a", [
+      { token: "tokA", type: "email", value: "a@example.com", detector: "regex" },
+      { token: "tokB", type: "iban", value: "DE89370400440532013000" },
+    ]);
+
+    const only = statements[0];
+    if (only === undefined) throw new Error("expected one statement");
+    // Row layout unchanged: token, execution_id, tenant_id, pii_type, value, detector.
+    expect(only.params.slice(0, 6)).toEqual([
+      "tokA",
+      "exec-1",
+      "tenant-a",
+      "email",
+      expect.stringMatching(/./),
+      "regex",
+    ]);
+    expect(only.params.slice(6, 10)).toEqual([
+      "tokB",
+      "exec-1",
+      "tenant-a",
+      "iban",
+    ]);
+    expect(only.params[11]).toBeNull(); // detector absent → NULL
+    const cipherA = only.params[4];
+    const cipherB = only.params[10];
+    if (typeof cipherA !== "string" || typeof cipherB !== "string") {
+      throw new Error("expected ciphertext in both rows");
+    }
+    expect(cipherA).not.toBe("a@example.com");
+    // The AAD still binds (executionId, token), so a row copied to another
+    // token cannot be decrypted with the second row's context.
+    expect(() => CIPHER.decrypt(cipherA, "pii-vault:exec-1:tokB")).toThrow();
+    expect(CIPHER.decrypt(cipherA, "pii-vault:exec-1:tokA")).toBe("a@example.com");
+    expect(CIPHER.decrypt(cipherB, "pii-vault:exec-1:tokB")).toBe("DE89370400440532013000");
+  });
+
+  it("stops issuing statements on the first failure and still mirrors every entry", async () => {
+    let inserts = 0;
+    const db = fakeDb({
+      query: (async (text: string) => {
+        if (/^INSERT/i.test(text.trim())) {
+          inserts++;
+          throw new Error("db down");
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    const entries = Array.from({ length: 1_200 }, (_unused, i) => ({
+      token: `tok${String(i).padStart(5, "0")}`,
+      type: "email" as const,
+      value: `user${String(i)}@example.com`,
+    }));
+    await store.put("exec-1", undefined, entries);
+    // One failing statement aborts the batch loop — no point retrying a down
+    // database 1 200 times on the request path — while the mirror keeps the
+    // execution resolvable exactly as before.
+    expect(inserts).toBe(1);
+    expect(await store.resolve("exec-1", "tok01199")).toBe("user1199@example.com");
   });
 
   it("resolve() serves from the in-memory mirror without a DB round-trip", async () => {

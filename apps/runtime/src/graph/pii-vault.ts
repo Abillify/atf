@@ -310,6 +310,79 @@ interface VaultRow {
   encrypted_value: string;
 }
 
+/**
+ * Columns written per vault entry, in statement order. One entry contributes
+ * exactly this many positional parameters, which is what
+ * {@link vaultInsertBatchRows} divides the driver's parameter ceiling by.
+ */
+const VAULT_INSERT_COLUMNS =
+  "token, execution_id, tenant_id, pii_type, encrypted_value, detector";
+const VAULT_INSERT_PARAMS_PER_ROW = 6;
+
+/**
+ * Largest batch written by one statement. PostgreSQL's ceiling is 65 535
+ * parameters, which six parameters per row would put at over 10 000 rows — the
+ * limit here is 500 instead, well clear of it, so that a column added to
+ * {@link VAULT_INSERT_COLUMNS} later cannot push a full batch past the ceiling,
+ * and so a single statement stays small enough that a failure tells the warning
+ * log which 500 entries were lost rather than which 10 000.
+ */
+const VAULT_INSERT_MAX_ROWS = 500;
+
+/** How many entries fit in one INSERT without exceeding the parameter ceiling. */
+export function vaultInsertBatchRows(
+  paramsPerRow: number = VAULT_INSERT_PARAMS_PER_ROW,
+): number {
+  if (paramsPerRow < 1) return VAULT_INSERT_MAX_ROWS;
+  return Math.max(1, Math.min(VAULT_INSERT_MAX_ROWS, Math.floor(65_535 / paramsPerRow)));
+}
+
+/**
+ * One multi-row `INSERT … ON CONFLICT (token) DO NOTHING` for `rowCount`
+ * entries. Placeholders are positional across the whole statement, so row `i`
+ * occupies `$6i+1 … $6i+6` — {@link vaultInsertParams} builds the values in the
+ * same order.
+ */
+function vaultInsertStatement(rowCount: number): string {
+  const rows: string[] = [];
+  for (let i = 0; i < rowCount; i++) {
+    const base = i * VAULT_INSERT_PARAMS_PER_ROW;
+    rows.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`,
+    );
+  }
+  return (
+    `INSERT INTO pii_vault_entries (${VAULT_INSERT_COLUMNS}) VALUES ${rows.join(", ")} ` +
+    "ON CONFLICT (token) DO NOTHING"
+  );
+}
+
+/** Flatten one batch of entries into positional parameters, row by row. */
+function vaultInsertParams(
+  batch: readonly PiiVaultEntry[],
+  executionId: string,
+  tenantId: string | undefined,
+  encrypt: (value: string, token: string) => string,
+): unknown[] {
+  const params: unknown[] = [];
+  for (const e of batch) {
+    params.push(
+      e.token,
+      executionId,
+      tenantId ?? null,
+      e.type,
+      // AAD binds the ciphertext to (executionId, token) — the exact pair the
+      // WHERE clause in `resolve()` looks up by. Copying an `encrypted_value`
+      // row into a different execution_id/token (SQL-injection, backup
+      // restore, or an insider with DB access) then fails to decrypt instead
+      // of silently resolving under the wrong execution's authority.
+      encrypt(e.value, e.token),
+      e.detector ?? null,
+    );
+  }
+  return params;
+}
+
 export class PostgresPiiVaultStore implements PiiVaultStore {
   private readonly mirror = new InMemoryPiiVaultStore();
 
@@ -319,25 +392,34 @@ export class PostgresPiiVaultStore implements PiiVaultStore {
     private readonly logger?: Logger,
   ) {}
 
+  /**
+   * Writes `entries` in as few statements as possible — one multi-row INSERT
+   * per {@link vaultInsertBatchRows} entries — instead of one round-trip per
+   * entry. A single message that tokenizes 1 200 spans used to cost 1 200
+   * sequential queries on the request path, before the first provider call;
+   * it now costs one. Encryption and the per-entry AAD are unchanged, and so
+   * is the durability contract: a failing database logs a warning, stops
+   * issuing batches, and the in-memory mirror below still serves every
+   * `resolve()`/`clear()` for this execution.
+   */
   async put(
     executionId: string,
     tenantId: string | undefined,
     entries: readonly PiiVaultEntry[],
   ): Promise<void> {
     if (entries.length === 0) return;
+    const maxRows = vaultInsertBatchRows();
     try {
-      for (const e of entries) {
-        // AAD binds the ciphertext to (executionId, token) — the exact pair the
-        // WHERE clause in `resolve()` looks up by. Copying an `encrypted_value`
-        // row into a different execution_id/token (SQL-injection, backup
-        // restore, or an insider with DB access) then fails to decrypt instead
-        // of silently resolving under the wrong execution's authority.
-        const encrypted = this.cipher.encrypt(e.value, vaultAad(executionId, e.token));
+      for (let offset = 0; offset < entries.length; offset += maxRows) {
+        const batch = entries.slice(offset, offset + maxRows);
         await this.db.query(
-          `INSERT INTO pii_vault_entries (token, execution_id, tenant_id, pii_type, encrypted_value, detector)
-             VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (token) DO NOTHING`,
-          [e.token, executionId, tenantId ?? null, e.type, encrypted, e.detector ?? null],
+          vaultInsertStatement(batch.length),
+          vaultInsertParams(
+            batch,
+            executionId,
+            tenantId,
+            (value, token) => this.cipher.encrypt(value, vaultAad(executionId, token)),
+          ),
         );
       }
     } catch (err) {
