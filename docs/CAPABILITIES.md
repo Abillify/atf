@@ -363,8 +363,13 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
 - **Continuous red teaming.** A scheduled attack suite probes configured flows, scores the
   results with a judge model, and tracks a security posture value over time
   (`RED_TEAM_ENABLED`, `RED_TEAM_INTERVAL_MS`).
-- **Plugin sandbox.** Third-party plugins run behind a trust boundary with an allowlist and
-  an execution timeout (`PLUGINS_SANDBOX`, `PLUGINS_ALLOWLIST`).
+- **Plugin isolation.** With `PLUGINS_SANDBOX=true`, a node-type plugin runs in its own Bun
+  Worker that inherits no `process.env` and receives a read-only snapshot of the state plus an
+  execution timeout. Which plugins load at all is a separate control — a name allowlist
+  (`PLUGINS_ALLOWLIST`) or a hash manifest (`plugins.manifest.json`), and in production a plugin
+  with neither is refused. The default sandbox is off, so in-process plugins keep full
+  privileges, and a Worker is a thread rather than a process or container: defence-in-depth, not
+  a hard security boundary (ADR 0006).
 - **Code sandbox.** Generated or tool-provided code executes in a resource-bounded container
   with network access off by default (`SANDBOX_ENABLED`, `SANDBOX_NETWORK_ENABLED`).
 

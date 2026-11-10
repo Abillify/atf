@@ -248,7 +248,9 @@ setting that governs it.
 - **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
   per-user OIDC consent.
 - **Safety** — guardrails on input and output, egress DLP, tool *output* checked for injected
-  instructions, scheduled red teaming, sandboxed plugins.
+  instructions, scheduled red teaming, and plugins isolated in a worker without access to the
+  process environment — opt-in (`PLUGINS_SANDBOX`), defence-in-depth rather than a hard
+  security boundary; see [ADR 0006](docs/adr/0006-plugin-trust-boundary-and-isolation.md).
 - **Governance** — approvals that reject on timeout, an explicitly loaded
   `compliance-policy.yaml`, hash-chained audit records, signed evidence bundles, and a generated
   dossier when their required controls are configured.

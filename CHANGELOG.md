@@ -94,6 +94,12 @@ releases:
   now opens with it: the checklist asked for 21 commands where CI runs one
   script, so contributors either ran a subset they remembered or paid for the
   full release gate on a docs change. `--skip` works in both modes.
+- **Docs** (README, CAPABILITIES): "sandboxed plugins" described more isolation
+  than ADR 0006 grants. Plugin isolation is opt-in (`PLUGINS_SANDBOX`, off by
+  default, so in-process plugins keep full privileges), it is a Bun Worker
+  thread rather than a process or container, and the name allowlist is a
+  separate control from the sandbox. Both texts now say what is there and what
+  is not, and link the ADR.
 
 ## [0.25.6] - 2026-11-10
 
