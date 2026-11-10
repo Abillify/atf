@@ -386,7 +386,12 @@ sequenceDiagram
 Stages are independently configured and many governance features are opt-in. The sequence above
 shows the ordering when those controls are enabled: policy admission precedes graph execution,
 PII tokenization precedes provider calls, and restoration follows output checks. A missing
-`compliance-policy.yaml` means "no policy" and allows execution. An invalid one never does: on
+`compliance-policy.yaml` means "no policy" and allows execution — the one loading failure that
+does not fail closed, and the reason `COMPLIANCE_POLICY_REQUIRED=true` exists: without a loaded
+policy the Runtime refuses to start in the production profile (warning elsewhere) and readiness
+reports `compliance_policy: missing`. Note that this is a startup and readiness gate, not a
+runtime interlock: deleting the file from a running instance disables the policy until readiness
+or a restart says so. An invalid file never does: on
 hot-reload the last valid policy stays in force, and at startup — with no valid policy yet —
 admission denies every run (503) until the file is fixed. `GET /admin/compliance-policy` reports
 the load error. The policy's `failClosed` field applies to evaluator exceptions only.
@@ -546,7 +551,8 @@ These are enforced in review and, where possible, in tests:
    application never imports another application's source.
 2. **Fail-closed boundaries are explicit.** Authentication, authorization, approvals, and
    configured policy checks deny on the failure modes documented for them. Exceptions are also
-   explicit: a missing compliance-policy file disables that policy, PII detector failures
+   explicit: a missing compliance-policy file disables that policy (`COMPLIANCE_POLICY_REQUIRED`
+   turns that into a startup failure in production, not a runtime block), PII detector failures
    default to open unless configured otherwise, and optional state can degrade to per-replica
    behavior. A path must not be called fail-closed without its configuration and fallback being
    stated.

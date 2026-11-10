@@ -433,12 +433,18 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 
 - **Policy as code, with an explicit activation boundary.** A valid
   `compliance-policy.yaml` in `FLOWS_DIR` can declare model allow/block rules, provider/data
-  rules, approval requirements, retention, and audit rules. A missing file means no policy.
-  An unreadable or schema-invalid file does not: a hot reload keeps the last valid policy, and
-  at startup with no valid policy chat and engine admission answer 503 until the file is fixed
-  (`GET /admin/compliance-policy` reports `loadError`, `stale` or `blocked`). There is no
-  mandatory-policy mode yet, so a deleted file still disables the policy; `failClosed`
-  controls exceptions during evaluation, not loading. Start from
+  rules, approval requirements, retention, and audit rules. An unreadable or schema-invalid file
+  never disables enforcement: a hot reload keeps the last valid policy, and at startup with no
+  valid policy chat and engine admission answer 503 until the file is fixed
+  (`GET /admin/compliance-policy` reports `loadError`, `stale` or `blocked`). A *missing* file
+  does mean no policy — that is the one loading failure which does not fail closed, and
+  `failClosed` covers exceptions during evaluation only.
+  `COMPLIANCE_POLICY_REQUIRED=true` is the mode for that case: without a loaded policy the
+  Runtime refuses to start in the production profile (a warning elsewhere), and readiness
+  reports `compliance_policy: missing` — `degraded`, which by itself keeps the replica in
+  rotation. It gates startup and readiness, not the running request path: delete the file from a
+  live instance and its watcher treats the removal as "policy disabled", so requests are admitted
+  again until readiness or a restart reports it. Start from
   [`deploy/examples/flows/compliance-policy.example.yaml`](../deploy/examples/flows/compliance-policy.example.yaml).
 - **Enforcement points and limits.** Model/data admission is applied by the centralized
   execution-admission path and chat preflight before graph execution; tool approval rules are

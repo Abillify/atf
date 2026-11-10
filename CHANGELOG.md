@@ -65,6 +65,14 @@ releases:
   /v1/embeddings`. Both places that made the claim now name only the endpoints
   that exist and state that embeddings are computed internally for retrieval and
   caches (`EMBEDDING_MODEL`) rather than offered as an API.
+- **Docs** (`docs/CAPABILITIES.md`, `ARCHITECTURE.md`): the compliance section
+  stated there was "no mandatory-policy mode yet". There is: with
+  `COMPLIANCE_POLICY_REQUIRED=true` the Runtime refuses to start without a loaded
+  `compliance-policy.yaml` in the production profile (a warning elsewhere) and
+  readiness reports `compliance_policy: missing`. The text now says that, and
+  states the limit the old sentence was reaching for: the flag gates startup and
+  readiness only, so deleting the policy file from a running instance still
+  disables the policy until readiness or a restart reports it.
 
 ## [0.25.6] - 2026-11-10
 
