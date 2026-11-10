@@ -125,6 +125,8 @@ releases:
 
 ## [0.25.4] - 2026-11-05
 
+0.25.3 was not released.
+
 ### Fixed
 
 - **Runtime** (media tools): an image generated in an earlier turn could not be
