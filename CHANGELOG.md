@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.25.6] - 2026-11-10
+
 ### Fixed
 
 - **Search** (`apps/search`): embedding, rerank, sparse and tokenize requests
@@ -28,6 +30,18 @@ releases:
   `TOKENIZE_API_KEY` pass a bearer token to the respective upstream; when unset
   the behavior is unchanged (no header). `EMBED_API_KEY` is ignored on the
   Bedrock path, where AWS credentials apply.
+
+### Changed
+
+- **Dependencies**: workspace-wide dependency updates across all apps and
+  packages — AI SDK packages, `@langchain/*`, TypeScript, testing and
+  tooling dependencies — and refreshed SHA pins for the pinned GitHub Actions
+  in `ci.yml`, `release.yml` and `outpost-release.yml`.
+
+- **Supply chain**: `@tailwindcss/oxide-wasm32-wasi` 4.3.5 dropped its
+  wasm32-only `cpu` marker and now appears in the linux-x64 inventory without
+  a shipped license file; a reviewed repository-root reuse rule sources its
+  MIT license from `@tailwindcss/oxide`. Notices and SBOM regenerated.
 
 ## [0.25.5] - 2026-11-06
 
@@ -4706,7 +4720,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.5...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.6...HEAD
+[0.25.6]: https://github.com/Abillify/atf/compare/v0.25.5...v0.25.6
 [0.25.5]: https://github.com/Abillify/atf/compare/v0.25.4...v0.25.5
 [0.25.4]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.4
 [0.25.2]: https://github.com/Abillify/atf/compare/v0.25.1...v0.25.2
