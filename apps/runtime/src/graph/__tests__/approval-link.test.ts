@@ -11,6 +11,8 @@
 import { describe, test, expect } from "bun:test";
 import {
   APPROVAL_CONFIRM_TTL_MS,
+  APPROVAL_LINK_GRACE_MS,
+  checkApprovalLinkToken,
   signApprovalConfirmToken,
   signApprovalLinkToken,
   verifyApprovalConfirmToken,
@@ -184,5 +186,47 @@ describe("approval-link confirm token", () => {
   test("a confirm token is not accepted as a link capability token", () => {
     const confirm = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
     expect(verifyApprovalLinkToken(confirm, ID, SECRET)).toBe(false);
+  });
+});
+
+/**
+ * The tri-state check behind the read-only widget rendering: an expired token
+ * must stay distinguishable from a forged one, because the former only reveals
+ * the outcome of the approval it was minted for while the latter reveals
+ * nothing and must stay a rejection.
+ */
+describe("approval-link token status", () => {
+  test("a valid token reports 'valid'", () => {
+    const token = signApprovalLinkToken(ID, SECRET, Date.now() + 60_000);
+    expect(checkApprovalLinkToken(token, ID, SECRET)).toBe("valid");
+  });
+
+  test("a genuine token past its expiry reports 'expired', not 'invalid'", () => {
+    const token = signApprovalLinkToken(ID, SECRET, 10_000);
+    expect(checkApprovalLinkToken(token, ID, SECRET, 10_001)).toBe("expired");
+  });
+
+  test("a foreign id or wrong secret stays 'invalid' even when expired", () => {
+    const token = signApprovalLinkToken(ID, SECRET, 10_000);
+    expect(
+      checkApprovalLinkToken(token, "other-approval", SECRET, 20_000),
+    ).toBe("invalid");
+    expect(checkApprovalLinkToken(token, ID, OTHER_SECRET, 20_000)).toBe(
+      "invalid",
+    );
+  });
+
+  test("malformed tokens report 'invalid', never thrown", () => {
+    expect(checkApprovalLinkToken(undefined, ID, SECRET)).toBe("invalid");
+    expect(checkApprovalLinkToken("", ID, SECRET)).toBe("invalid");
+    expect(checkApprovalLinkToken("no-separator", ID, SECRET)).toBe("invalid");
+    expect(checkApprovalLinkToken("not.base64url!!", ID, SECRET)).toBe(
+      "invalid",
+    );
+  });
+
+  test("the link grace is shorter than the confirm TTL is irrelevant: it is a positive slack", () => {
+    expect(APPROVAL_LINK_GRACE_MS).toBeGreaterThan(0);
+    expect(APPROVAL_LINK_GRACE_MS).toBeLessThan(3_600_000);
   });
 });

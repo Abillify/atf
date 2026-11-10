@@ -20,7 +20,10 @@ import { isToolErrorOutput, sanitizeToolResultOutput } from "../message-mapping.
 import { nodeStateKey } from "./node-instance.js";
 import { parseVectorSearchResults } from "../reranker.js";
 import type { HashRefHandleRegistry } from "../ref-handles.js";
-import { signApprovalLinkToken } from "../approval-link.js";
+import {
+  APPROVAL_LINK_GRACE_MS,
+  signApprovalLinkToken,
+} from "../approval-link.js";
 import type { PendingApproval } from "../approval-gate.js";
 import { makeToolCallChunk } from "../exec-runtime.js";
 import type { ExecRuntime } from "../exec-runtime.js";
@@ -805,12 +808,23 @@ export function createToolCallbacks(deps: {
     const onApprovalRequired = (pending: PendingApproval): void => {
       const base = (getRuntime().appConfig.approvalBaseUrl ?? "").replace(/\/$/, "");
       const linkSecret = getRuntime().appConfig.oidcSessionSecret;
+      // The capability token travels in the URL — chat history, access logs
+      // and the Referer of the widget iframe — so it must not outlive the
+      // approval it authorizes. The gate auto-denies at the per-request
+      // override (compliance-policy `approvalRules[].timeoutMs`, ADR-0009) or
+      // at its own `APPROVAL_TIMEOUT_MS`; the token gets exactly that
+      // lifetime plus a short grace, so a reviewer who opens the widget right
+      // before the deadline can still read the outcome. No second default:
+      // when neither the request nor a gate reports a timeout, no capability
+      // token is minted and the links fall back to operator RBAC.
+      const approvalTimeoutMs =
+        pending.timeoutMs ?? getRuntime().approvalGate?.timeoutMs;
       const linkToken =
-        linkSecret !== undefined
+        linkSecret !== undefined && approvalTimeoutMs !== undefined
           ? signApprovalLinkToken(
               pending.id,
               linkSecret,
-              Date.now() + 3_600_000,
+              Date.now() + approvalTimeoutMs + APPROVAL_LINK_GRACE_MS,
             )
           : undefined;
       const decideTokenQuery =

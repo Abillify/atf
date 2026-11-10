@@ -41,6 +41,16 @@ interface ApprovalLinkPayload {
 }
 
 /**
+ * Grace added on top of the approval's own auto-deny timeout when minting a
+ * capability token. The token lives in a URL (chat history, access logs,
+ * Referer), so the point is to keep it as short as possible while still
+ * letting a reviewer who opens the widget just before the deadline reload it
+ * and read the outcome — the widget itself reloads one second after the
+ * timeout fires.
+ */
+export const APPROVAL_LINK_GRACE_MS = 60_000;
+
+/**
  * Mints a capability token authorizing decisions on a single approval `id`,
  * valid until `expiresAtMs`. Signed with HMAC-SHA256 over the (base64url)
  * payload using `secret`. URL-safe (base64url, no padding).
@@ -65,19 +75,31 @@ export function signApprovalLinkToken(
 }
 
 /**
- * Verifies a capability token: checks the HMAC signature (constant-time),
- * that it is bound to `approvalId`, and that it has not expired. Returns true
- * only when all checks pass.
+ * Outcome of {@link checkApprovalLinkToken}.
+ *
+ * `expired` is deliberately distinguished from `invalid`: an expired token is
+ * genuine (correct signature, correct approval id) and its approval has by
+ * definition reached a terminal state — the auto-deny fired. That is enough to
+ * show the reviewer the outcome of THE approval they were shown, which is what
+ * a reload of the in-chat widget needs, while a forged or foreign token stays a
+ * plain rejection. It never grants a decision.
  */
-export function verifyApprovalLinkToken(
+export type ApprovalLinkTokenStatus = "valid" | "expired" | "invalid";
+
+/**
+ * Verifies a capability token and reports WHY it failed: signature and
+ * approval-id binding first (constant-time), then expiry. See
+ * {@link ApprovalLinkTokenStatus}.
+ */
+export function checkApprovalLinkToken(
   token: string | undefined,
   approvalId: string,
   secret: string,
   now: number = Date.now(),
-): boolean {
-  if (token === undefined || token === "") return false;
+): ApprovalLinkTokenStatus {
+  if (token === undefined || token === "") return "invalid";
   const idx = token.indexOf(SEP);
-  if (idx <= 0 || idx >= token.length - 1) return false;
+  if (idx <= 0 || idx >= token.length - 1) return "invalid";
   const payloadB64 = token.slice(0, idx);
   const sigB64 = token.slice(idx + 1);
 
@@ -89,10 +111,10 @@ export function verifyApprovalLinkToken(
   try {
     provided = Buffer.from(sigB64, "base64url");
   } catch {
-    return false;
+    return "invalid";
   }
-  if (provided.length !== expected.length) return false;
-  if (!crypto.timingSafeEqual(provided, expected)) return false;
+  if (provided.length !== expected.length) return "invalid";
+  if (!crypto.timingSafeEqual(provided, expected)) return "invalid";
 
   let payload: ApprovalLinkPayload;
   try {
@@ -100,11 +122,27 @@ export function verifyApprovalLinkToken(
       Buffer.from(payloadB64, "base64url").toString("utf8"),
     ) as ApprovalLinkPayload;
   } catch {
-    return false;
+    return "invalid";
   }
-  if (typeof payload.id !== "string" || payload.id !== approvalId) return false;
-  if (typeof payload.exp !== "number" || now > payload.exp) return false;
-  return true;
+  if (typeof payload.id !== "string" || payload.id !== approvalId) {
+    return "invalid";
+  }
+  if (typeof payload.exp !== "number") return "invalid";
+  return now > payload.exp ? "expired" : "valid";
+}
+
+/**
+ * Verifies a capability token: checks the HMAC signature (constant-time),
+ * that it is bound to `approvalId`, and that it has not expired. Returns true
+ * only when all checks pass.
+ */
+export function verifyApprovalLinkToken(
+  token: string | undefined,
+  approvalId: string,
+  secret: string,
+  now: number = Date.now(),
+): boolean {
+  return checkApprovalLinkToken(token, approvalId, secret, now) === "valid";
 }
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,15 @@ releases:
   resolves the request. This applies to every `GET` caller, an authenticated
   operator included; the Control dashboard keeps its one-step `POST` route. Set
   `APPROVAL_LINK_CONFIRM=false` to restore the one-click links.
+- **Runtime** (approvals): the capability token carried by the in-chat approval
+  widget and decision links was minted with a fixed one-hour expiry, so it outlived
+  a short approval by up to an hour while remaining a live credential in chat
+  history, access logs and the widget's `Referer`. It now expires with the approval
+  it authorizes — the gate's own `APPROVAL_TIMEOUT_MS`, or a compliance-policy
+  `approvalRules[].timeoutMs` override (ADR-0009) — plus a 60 second grace. Because
+  a chat keeps the widget open past that point, an expired-but-genuine token still
+  renders the approval's final state (no buttons, no request details) instead of a
+  401; deciding continues to require a valid token.
 
 ### Fixed
 

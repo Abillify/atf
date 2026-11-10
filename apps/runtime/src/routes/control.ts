@@ -35,10 +35,12 @@ import {
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
 import {
+  checkApprovalLinkToken,
   readApprovalLinkExpiry,
   signApprovalConfirmToken,
   verifyApprovalConfirmToken,
   verifyApprovalLinkToken,
+  type ApprovalLinkTokenStatus,
 } from "../graph/approval-link.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import {
@@ -402,6 +404,26 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
     );
   };
 
+  /**
+   * Capability-token status for READ-ONLY rendering of one approval. An
+   * expired token still proves which approval it was minted for, and that
+   * approval has by then auto-denied, so its terminal state leaks nothing the
+   * token holder was not already shown — while a 401 would leave the chat
+   * widget dead for as long as the message is open. Never used to accept a
+   * decision: that path keeps requiring {@link approvalLinkAuthorized}.
+   */
+  const approvalLinkStatus = (
+    ctx: { req: { query: (k: string) => string | undefined } },
+    id: string,
+  ): ApprovalLinkTokenStatus => {
+    if (approvalLinkSecret === undefined) return "invalid";
+    return checkApprovalLinkToken(
+      ctx.req.query("token"),
+      id,
+      approvalLinkSecret,
+    );
+  };
+
   // -------------------------------------------------------------------------
   // Approvals
   // -------------------------------------------------------------------------
@@ -425,13 +447,27 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       // The widget is loaded by the end user's browser (an <iframe> in the
       // chat) which cannot send an operator bearer. Accept the per-approval
       // capability token bound to this id; otherwise require operator RBAC.
-      if (!approvalLinkAuthorized(ctx, id)) {
+      //
+      // Rendering is read-only, so an EXPIRED token still identifies the
+      // approval it was minted for and is honoured here: the token expires
+      // with the gate's auto-deny plus a grace, and a chat that stays open
+      // must keep showing that outcome instead of turning into a 401. Deciding
+      // (`decide`) never accepts an expired token.
+      const linkStatus = approvalLinkStatus(ctx, id);
+      if (linkStatus === "invalid") {
         const actor = await guard(ctx, "approvals:write");
         if (!actor) return unauthorized(ctx);
       }
       const pending = (await approvalGate.listPending()).find(
         (p) => p.id === id,
       );
+      // Belt and braces: an expired capability never shows live request
+      // details or working buttons, only the outcome. If the approval were
+      // somehow still pending (clock skew, a replica that never ran the
+      // timer), the neutral card is rendered instead.
+      if (linkStatus === "expired" && pending !== undefined) {
+        return ctx.html(renderResolvedState(undefined));
+      }
       const resolved =
         pending === undefined ? await approvalGate.getResolved(id) : undefined;
       return ctx.html(

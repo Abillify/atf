@@ -173,6 +173,111 @@ describe("approval-link capability token (in-chat widget)", () => {
     );
   });
 
+  test("GET /:id/widget shows the final state for an expired token instead of a 401", async () => {
+    // The token expires with the approval's own auto-deny plus a grace. A chat
+    // that stays open reloads the widget after that point constantly, and the
+    // outcome of a denied approval leaks nothing the token holder was not
+    // already shown — whereas 401 would leave the iframe dead.
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 20 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+    // Minted short, so that by the reload below the token has expired too —
+    // exactly the state a chat reaches when it is left open past the deadline.
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 40);
+
+    // Let the gate auto-deny and the token lapse, so the terminal state is the
+    // timed-out one reached with an expired capability.
+    await new Promise((r) => setTimeout(r, 80));
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/widget?token=${encodeURIComponent(token)}`,
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Automatically denied (timed out).");
+    // Terminal: no working buttons, and no echo of the request arguments.
+    expect(html).not.toContain("decide?decision=");
+    expect(html).not.toContain("sven");
+  });
+
+  test("an expired token never shows live details or buttons, even if still pending", async () => {
+    // Belt and braces for clock skew or a replica that never ran the timer:
+    // the expired path must degrade to the neutral card, never to the live one.
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 60_000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+    const expired = signApprovalLinkToken(id, SECRET, Date.now() - 1);
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/widget?token=${encodeURIComponent(expired)}`,
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("no longer available");
+    expect(html).not.toContain("decide?decision=");
+    expect(html).not.toContain("sven");
+    // The approval itself is untouched — reading is not deciding.
+    expect(await gate.listPending()).toHaveLength(1);
+  });
+
+  test("a forged token is still a 401 for the widget, and an expired one for decide", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 60_000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+
+    // Forged (wrong secret): no read access either.
+    const forged = signApprovalLinkToken(
+      id,
+      "a-completely-different-secret-value-that-is-long",
+      Date.now() + 60_000,
+    );
+    const widgetRes = await a.request(
+      `/monitoring/approvals/${id}/widget?token=${encodeURIComponent(forged)}`,
+    );
+    expect(widgetRes.status).toBe(401);
+
+    // Expired but genuine: deciding stays forbidden, the approval stays pending.
+    const expired = signApprovalLinkToken(id, SECRET, Date.now() - 1);
+    const decideRes = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(expired)}`,
+    );
+    expect(decideRes.status).toBe(401);
+    expect(await gate.listPending()).toHaveLength(1);
+  });
+
   test("GET /:id/decide with a valid capability token resolves the approval as the requesting user", async () => {
     const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
     const a = app({
