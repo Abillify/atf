@@ -254,6 +254,15 @@ const REPOSITORY_LICENSE_REUSE_RULES: RepositoryLicenseReuseRule[] = [
 			"Tauri CLI platform binaries use the dual-license files of the Tauri repository (named LICENSE_MIT / LICENSE_APACHE-2.0 up to 2.8, LICENSE-MIT / LICENSE-APACHE-2.0 from 2.12).",
 	},
 	{
+		packagePattern: /^@tailwindcss\/oxide-wasm32-wasi$/,
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/tailwindlabs/tailwindcss",
+		sourcePackagePattern: /^@tailwindcss\/oxide$/,
+		allowedSourceFiles: /^(?:LICENSE|LICENCE|COPYING)(?:[._-].*)?$/i,
+		reason:
+			"@tailwindcss/oxide-wasm32-wasi is the WASI optional dependency of @tailwindcss/oxide, published from the tailwindcss repository (crates/node), and uses its repository-root MIT license.",
+	},
+	{
 		packagePattern: /^cookie-signature$/,
 		expectedLicense: "MIT",
 		expectedRepository: "https://github.com/visionmedia/node-cookie-signature",
