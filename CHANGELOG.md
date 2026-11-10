@@ -40,6 +40,22 @@ releases:
   renders the approval's final state (no buttons, no request details) instead of a
   401; deciding continues to require a valid token.
 
+### Added
+
+- **Deploy** (`deploy/examples`): the quickstart can run on the published images
+  instead of building them. `compose.images.yaml` is an overlay that `!reset`s
+  every `build:` section and points each service at
+  `ghcr.io/abillify/atf-<service>:${ATF_VERSION}`, so both paths share the same
+  service definitions, flow files, mock model and health checks — and editing a
+  flow still hot-reloads, because that is a Runtime property rather than a
+  dev-server one. The released Control bakes no backend URL into its bundle and
+  calls relative paths on its own origin, so the overlay also adds a
+  digest-pinned Caddy router that puts the UI and the Runtime behind one origin
+  the way the production deployments do and leaves the Control itself
+  unpublished. `ATF_VERSION` in `.env.example` is a new `verify:version`
+  occurrence, which keeps a checkout from pulling images for a different release
+  than the code it is reading.
+
 ### Fixed
 
 - **Runtime** (approvals): the in-chat approval link

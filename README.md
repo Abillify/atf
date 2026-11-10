@@ -152,17 +152,28 @@ security posture, providers, budgets, and compliance evidence share one operator
 
 ## Quickstart
 
-Requirements: Docker with Compose v2, roughly 6 GB free memory and 10 GB disk for the build.
+Requirements: Docker with Compose v2. Pulling the released images needs roughly 4 GB of free disk; building them from this checkout instead needs about 6 GB free memory and 10 GB of disk.
 
 ```bash
 git clone https://github.com/abillify/atf.git && cd atf
-docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
+docker compose --env-file deploy/examples/.env.example \
+  -f deploy/examples/compose.yaml -f deploy/examples/compose.images.yaml up -d --wait
 ```
 
 This starts all five applications plus PostgreSQL/pgvector and a deterministic mock model, so
-it needs no API key. Once the health checks pass:
+it needs no API key. `ATF_VERSION` in [`deploy/examples/.env.example`](deploy/examples/.env.example)
+selects the release, and `bun run verify:version` keeps it at the version of the checkout you are
+reading, so the containers match the code. If the pull reports `denied` or `not found` — a private
+registry, or no image published for your architecture — drop the overlay and build instead:
 
-- Control — <http://localhost:3001>
+```bash
+docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
+```
+
+Once the health checks pass:
+
+- Control — <http://localhost:3001> (the published-image variant serves it through a small router,
+  because the released Control calls its own origin and so needs the UI and the Runtime on one)
 - Runtime readiness — <http://localhost:3000/health/ready>
 - Search health — <http://localhost:3002/health>
 - Gate readiness — <http://localhost:3003/readyz>

@@ -97,6 +97,20 @@ export const HELM_OCCURRENCES: Occurrence[] = [
 	})),
 ];
 
+/**
+ * The `ATF_VERSION` the image-based quickstart (`deploy/examples/compose.images.yaml`)
+ * pulls its service images by. Exported for the test, which replays it against
+ * a temporary env file.
+ */
+export const QUICKSTART_ENV_OCCURRENCES: Occurrence[] = [
+	{
+		file: "deploy/examples/.env.example",
+		pattern: /^ATF_VERSION=(\d+\.\d+\.\d+)$/gm,
+		label: "Quickstart image version",
+		expected: 1,
+	},
+];
+
 const OCCURRENCES: Occurrence[] = [
 	...WORKSPACE_MANIFESTS.map((file) => ({
 		file,
@@ -171,6 +185,10 @@ const OCCURRENCES: Occurrence[] = [
 		label: "Gate MCP service-block expectation",
 		expected: 1,
 	},
+	// The image-based quickstart pulls `ghcr.io/abillify/atf-<service>` by tag,
+	// so the tag in the example env file is the version the release was cut at.
+	// A stale value there is a quickstart that fails with `not found`.
+	...QUICKSTART_ENV_OCCURRENCES,
 	// Helm charts: the appVersion of the umbrella chart and every
 	// subchart tracks the product version, so image tags default to it. The
 	// chart `version` itself follows the product version too — helm upgrades

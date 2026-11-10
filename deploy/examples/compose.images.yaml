@@ -1,0 +1,110 @@
+# Pull-based quickstart: the five ATF services run as the published release
+# images instead of being built from this checkout. Apply it on top of
+# `compose.yaml`, which keeps providing Postgres, the mock model, the flows,
+# the Gate config, the host ports and every environment block:
+#
+#   docker compose --env-file deploy/examples/.env.example \
+#     -f deploy/examples/compose.yaml \
+#     -f deploy/examples/compose.images.yaml up -d
+#
+# `ATF_VERSION` comes from `.env.example` and is the product version the
+# overlay was written for; `bun run version:sync` keeps it in step with
+# `package.json`. `:?` makes an unset version fail with this message instead
+# of a malformed image reference.
+#
+# What the published images change, and what this file does about it:
+#
+# - `build:` still merges in from `compose.yaml`, so every service has to
+#   `!reset` it. Without that, Compose would build the local source and the
+#   pull would never happen.
+# - The release images are the production ones, so the Control serves its built
+#   output instead of `next dev` - a UI change means a rebuild. Flow files do
+#   *not* need one: the Runtime watches `FLOWS_DIR` in every mode, which was
+#   verified against `0.25.6` by adding and removing a file in `./flows`.
+# - Control resolves the Runtime *relatively* on purpose (`src/lib/backend-url.ts`
+#   — no `NEXT_PUBLIC_BACKEND_URL` is baked in, so one image works behind any
+#   proxy). The build-from-source variant gets away without a proxy because
+#   `compose.yaml` points `NEXT_PUBLIC_BACKEND_URL` at the host port and the
+#   Runtime CORS list allows it. Here that is cleared, and `router` below
+#   provides the same origin the image expects — which is also how a real
+#   deployment is wired.
+
+services:
+  runtime:
+    image: ghcr.io/abillify/atf-runtime:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
+    build: !reset null
+
+  search:
+    image: ghcr.io/abillify/atf-search:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
+    build: !reset null
+
+  gate:
+    image: ghcr.io/abillify/atf-gate:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
+    build: !reset null
+
+  extract:
+    image: ghcr.io/abillify/atf-extract:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
+    build: !reset null
+
+  control:
+    image: ghcr.io/abillify/atf-control:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
+    build: !reset null
+    environment:
+      # Empty means "not set" to `backendBase()`, which then emits relative
+      # API paths — the same-origin contract the image is built for. The
+      # browser reaches the Runtime through `router`, never cross-origin.
+      NEXT_PUBLIC_BACKEND_URL: ""
+    # Only the router is published: the Control is reachable at
+    # `ATF_CONTROL_PORT` through it, exactly once, with the Runtime behind the
+    # same origin.
+    ports: !reset []
+    healthcheck:
+      # The Control image is a Node image without Bun, so the health check
+      # from `compose.yaml` would fail with "exec: bun: not found".
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Same-origin router for the published Control and Runtime, mirroring the
+  # reverse proxy every real deployment puts in front of these two images.
+  # It is the browser entry point: `http://localhost:${ATF_CONTROL_PORT}`.
+  router:
+    # Pinned to a digest, like the production router example this mirrors:
+    # an unpinned `2-alpine` would let an unrelated upstream change move under
+    # the quickstart.
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./Caddyfile.quickstart:/etc/caddy/Caddyfile:ro
+    ports:
+      - "${ATF_CONTROL_PORT:-3001}:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The upstream Caddy binary carries the file capability `cap_net_bind_service`,
+    # and a kernel refuses to exec such a binary once the container's permitted
+    # set is empty: the container exits with `exec /usr/bin/caddy: operation
+    # not permitted`. Re-adding exactly that one capability is what keeps it
+    # executable, and it is the capability Caddy asks for anyway. Nothing else is
+    # granted - the applications above still run with every capability dropped.
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+    depends_on:
+      runtime:
+        condition: service_healthy
+      control:
+        condition: service_healthy
+    healthcheck:
+      # 8080 rather than 80: even with the bind capability present, the
+      # quickstart publishes a high host port and needs no privileged bind.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
