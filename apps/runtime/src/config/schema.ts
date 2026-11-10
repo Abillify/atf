@@ -553,6 +553,11 @@ export interface AppConfig {
   approvalGateEnabled?: boolean;
   approvalRequireTools?: string[];
   approvalTimeoutMs?: number;
+  /**
+   * Two-step confirmation for in-chat approval links; default true when unset.
+   * See `APPROVAL_LINK_CONFIRM`.
+   */
+  approvalLinkConfirm?: boolean;
   approvalBaseUrl?: string;
   /** Explicit browser origins permitted to embed in-chat approval widgets. */
   approvalFrameAncestors?: string[];
@@ -2030,6 +2035,20 @@ export const EnvSchema = z.object({
     .min(1000)
     .max(3_600_000)
     .default(30_000),
+  /**
+   * Two-step confirmation for the in-chat approval links. Default true: the
+   * first `GET …/decide` only renders a confirmation page and a second, signed
+   * click resolves the approval, so a link preview, prefetcher or security
+   * scanner fetching the URL cannot approve anything. Set false to restore the
+   * one-click behaviour.
+   */
+  APPROVAL_LINK_CONFIRM: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
   APPROVAL_BASE_URL: z.string().url().optional(),
   APPROVAL_FRAME_ANCESTORS: z
     .string()

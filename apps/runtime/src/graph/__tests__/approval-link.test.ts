@@ -10,7 +10,10 @@
 
 import { describe, test, expect } from "bun:test";
 import {
+  APPROVAL_CONFIRM_TTL_MS,
+  signApprovalConfirmToken,
   signApprovalLinkToken,
+  verifyApprovalConfirmToken,
   verifyApprovalLinkToken,
 } from "../approval-link.js";
 
@@ -78,5 +81,108 @@ describe("approval-link capability token", () => {
     const token = signApprovalLinkToken(ID, SECRET, Date.now() + 60_000);
     expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(encodeURIComponent(token)).toBe(token);
+  });
+});
+
+/**
+ * Second-step confirmation tokens (`confirm=`): an HMAC over
+ * `id:decision:linkExpiry` so that a prefetched first click cannot resolve an
+ * approval and a confirmation minted for one decision cannot be reused for the
+ * other.
+ */
+describe("approval-link confirm token", () => {
+  const LINK_EXP = 2_000_000_000_000;
+
+  test("a freshly minted confirm token verifies for its id, decision and expiry", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(
+      verifyApprovalConfirmToken(token, ID, "approved", LINK_EXP, SECRET),
+    ).toBe(true);
+  });
+
+  test("a confirm token minted for 'approved' is rejected for 'denied'", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(
+      verifyApprovalConfirmToken(token, ID, "denied", LINK_EXP, SECRET),
+    ).toBe(false);
+  });
+
+  test("a confirm token is bound to the approval id", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(
+      verifyApprovalConfirmToken(
+        token,
+        "other-approval",
+        "approved",
+        LINK_EXP,
+        SECRET,
+      ),
+    ).toBe(false);
+  });
+
+  test("a confirm token is bound to the link expiry it was minted for", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(
+      verifyApprovalConfirmToken(token, ID, "approved", LINK_EXP + 1, SECRET),
+    ).toBe(false);
+  });
+
+  test("a confirm token signed with a different secret is rejected", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(
+      verifyApprovalConfirmToken(token, ID, "approved", LINK_EXP, OTHER_SECRET),
+    ).toBe(false);
+  });
+
+  test("a confirm token expires after APPROVAL_CONFIRM_TTL_MS", () => {
+    const now = LINK_EXP - 1_000;
+    const token = signApprovalConfirmToken(
+      ID,
+      "approved",
+      LINK_EXP,
+      SECRET,
+      now,
+    );
+    expect(
+      verifyApprovalConfirmToken(
+        token,
+        ID,
+        "approved",
+        LINK_EXP,
+        SECRET,
+        now + APPROVAL_CONFIRM_TTL_MS - 1,
+      ),
+    ).toBe(true);
+    expect(
+      verifyApprovalConfirmToken(
+        token,
+        ID,
+        "approved",
+        LINK_EXP,
+        SECRET,
+        now + APPROVAL_CONFIRM_TTL_MS + 1,
+      ),
+    ).toBe(false);
+  });
+
+  test("malformed confirm tokens are rejected, not thrown", () => {
+    const args = [ID, "approved", LINK_EXP, SECRET] as const;
+    expect(verifyApprovalConfirmToken(undefined, ...args)).toBe(false);
+    expect(verifyApprovalConfirmToken("", ...args)).toBe(false);
+    expect(verifyApprovalConfirmToken("no-separator", ...args)).toBe(false);
+    expect(verifyApprovalConfirmToken(".sigonly", ...args)).toBe(false);
+    expect(verifyApprovalConfirmToken("payloadonly.", ...args)).toBe(false);
+    expect(verifyApprovalConfirmToken("not.base64url!!", ...args)).toBe(false);
+  });
+
+  test("confirm tokens are URL-safe", () => {
+    const token = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(encodeURIComponent(token)).toBe(token);
+  });
+
+  test("a confirm token is not accepted as a link capability token", () => {
+    const confirm = signApprovalConfirmToken(ID, "approved", LINK_EXP, SECRET);
+    expect(verifyApprovalLinkToken(confirm, ID, SECRET)).toBe(false);
   });
 });

@@ -379,6 +379,12 @@ Consequential actions can require a human decision before they execute.
   arguments. Credentials are never included in that payload.
 - **Two decision surfaces.** An embedded approve/reject element in the chat response for
   compatible frontends, and a reviewer inbox in Control protected by RBAC.
+- **Two-step link confirmation.** Chat and mail clients fetch links on their own (link
+  previews, prefetchers, security scanners), so the in-chat approve/deny links never resolve
+  an approval in one step. The first click renders a confirmation page; only the second,
+  signed click (`confirm`, an HMAC bound to the approval id, the decision and 120 s of
+  validity) resolves it. Set `APPROVAL_LINK_CONFIRM=false` to restore the one-click links.
+  Control is unaffected: its inbox resolves through `POST /monitoring/approvals/:id`.
 - **Fail closed.** If nobody decides within `APPROVAL_TIMEOUT_MS` the request is rejected.
   Silence never results in an action.
 - **Cluster-wide visibility.** With Redis configured, pending approvals are visible across

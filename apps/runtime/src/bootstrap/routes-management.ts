@@ -501,6 +501,9 @@ export async function registerManagementRoutes(
         ...(config.oidcSessionSecret !== undefined
           ? { approvalLinkSecret: config.oidcSessionSecret }
           : {}),
+        ...(config.approvalLinkConfirm !== undefined
+          ? { approvalLinkConfirm: config.approvalLinkConfirm }
+          : {}),
         operatorAuth,
         auditLog,
       }),

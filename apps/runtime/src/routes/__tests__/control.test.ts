@@ -15,7 +15,10 @@ import type {
   ApprovalGateConfig,
   ApprovalRegistry,
 } from "../../graph/approval-gate.js";
-import { signApprovalLinkToken } from "../../graph/approval-link.js";
+import {
+  signApprovalConfirmToken,
+  signApprovalLinkToken,
+} from "../../graph/approval-link.js";
 import { InMemoryAuditLog } from "../../observability/audit-log.js";
 import {
   createReplayService,
@@ -176,6 +179,7 @@ describe("approval-link capability token (in-chat widget)", () => {
       approvalGate: gate,
       authRequired: true,
       approvalLinkSecret: SECRET,
+      approvalLinkConfirm: false,
     });
 
     const decision = gate.request({
@@ -195,6 +199,261 @@ describe("approval-link capability token (in-chat widget)", () => {
     const decided = await decision;
     expect(decided.approved).toBe(true);
     expect(decided.by).toBe("Example Contributor");
+  });
+
+  test("APPROVAL_LINK_CONFIRM=false keeps the one-click decision flow", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const audit = new InMemoryAuditLog();
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+      approvalLinkConfirm: false,
+      auditLog: audit,
+    });
+    const decisionPromise = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 60_000);
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=denied&token=${encodeURIComponent(token)}`,
+    );
+    expect(res.status).toBe(200);
+    const decided = await decisionPromise;
+    expect(decided.approved).toBe(false);
+    expect((await audit.list()).some((r) => r.action === "approvals.resolve")).toBe(
+      true,
+    );
+  });
+
+  test("two-step confirmation is on by default when a link secret exists", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 60_000);
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}`,
+    );
+    expect(await res.text()).toContain("Confirm your choice");
+    expect(await gate.listPending()).toHaveLength(1);
+  });
+
+  test("a link click first asks for confirmation and only the second click resolves", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const audit = new InMemoryAuditLog();
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+      auditLog: audit,
+    });
+
+    const decisionPromise = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: { user: "sven" },
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 60_000);
+
+    // First click — what a link preview, prefetcher or security scanner would
+    // trigger automatically. It must not resolve the approval.
+    const first = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}`,
+    );
+    expect(first.status).toBe(200);
+    const page = await first.text();
+    expect(page).toContain("Confirm your choice");
+    expect(await gate.listPending()).toHaveLength(1);
+    expect((await audit.list()).length).toBe(0);
+    expect(decisionPromise).toBeDefined();
+
+    // Second click — the confirmation link from that page.
+    const nonce = /confirm=([A-Za-z0-9._-]+)/.exec(page)?.[1];
+    if (nonce === undefined) throw new Error("no confirmation link rendered");
+    const second = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${nonce}`,
+    );
+    expect(second.status).toBe(200);
+    const decided = await decisionPromise;
+    expect(decided.approved).toBe(true);
+    expect(decided.by).toBe("Example Contributor");
+  });
+
+  test("a confirmation nonce is bound to its approval and decision", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    const decisionPromise = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const linkExpiresAtMs = Date.now() + 60_000;
+    const token = signApprovalLinkToken(id, SECRET, linkExpiresAtMs);
+
+    // A nonce minted for a different approval id must not resolve this one.
+    const foreignNonce = signApprovalConfirmToken(
+      "another-approval",
+      "approved",
+      linkExpiresAtMs,
+      SECRET,
+    );
+    const foreign = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${foreignNonce}`,
+    );
+    expect(foreign.status).toBe(400);
+
+    // Neither may a nonce minted for the opposite decision.
+    const denyNonce = signApprovalConfirmToken(
+      id,
+      "denied",
+      linkExpiresAtMs,
+      SECRET,
+    );
+    const mismatched = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${denyNonce}`,
+    );
+    expect(mismatched.status).toBe(400);
+
+    expect(await gate.listPending()).toHaveLength(1);
+    void decisionPromise;
+  });
+
+  test("an authenticated operator goes through the same confirmation", async () => {
+    // No GET decides in one step, not even an authenticated one — the Control
+    // dashboard resolves through POST /monitoring/approvals/:id instead.
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+      operatorAuth: createOperatorAuthorizer({
+        authRequired: true,
+        tokens: [{ token: "op-token-alice", role: "operator", name: "alice" }],
+      }),
+    });
+    const decisionPromise = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "Example Contributor",
+    });
+    const id = await firstPendingId(gate);
+
+    const first = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=denied`,
+      { headers: { Authorization: "Bearer op-token-alice" } },
+    );
+    expect(first.status).toBe(200);
+    const page = await first.text();
+    expect(page).toContain("Confirm your choice");
+    expect(await gate.listPending()).toHaveLength(1);
+
+    const nonce = /confirm=([A-Za-z0-9._-]+)/.exec(page)?.[1];
+    if (nonce === undefined) throw new Error("no confirmation link rendered");
+    const second = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=denied&confirm=${nonce}`,
+      { headers: { Authorization: "Bearer op-token-alice" } },
+    );
+    expect(second.status).toBe(200);
+    const decided = await decisionPromise;
+    expect(decided.approved).toBe(false);
+    expect(decided.by).toBe("alice");
+  });
+
+  test("an expired or tampered confirmation is 400 and stays pending", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const expiresAtMs = Date.now() + 60_000;
+    const token = signApprovalLinkToken(id, SECRET, expiresAtMs);
+
+    // Expired (minted APPROVAL_CONFIRM_TTL_MS + 1s ago).
+    const stale = signApprovalConfirmToken(
+      id,
+      "approved",
+      expiresAtMs,
+      SECRET,
+      Date.now() - 121_000,
+    );
+    const staleRes = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${stale}`,
+    );
+    expect(staleRes.status).toBe(400);
+
+    // Tampered signature.
+    const forged = `${signApprovalConfirmToken(id, "approved", expiresAtMs, SECRET).split(".")[0]}.AAAA_forged`;
+    const forgedRes = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${forged}`,
+    );
+    expect(forgedRes.status).toBe(400);
+
+    expect(await gate.listPending()).toHaveLength(1);
+  });
+
+  test("the confirmation page is script-free and form-free", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({
+      approvalGate: gate,
+      authRequired: true,
+      approvalLinkSecret: SECRET,
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "worktime/vacation_create",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 60_000);
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}`,
+    );
+    const page = await res.text();
+    expect(page).not.toContain("<script");
+    expect(page).not.toContain("<form");
+    expect(page).not.toContain("onclick");
+    // Works inside the script-less sandboxed iframe: plain links only.
+    expect(page).toContain("rel=\"nofollow\"");
   });
 
   test("GET /:id/decide without a token is 401 when auth is required", async () => {
@@ -268,8 +527,15 @@ describe("approval-link capability token (in-chat widget)", () => {
     });
     const id = await firstPendingId(gate);
 
-    const res = await a.request(
+    const first = await a.request(
       `/monitoring/approvals/${id}/decide?decision=approved&by=bob`,
+      { headers: { Authorization: "Bearer op-token-alice" } },
+    );
+    const page = await first.text();
+    const nonce = /confirm=([A-Za-z0-9._-]+)/.exec(page)?.[1];
+    if (nonce === undefined) throw new Error("no confirmation link rendered");
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&by=bob&confirm=${nonce}`,
       { headers: { Authorization: "Bearer op-token-alice" } },
     );
     expect(res.status).toBe(200);

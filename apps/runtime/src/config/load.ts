@@ -383,6 +383,7 @@ export function loadConfig(): AppConfig {
     approvalGateEnabled: env.APPROVAL_GATE_ENABLED,
     approvalRequireTools: env.APPROVAL_REQUIRE_TOOLS,
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,
+    approvalLinkConfirm: env.APPROVAL_LINK_CONFIRM,
     approvalBaseUrl: env.APPROVAL_BASE_URL,
     approvalFrameAncestors: env.APPROVAL_FRAME_ANCESTORS,
     mediaBaseUrl: env.MEDIA_BASE_URL ?? env.APPROVAL_BASE_URL,

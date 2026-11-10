@@ -34,7 +34,12 @@ import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
-import { verifyApprovalLinkToken } from "../graph/approval-link.js";
+import {
+  readApprovalLinkExpiry,
+  signApprovalConfirmToken,
+  verifyApprovalConfirmToken,
+  verifyApprovalLinkToken,
+} from "../graph/approval-link.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import {
   AUDIT_UNAVAILABLE_BODY,
@@ -62,6 +67,16 @@ export interface ControlRouterDeps {
   auditLog?: AuditLog;
   /** Browser origins allowed to embed approval HTML; defaults to same-origin only. */
   approvalFrameAncestors?: readonly string[];
+  /**
+   * Two-step confirmation for `GET /monitoring/approvals/:id/decide`. Default
+   * true: the first click renders a confirmation page and only the second,
+   * signed click resolves the approval. Needed because chat and mail clients
+   * fetch links automatically (previews, prefetchers, security scanners), and a
+   * single state-changing GET would let such a fetch approve a consequential
+   * tool call. `approvalLinkSecret` must be set — the confirmation is an HMAC
+   * with the same secret. When unset or false the one-click behaviour stays.
+   */
+  approvalLinkConfirm?: boolean;
 }
 
 interface ResolveBody {
@@ -128,6 +143,34 @@ function approvalShell(body: string, headExtra = ""): string {
     `.btn.done{cursor:default;opacity:.95}` +
     `.note{margin-top:8px;color:#6b7280;font-size:12px}` +
     `</style></head><body>${body}</body></html>`
+  );
+}
+
+/**
+ * Renders the first step of a two-click approval link: the question, the
+ * confirmation link (which carries the signed `confirm` nonce) and a link back
+ * to the widget. Script-free like the widget itself — the sandboxed iframe has
+ * no `allow-scripts`, so the confirmation has to be an ordinary link.
+ */
+function renderApprovalConfirm(
+  pending: PendingApproval | undefined,
+  decision: "approved" | "denied",
+  href: string,
+  backHref: string,
+): string {
+  const verb = decision === "approved" ? "Approve" : "Deny";
+  const cls = decision === "approved" ? "approve" : "deny";
+  const tool = pending?.tool.split("/").pop() ?? pending?.tool ?? "tool call";
+  return approvalShell(
+    `<div class="tool">${verb} <code>${escapeHtml(tool)}</code>?</div>` +
+      `<div class="note">Confirm your choice &mdash; this second step keeps an ` +
+      `automatic link preview, prefetcher or security scanner from acting on ` +
+      `the request.</div>` +
+      `<div class="row">` +
+      `<a class="btn ${cls}" href="${escapeHtml(href)}" rel="nofollow">` +
+      `${decision === "approved" ? "✅" : "🚫"} ${verb}</a>` +
+      `<a class="btn" href="${escapeHtml(backHref)}" rel="nofollow">Back</a>` +
+      `</div>`,
   );
 }
 
@@ -299,6 +342,10 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
   };
   const authRequired = deps.authRequired ?? false;
   const approvalLinkSecret = deps.approvalLinkSecret;
+  // Confirmation needs a secret to sign the nonce with; without one the
+  // one-click flow is the only option, regardless of the switch.
+  const approvalLinkConfirm =
+    deps.approvalLinkConfirm ?? approvalLinkSecret !== undefined;
   const operatorAuth =
     deps.operatorAuth ?? createOperatorAuthorizer({ authRequired });
 
@@ -397,11 +444,13 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       );
     });
 
-    // GET /monitoring/approvals/:id/decide?decision=approved|denied&by=name
-    // One-click approve/deny link — designed for embedding in chat messages.
-    // No JSON body required; decision comes from the query parameter.
-    // Renders the shared approval shell so it looks identical to the widget
-    // (the iframe navigates here on click). Shows only the chosen button.
+        // GET /monitoring/approvals/:id/decide?decision=approved|denied&by=name
+    // Approve/deny link — designed for embedding in chat messages. No JSON
+    // body required; decision comes from the query parameter. Renders the
+    // shared approval shell so it looks identical to the widget (the iframe
+    // navigates here on click). Shows only the chosen button. With
+    // APPROVAL_LINK_CONFIRM (default) a link click first renders a
+    // confirmation page and only the second click resolves.
     router.get("/monitoring/approvals/:id/decide", async (ctx) => {
       approvalWidgetHeaders(ctx);
       const id = ctx.req.param("id");
@@ -431,6 +480,62 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
           400,
         );
       }
+      const pending = (await approvalGate.listPending()).find(
+        (p) => p.id === id,
+      );
+      // Two-step confirmation (default on whenever a secret exists). Every GET
+      // caller goes through it, an authenticated operator too — the state
+      // change should never hang off a URL a crawler can present. The Control
+      // dashboard resolves through `POST /monitoring/approvals/:id`, which
+      // stays a single step. First click renders the confirmation page with a
+      // signed nonce, second click verifies it for THIS approval and decision.
+      if (approvalLinkConfirm && approvalLinkSecret !== undefined) {
+        const linkToken = ctx.req.query("token") ?? "";
+        const confirm = ctx.req.query("confirm");
+        // The confirmation is bound to the capability token's expiry, so it
+        // cannot outlive the link it was minted from — not even when the same
+        // approval id gets a freshly minted link later.
+        const linkExpiresAtMs = readApprovalLinkExpiry(linkToken) ?? 0;
+        if (confirm === undefined) {
+          const nonce = signApprovalConfirmToken(
+            id,
+            decision,
+            linkExpiresAtMs,
+            approvalLinkSecret,
+          );
+          const base = `/monitoring/approvals/${encodeURIComponent(id)}`;
+          const tokenQuery =
+            linkToken === ""
+              ? ""
+              : `&token=${encodeURIComponent(linkToken)}`;
+          return ctx.html(
+            renderApprovalConfirm(
+              pending,
+              decision,
+              `${base}/decide?decision=${decision}${tokenQuery}&confirm=${nonce}`,
+              `${base}/widget${linkToken === "" ? "" : `?token=${encodeURIComponent(linkToken)}`}`,
+            ),
+          );
+        }
+        if (
+          !verifyApprovalConfirmToken(
+            confirm,
+            id,
+            decision,
+            linkExpiresAtMs,
+            approvalLinkSecret,
+          )
+        ) {
+          return ctx.html(
+            approvalShell(
+              `<div class="tool">❌ Invalid confirmation</div>` +
+                `<div class="note">The confirmation link is stale or belongs to ` +
+                `a different decision. Open the approval again.</div>`,
+            ),
+            400,
+          );
+        }
+      }
       // Reviewer identity for the audit trail / widget. When the caller is an
       // AUTHENTICATED operator (`via` is "token"/"jwt"), the authenticated
       // identity is authoritative and `?by=` is ignored — otherwise a forged
@@ -439,9 +544,6 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       // plane (no RBAC / a link-scoped actor), where the reviewer is the end
       // user clicking their own in-chat widget, precedence is: an explicit
       // `?by=`, then the user who triggered the request, then the actor name.
-      const pending = (await approvalGate.listPending()).find(
-        (p) => p.id === id,
-      );
       const by =
         actor.via === "open"
           ? (ctx.req.query("by") ?? pending?.requestedBy ?? actor.name)

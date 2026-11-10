@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Runtime** (approvals): a single `GET` on the in-chat approval link used to
+  resolve the approval, so a link preview, prefetcher or security scanner in a
+  chat or mail client could approve a consequential tool call without anyone
+  clicking (`rel="nofollow"` does not prevent such a fetch). Approval links are
+  now two-step by default: the first click renders a script-free confirmation
+  page, and only a second click carrying a signed `confirm` value — an HMAC over
+  the approval id, the decision and the link expiry, valid 120 seconds —
+  resolves the request. This applies to every `GET` caller, an authenticated
+  operator included; the Control dashboard keeps its one-step `POST` route. Set
+  `APPROVAL_LINK_CONFIRM=false` to restore the one-click links.
+
 ### Fixed
 
 - **Runtime** (approvals): the in-chat approval link
