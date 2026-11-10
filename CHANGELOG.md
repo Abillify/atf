@@ -59,6 +59,12 @@ releases:
   set `APPROVAL_MESSAGE_LOCALE=de` to keep the German message. The widget inherits
   the setting, so a single approval interaction never mixes languages, and the
   rendered HTML declares the matching `lang`.
+- **Docs** (`docs/CAPABILITIES.md`): the capability overview advertised an
+  OpenAI-compatible embeddings endpoint that the Runtime does not serve — the
+  generated route table in `ARCHITECTURE.md` has never listed `POST
+  /v1/embeddings`. Both places that made the claim now name only the endpoints
+  that exist and state that embeddings are computed internally for retrieval and
+  caches (`EMBEDDING_MODEL`) rather than offered as an API.
 
 ## [0.25.6] - 2026-11-10
 

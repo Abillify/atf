@@ -30,9 +30,10 @@ still depends on the operator enabling and verifying it. See
 ## Orchestration and model access
 
 Runtime executes AI workflows defined as declarative graphs and exposes OpenAI-compatible
-endpoints for chat completions, Responses, model listing, and embeddings. Compatibility is
-limited to the documented routes and fields; clients that rely on other OpenAI API surfaces may
-need adaptation.
+endpoints for chat completions, Responses and model listing. Compatibility is limited to the
+documented routes and fields; clients that rely on other OpenAI API surfaces may need
+adaptation. Embeddings are not one of them: the Runtime computes embeddings internally for
+retrieval and caches (`EMBEDDING_MODEL`) but does not offer `POST /v1/embeddings`.
 
 - **Flows as files.** Workflows are YAML documents validated against
   `apps/runtime/schemas/flow.schema.json` and loaded from `FLOWS_DIR`. Changes are picked up
@@ -681,9 +682,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 
 ## Channels
 
-The primary interface provides OpenAI-compatible chat, Responses, model-listing, and embedding
-endpoints. Clients using those documented surfaces can often connect without an adapter; this is
-not a claim of compatibility with the complete OpenAI API. Two additional inbound paths exist.
+The primary interface provides OpenAI-compatible chat, Responses and model-listing endpoints.
+Clients using those documented surfaces can often connect without an adapter; this is not a
+claim of compatibility with the complete OpenAI API — embeddings in particular are internal and
+not exposed as an endpoint. Two additional inbound paths exist.
 
 - **Webhooks.** A `trigger` node accepts a signed inbound call and starts a flow.
 - **Rocket.Chat.** A direct-message assistant, off by default (`ROCKETCHAT_ENABLED`).
