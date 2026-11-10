@@ -82,6 +82,10 @@ releases:
   `fast_path_share` factor, the existing-controls list names the fast path and
   the native parsers, and the previously unnumbered "Cost levers in the Runtime"
   section is §7 with "Operating effort" following as §8.
+- **Runtime** (config): the header comment in `config/profiles.ts` claimed the
+  platform exposes ~130 environment variables; the generated reference lists
+  several hundred. The comment no longer carries a number that goes stale on
+  every release and points at `docs/CONFIGURATION.md` instead.
 
 ## [0.25.6] - 2026-11-10
 

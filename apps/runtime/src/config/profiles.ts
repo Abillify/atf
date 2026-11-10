@@ -4,9 +4,10 @@
 /**
  * Configuration profiles / presets (`src/config/profiles.ts`)
  *
- * The platform exposes ~130 environment variables. Standing up a correct
- * regulated multi-tenant deployment means flipping a dozen of them on in
- * concert (guardrails, PII vault, retention, RLS, monitoring auth, …) — the
+ * The platform exposes a large and growing set of environment variables — see
+ * `docs/CONFIGURATION.md` for the generated list and current count. Standing up
+ * a correct regulated multi-tenant deployment means flipping a dozen of them on
+ * in concert (guardrails, PII vault, retention, RLS, monitoring auth, …) — the
  * single biggest source of misconfiguration risk.
  *
  * `ATF_PRESET` picks a curated bundle of *defaults* for those flags (`PROFILE`
