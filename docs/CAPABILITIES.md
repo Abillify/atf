@@ -434,6 +434,41 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   provider call. It is not a blanket guarantee for undetected types, detector failures, or
   unconfigured multimodal inputs.
 
+**Boundaries — what the vault covers today.** The vault is a decorator around the engine's
+model-facing I/O, and its reach is exactly that boundary
+([ADR 0007](adr/0007-reversible-pii-vault-decorator.md)). Stating it precisely matters, because
+the security value of the control depends on knowing which paths it does not cover:
+
+- **Tokenized: inbound message text.** `wrapEngineWithPiiVault`
+  (`apps/runtime/src/graph/pii-vault-engine.ts`) tokenizes the content of every inbound
+  `ChatMessage` — string content and text content blocks — before delegating to
+  `executeFlow`, which is why no node handler, provider call, or MCP tool needs its own vault
+  integration.
+- **Tokenized: tool arguments.** A tool call the model emits is built from the model's own
+  output, which at that point only contains placeholders, so arguments reach a tool tokenized.
+- **Not tokenized: tool results.** A tool's return value is appended to the conversation as a
+  `role: "tool"` message (`apps/runtime/src/graph/message-mapping.ts`) and re-enters the model
+  context without passing through the vault. Neither `agent-tools.ts` nor the retrieval handler
+  `handlers/retrieval.ts` references the vault at all.
+- **Not tokenized: retrieved content.** Retrieval chunks are assembled into prompts from the
+  search index, not from an inbound message, so a document containing personal data reaches the
+  provider in plaintext. Retrieval-side protection has to come from the index and the
+  `access_tags` ACL, not from the vault.
+- **One token per occurrence.** `tokenizeText` mints a fresh identifier for every detected span,
+  so two mentions of the same value in one message become two unrelated tokens. This rules out a
+  cross-subject mapping bug, but it also means the vault cannot be used to count or link
+  distinct entities.
+- **Mapping lifetime.** The token→value mapping lives only in the request-scoped store and is
+  cleared in the `finally` of every execution (`vault.release` → `store.clear`). What survives
+  deliberately is the action summary — counts of tokenized spans by type and detector, never
+  values — kept in a bounded 500-entry ring so the explainability card can report the run after
+  it ended.
+- **Unresolvable placeholders are kept.** `detokenizeText` leaves a placeholder it cannot resolve
+  in the output verbatim instead of dropping it, so a vault miss shows up as a visible token
+  rather than silently corrupting an answer.
+
+Closing the two uncovered paths is a design decision of its own, recorded as ADR 0036 (Proposed).
+
 ## Compliance and evidence
 
 - **Policy as code, with an explicit activation boundary.** A valid

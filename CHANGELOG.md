@@ -100,6 +100,19 @@ releases:
   thread rather than a process or container, and the name allowlist is a
   separate control from the sandbox. Both texts now say what is there and what
   is not, and link the ADR.
+- **Docs** (CAPABILITIES, ADR-0036): the PII vault section claimed the vault
+  keeps PII out of provider calls without saying which paths it covers. A new
+  "Boundaries" list states the current reach exactly: inbound message text and
+  therefore tool arguments are tokenized, tool results and retrieved content are
+  not — a tool return value re-enters the model context as a `role: "tool"`
+  message and retrieval chunks come from the index, neither of which references
+  the vault. It also records that every occurrence gets its own token, that the
+  mapping is cleared in the `finally` of each execution while the value-free
+  action summary survives in a bounded ring, and that an unresolvable placeholder
+  is left visible rather than dropped. ADR 0036 (Proposed) records the design for
+  closing the gap — typed placeholders, one token per value per execution,
+  allowlisted detokenization at the tool boundary, and a `PII_VAULT_SCOPE` for
+  context — with no implementation behind it yet.
 
 ## [0.25.6] - 2026-11-10
 

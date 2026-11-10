@@ -45,6 +45,7 @@ New ADRs get the next free number; never reuse a number. Status values:
 | 0033 | [Extract throughput: continuous page refill, parallel job lanes, derived-PDF cache](0033-extract-throughput-continuous-refill-job-lanes-derived-pdf-cache.md) | Accepted  |
 | 0034 | [Online (DB) flows shadow same-id file flows — visibly, precedence unchanged](0034-online-db-flows-shadow-file-flows-visibly.md) | Accepted  |
 | 0035 | [Asymmetric transaction tokens and one audience per service](0035-asymmetric-transaction-tokens-audience-per-service.md) | Accepted  |
+| 0036 | [Extend the PII vault past the model boundary: tool results, retrieved context, and stable tokens](0036-pii-vault-typed-tokens-and-tool-boundary.md) | Proposed  |
 
 ## Conventions
 

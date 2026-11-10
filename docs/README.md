@@ -75,11 +75,11 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 39 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 40 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 
-- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0035)
+- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0036)
 - [`adr/search/`](adr/search/) — Search decisions
 - [`adr/gate/`](adr/gate/) — Gate decisions
 
