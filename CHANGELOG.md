@@ -18,6 +18,17 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search** (`apps/search`): embedding, rerank, sparse and tokenize requests
+  sent no `Authorization` header and therefore failed with HTTP 401 against
+  backends that require authentication (such as a LiteLLM proxy). The new
+  optional configuration `EMBED_API_KEY`, `EMBED_FALLBACK_API_KEY`,
+  `RERANK_API_KEY`, `RERANK_FALLBACK_API_KEY`, `SPARSE_API_KEY` and
+  `TOKENIZE_API_KEY` pass a bearer token to the respective upstream; when unset
+  the behavior is unchanged (no header). `EMBED_API_KEY` is ignored on the
+  Bedrock path, where AWS credentials apply.
+
 ## [0.25.5] - 2026-11-06
 
 ### Changed

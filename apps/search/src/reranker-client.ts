@@ -130,6 +130,13 @@ export interface RerankerClientConfig {
   globalConcurrency?: number;
   /** Optional circuit breaker shared across all calls from this client. */
   circuitBreaker?: CircuitBreaker;
+  /**
+   * Optional Bearer token. When set, sent as `Authorization: Bearer <token>`
+   * on every upstream request (native rerank endpoint and the embeddings
+   * probe/bi-encoder/rank-pooling paths alike). Needed for OpenAI-compatible
+   * servers such as a LiteLLM proxy that reject unauthenticated calls.
+   */
+  apiKey?: string | null;
   inputTokenCost?: number;
   outputTokenCost?: number;
 }
@@ -257,6 +264,7 @@ async function fetchEmbeddings(
   model: string,
   inputs: string | string[],
   timeoutMs: number,
+  apiKey: string | null | undefined,
 ): Promise<
   | {
       ok: true;
@@ -275,6 +283,7 @@ async function fetchEmbeddings(
     const fetchHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    if (apiKey) fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
     injectTraceHeaders(fetchHeaders);
     response = await fetch(url, {
       method: "POST",
@@ -449,6 +458,7 @@ export function createRerankerClient(
     logger,
     timeoutMs = 30_000,
     circuitBreaker,
+    apiKey,
     inputTokenCost = 0,
     outputTokenCost = 0,
   } = config;
@@ -670,6 +680,7 @@ export function createRerankerClient(
             scoreTransform,
             logger,
             timeoutMs,
+            apiKey,
           ),
         isRetryable,
         3,
@@ -691,6 +702,7 @@ export function createRerankerClient(
             separator,
             logger,
             timeoutMs,
+            apiKey,
           ),
         isRetryable,
         3,
@@ -709,6 +721,7 @@ export function createRerankerClient(
             documents,
             logger,
             timeoutMs,
+            apiKey,
           ),
         isRetryable,
         3,
@@ -724,6 +737,7 @@ export function createRerankerClient(
       rerankModel,
       query,
       timeoutMs,
+      apiKey,
     );
     if (!probe.ok) {
       logger.debug({ error: probe.error }, "Reranker mode probe failed");
@@ -746,6 +760,7 @@ export function createRerankerClient(
         separator,
         logger,
         timeoutMs,
+        apiKey,
       );
       return applyOffset(res);
     }
@@ -764,6 +779,7 @@ export function createRerankerClient(
       documents,
       logger,
       timeoutMs,
+      apiKey,
     );
     return applyOffset(res);
   }
@@ -785,6 +801,7 @@ async function rerankViaNativeEndpoint(
   scoreTransform: RerankScoreTransform,
   logger: pino.Logger,
   timeoutMs: number,
+  apiKey: string | null | undefined,
 ): Promise<RerankResponse> {
   const controller = new AbortController();
   // timeoutMs=0 disables the timeout (useful for local dev with slow models).
@@ -796,6 +813,7 @@ async function rerankViaNativeEndpoint(
     const fetchHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    if (apiKey) fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
     injectTraceHeaders(fetchHeaders);
     response = await fetch(url, {
       method: "POST",
@@ -941,6 +959,7 @@ async function rerankViaRankPooling(
   separator: string,
   logger: pino.Logger,
   timeoutMs: number,
+  apiKey: string | null | undefined,
 ): Promise<RerankResponse> {
   const inputs = documents.map((doc) => `${query}${separator}${doc}`);
   const batchResult = await fetchEmbeddings(
@@ -948,6 +967,7 @@ async function rerankViaRankPooling(
     rerankModel,
     inputs,
     timeoutMs,
+    apiKey,
   );
   if (!batchResult.ok) return { ok: false, error: batchResult.error };
 
@@ -972,12 +992,14 @@ async function rerankViaBiEncoder(
   documents: string[],
   logger: pino.Logger,
   timeoutMs: number,
+  apiKey: string | null | undefined,
 ): Promise<RerankResponse> {
   const queryResult = await fetchEmbeddings(
     embeddingsUrl,
     rerankModel,
     query,
     timeoutMs,
+    apiKey,
   );
   if (!queryResult.ok) return { ok: false, error: queryResult.error };
   const queryVec = queryResult.rows[0]?.embedding;
@@ -997,6 +1019,7 @@ async function rerankViaBiEncoder(
     documents,
     logger,
     timeoutMs,
+    apiKey,
     queryResult.usage,
   );
 }
@@ -1008,6 +1031,7 @@ async function rerankViaBiEncoderWithQueryVec(
   documents: string[],
   logger: pino.Logger,
   timeoutMs: number,
+  apiKey: string | null | undefined,
   queryUsage?: { inputTokens: number; outputTokens: number },
 ): Promise<RerankResponse> {
   const docResult = await fetchEmbeddings(
@@ -1015,6 +1039,7 @@ async function rerankViaBiEncoderWithQueryVec(
     rerankModel,
     documents,
     timeoutMs,
+    apiKey,
   );
   if (!docResult.ok) return { ok: false, error: docResult.error };
 

@@ -32,6 +32,12 @@ export interface EmbeddingClientConfig {
    * outbound call so downstream service logs can be correlated.
    */
   getRequestId?: () => string | undefined;
+  /**
+   * Optional Bearer token. When set, sent as `Authorization: Bearer <token>`
+   * on the HTTP request (OpenAI-compatible servers such as a LiteLLM proxy).
+   * Ignored on the Bedrock code path, which uses the AWS SDK's own credentials.
+   */
+  apiKey?: string | null;
   inputTokenCost?: number;
   outputTokenCost?: number;
 }
@@ -273,6 +279,7 @@ export function createEmbeddingClient(
     timeoutMs = 30_000,
     circuitBreaker,
     getRequestId,
+    apiKey,
     inputTokenCost = 0,
     outputTokenCost = 0,
   } = config;
@@ -399,6 +406,7 @@ export function createEmbeddingClient(
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     const reqId = getRequestId?.();
     if (reqId) headers["X-Request-Id"] = reqId;
     // Forward W3C Trace Context and correlation ID so downstream service logs
