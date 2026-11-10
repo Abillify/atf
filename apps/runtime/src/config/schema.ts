@@ -18,6 +18,10 @@
 import { z } from "zod";
 import type { OperationalProfile } from "@atf/security-kit";
 import type { ProviderKeys } from "../graph/provider-key-pool.js";
+import {
+  DEFAULT_APPROVAL_MESSAGE_LOCALE,
+  type ApprovalMessageLocale,
+} from "../graph/approval-messages.js";
 import type {
   OperatorRole,
   OperatorTokenEntry,
@@ -561,6 +565,13 @@ export interface AppConfig {
   approvalBaseUrl?: string;
   /** Explicit browser origins permitted to embed in-chat approval widgets. */
   approvalFrameAncestors?: string[];
+  /**
+   * Language of the human-in-the-loop approval text: the chat message and the
+   * in-chat widget, confirmation and result pages. Default `en`; `de` restores
+   * the German chat text. See `APPROVAL_MESSAGE_LOCALE` and
+   * `graph/approval-messages.ts`.
+   */
+  approvalMessageLocale?: ApprovalMessageLocale;
   mediaBaseUrl?: string;
   /**
    * Deployment gate for the `show_figure` tool: answers may embed document
@@ -2050,6 +2061,14 @@ export const EnvSchema = z.object({
         raw === undefined || raw === "" || raw === "true" || raw === "1",
     ),
   APPROVAL_BASE_URL: z.string().url().optional(),
+  /**
+   * Language of the approval chat message and the in-chat approval widget, so
+   * both halves of one approval interaction read the same way. English by
+   * default; set `de` to keep the German message.
+   */
+  APPROVAL_MESSAGE_LOCALE: z
+    .enum(["en", "de"])
+    .default(DEFAULT_APPROVAL_MESSAGE_LOCALE),
   APPROVAL_FRAME_ANCESTORS: z
     .string()
     .optional()

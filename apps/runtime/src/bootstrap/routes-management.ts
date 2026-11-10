@@ -504,6 +504,7 @@ export async function registerManagementRoutes(
         ...(config.approvalLinkConfirm !== undefined
           ? { approvalLinkConfirm: config.approvalLinkConfirm }
           : {}),
+        approvalMessageLocale: config.approvalMessageLocale,
         operatorAuth,
         auditLog,
       }),

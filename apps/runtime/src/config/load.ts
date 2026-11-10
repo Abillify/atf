@@ -385,6 +385,7 @@ export function loadConfig(): AppConfig {
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,
     approvalLinkConfirm: env.APPROVAL_LINK_CONFIRM,
     approvalBaseUrl: env.APPROVAL_BASE_URL,
+    approvalMessageLocale: env.APPROVAL_MESSAGE_LOCALE,
     approvalFrameAncestors: env.APPROVAL_FRAME_ANCESTORS,
     mediaBaseUrl: env.MEDIA_BASE_URL ?? env.APPROVAL_BASE_URL,
     embedSearchFigures: env.EMBED_SEARCH_FIGURES,

@@ -109,8 +109,9 @@ function approveFirst(gate: ApprovalRegistry): Promise<void> {
 async function runAndGetChatText(
   gate: ApprovalRegistry,
   policy?: CompliancePolicy,
+  configOverrides: Partial<AppConfig> = {},
 ): Promise<string> {
-  const engine = createGraphEngine(baseConfig, {
+  const engine = createGraphEngine({ ...baseConfig, ...configOverrides }, {
     flowRegistry: registry(flow),
     mcpWrapper: fakeMcp(),
     llmProviderFactory: () => {
@@ -225,5 +226,21 @@ describe("approval link token lifetime", () => {
       .map((c) => c.choices[0]?.delta?.content ?? "")
       .join("");
     expect(text).not.toContain("token=");
+  });
+
+  test("APPROVAL_MESSAGE_LOCALE switches the language of the chat message", async () => {
+    // English became the default so a flow log reads in one language end to
+    // end; German remains available per deployment (APPROVAL_MESSAGE_LOCALE=de).
+    const enGate = mustCreateApprovalGate({ enabled: true, timeoutMs: 300_000 });
+    const en = await runAndGetChatText(enGate);
+    expect(en).toContain("Approval required");
+    expect(en).not.toContain("Freigabe erforderlich");
+
+    const deGate = mustCreateApprovalGate({ enabled: true, timeoutMs: 300_000 });
+    const de = await runAndGetChatText(deGate, undefined, {
+      approvalMessageLocale: "de",
+    });
+    expect(de).toContain("Freigabe erforderlich");
+    expect(de).not.toContain("Approval required");
   });
 });

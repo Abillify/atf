@@ -654,6 +654,74 @@ describe("approval-link capability token (in-chat widget)", () => {
     expect(resolve?.details?.authenticatedAs).toBe("alice");
   });
 
+  test("approvalMessageLocale=de renders the widget, confirmation and result in German", async () => {
+    // The chat message and the pages it embeds must read the same language;
+    // English widget labels under a German chat message was the reported defect.
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 60_000 });
+    const a = app({
+      approvalGate: gate,
+      approvalLinkSecret: SECRET,
+      approvalMessageLocale: "de",
+    });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "bank/pay",
+      args: {},
+      requestedBy: "user-1",
+    });
+    const id = await firstPendingId(gate);
+    const token = signApprovalLinkToken(id, SECRET, Date.now() + 60_000);
+
+    const widget = await (
+      await a.request(
+        `/monitoring/approvals/${id}/widget?token=${encodeURIComponent(token)}`,
+      )
+    ).text();
+    expect(widget).toContain('<html lang="de">');
+    expect(widget).toContain("Freigabe erforderlich");
+    expect(widget).toContain("keine Argumente");
+    expect(widget).toContain("Freigeben");
+    expect(widget).toContain("Ablehnen");
+    expect(widget).not.toContain(">Approve<");
+
+    const confirm = await (
+      await a.request(
+        `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}`,
+      )
+    ).text();
+    expect(confirm).toContain("<code>pay</code> genehmigen?");
+    expect(confirm).toContain("Bestätige deine Auswahl");
+    expect(confirm).toContain(">Zurück<");
+
+    const nonce = /confirm=([A-Za-z0-9._-]+)/.exec(confirm)?.[1];
+    if (nonce === undefined) throw new Error("no confirmation link rendered");
+    const decided = await (
+      await a.request(
+        `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${nonce}`,
+      )
+    ).text();
+    expect(decided).toContain("Freigegeben");
+    expect(decided).not.toContain(">Approved<");
+  });
+
+  test("an unsupported approvalMessageLocale still renders English", async () => {
+    // A misconfigured label language must never leave a security-relevant
+    // decision page without text.
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 60_000 });
+    const a = app({ approvalGate: gate, approvalMessageLocale: "fr" });
+    void gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "bank/pay",
+      args: {},
+    });
+    const id = await firstPendingId(gate);
+    const html = await (await a.request(`/monitoring/approvals/${id}/widget`)).text();
+    expect(html).toContain('<html lang="en">');
+    expect(html).toContain("Approval required");
+  });
+
   test("GET /:id/decide on the open plane still honours ?by=", async () => {
     const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
     const audit = new InMemoryAuditLog();

@@ -50,6 +50,16 @@ releases:
   the real one in `details.authenticatedAs`. On the open plane (no RBAC) the
   previous precedence is unchanged.
 
+### Changed
+
+- **Runtime** (approvals): the approval text rendered into the chat and the pages
+  of the in-chat widget are no longer hard-coded German. Both read from one message
+  catalogue (`apps/runtime/src/graph/approval-messages.ts`), which ships `en` and
+  `de`. **The default language of the in-chat approval message is now English**;
+  set `APPROVAL_MESSAGE_LOCALE=de` to keep the German message. The widget inherits
+  the setting, so a single approval interaction never mixes languages, and the
+  rendered HTML declares the matching `lang`.
+
 ## [0.25.6] - 2026-11-10
 
 ### Fixed

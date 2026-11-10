@@ -42,6 +42,11 @@ import {
   verifyApprovalLinkToken,
   type ApprovalLinkTokenStatus,
 } from "../graph/approval-link.js";
+import {
+  approvalMessages,
+  formatMessage,
+  type ApprovalMessages,
+} from "../graph/approval-messages.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import {
   AUDIT_UNAVAILABLE_BODY,
@@ -79,6 +84,12 @@ export interface ControlRouterDeps {
    * with the same secret. When unset or false the one-click behaviour stays.
    */
   approvalLinkConfirm?: boolean;
+  /**
+   * Language of every string rendered by the approval pages, matching the
+   * language of the chat message that embeds them (`APPROVAL_MESSAGE_LOCALE`).
+   * Unknown or unset values fall back to English.
+   */
+  approvalMessageLocale?: string;
 }
 
 interface ResolveBody {
@@ -120,9 +131,13 @@ function escapeHtml(s: string): string {
  * plain markup). `headExtra` injects extra `<head>` markup (e.g. a
  * `<meta http-equiv="refresh">` so a pending widget reloads itself when the
  * countdown ends — JS-free environments cannot reload on their own). */
-function approvalShell(body: string, headExtra = ""): string {
+function approvalShell(
+  body: string,
+  msg: ApprovalMessages,
+  headExtra = "",
+): string {
   return (
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="${escapeHtml(msg.lang)}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     headExtra +
     `<style>` +
@@ -159,42 +174,62 @@ function renderApprovalConfirm(
   decision: "approved" | "denied",
   href: string,
   backHref: string,
+  msg: ApprovalMessages,
 ): string {
-  const verb = decision === "approved" ? "Approve" : "Deny";
+  const verb = decision === "approved" ? msg.approve : msg.deny;
   const cls = decision === "approved" ? "approve" : "deny";
-  const tool = pending?.tool.split("/").pop() ?? pending?.tool ?? "tool call";
+  const tool =
+    pending?.tool.split("/").pop() ?? pending?.tool ?? msg.unnamedTool;
+  // The template comes from the catalog and the tool name from the request:
+  // escape the template first, then substitute an already-escaped tool name so
+  // it keeps its <code> formatting.
+  const question = formatMessage(
+    escapeHtml(
+      decision === "approved" ? msg.confirmApprove : msg.confirmDeny,
+    ),
+    { tool: `<code>${escapeHtml(tool)}</code>` },
+  );
   return approvalShell(
-    `<div class="tool">${verb} <code>${escapeHtml(tool)}</code>?</div>` +
-      `<div class="note">Confirm your choice &mdash; this second step keeps an ` +
-      `automatic link preview, prefetcher or security scanner from acting on ` +
-      `the request.</div>` +
+    `<div class="tool">${question}</div>` +
+      `<div class="note">${escapeHtml(msg.confirmExplanation)}</div>` +
       `<div class="row">` +
       `<a class="btn ${cls}" href="${escapeHtml(href)}" rel="nofollow">` +
-      `${decision === "approved" ? "✅" : "🚫"} ${verb}</a>` +
-      `<a class="btn" href="${escapeHtml(backHref)}" rel="nofollow">Back</a>` +
+      `${decision === "approved" ? "✅" : "🚫"} ${escapeHtml(verb)}</a>` +
+      `<a class="btn" href="${escapeHtml(backHref)}" rel="nofollow">${escapeHtml(
+        msg.back,
+      )}</a>` +
       `</div>`,
+    msg,
   );
 }
 
 /** Renders the final, single-button state (only the decision that was taken). */
-function renderResolvedState(resolved: ResolvedApproval | undefined): string {
+function renderResolvedState(
+  resolved: ResolvedApproval | undefined,
+  msg: ApprovalMessages,
+): string {
   if (resolved === undefined) {
     return approvalShell(
-      `<div class="tool">⏳ Approval</div>` +
-        `<div class="note">This request is no longer available ` +
-        `(already handled or expired).</div>`,
+      `<div class="tool">⏳ ${escapeHtml(msg.approvalLabel)}</div>` +
+        `<div class="note">${escapeHtml(msg.noLongerAvailable)}</div>`,
+      msg,
     );
   }
   const cls = resolved.approved ? "approve" : "deny";
-  const label = resolved.approved ? "✅ Approved" : "🚫 Denied";
+  const label = resolved.approved
+    ? `✅ ${escapeHtml(msg.approved)}`
+    : `🚫 ${escapeHtml(msg.denied)}`;
   const note =
     resolved.timedOut === true
-      ? `<div class="note">Automatically denied (timed out).</div>`
+      ? `<div class="note">${escapeHtml(msg.timedOut)}</div>`
       : resolved.by !== undefined
-        ? `<div class="note">by ${escapeHtml(resolved.by)}</div>`
+        ? `<div class="note">${escapeHtml(
+            formatMessage(msg.resolvedBy, { by: resolved.by }),
+          )}</div>`
         : "";
   return approvalShell(
     `<div class="row"><span class="btn ${cls} done">${label}</span></div>${note}`,
+    msg,
   );
 }
 
@@ -211,7 +246,11 @@ function renderResolvedState(resolved: ResolvedApproval | undefined): string {
  * the window. The literal duration/step values are baked into a per-widget
  * `<style>` because CSS `steps()` does not accept custom properties.
  */
-function renderCountdown(requestedAt: string, timeoutMs: number): string {
+function renderCountdown(
+  requestedAt: string,
+  timeoutMs: number,
+  msg: ApprovalMessages,
+): string {
   const startedAt = Date.parse(requestedAt);
   const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
   const remainingMs = Math.max(0, timeoutMs - elapsed);
@@ -242,8 +281,12 @@ function renderCountdown(requestedAt: string, timeoutMs: number): string {
     (animated ? `@keyframes cd-tick{from{--cd:${steps}}}` : "") +
     `.cd .num::after{content:counter(cd)}` +
     `</style>` +
-    `<div class="cd" title="Automatic denial in ${remainingSec}s" ` +
-    `aria-label="Automatic denial in ${remainingSec} seconds">` +
+    `<div class="cd" title="${escapeHtml(
+      formatMessage(msg.countdownTitle, { seconds: String(remainingSec) }),
+    )}" ` +
+    `aria-label="${escapeHtml(
+      formatMessage(msg.countdownAria, { seconds: String(remainingSec) }),
+    )}">` +
     `<svg viewBox="0 0 44 44" aria-hidden="true">` +
     `<circle class="trk" cx="22" cy="22" r="16"></circle>` +
     `<circle class="prg" cx="22" cy="22" r="16"></circle></svg>` +
@@ -265,13 +308,17 @@ function renderApprovalWidget(
   pending: PendingApproval | undefined,
   resolved: ResolvedApproval | undefined,
   timeoutMs: number,
+  msg: ApprovalMessages,
   linkToken?: string,
 ): string {
   // Already resolved (or resolved meanwhile): show only the chosen button.
-  if (pending === undefined) return renderResolvedState(resolved);
+  if (pending === undefined) return renderResolvedState(resolved, msg);
 
   const toolLabel = escapeHtml(pending.tool.split("/").pop() ?? pending.tool);
-  const title = escapeHtml(pending.title ?? `Approval required: ${pending.tool.split("/").pop() ?? pending.tool}`);
+  const title = escapeHtml(
+    pending.title ??
+      `${msg.approvalRequired}: ${pending.tool.split("/").pop() ?? pending.tool}`,
+  );
   const message = pending.message !== undefined
     ? `<div class="message">${escapeHtml(pending.message)}</div>`
     : "";
@@ -288,7 +335,7 @@ function renderApprovalWidget(
               )}`,
           )
           .join(", ")
-      : "<em>no arguments</em>";
+      : `<em>${escapeHtml(msg.noArguments)}</em>`;
 
   // The decide endpoint sits next to this one (…/:id/decide). A relative href
   // keeps the navigation on the backend origin that served the iframe document,
@@ -317,14 +364,15 @@ function renderApprovalWidget(
   return approvalShell(
     `<div class="head">` +
       `<div class="tool">⏳ ${title} <code>${toolLabel}</code></div>` +
-      renderCountdown(pending.requestedAt, timeoutMs) +
+      renderCountdown(pending.requestedAt, timeoutMs, msg) +
       `</div>` +
       message +
       `<div class="args">${argSummary}</div>` +
       `<div class="row">` +
-      `<a class="btn approve" href="decide?decision=approved${decideTokenQuery}" rel="nofollow">✅ Approve</a>` +
-      `<a class="btn deny" href="decide?decision=denied${decideTokenQuery}" rel="nofollow">🚫 Deny</a>` +
+      `<a class="btn approve" href="decide?decision=approved${decideTokenQuery}" rel="nofollow">✅ ${escapeHtml(msg.approve)}</a>` +
+      `<a class="btn deny" href="decide?decision=denied${decideTokenQuery}" rel="nofollow">🚫 ${escapeHtml(msg.deny)}</a>` +
       `</div>`,
+    msg,
     refreshMeta,
   );
 }
@@ -343,6 +391,9 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
     );
   };
   const authRequired = deps.authRequired ?? false;
+  // One catalog for every approval page this router renders, matching the
+  // language of the chat message that embeds them.
+  const msg = approvalMessages(deps.approvalMessageLocale);
   const approvalLinkSecret = deps.approvalLinkSecret;
   // Confirmation needs a secret to sign the nonce with; without one the
   // one-click flow is the only option, regardless of the switch.
@@ -466,7 +517,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       // somehow still pending (clock skew, a replica that never ran the
       // timer), the neutral card is rendered instead.
       if (linkStatus === "expired" && pending !== undefined) {
-        return ctx.html(renderResolvedState(undefined));
+        return ctx.html(renderResolvedState(undefined, msg));
       }
       const resolved =
         pending === undefined ? await approvalGate.getResolved(id) : undefined;
@@ -475,6 +526,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
           pending,
           resolved,
           approvalGate.timeoutMs,
+          msg,
           ctx.req.query("token"),
         ),
       );
@@ -509,9 +561,9 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       if (decision !== "approved" && decision !== "denied") {
         return ctx.html(
           approvalShell(
-            `<div class="tool">❌ Invalid decision</div>` +
-              `<div class="note">Parameter <code>decision</code> must be ` +
-              `<code>approved</code> or <code>denied</code>.</div>`,
+            `<div class="tool">❌ ${escapeHtml(msg.invalidDecision)}</div>` +
+              `<div class="note">${escapeHtml(msg.invalidDecisionNote)}</div>`,
+            msg,
           ),
           400,
         );
@@ -550,6 +602,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
               decision,
               `${base}/decide?decision=${decision}${tokenQuery}&confirm=${nonce}`,
               `${base}/widget${linkToken === "" ? "" : `?token=${encodeURIComponent(linkToken)}`}`,
+              msg,
             ),
           );
         }
@@ -564,9 +617,11 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
         ) {
           return ctx.html(
             approvalShell(
-              `<div class="tool">❌ Invalid confirmation</div>` +
-                `<div class="note">The confirmation link is stale or belongs to ` +
-                `a different decision. Open the approval again.</div>`,
+              `<div class="tool">❌ ${escapeHtml(msg.invalidConfirmation)}</div>` +
+                `<div class="note">${escapeHtml(
+                  msg.invalidConfirmationNote,
+                )}</div>`,
+              msg,
             ),
             400,
           );
@@ -590,7 +645,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
         // Already resolved (or expired): re-render the retained final state so
         // a double-click / reload still shows just the decision that was taken.
         const prior = await approvalGate.getResolved(id);
-        return ctx.html(renderResolvedState(prior), prior ? 200 : 404);
+        return ctx.html(renderResolvedState(prior, msg), prior ? 200 : 404);
       }
       // Regulierte Aktion (Req 1.4): the decision is only presented as saved
       // once it is durably audited — otherwise 503 (never a success without a
@@ -616,21 +671,30 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
         } catch {
           return ctx.html(
             approvalShell(
-              `<div class="tool">⚠️ ${approved ? "Approved" : "Denied"} — audit entry missing</div>` +
-                `<div class="note">The decision took effect, but it could not be ` +
-                `recorded in the audit trail. Please inform your operator.</div>`,
+              `<div class="tool">⚠️ ${escapeHtml(
+                formatMessage(msg.auditEntryMissing, {
+                  decision: approved ? msg.approved : msg.denied,
+                }),
+              )}</div>` +
+                `<div class="note">${escapeHtml(
+                  msg.auditEntryMissingNote,
+                )}</div>`,
+              msg,
             ),
             AUDIT_UNAVAILABLE_STATUS,
           );
         }
       }
       return ctx.html(
-        renderResolvedState({
-          id,
-          approved,
-          by,
-          decidedAt: new Date().toISOString(),
-        }),
+        renderResolvedState(
+          {
+            id,
+            approved,
+            by,
+            decidedAt: new Date().toISOString(),
+          },
+          msg,
+        ),
       );
     });
 
