@@ -42,6 +42,17 @@ releases:
 
 ### Added
 
+- **Docs**: `docs/compliance/` maps ATF controls onto four frameworks an operator is
+  likely to be asked about — ISO/IEC 42001, NIS2, DORA and BSI C5 — in the same shape
+  for each: the topic, the ATF control that serves it, the settings that make it
+  binding, and the endpoint, artefact or metric to hand an assessor. Every row links
+  the control to the section of `docs/CAPABILITIES.md` that documents it, so the middle
+  column is checkable rather than assertive. Clause and article references are
+  deliberately `TODO(human)` throughout: the mapping is a draft, not legal advice, and
+  the standard texts are not reproduced here. Management-system duties a product cannot
+  own (scope statements, training, notification to an authority) are recorded as not
+  covered, which is where an operator's own documentation starts.
+
 - **Docs**: `docs/FLOW-COOKBOOK.md` is the pattern half of the flow documentation — twelve
   recipes (classifier routing, model pools and sticky conversations, cheap-to-strong cascade,
   RAG with a runtime source check, bounded tool loops, sub-flows and prompt files, variables and

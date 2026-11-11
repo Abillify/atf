@@ -71,6 +71,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | STRIDE threat model per service, including Outpost Desktop and the updater |
 | [EU-AI-ACT.md](EU-AI-ACT.md) | EU AI Act: roles, high-risk check, Art. 9–15/26/50 mapped to ATF controls, gaps |
+| [compliance/README.md](compliance/README.md) | Draft mappings of ATF controls onto ISO/IEC 42001, NIS2, DORA and BSI C5. Not legal advice; every clause reference is `TODO(human)` |
 | [DSFA-VORLAGE.md](DSFA-VORLAGE.md) | DPIA (German "DSFA") template, Art. 35 GDPR, with ATF-specific pre-fills |
 | [VVT-VORLAGE.md](VVT-VORLAGE.md) | Record of processing activities (RoPA, German "VVT") template, Art. 30 GDPR |
 | [runbooks/backup-restore.md](runbooks/backup-restore.md) | Backing up and restoring every store, in dependency order |
@@ -82,7 +83,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 40 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 36 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 
