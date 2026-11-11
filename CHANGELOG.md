@@ -183,6 +183,14 @@ releases:
   The Quickstart stack job runs the tour itself: documentation that executes is
   gated like documentation that does not, so a vault, approval or receipt
   regression fails CI rather than a demo.
+- **Docs** (ADRs 0037–0040): four design records, all `Proposed`, cover the
+  open architecture questions the review follow-up surfaced but did not
+  implement: showing the knowledge base in Control without breaking the
+  "Control talks only to the Runtime" rule (0037), a trust-proxy mode that
+  governs traffic from existing AI clients without a flow file (0038),
+  sharing the receipt transparency log between replicas so `REPLICAS > 1`
+  stops forking the tree (0039), and file-supplied secrets with a design for
+  external key management (0040).
 - **Docs** (`ROADMAP.md`, `SUPPORT.md`, `GOVERNANCE.md`): a reader who decides
   whether to adopt ATF could see what it does today but not where it is going,
   who answers questions, or how a decision gets made. `ROADMAP.md` states the

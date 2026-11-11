@@ -46,6 +46,10 @@ New ADRs get the next free number; never reuse a number. Status values:
 | 0034 | [Online (DB) flows shadow same-id file flows — visibly, precedence unchanged](0034-online-db-flows-shadow-file-flows-visibly.md) | Accepted  |
 | 0035 | [Asymmetric transaction tokens and one audience per service](0035-asymmetric-transaction-tokens-audience-per-service.md) | Accepted  |
 | 0036 | [Extend the PII vault past the model boundary: tool results, retrieved context, and stable tokens](0036-pii-vault-typed-tokens-and-tool-boundary.md) | Proposed  |
+| 0037 | [Show the knowledge base in Control without breaking "Control talks only to the Runtime"](0037-knowledge-management-in-control.md) | Proposed  |
+| 0038 | [Trust-proxy mode: ATF as a drop-in gateway in front of existing AI clients](0038-trust-proxy-mode.md) | Proposed  |
+| 0039 | [Share the receipt transparency log between replicas](0039-shared-receipt-transparency-log.md) | Proposed  |
+| 0040 | [Secrets from files, and a design for external key management](0040-external-key-management.md) | Proposed  |
 
 ## Conventions
 
