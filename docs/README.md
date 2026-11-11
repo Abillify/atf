@@ -13,6 +13,9 @@
 | [../DEVELOPMENT.md](../DEVELOPMENT.md) | You are about to change code |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | You are deploying to production |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | You are opening a pull request |
+| [../SUPPORT.md](../SUPPORT.md) | You need help or want to know where a question belongs |
+| [../ROADMAP.md](../ROADMAP.md) | You want to know where the project is going |
+| [../GOVERNANCE.md](../GOVERNANCE.md) | You want to know who decides and how |
 | [../SECURITY.md](../SECURITY.md) | You found a vulnerability |
 | [../LICENSING.md](../LICENSING.md) | You need to know what you may do with ATF |
 

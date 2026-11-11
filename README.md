@@ -370,6 +370,9 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production requirements and the supported boundary |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |
+| [ROADMAP.md](ROADMAP.md) | Where the project is going: now, next, later — without dates |
+| [SUPPORT.md](SUPPORT.md) | Where questions, bugs, security reports, and commercial requests go |
+| [GOVERNANCE.md](GOVERNANCE.md) | Who decides, how contracts and ADRs change, how to get involved |
 | [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
 | [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md) | Document Intelligence v2 upgrade, rollback, and corpus re-ingest |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
