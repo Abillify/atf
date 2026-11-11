@@ -59,6 +59,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [DEPRECATIONS.md](DEPRECATIONS.md) | Every deprecated option, field and header, with its replacement and removal version |
 | [STABILITY.md](STABILITY.md) | What is covered by semantic versioning from 1.0.0 and which features stay experimental |
 | [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |
+| [BENCHMARKS.md](BENCHMARKS.md) | Measured retrieval, extraction and groundedness numbers, each with the raw report file committed under `benchmarks/` next to it |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
 | [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |
 | [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md) | Moving a deployment onto the Document Intelligence v2 ingestion path |

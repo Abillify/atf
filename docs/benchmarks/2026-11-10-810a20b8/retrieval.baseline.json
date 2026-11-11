@@ -1,0 +1,138 @@
+{
+  "label": "baseline",
+  "pending": false,
+  "generated_at": "2026-11-10T07:55:03.490Z",
+  "fixture": {
+    "version": "1.4.0",
+    "path": "/home/runner/work/atf/atf/scripts/eval/golden-set/golden-set.v1.json",
+    "documents": 4,
+    "questions": 144
+  },
+  "parameters": {
+    "collection": "golden",
+    "base_url": "http://127.0.0.1:3012",
+    "cutoffs": [
+      5,
+      10
+    ],
+    "mode": "live",
+    "endpoint": "v1"
+  },
+  "latency": {
+    "p50_ms": 87.5,
+    "p95_ms": 198.6,
+    "samples": 144
+  },
+  "metrics": {
+    "page": {
+      "5": {
+        "recallAtK": 0.691666666667,
+        "mrr": 0.437916666667,
+        "ndcgAtK": 0.501639534091,
+        "evaluatedQueries": 120,
+        "skippedQueries": 24
+      },
+      "10": {
+        "recallAtK": 0.8,
+        "mrr": 0.45296957672,
+        "ndcgAtK": 0.53727939307,
+        "evaluatedQueries": 120,
+        "skippedQueries": 24
+      }
+    },
+    "figure": {
+      "5": {
+        "recallAtK": 0.974358974359,
+        "mrr": 0.869017094017,
+        "ndcgAtK": 0.89560577261,
+        "evaluatedQueries": 78,
+        "skippedQueries": 66
+      },
+      "10": {
+        "recallAtK": 0.974358974359,
+        "mrr": 0.869017094017,
+        "ndcgAtK": 0.89560577261,
+        "evaluatedQueries": 78,
+        "skippedQueries": 66
+      }
+    },
+    "mrr": {
+      "5": 0.864166666667,
+      "10": 0.864166666667
+    },
+    "figure_hit_rate": {
+      "5": {
+        "rate": 0.974358974359,
+        "figureQuestions": 78,
+        "hits": 76
+      },
+      "10": {
+        "rate": 0.974358974359,
+        "figureQuestions": 78,
+        "hits": 76
+      }
+    },
+    "abstention": {
+      "5": {
+        "abstainQuestions": 24,
+        "answerableQuestions": 120,
+        "abstained": 0,
+        "correctAbstentions": 0,
+        "abstentionPrecision": 0,
+        "abstentionRecall": 0,
+        "falseAnswerRate": 1,
+        "falseAbstentionRate": 0
+      },
+      "10": {
+        "abstainQuestions": 24,
+        "answerableQuestions": 120,
+        "abstained": 0,
+        "correctAbstentions": 0,
+        "abstentionPrecision": 0,
+        "abstentionRecall": 0,
+        "falseAnswerRate": 1,
+        "falseAbstentionRate": 0
+      }
+    }
+  },
+  "abstention_min_score": null,
+  "extraction": {
+    "tableCell": {
+      "accuracy": 0,
+      "cases": 22,
+      "expectedCells": 112,
+      "matchedCells": 0
+    },
+    "label": {
+      "coverage": 0,
+      "cases": 28,
+      "expectedLabels": 84,
+      "coveredLabels": 0
+    },
+    "bpmn": {
+      "nodeRecall": 0,
+      "edgeRecall": 0,
+      "cases": 20,
+      "expectedNodes": 80,
+      "recoveredNodes": 0,
+      "expectedEdges": 60,
+      "recoveredEdges": 0
+    },
+    "pending": true
+  },
+  "coverage": {
+    "by_kind": {
+      "docx": 46,
+      "bpmn": 36,
+      "ui_mask": 36,
+      "plan": 26
+    },
+    "abstain_questions": 24,
+    "page_questions": 120,
+    "figure_questions": 78,
+    "cell_questions": 22,
+    "table_annotations": 22,
+    "label_annotations": 28,
+    "bpmn_annotations": 20
+  }
+}

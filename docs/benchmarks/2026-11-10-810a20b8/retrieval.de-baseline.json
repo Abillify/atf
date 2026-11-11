@@ -1,0 +1,139 @@
+{
+  "label": "de-baseline",
+  "pending": false,
+  "generated_at": "2026-11-10T08:53:04.290Z",
+  "fixture": {
+    "version": "1.4.0+de-morphology.1.2.0",
+    "path": "scripts/eval/golden-set/de-morphology.v1.json",
+    "documents": 4,
+    "questions": 43
+  },
+  "parameters": {
+    "collection": "golden",
+    "base_url": "http://127.0.0.1:3012",
+    "cutoffs": [
+      5,
+      10
+    ],
+    "mode": "live",
+    "endpoint": "v1",
+    "search_mode": "fts"
+  },
+  "latency": {
+    "p50_ms": 5.3,
+    "p95_ms": 8.2,
+    "samples": 43
+  },
+  "metrics": {
+    "page": {
+      "5": {
+        "recallAtK": 0.583333333333,
+        "mrr": 0.360648148148,
+        "ndcgAtK": 0.416173432325,
+        "evaluatedQueries": 36,
+        "skippedQueries": 7
+      },
+      "10": {
+        "recallAtK": 0.75,
+        "mrr": 0.38544973545,
+        "ndcgAtK": 0.472642450331,
+        "evaluatedQueries": 36,
+        "skippedQueries": 7
+      }
+    },
+    "figure": {
+      "5": {
+        "recallAtK": 0.631578947368,
+        "mrr": 0.510526315789,
+        "ndcgAtK": 0.54103379305,
+        "evaluatedQueries": 19,
+        "skippedQueries": 24
+      },
+      "10": {
+        "recallAtK": 0.789473684211,
+        "mrr": 0.529156223893,
+        "ndcgAtK": 0.589635274909,
+        "evaluatedQueries": 19,
+        "skippedQueries": 24
+      }
+    },
+    "mrr": {
+      "5": 0.554166666667,
+      "10": 0.575110229277
+    },
+    "figure_hit_rate": {
+      "5": {
+        "rate": 0.631578947368,
+        "figureQuestions": 19,
+        "hits": 12
+      },
+      "10": {
+        "rate": 0.789473684211,
+        "figureQuestions": 19,
+        "hits": 15
+      }
+    },
+    "abstention": {
+      "5": {
+        "abstainQuestions": 7,
+        "answerableQuestions": 36,
+        "abstained": 1,
+        "correctAbstentions": 0,
+        "abstentionPrecision": 0,
+        "abstentionRecall": 0,
+        "falseAnswerRate": 1,
+        "falseAbstentionRate": 0.027777777778
+      },
+      "10": {
+        "abstainQuestions": 7,
+        "answerableQuestions": 36,
+        "abstained": 1,
+        "correctAbstentions": 0,
+        "abstentionPrecision": 0,
+        "abstentionRecall": 0,
+        "falseAnswerRate": 1,
+        "falseAbstentionRate": 0.027777777778
+      }
+    }
+  },
+  "abstention_min_score": null,
+  "extraction": {
+    "tableCell": {
+      "accuracy": 0,
+      "cases": 0,
+      "expectedCells": 0,
+      "matchedCells": 0
+    },
+    "label": {
+      "coverage": 0,
+      "cases": 0,
+      "expectedLabels": 0,
+      "coveredLabels": 0
+    },
+    "bpmn": {
+      "nodeRecall": 0,
+      "edgeRecall": 0,
+      "cases": 0,
+      "expectedNodes": 0,
+      "recoveredNodes": 0,
+      "expectedEdges": 0,
+      "recoveredEdges": 0
+    },
+    "pending": false
+  },
+  "coverage": {
+    "by_kind": {
+      "docx": 19,
+      "bpmn": 8,
+      "ui_mask": 8,
+      "plan": 8
+    },
+    "abstain_questions": 7,
+    "page_questions": 36,
+    "figure_questions": 19,
+    "cell_questions": 0,
+    "table_annotations": 0,
+    "label_annotations": 0,
+    "bpmn_annotations": 0
+  }
+}

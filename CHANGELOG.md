@@ -42,6 +42,19 @@ releases:
 
 ### Added
 
+- **Docs**: `docs/BENCHMARKS.md` publishes the measured evaluation numbers with
+  their raw report files, committed under `docs/benchmarks/` in dated snapshot
+  directories. Retrieval (eight configurations of the golden set and the German
+  variant set, bge-m3 on CPU), the gate margins of the three threshold files, and
+  the two scorer self-checks are each reported next to the file they were read
+  from, with the CI run that produced them. What was never measured is listed as
+  unmeasured instead of estimated: extraction quality on real documents,
+  table-cell and BPMN metrics, groundedness of real model answers, abstention
+  with a score gate, and any throughput or capacity figure. The reranker's
+  per-query cost is reported in full — about 15 s p50 on a shared CPU runner,
+  stable across three runs — together with the open question of why an older
+  configuration measured three orders of magnitude faster.
+
 - **Docs**: `docs/compliance/` maps ATF controls onto four frameworks an operator is
   likely to be asked about — ISO/IEC 42001, NIS2, DORA and BSI C5 — in the same shape
   for each: the topic, the ATF control that serves it, the settings that make it
