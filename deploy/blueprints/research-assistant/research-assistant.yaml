@@ -1,0 +1,138 @@
+id: research-assistant
+name: Research Assistant (Blueprint)
+description: >-
+  Search one collection until the question is answered, let a verifier reject weak
+  findings, then write an answer whose sources section is checked deterministically.
+  A starting point, not a product: set the four variables below before adding anything.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+
+# Everything deployment-specific lives here and nowhere else, so the node bodies stay
+# generic and a caller can retarget a single run with a `context` variable override.
+variables:
+  # A built-in protocol (openai, anthropic, google, ollama, azure, bedrock) or an
+  # instance name from the deployment's PROVIDERS registry. `provider` accepts a
+  # `{{vars.*}}` reference, which is what lets this file validate with no registry set.
+  model_provider: openai
+  model_id: replace-me
+  # The one Search collection this assistant may read. It is pinned into every tool
+  # call further down — a model must never get to choose which store it reads.
+  collection: department_documents
+  # Answers come from reading, so the loop, not the writing, is where the budget goes.
+  max_tool_steps: 8
+
+nodes:
+  # A run always starts at the first node of this list.
+  - id: research
+    type: agent-harness
+    label: Research loop
+    llm: { provider: "{{vars.model_provider}}", model: "{{vars.model_id}}" }
+    # On a harness, `systemPrompt` steers the PLANNER only; the workers read their own
+    # prompts below. (Drop the planner entirely with `plannerless: true` when the work
+    # is a fixed queue of documents rather than one open question.)
+    systemPrompt: "#[[file:prompts/plan.md]]"
+    config:
+      # Only nodes listed here can ever be delegated to. The verifier is deliberately
+      # absent: it is reached through `verification.target`, not by the planner's choice.
+      allowlist:
+        - researcher
+      maxIterations: 14
+      maxTimeMs: 600000
+      # Three passes that produce nothing new mean the collection is exhausted; without
+      # this the loop keeps paying for the same empty search.
+      maxStagnantIterations: 3
+      # A finding the harness carries forward must state both what was found and what
+      # was not, or a later round cannot tell "nothing found" from "not looked".
+      requiredFindingMarkers:
+        - "FINDINGS:"
+        - "GAPS:"
+      # Condensed, not full transcripts: the answer node needs one block of evidence,
+      # and the worker turns stay out of the client's stream.
+      carryForward: condensed
+      resultMode: context
+      streamDelegates: false
+      # The gate that makes this a loop. `failClosed` means a run the verifier never
+      # accepted ends as verification-failed instead of quietly answering anyway.
+      verification:
+        target: verify
+        passSignal: "[[BLUEPRINT_RESEARCH_OK]]"
+        maxAttempts: 2
+        failClosed: true
+
+  - id: researcher
+    type: llm
+    label: Read the collection
+    llm:
+      {
+        provider: "{{vars.model_provider}}",
+        model: "{{vars.model_id}}",
+        parameters: { temperature: 0 },
+      }
+    # Name the tools a worker may call rather than `vectorsearch/*`: the model's tool
+    # list is also its instruction set, and an unlisted tool is one it cannot reach.
+    tools:
+      - vectorsearch/search
+      - vectorsearch/get_documents
+      - vectorsearch/get_pages
+    config:
+      maxToolSteps: "{{vars.max_tool_steps}}"
+      # A contract, not a hint: a researcher that answers from its own memory fails
+      # instead of returning fluent, ungrounded prose.
+      requireToolUse: true
+      suppressToolPreamble: true
+      toolArgs:
+        # `collection` has to be pinned. Omitted, the Search server falls back to its
+        # own defaultCollection and the run completes against the wrong store — with a
+        # successful-looking result, which is the part that makes this a bug you never
+        # see. `<server>/*` covers every listed tool, and a wildcard argument is skipped
+        # for a tool whose schema does not declare it, so `hybrid` reaches `search` only.
+        "vectorsearch/*":
+          collection: "{{vars.collection}}"
+          hybrid: true
+          group_by_document: true
+      # Retrieval output is what fills a context window; capped per call and per turn so
+      # the fourth search cannot push the first three out of the model's view.
+      toolResultBudget:
+        perResultChars: 12000
+        perTurnChars: 60000
+    systemPrompt: "#[[file:prompts/research.md]]"
+
+  # Reached only through `verification.target`; the harness delegates to it and re-runs
+  # while it withholds the signal. Deliberately tool-less: deciding whether the evidence
+  # is sufficient is not a reason to go and gather more of it.
+  - id: verify
+    type: llm
+    label: Challenge the findings
+    llm:
+      {
+        provider: "{{vars.model_provider}}",
+        model: "{{vars.model_id}}",
+        parameters: { temperature: 0, maxTokens: 512 },
+      }
+    systemPrompt: "#[[file:prompts/verify.md]]"
+
+  - id: answer
+    type: llm
+    label: Write the answer
+    llm: { provider: "{{vars.model_provider}}", model: "{{vars.model_id}}" }
+    # No tools: the verifier signed off on this evidence set, and an answer step that
+    # can still search reopens research after the gate that was supposed to close it.
+    config:
+      # Deterministic repair, because prompts do not: models cite `[n]` inline and then
+      # drop some numbers from the closing list. Missing entries are appended from the
+      # sources actually registered in this run, and a marker outside `1..n` — a number
+      # for a document that was never retrieved — retries the attempt instead of shipping.
+      sourcesCheck:
+        completeSection: true
+        heading: "## Sources"
+        rejectOutOfRangeMarkers: true
+      maxOutputChars: 8000
+    systemPrompt: "#[[file:prompts/answer.md]]"
+
+edges:
+  # Delegated nodes (researcher, verify) need no edges; the harness reaches them itself.
+  # This is the success path — a failed verification stops at the harness.
+  - source: research
+    target: answer

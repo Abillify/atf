@@ -178,7 +178,14 @@ jobs:
           # given. Validate against the instance `deploy/examples/compose.yaml`
           # configures; the validator reads names and protocols only, so no key here.
           PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","local":true}]'
-        run: bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version
+        run: |
+          bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version
+          # The blueprints need a second, explicit call: the flow collector is not
+          # recursive, so a sibling directory is never picked up by the path above.
+          # No PROVIDERS entry is needed for them — `research-assistant.yaml` takes its
+          # provider from `{{vars.model_provider}}`, which defaults to a built-in
+          # protocol, so the file validates against a registry that is not set at all.
+          bun run scripts/cli.ts validate ../../deploy/blueprints/research-assistant/ --require-version
 
   typecheck:
     name: Typecheck
