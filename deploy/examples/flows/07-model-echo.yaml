@@ -1,0 +1,34 @@
+id: model-echo
+name: Model Echo (Trust Tour)
+description: >-
+  Show what a model is actually given once reversible tokenisation has run. The node pins the
+  quickstart mock's `echo` model, which answers with the messages it received, so the placeholders
+  the Runtime put in the prompt become visible in the reply while the answer handed to the caller
+  still contains the real values. Step 1 of TOUR.md walks through it.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - personal
+
+# Everything about this file is unusual, and deliberately so.
+#
+# It is the only example flow here that names a model. It has to: the point is to read back the
+# prompt as the model saw it, and only the mock's `echo` model does that. `provider: quickstart`
+# is the provider instance `deploy/examples/compose.yaml` defines, so if you rename that provider
+# — which is what swapping in a real model looks like — this flow stops loading with a provider
+# error. Delete the file then, or point it at whatever you named a model that repeats prompts.
+#
+# Nothing is retrieved and no tool is reachable, so the answer can only ever be the echoed prompt.
+# That is the shape of a demonstration: an `llm` node whose reply is evidence, not content.
+nodes:
+  - id: mirror
+    type: llm
+    label: Repeat the prompt
+    llm:
+      provider: quickstart
+      model: echo
+    systemPrompt: >-
+      Repeat the conversation you were given, unchanged, and add nothing to it. You are a
+      rehearsal model: the exercise is about seeing the input, so an improvement, a summary or a
+      comment would all ruin it.
+edges: []

@@ -33,6 +33,15 @@ services:
   runtime:
     image: ghcr.io/abillify/atf-runtime:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}
     build: !reset null
+    # The decision receipts the Runtime signs need their generated demo seed in the environment,
+    # and reading a file into an environment variable is normally a shell job — which this image
+    # cannot do, being distroless. So Bun reads it: this is the entrypoint of
+    # deploy/images/Dockerfile.runtime (`/usr/local/bin/bun run src/index.ts`, worked on from
+    # /app/apps/runtime) with `--env-file` in front, the same flag `compose.yaml` uses for the
+    # source-built image. Without it the Runtime would refuse to start, because
+    # `DECISION_RECEIPTS_ENABLED=true` without a signing key is an error and not a fallback.
+    entrypoint:
+      ["/usr/local/bin/bun", "--env-file=/keys/receipt-seed.env", "run", "src/index.ts"]
 
   search:
     image: ghcr.io/abillify/atf-search:${ATF_VERSION:?set ATF_VERSION in deploy/examples/.env.example}

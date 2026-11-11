@@ -191,6 +191,11 @@ curl --fail-with-body http://localhost:3000/v1/chat/completions \
 > production template. Do not expose it. See
 > [deploy/examples/README.md](deploy/examples/README.md).
 
+`deploy/examples/tour.sh` then runs the three claims on this page against that stack in about five
+minutes — the prompt as the model received it, an approval that answers and one that stays silent,
+and a receipt verified offline and then tampered with. [deploy/examples/TOUR.md](deploy/examples/TOUR.md)
+explains what each step proves.
+
 Example flows in [`deploy/examples/flows/`](deploy/examples/flows/) go from a single node up to
 retrieval, tool use with an approval gate, and a routed multi-step graph.
 

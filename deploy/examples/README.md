@@ -1,6 +1,6 @@
 # Local unauthenticated quickstart
 
-This example starts all five ATF applications plus PostgreSQL/pgvector, a deterministic OpenAI-compatible mock and a one-shot service that loads one demo document into Search. It is intended only for local functional smoke testing. Authentication, tenant isolation, TLS, durable Runtime state, Redis, real inference, and production hardening are deliberately disabled or omitted. Authorisation is the one control left switched on, with no policy file behind it, because Runtime consults the approval gate as part of authorisation - with it off, nothing in [`flows/04-tool-use-with-approval.yaml`](flows/04-tool-use-with-approval.yaml) would ever wait for a person. Every flow here is therefore admitted, and only the approval rule pauses a call.
+This example starts all five ATF applications plus PostgreSQL/pgvector, a deterministic OpenAI-compatible mock, a one-shot service that writes a throwaway receipt signing key into a volume, and a one-shot service that loads one demo document into Search. It is intended only for local functional smoke testing. Authentication, tenant isolation, TLS, durable Runtime state, Redis, real inference, and production hardening are deliberately disabled or omitted. Authorisation is the one control left switched on, with no policy file behind it, because Runtime consults the approval gate as part of authorisation - with it off, nothing in [`flows/04-tool-use-with-approval.yaml`](flows/04-tool-use-with-approval.yaml) would ever wait for a person. Every flow here is therefore admitted, and only the approval rule pauses a call.
 
 Two ways to start the same stack:
 
@@ -83,6 +83,22 @@ while the stack starts, a `seed` service posts [`demo/handbook.md`](demo/handboo
 [Grounded retrieval](#grounded-retrieval-end-to-end) runs. Its embeddings are deterministic
 three-dimensional smoke vectors, so the ordering there proves the path and nothing about relevance.
 Gate is fully wired as well - the next section runs it end to end.
+
+## Three claims, five minutes
+
+`./tour.sh` walks this stack and shows the three things ATF's pitch rests on: the prompt as a model
+received it with `[[PII:…]]` where an address and an IBAN were, while the caller's answer still has
+both; one tool call approved by hand and a second left unanswered until it is recorded as rejected;
+and a decision receipt that the shipped verifier accepts, then rejects after one byte of the signed
+payload changes. It prints the evidence for each and exits non-zero if any of them is missing.
+
+```bash
+ATF_APPROVAL_TIMEOUT_MS=15000 docker compose --env-file .env.example -f compose.yaml up -d --wait
+./tour.sh --runtime http://127.0.0.1:3000 --approval-window 15000
+```
+
+[TOUR.md](TOUR.md) explains what each step proves, what the throwaway signing key means for the
+receipts, and where this stack is deliberately weaker than a production deployment.
 
 ## Governed tool use, end to end
 
@@ -199,3 +215,11 @@ configured header instead of the caller's own bearer. Both warnings are correct,
 the same way: `AUTHN_MODE=oidc` on the Runtime, `forwardAuthToken: true` on the MCP server, and
 `auth.mode: oauth` on the Gate - the tools keep working unchanged, because they read
 `:ctx.username` either way.
+
+Decision receipts are signed with the key the `receipt-key` service writes into a volume the first
+time the stack starts. That key is unauthenticated, world-readable inside its volume (the writing
+service runs as root, the published Runtime image reads it as another uid), never rotated, and
+deleted by `down --volumes`, after which the receipts of the previous stack stop verifying -
+correct behaviour, not a bug, and the reason [the tour](TOUR.md) calls it a throwaway. A real instance takes `RECEIPT_SIGNING_KEY`
+from a secret store and rotates it on a schedule; see
+[`../../docs/runbooks/key-rotation.md`](../../docs/runbooks/key-rotation.md).

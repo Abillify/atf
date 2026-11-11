@@ -12,7 +12,9 @@ cd apps/runtime
 bun run scripts/cli.ts validate ../../deploy/examples/flows/
 ```
 
-These six are ordered by what they add. Each is safe to run; none contains credentials or
+Seven flows, one directory, loadable as they are. This is the default `FLOWS_DIR`
+for the Runtime in `compose.yaml`, so a fresh quickstart has all seven without any
+further setup. They are ordered by what they add. Each is safe to run; none contains credentials or
 customer data.
 
 | Flow | Demonstrates | Requires beyond the quickstart |
@@ -23,6 +25,7 @@ customer data.
 | [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Two tool paths: a lookup the model may take by itself, and a write declared as a `tool` node that waits for a person | Nothing - the quickstart starts Gate with `ticket_lookup` and `ticket_create` over a demo table and sets the approval rule |
 | [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | Nothing - the seeded `handbook` collection serves its question branch and its Gate provides `ticket_create` for actions |
 | [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
+| [`07-model-echo.yaml`](07-model-echo.yaml) | What a model is actually given once reversible tokenisation has run: the mock's `echo` model replies with the messages it received, so the placeholders are visible in the answer | Nothing - the quickstart's mock serves the `echo` model and `TOUR.md` step 1 walks through it |
 
 The quickstart starts Search and Gate, and Gate arrives with the two tools above over a
 preloaded demo table - `04` runs against it as is. A `seed` service posts
@@ -41,7 +44,9 @@ than assuming the filename alone establishes a control.
 
 ## Things worth noticing
 
-**No `llm` block.** None of these flows pins a provider or model. They inherit `DEFAULT_LLM`, so
+**No `llm` block.** None of these flows pins a provider or model - `07-model-echo` is the single
+exception, and only because its purpose is to report on one specific model. The rest inherit
+`DEFAULT_LLM`, so
 the same file works against the mock model, a local server, and a hosted provider. Pin a model
 per node only when the node genuinely needs a different one — the router's job is normally to
 pick.

@@ -89,6 +89,35 @@ releases:
   three-dimensional test vector, so the scores still say nothing about relevance.
   `README.md` walks the request, and the Quickstart stack job in CI fails if the
   answer stops citing the seeded document.
+- **Deploy** (`deploy/examples`): `tour.sh` shows the three claims ATF's pitch
+  rests on in one five minute run against the quickstart, and prints the evidence
+  instead of asserting it. It reads `GET /monitoring/posture` first and refuses to
+  continue unless `pii_vault`, `approval_gate` and `receipts` are `ok`, then (1)
+  sends a message containing an e-mail address and an IBAN to the new
+  `flows/07-model-echo.yaml` — whose `echo` model in `model-mock.py` replies with
+  the messages it was handed — and shows the sealed Debug_Trace holding
+  `[[PII:…]]` where the address was while the caller's answer holds the cleartext
+  again; (2) parks one `gate/ticket_create` call and approves it, then parks a
+  second and waits, so the same run contains both a decision and an unanswered
+  request recorded as `approved: false, timedOut: true`; (3) fetches the
+  execution's receipt and JWKS and runs the shipped `scripts/atf-verify.ts` twice,
+  expecting exit 0 on the genuine receipt and exit 1 on a copy with one byte of
+  the COSE payload flipped — tampering with `cose_base64` rather than the display
+  `payload`, because the verifier reads the signed bytes. Exit codes are 0 for
+  every claim shown, 1 for a step that did not behave as documented and 2 for a
+  wrong invocation or an unreachable stack. `TOUR.md` explains what each step
+  proves and what the stack deliberately does not show. Supporting it: the stack
+  now enables `PII_VAULT_ENABLED` and `DECISION_RECEIPTS_ENABLED`, and a one-shot
+  `receipt-key` service writes a throwaway Ed25519 seed into a volume on first
+  start — unprotected, never rotated, deleted by `down --volumes`, which is why
+  the docs name it a demo key and point at the rotation runbook instead of
+  imitating a production key source. `ATF_APPROVAL_TIMEOUT_MS` in `.env.example`
+  lets a demonstration shorten the ten minute default without editing the
+  compose file, and the CI flow-validation step now passes the `quickstart`
+  provider instance that `07-model-echo.yaml` is the first example flow to name.
+  The Quickstart stack job runs the tour itself: documentation that executes is
+  gated like documentation that does not, so a vault, approval or receipt
+  regression fails CI rather than a demo.
 
 ### Fixed
 

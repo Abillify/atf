@@ -5,6 +5,11 @@ It answers embeddings, chat and page-extraction calls, and it drives the tool lo
 flow declares them, one per round, with arguments filled from each tool's own schema. That is a
 script, not a decision - which is exactly why the tool path can be demonstrated offline. The
 approvals, the identity injection and the database writes are all real.
+
+One model, `echo`, drops the script on purpose: it serialises the messages it received back as
+its own reply. That is the only way the quickstart can show a reader what the Runtime actually
+put on the wire, and the guided tour in `TOUR.md` uses it to prove that personal data was
+tokenised before the model was ever called.
 """
 
 import json
@@ -110,6 +115,7 @@ class Handler(BaseHTTPRequestHandler):
                         {"id": "example-chat", "object": "model", "owned_by": "quickstart"},
                         {"id": "example-embedding", "object": "model", "owned_by": "quickstart"},
                         {"id": "example-vision", "object": "model", "owned_by": "quickstart"},
+                        {"id": "echo", "object": "model", "owned_by": "quickstart"},
                     ],
                 },
             )
@@ -136,50 +142,55 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/v1/chat/completions":
-            # One scripted tool call per round, before anything is answered in prose. The runtime
-            # executes it against Gate and sends the result back; that result is what makes the
-            # write tool stop in the reviewer inbox.
-            offered = _offered_tool(request)
-            if offered is not None:
-                self._tool_call(request, offered[0], offered[1])
-                return
-            content = "ATF quickstart is running with a deterministic mock model."
-            if _has_grounding(request):
-                # A grounded call. The one sentence below is copied verbatim from
-                # demo/handbook.md - the document the seed service ingests - and cited as [1],
-                # the number the runtime gives the only seeded document. The mock neither picks
-                # the citation nor understands the text; a real model answers from the passage.
-                content = (
-                    "According to the field service handbook, the support desk answers from "
-                    "07:00 to 19:00 Central European Time, Monday to Friday [1]. The mock model "
-                    "copies this sentence out of the retrieved passage and adds nothing to it."
-                )
-            if _tool_round(request) > 0:
-                # Reached once the declared tools have been called, so the answer names what ran.
-                # It reports the round trip only - the mock never claims to have decided anything.
-                content = (
-                    f"ATF quickstart: {_tool_round(request)} tool call(s) went through Gate and "
-                    "their results came back. The mock model adds nothing on top of them."
-                )
-            if _is_page_extraction(request):
-                # @atf/extract expects <summary>, <figures> and <markdown>. Returning
-                # prose here would still work — its parser falls back to treating the
-                # whole response as the page body — but the quickstart would then
-                # demonstrate the fallback rather than the contract.
-                content = (
-                    "<summary>Eine Beispielseite aus dem ATF-Quickstart.</summary>\n"
-                    "<figures>\n"
-                    '<figure id="1" bbox="[0.1000, 0.2000, 0.6000, 0.7000]">'
-                    "Platzhalterabbildung des deterministischen Mock-Modells."
-                    "</figure>\n"
-                    "</figures>\n"
-                    "<markdown>\n"
-                    "# Beispielseite\n\n"
-                    "Dieser Text stammt aus dem deterministischen Mock-Modell, "
-                    "nicht aus einem echten Vision-Modell.\n\n"
-                    "![figure_1]\n"
-                    "</markdown>"
-                )
+            if _is_echo(request):
+                # Before the tool script: an echo model repeats what it was handed, whatever it
+                # was handed. See `_echo_content`.
+                content = _echo_content(request)
+            else:
+                # One scripted tool call per round, before anything is answered in prose. The runtime
+                # executes it against Gate and sends the result back; that result is what makes the
+                # write tool stop in the reviewer inbox.
+                offered = _offered_tool(request)
+                if offered is not None:
+                    self._tool_call(request, offered[0], offered[1])
+                    return
+                content = "ATF quickstart is running with a deterministic mock model."
+                if _has_grounding(request):
+                    # A grounded call. The one sentence below is copied verbatim from
+                    # demo/handbook.md - the document the seed service ingests - and cited as [1],
+                    # the number the runtime gives the only seeded document. The mock neither picks
+                    # the citation nor understands the text; a real model answers from the passage.
+                    content = (
+                        "According to the field service handbook, the support desk answers from "
+                        "07:00 to 19:00 Central European Time, Monday to Friday [1]. The mock model "
+                        "copies this sentence out of the retrieved passage and adds nothing to it."
+                    )
+                if _tool_round(request) > 0:
+                    # Reached once the declared tools have been called, so the answer names what ran.
+                    # It reports the round trip only - the mock never claims to have decided anything.
+                    content = (
+                        f"ATF quickstart: {_tool_round(request)} tool call(s) went through Gate and "
+                        "their results came back. The mock model adds nothing on top of them."
+                    )
+                if _is_page_extraction(request):
+                    # @atf/extract expects <summary>, <figures> and <markdown>. Returning
+                    # prose here would still work — its parser falls back to treating the
+                    # whole response as the page body — but the quickstart would then
+                    # demonstrate the fallback rather than the contract.
+                    content = (
+                        "<summary>Eine Beispielseite aus dem ATF-Quickstart.</summary>\n"
+                        "<figures>\n"
+                        '<figure id="1" bbox="[0.1000, 0.2000, 0.6000, 0.7000]">'
+                        "Platzhalterabbildung des deterministischen Mock-Modells."
+                        "</figure>\n"
+                        "</figures>\n"
+                        "<markdown>\n"
+                        "# Beispielseite\n\n"
+                        "Dieser Text stammt aus dem deterministischen Mock-Modell, "
+                        "nicht aus einem echten Vision-Modell.\n\n"
+                        "![figure_1]\n"
+                        "</markdown>"
+                    )
             if request.get("stream") is True:
                 chunks = [
                     {
@@ -221,6 +232,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_: object) -> None:
         return
+
+
+def _is_echo(request: object) -> bool:
+    """True when the request asks for the `echo` model.
+
+    Also accepted with a provider prefix (`quickstart/echo`), which is how a client names a
+    model once more than one provider is configured.
+    """
+    if not isinstance(request, dict):
+        return False
+    model = request.get("model")
+    return isinstance(model, str) and model.rsplit("/", 1)[-1] == "echo"
+
+
+def _echo_content(request: dict) -> str:
+    """Return the messages of the request, verbatim, as the assistant reply.
+
+    The Runtime tokenises personal data out of the prompt before it calls a model and puts the
+    real values back into the answer on the way out, so the answer alone cannot show which form
+    the model saw. Repeating the received messages makes the difference visible: the reply
+    carries the placeholders, the answer carries the values.
+    """
+    messages = request.get("messages")
+    if not isinstance(messages, list):
+        messages = [{"role": "user", "content": ""}]
+    return json.dumps(messages, ensure_ascii=False, indent=2)
 
 
 def _has_grounding(request: object) -> bool:
