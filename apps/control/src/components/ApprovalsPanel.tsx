@@ -79,6 +79,9 @@ function ApprovalCard({
             {item.tenantId ? (
               <>
                 {translate("approvalsPanel.tenant")}
+                {/* The catalog value ends with the word, not a space: without
+                    this separator the label and the id collide on screen. */}
+                {" "}
                 <span className="font-mono">{item.tenantId}</span>
               </>
             ) : null}
