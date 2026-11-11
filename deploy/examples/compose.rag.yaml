@@ -1,0 +1,26 @@
+# Optional overlay: switch on the Runtime's own vector store.
+#
+# The quickstart keeps RAG off because the flows it ships retrieve through
+# Search (`03-grounded-retrieval.yaml` fans out to Search's MCP tools), and a
+# second, in-process store next to a real one would only invite confusion.
+# The tutorial flow `flows/08-first-assistant.yaml` instead uses a `retrieval`
+# node, which reads the Runtime's own store - so it needs these two settings.
+# Without them a `retrieval` node is a no-op rather than an error: the run
+# completes, and the answer simply never contains the document you ingested.
+#
+#   docker compose --env-file .env.example -f compose.yaml \
+#     -f compose.rag.yaml up -d --wait
+#
+# Add `-f compose.images.yaml` as well to stay on the published images.
+#
+# `EMBEDDING_MODEL` names a `PROVIDERS` entry plus a model, exactly like
+# `DEFAULT_LLM`; the value below points at the quickstart mock, whose embedding
+# endpoint returns a fixed vector for every text. That is enough to prove the
+# path - ingestion, similarity search, context injection, citations - and says
+# nothing about relevance: every score comes back as 1. A real deployment puts
+# a real embedding model here.
+services:
+  runtime:
+    environment:
+      RAG_ENABLED: "true"
+      EMBEDDING_MODEL: '{"provider":"quickstart","model":"example-embedding"}'

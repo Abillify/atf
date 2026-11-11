@@ -10,6 +10,7 @@
 | [CONFIGURATION.md](CONFIGURATION.md) | You are configuring a deployment. Generated from the schemas |
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The variables a first production deployment needs per service |
 | [FLOWS.md](FLOWS.md) | You are writing or changing a flow. Generated from the flow schema and node type catalog |
+| [tutorials/first-assistant.md](tutorials/first-assistant.md) | You are building your first assistant end to end: your own document retrieved, a tool call held for approval, a signed receipt for the run |
 | [../DEVELOPMENT.md](../DEVELOPMENT.md) | You are about to change code |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | You are deploying to production |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | You are opening a pull request |
@@ -62,6 +63,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [router-result-interpretation.md](router-result-interpretation.md) | Configuring Gate's optional second-pass result interpretation |
 | [MCP-2026-CONTEXT-LAYER.md](MCP-2026-CONTEXT-LAYER.md) | MCP context-layer design |
 | [../deploy/examples/flows/README.md](../deploy/examples/flows/README.md) | Example flows, ordered by what they add |
+| [tutorials/first-assistant.md](tutorials/first-assistant.md) | Step-by-step walkthrough of one flow end to end, with the commands and the output they produced |
 | [../licenses/README.md](../licenses/README.md) | Why some third-party license texts are vendored here |
 | [IMAGE-LICENSES.md](IMAGE-LICENSES.md) | Base images and OS-package licenses (poppler, LibreOffice) in the shipped container images, and the per-image license SBOMs |
 | [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |

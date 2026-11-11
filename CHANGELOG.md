@@ -42,6 +42,15 @@ releases:
 
 ### Added
 
+- **Docs**: `docs/tutorials/first-assistant.md` builds one assistant end to end on the
+  quickstart — a document ingested, retrieved and cited, a tool call parked until a
+  named person approves it, and the signed receipt verified offline — and names the
+  boundaries honestly: the mock proves the governance path, not answer quality. Every
+  command on the page was executed against the stack and the output shown is that run's.
+  It comes with `deploy/examples/compose.rag.yaml`, a two-line overlay that switches
+  retrieval on (without it a `retrieval` node is a silent no-op), and
+  `deploy/examples/flows/08-first-assistant.yaml`, the retrieval → answer →
+  approval-guarded tool flow the tutorial reads line by line.
 - **Deploy** (`deploy/examples`): the quickstart can run on the published images
   instead of building them. `compose.images.yaml` is an overlay that `!reset`s
   every `build:` section and points each service at

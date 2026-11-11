@@ -1,0 +1,73 @@
+id: first-assistant
+name: Your First Governed Assistant
+description: >-
+  The flow the tutorial docs/tutorials/first-assistant.md builds step by step:
+  answer from a document you ingested yourself, then file a ticket a person has
+  to approve. Retrieval comes from the Runtime's own vector store, so the only
+  setup is the compose.rag.yaml overlay and one POST - see the tutorial for why
+  this uses a `retrieval` node while `03-grounded-retrieval.yaml` uses Search.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+
+# Three nodes, one edge each, run in order. The first node that appears is
+# where a run starts, and a node with no outgoing edge ends it - the graph here
+# is a line on purpose, so the order of the file is the order of the run.
+nodes:
+  # Grounding in one line: the Runtime embeds the latest message, fetches the
+  # closest chunks of `collection` from its own vector store, and injects them
+  # as the context the next node answers from. `topK` is how many chunks;
+  # `minScore` would drop weak matches, and is left out because the quickstart
+  # mock returns the same vector for every text, so every score is 1.
+  #
+  # The node is a no-op rather than an error when RAG is not configured, which
+  # is why the tutorial reads `GET /v1/rag/collections` first (it answers 404
+  # without `RAG_ENABLED`) instead of wondering why an answer ignores the
+  # document.
+  - id: retrieve
+    type: retrieval
+    label: Look the policy up
+    config:
+      collection: policies
+      topK: 3
+
+  # `model: echo` is the quickstart mock's repeater, pinned by name. A tutorial
+  # answer has to be checkable, and this one is: the reply is the prompt the
+  # model was handed, so your own paragraph appears in it under the citation
+  # marker the Runtime added. Replace the two `llm:` lines with your own model
+  # (the tutorial's last step) and this node answers in prose instead.
+  - id: answer
+    type: llm
+    label: Answer from the policy
+    llm:
+      provider: quickstart
+      model: echo
+    systemPrompt: >-
+      Answer from the provided sources only and cite them as [1]. If they do not
+      contain the answer, say so rather than filling the gap.
+
+  # The consequential step, declared as a `tool` node rather than offered to the
+  # model: no one has to hope the model asks first, and `APPROVAL_REQUIRE_TOOLS`
+  # binds a tool the flow declares. `{{query}}` is the incoming message,
+  # resolved when the node runs, so the ticket subject is the question that was
+  # asked. The call then waits for a person; the flow stays open while it waits.
+  - id: file-ticket
+    type: tool
+    label: File a follow-up ticket (needs a person)
+    tools:
+      - gate/ticket_create
+    config:
+      toolArgs:
+        gate/ticket_create:
+          subject: "{{query}}"
+
+edges:
+  - { source: retrieve, target: answer }
+  # The condition is what lets one flow serve both halves of the tutorial: an
+  # ordinary question ends after the answer, and only a request that asks for a
+  # ticket reaches the node that parks an approval. Without it every test
+  # question would leave a write waiting for a person.
+  - source: answer
+    target: file-ticket
+    conditions: "lastMessageText =~ 'ticket|follow.up'"

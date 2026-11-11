@@ -182,6 +182,17 @@ The `seed` service runs once per start, and re-posting the same file replaces th
 duplicating it, so starting the stack twice is harmless. `down --volumes` empties Search, and the
 next start seeds it again.
 
+Every flow above retrieves through Search. A `retrieval` node reads the Runtime's own store instead,
+and that store is switched off in this stack — `RAG_ENABLED` unset makes such a node a silent no-op, so
+a flow with one answers from the question alone and reports nothing wrong. [`compose.rag.yaml`](compose.rag.yaml)
+turns it on, and [`docs/tutorials/first-assistant.md`](../../docs/tutorials/first-assistant.md) is the
+walkthrough that needs it:
+
+```bash
+docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml \
+  -f deploy/examples/compose.rag.yaml up -d --wait
+```
+
 ## Stop
 
 Repeat the `-f` flags you started with, otherwise Compose treats the stack as a
@@ -190,7 +201,8 @@ different project:
 ```bash
 docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml down
 docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml \
-  -f deploy/examples/compose.images.yaml down
+  -f deploy/examples/compose.images.yaml \
+  -f deploy/examples/compose.rag.yaml down
 ```
 
 To also delete the local PostgreSQL volume, add `--volumes` to the matching command.

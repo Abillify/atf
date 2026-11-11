@@ -12,8 +12,8 @@ cd apps/runtime
 bun run scripts/cli.ts validate ../../deploy/examples/flows/
 ```
 
-Seven flows, one directory, loadable as they are. This is the default `FLOWS_DIR`
-for the Runtime in `compose.yaml`, so a fresh quickstart has all seven without any
+Eight flows, one directory, loadable as they are. This is the default `FLOWS_DIR`
+for the Runtime in `compose.yaml`, so a fresh quickstart has all eight without any
 further setup. They are ordered by what they add. Each is safe to run; none contains credentials or
 customer data.
 
@@ -26,6 +26,7 @@ customer data.
 | [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | Nothing - the seeded `handbook` collection serves its question branch and its Gate provides `ticket_create` for actions |
 | [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
 | [`07-model-echo.yaml`](07-model-echo.yaml) | What a model is actually given once reversible tokenisation has run: the mock's `echo` model replies with the messages it received, so the placeholders are visible in the answer | Nothing - the quickstart's mock serves the `echo` model and `TOUR.md` step 1 walks through it |
+| [`08-first-assistant.yaml`](08-first-assistant.yaml) | The walkthrough flow of [docs/tutorials/first-assistant.md](../../../docs/tutorials/first-assistant.md): a `retrieval` node against the Runtime's own store, a conditional edge into a write tool, then the trace and signed receipt for that same run | The `compose.rag.yaml` overlay (it sets `RAG_ENABLED` and `EMBEDDING_MODEL`) plus one ingest call - `retrieval` reads the Runtime's in-memory store, which the quickstart keeps switched off because every flow above retrieves through Search |
 
 The quickstart starts Search and Gate, and Gate arrives with the two tools above over a
 preloaded demo table - `04` runs against it as is. A `seed` service posts

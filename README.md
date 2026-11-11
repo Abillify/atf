@@ -226,6 +226,9 @@ explains what each step proves.
 
 Example flows in [`deploy/examples/flows/`](deploy/examples/flows/) go from a single node up to
 retrieval, tool use with an approval gate, and a routed multi-step graph.
+[`docs/tutorials/first-assistant.md`](docs/tutorials/first-assistant.md) walks one of them end to
+end on that stack: your own document retrieved into the prompt, a write held for a named approver,
+and the signed receipt for the run verified offline.
 
 ## Flows
 
@@ -381,6 +384,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [docs/STABILITY.md](docs/STABILITY.md) | Stability contract: what semantic versioning covers from 1.0.0 |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | STRIDE threat model per service |
 | [docs/EU-AI-ACT.md](docs/EU-AI-ACT.md) | EU AI Act obligations mapped to ATF controls |
+| [docs/tutorials/first-assistant.md](docs/tutorials/first-assistant.md) | Build your first governed assistant on the quickstart stack, step by step |
 | [docs/runbooks/](docs/runbooks/) | Backup, key rotation, incidents, scaling, Redis outage, transaction-token rotation |
 
 ## Enterprise adoption and engineering
