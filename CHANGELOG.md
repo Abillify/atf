@@ -213,6 +213,19 @@ releases:
   sharing the receipt transparency log between replicas so `REPLICAS > 1`
   stops forking the tree (0039), and file-supplied secrets with a design for
   external key management (0040).
+- **Docs** (ADRs 0041–0044): four more `Proposed` records for the integration
+  questions the review follow-up deliberately left to a human decision: the
+  channel interface extracted from the Rocket.Chat implementation as the
+  contract a second channel (Slack, Teams) would implement, with the forged-
+  event and replay threats mapped per function (0041); identity provisioning
+  as OIDC group claims plus a small deprovisioning endpoint wired into the
+  ADR 0025 erasure orchestrator, instead of a SCIM server over a local user
+  store ATF does not have (0042); exposing flows as A2A agents with the
+  agent card generated from existing flow metadata and no confirmation
+  bypass, protocol details flagged `TODO(human)` until verified against the
+  spec (0043); and MCP elicitation as an additional approval surface on the
+  stateful gate transports, leaving the transaction token as the only thing
+  that authorizes (0044).
 - **Docs** (`ROADMAP.md`, `SUPPORT.md`, `GOVERNANCE.md`): a reader who decides
   whether to adopt ATF could see what it does today but not where it is going,
   who answers questions, or how a decision gets made. `ROADMAP.md` states the

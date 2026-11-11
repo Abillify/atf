@@ -50,6 +50,10 @@ New ADRs get the next free number; never reuse a number. Status values:
 | 0038 | [Trust-proxy mode: ATF as a drop-in gateway in front of existing AI clients](0038-trust-proxy-mode.md) | Proposed  |
 | 0039 | [Share the receipt transparency log between replicas](0039-shared-receipt-transparency-log.md) | Proposed  |
 | 0040 | [Secrets from files, and a design for external key management](0040-external-key-management.md) | Proposed  |
+| 0041 | [A channel interface derived from the Rocket.Chat implementation](0041-channel-interface-derived-from-rocketchat.md) | Proposed  |
+| 0042 | [Identity provisioning: OIDC group claims first, SCIM only where claims cannot reach](0042-provisioning-oidc-claims-before-scim.md) | Proposed  |
+| 0043 | [Exposing flows as A2A agents: agent-card mapping and controls](0043-a2a-agent-endpoint-mapping-flows.md) | Proposed  |
+| 0044 | [MCP elicitation as an additional approval surface](0044-mcp-elicitation-for-approvals.md) | Proposed  |
 
 ## Conventions
 

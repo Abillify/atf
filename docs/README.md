@@ -88,7 +88,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 
-- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0040)
+- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0044)
 - [`adr/search/`](adr/search/) — Search decisions
 - [`adr/gate/`](adr/gate/) — Gate decisions
 
