@@ -191,7 +191,7 @@ The dashboard nav is grouped into **five** sections. Labels are i18n keys
 | **Research**      | Studio, Memory, Eval, Optimizer, Canary, Autopilot                              |
 | **Monitoring**    | Live Graph, Traces, History, Approvals, Shadow, Security, Providers             |
 | **Configuration** | Flows, Flow health, Triggers, Assistants, Guardrails, PII Vault, Compliance,    |
-|                   | Governance posture, Citation impact, MCP                                        |
+|                   | Governance posture, Citation impact, MCP, Services                              |
 | **Budgeting**     | Cost & Tokens, Limits, Tenants, Models, Jobs                                    |
 
 `/overview` is the first group on its own and the app's landing route: `/`

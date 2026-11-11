@@ -204,6 +204,20 @@ export interface EmbeddingConfig {
 // AppConfig
 // ---------------------------------------------------------------------------
 
+/** Which kind of operator-facing surface a `SERVICE_LINKS` entry points at. */
+export type ServiceLinkKind = "search" | "extract" | "gate" | "other";
+
+/**
+ * One entry of `SERVICE_LINKS`: a link to an operator-facing service UI shown
+ * on the Control services page (`GET /monitoring/services`). Display data only
+ * — never carries credentials.
+ */
+export interface ServiceLinkConfig {
+  name: string;
+  kind: ServiceLinkKind;
+  url: string;
+}
+
 export interface AppConfig {
   /** The applied configuration preset name (see `src/config/profiles.ts`), if any. */
   profile?: string;
@@ -224,6 +238,12 @@ export interface AppConfig {
   appEnv?: OperationalProfile;
   monitoringTransport: "sse" | "websocket";
   mcpServers: McpServerConfig[];
+  /**
+   * Operator-facing service UIs from `SERVICE_LINKS`, shown on the Control
+   * services page together with the MCP server status. A loaded config always
+   * has this (empty when unset); optional so hand-built configs stay valid.
+   */
+  serviceLinks?: ServiceLinkConfig[];
   /** Controls whether breaking MCP schema drift is reported or rejected. */
   mcpSchemaCompatibilityMode?: "report" | "strict";
   /**
@@ -847,6 +867,38 @@ export const TokenExchangeConfigSchema = z
     message: "tokenExchange requires either tokenEndpoint or issuer",
   });
 
+/**
+ * One `SERVICE_LINKS` entry. The URL scheme is validated here so a
+ * `javascript:` or `data:` URL fails at startup, never reaching a browser;
+ * the https-only-in-production rule lives in `load.ts`, because the effective
+ * operational profile is resolved there before this schema sees the env.
+ */
+export const ServiceLinkConfigSchema = z.object({
+  name: z.string().min(1),
+  kind: z.enum(["search", "extract", "gate", "other"]),
+  url: z
+    .string()
+    .min(1)
+    .superRefine((raw, ctx) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `url must be an absolute URL, got "${raw}"`,
+        });
+        return;
+      }
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `url scheme must be https: or http:, got "${parsed.protocol}"`,
+        });
+      }
+    }),
+});
+
 export const McpServerConfigSchema = z.object({
   name: z.string().min(1),
   url: z.string().min(1),
@@ -985,6 +1037,37 @@ export const EnvSchema = z.object({
       if (!result.success) {
         result.error.issues.forEach((issue) => {
           ctx.addIssue({ ...issue, path: ["MCP_SERVERS", ...issue.path] });
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
+  /**
+   * Operator-facing service UIs, e.g.
+   * `[{"name":"Search","kind":"search","url":"https://search.example.com"}]`.
+   * Served (display-only) by `GET /monitoring/services`. `https:` is always
+   * required in production; plain `http:` is accepted in other profiles only
+   * (checked in `load.ts`, where the operational profile is known).
+   */
+  SERVICE_LINKS: z
+    .string()
+    .optional()
+    .transform((raw, ctx): ServiceLinkConfig[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SERVICE_LINKS must be a valid JSON array",
+        });
+        return z.NEVER;
+      }
+      const result = z.array(ServiceLinkConfigSchema).safeParse(parsed);
+      if (!result.success) {
+        result.error.issues.forEach((issue) => {
+          ctx.addIssue({ ...issue, path: ["SERVICE_LINKS", ...issue.path] });
         });
         return z.NEVER;
       }

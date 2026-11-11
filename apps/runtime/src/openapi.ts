@@ -96,6 +96,12 @@ const META_RULES: Array<
     auth: "bearer",
   },
   {
+    prefix: "/monitoring/services",
+    tag: "Monitoring",
+    summary: "Configured service links and MCP server status",
+    auth: "bearer",
+  },
+  {
     prefix: "/metrics",
     tag: "Monitoring",
     summary: "Prometheus metrics",

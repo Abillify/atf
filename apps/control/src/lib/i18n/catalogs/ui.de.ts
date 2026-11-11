@@ -1759,6 +1759,29 @@ export const uiDe: Record<keyof typeof uiEn, string> = {
   "runPicker.sampleData": "📌 Beispieldaten",
   "runPicker.valuesOfARecordedRun":
     "Werte eines aufgezeichneten Laufs füllen die Vorschauen und den Baum",
+  "services.kind.extract": "Extraktion",
+  "services.kind.gate": "Gate",
+  "services.kind.other": "Dienst",
+  "services.kind.search": "Suche",
+  "services.links.empty": "Es sind keine Dienst-Links konfiguriert.",
+  "services.links.emptyHint":
+    "Hinterlegen Sie SERVICE_LINKS in der Runtime, um die Fach-Oberflächen hier anzuzeigen.",
+  "services.links.heading": "Fach-Oberflächen",
+  "services.loading": "Diensteübersicht wird geladen",
+  "services.linkRejected": "Link blockiert",
+  "services.mcp.connected": "verbunden",
+  "services.mcp.empty": "Es sind keine MCP-Server konfiguriert.",
+  "services.mcp.emptyHint":
+    "Konfigurierte MCP-Server und ihr Verbindungsstatus erscheinen hier.",
+  "services.mcp.error": "nicht erreichbar",
+  "services.mcp.heading": "MCP-Server",
+  "services.openUi": "Oberfläche öffnen",
+  "services.subtitle":
+    "Die Fach-Oberflächen dieser Installation und der Status der verbundenen MCP-Server.",
+  "services.title": "Dienste",
+  "services.unreachable": "Die Diensteübersicht ist nicht verfügbar",
+  "services.unreachableHint":
+    "Die Runtime hat GET /monitoring/services nicht beantwortet — möglicherweise eine ältere Version oder es fehlt die Monitoring-Berechtigung.",
   "security.loadingSecurityPosture": "Sicherheitslage wird geladen",
   "securityPanel.aISecurityPosture": "KI-Sicherheitslage",
   "securityPanel.and": ") und",

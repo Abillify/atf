@@ -52,6 +52,16 @@ releases:
   naming that cause instead of an error, because an optional service being absent
   is not an outage. The overview is the first group in the sidebar, the ⌘K
   palette and the breadcrumbs, and every string ships in both catalogues.
+- **Runtime, Control**: a services page for operator-facing service UIs. The
+  Runtime accepts a `SERVICE_LINKS` JSON array (`name`, `kind` of
+  search/extract/gate/other, absolute `url`) and serves it — alongside the MCP
+  servers and their live connection status, without headers or tokens — on
+  `GET /monitoring/services` behind `monitoring:read`. A link with an active
+  scheme (`javascript:`, `data:`) is rejected at startup, and `APP_ENV=production`
+  additionally requires `https://`. Control renders both in a new `/services`
+  page: each link opens in a new tab with `rel="noopener noreferrer"` after a
+  second client-side scheme check, and each MCP server shows connected or
+  unreachable.
 
 - **Docs**: `docs/BENCHMARKS.md` publishes the measured evaluation numbers with
   their raw report files, committed under `docs/benchmarks/` in dated snapshot

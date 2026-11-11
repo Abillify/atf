@@ -209,6 +209,24 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<v
   await page.route("**/mcp/servers", (route) =>
     route.fulfill({ json: { servers: [] } })
   );
+  await page.route("**/monitoring/services**", (route) =>
+    route.fulfill({
+      json: {
+        services: [
+          { name: "Search", kind: "search", url: "https://search.example.com" },
+          { name: "Extract", kind: "extract", url: "https://extract.example.com" },
+        ],
+        mcp: [
+          {
+            name: "erp",
+            url: "http://erp.internal:4000/mcp",
+            transport: "http",
+            status: "connected",
+          },
+        ],
+      },
+    })
+  );
   await page.route("**/monitoring/usage**", (route) =>
     route.fulfill({
       json: {

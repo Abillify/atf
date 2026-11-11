@@ -10352,6 +10352,42 @@
         ]
       }
     },
+    "/monitoring/services": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Configured service links and MCP server status",
+        "operationId": "get__monitoring_services",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/monitoring/citation-impact": {
       "get": {
         "tags": [

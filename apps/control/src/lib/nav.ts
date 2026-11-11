@@ -43,6 +43,7 @@ import {
   ListChecks,
   Link2,
   LayoutDashboard,
+  Server,
 } from "lucide-react";
 
 export interface NavItem {
@@ -222,6 +223,12 @@ export const NAV_GROUPS: NavGroup[] = [
         labelKey: "nav.mcp",
         hintKey: "nav.mcp.hint",
         icon: Cable,
+      },
+      {
+        href: "/services",
+        labelKey: "nav.services",
+        hintKey: "nav.services.hint",
+        icon: Server,
       },
     ],
   },

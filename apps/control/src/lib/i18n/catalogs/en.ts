@@ -69,6 +69,8 @@ export const en = {
   "nav.citationImpact.hint": "Answers whose cited sources changed",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Connected MCP servers",
+  "nav.services": "Services",
+  "nav.services.hint": "Service interfaces and MCP status",
 
   "nav.cost": "Cost & Tokens",
   "nav.cost.hint": "Spend & token usage",

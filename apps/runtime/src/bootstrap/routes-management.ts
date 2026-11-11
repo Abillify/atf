@@ -1143,6 +1143,23 @@ export async function registerManagementRoutes(
     logger.info("Governance posture report enabled at GET /monitoring/posture");
   }
 
+  // Operator service inventory route — configured SERVICE_LINKS plus the live
+  // MCP server status, behind the same monitoring:read permission. Display
+  // data only, no credentials in the response.
+  {
+    const { createServicesRouter } = await import("../routes/services.js");
+    app.route(
+      "/",
+      createServicesRouter({
+        config,
+        mcpWrapper,
+        authRequired: config.monitoringAuthRequired,
+        operatorAuth,
+      }),
+    );
+    logger.info("Service inventory enabled at GET /monitoring/services");
+  }
+
   // Citation impact report route — past answers whose cited passages changed
   // or disappeared. Needs the citation index (a database); the check itself
   // runs against Search (CITATION_CHECK_URL), so the route stays mounted

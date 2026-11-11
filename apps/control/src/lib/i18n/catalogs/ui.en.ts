@@ -1715,6 +1715,29 @@ export const uiEn = {
   "runPicker.sampleData": "📌 Sample data",
   "runPicker.valuesOfARecordedRun":
     "Values of a recorded run fill the previews and the tree",
+  "services.kind.extract": "Extract",
+  "services.kind.gate": "Gate",
+  "services.kind.other": "Service",
+  "services.kind.search": "Search",
+  "services.links.empty": "No service links are configured.",
+  "services.links.emptyHint":
+    "Set SERVICE_LINKS on the Runtime to list the operator-facing service UIs here.",
+  "services.links.heading": "Service interfaces",
+  "services.loading": "Loading the service inventory",
+  "services.linkRejected": "Link blocked",
+  "services.mcp.connected": "connected",
+  "services.mcp.empty": "No MCP servers are configured.",
+  "services.mcp.emptyHint":
+    "Configured MCP servers and their connection status appear here.",
+  "services.mcp.error": "unreachable",
+  "services.mcp.heading": "MCP servers",
+  "services.openUi": "Open UI",
+  "services.subtitle":
+    "The service interfaces of this deployment and the status of the connected MCP servers.",
+  "services.title": "Services",
+  "services.unreachable": "The service inventory is unavailable",
+  "services.unreachableHint":
+    "The Runtime did not answer GET /monitoring/services — it may be an older version or the monitoring permission is missing.",
   "security.loadingSecurityPosture": "Loading security posture",
   "securityPanel.aISecurityPosture": "AI Security Posture",
   "securityPanel.and": "), and",

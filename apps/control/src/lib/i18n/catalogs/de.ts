@@ -69,6 +69,8 @@ export const de: Catalog = {
   "nav.citationImpact.hint": "Antworten mit geänderten Quellen",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Verbundene MCP-Server",
+  "nav.services": "Dienste",
+  "nav.services.hint": "Fach-Oberflächen und MCP-Status",
 
   "nav.cost": "Kosten & Tokens",
   "nav.cost.hint": "Ausgaben & Token-Verbrauch",

@@ -175,6 +175,23 @@ export function loadConfig(): AppConfig {
   // silently fall back to forwarding the un-exchanged (wrong-audience) token.
   resolveTokenExchangeSecrets(mcpServers);
 
+  // Service links are rendered as clickable URLs in the Control UI, so plain
+  // http: is a development convenience only — in production every link must
+  // be https: (scheme itself is already restricted by ServiceLinkConfigSchema,
+  // which rejects javascript:/data: at parse time).
+  if (appEnv === "production") {
+    const insecure = env.SERVICE_LINKS.filter(
+      (link) => !link.url.toLowerCase().startsWith("https://"),
+    );
+    if (insecure.length > 0) {
+      process.stderr.write(
+        `[Config] SERVICE_LINKS entries must use https:// in production: ` +
+          `${insecure.map((link) => link.name).join(", ")}\n`,
+      );
+      process.exit(1);
+    }
+  }
+
   return {
     ...(profile !== undefined ? { profile } : {}),
     port: env.PORT,
@@ -191,6 +208,7 @@ export function loadConfig(): AppConfig {
     appEnv,
     monitoringTransport: env.MONITORING_TRANSPORT,
     mcpServers,
+    serviceLinks: env.SERVICE_LINKS,
     mcpSchemaCompatibilityMode: env.MCP_SCHEMA_COMPATIBILITY_MODE,
     ...(env.PROVIDERS.length > 0 ? { providers: env.PROVIDERS } : {}),
     anthropicPromptCacheEnabled: env.ANTHROPIC_PROMPT_CACHE,
