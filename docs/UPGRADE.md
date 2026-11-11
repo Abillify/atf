@@ -18,7 +18,8 @@ and contracts. Before every upgrade, take a backup as described in
 ## Generic upgrade procedure
 
 1. Read the release notes of every skipped version (especially the
-   **Migration** sections in the [CHANGELOG](../CHANGELOG.md)).
+   **Migration** sections in the [CHANGELOG](../CHANGELOG.md); entries older
+   than `0.19.0` are in its [archive](changelog/0.x-archive.md)).
 2. Back up the Runtime, Search and Extract databases, the Extract source store
    (`SOURCE_STORE_DIR`), the Search asset store (inside the Search database with
    the default `ASSET_STORE_BACKEND=postgres`, or `ASSET_STORE_DIR` with the
@@ -100,12 +101,13 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
   stays unchanged. Runtime and Gate serve `/openapi.json` and
   `/openapi.yaml`.
 - Review the **Changed** and **Security** sections of `[0.15.0]` in the
-  CHANGELOG: several production-gate rules now refuse configurations that
-  used to start.
+  [changelog archive](changelog/0.x-archive.md#0150-2026-10-13): several
+  production-gate rules now refuse configurations that used to start.
 
 ### 0.15 → 0.16
 
-Review the `[0.16.0]` section of the [CHANGELOG](../CHANGELOG.md), in particular its
+Review the `[0.16.0]` section of the
+[changelog archive](changelog/0.x-archive.md#0160-2026-10-15), in particular its
 **Migration** subsection. Steps, in order:
 
 1. Take a backup, then run the migrations (`bun run migrate` or the Helm hooks): Runtime
@@ -195,7 +197,8 @@ embedding settings are not affected.
 
 ### 0.16 → 0.17
 
-Review the `[0.16.2]` and `[0.17.0]` sections of the [CHANGELOG](../CHANGELOG.md).
+Review the `[0.16.2]` and `[0.17.0]` sections of the
+[changelog archive](changelog/0.x-archive.md#0170-2026-10-18).
 One behaviour change arrives with 0.16.2: an **unknown collection** on a Search
 read or search route is now a typed `404` with `COLLECTION_NOT_FOUND` instead of
 `403`. Clients and alerting rules that treated `403` on a read as "the collection
@@ -212,7 +215,8 @@ links); without either, a node that requests the tool emits a
 
 ### 0.17 → 0.18
 
-Review the `[0.18.0]` section of the [CHANGELOG](../CHANGELOG.md). Search global
+Review the `[0.18.0]` section of the
+[changelog archive](changelog/0.x-archive.md#0180-2026-10-18). Search global
 schema version stays **9**, Runtime **47**, Extract **5** — no migration step,
 but the HTTP surface changes:
 

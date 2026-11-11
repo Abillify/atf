@@ -128,6 +128,10 @@ Historical Gate change record: [CHANGELOG-gate.md](CHANGELOG-gate.md). Current r
 result-interpretation configuration is in
 [router-result-interpretation.md](router-result-interpretation.md).
 
+Changelog entries older than `0.19.0` — every release from `0.1.0` to `0.18.1` —
+are in [changelog/0.x-archive.md](changelog/0.x-archive.md). Current entries are
+in [CHANGELOG.md](../CHANGELOG.md).
+
 ## Generated documents
 
 These documents are generated and must not be edited by hand. CI fails when they are stale.
