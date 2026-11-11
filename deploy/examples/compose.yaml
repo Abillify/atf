@@ -82,9 +82,11 @@ services:
       CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
       PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","apiKey":"local-placeholder","local":true}]'
       DEFAULT_LLM: '{"provider":"quickstart","model":"example-chat"}'
-      # The egress guard refuses private addresses; model-mock and the Gate live on the compose
-      # network, so they are the exact-host exceptions. Both are named hosts, never a range.
-      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock,gate
+      # The egress guard refuses private addresses; model-mock, the Gate and Search live on
+      # the compose network, so they are the exact-host exceptions. Search is here because
+      # a `ragProfiles` plan compiles into `vectorsearch/search` MCP calls (flows/mcp.yaml),
+      # which is how the retrieval flow reaches it. All three are named hosts, never a range.
+      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock,gate,search
       # The tool-use flow (`flows/04-tool-use-with-approval.yaml`) is the point of the stack: its
       # write tool stops in Control's reviewer inbox until someone decides. Approvals are
       # deployment configuration, not flow configuration, so a reviewer cannot be edited away - and
@@ -115,6 +117,13 @@ services:
     depends_on:
       model-mock:
         condition: service_healthy
+      # The retrieval flow reads through the `vectorsearch` MCP server (flows/mcp.yaml), so
+      # Search answers before the Runtime starts; and the handbook is seeded before the
+      # first request can ask about it, so the documented citation works immediately.
+      search:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -194,6 +203,32 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # One-shot seed service: posts demo/handbook.md into the `handbook` collection
+  # so the retrieval flow (flows/03-grounded-retrieval.yaml) finds and cites a
+  # real document out of the box. Idempotent (Search keys the document by its
+  # X-Reference and recognises identical bytes), so `up` a second time does not
+  # duplicate it; after `down -v` it seeds the fresh volume again. The image is
+  # the one `model-mock` already uses — seeding pulls nothing new.
+  seed:
+    image: python:3.13-alpine
+    command: ["python", "/seed/seed-handbook.py"]
+    volumes:
+      - ./demo/seed-handbook.py:/seed/seed-handbook.py:ro
+      - ./demo/handbook.md:/handbook/handbook.md:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    depends_on:
+      search:
+        condition: service_healthy
 
   extract:
     build:

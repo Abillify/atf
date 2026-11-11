@@ -775,6 +775,25 @@ jobs:
             -H 'X-Reference: quickstart-smoke.pdf' \
             --data-binary @/tmp/smoke.pdf
 
+      # Retrieval is the other half of the quickstart, and it is the half that
+      # needs two services to agree: the seed service posts demo/handbook.md
+      # into Search, and the Runtime reaches it over the `vectorsearch` MCP
+      # server in flows/mcp.yaml. The mock model returns its grounded sentence
+      # only when the prompt carries retrieved sources, and the citation names
+      # the seeded document, so this answer is impossible unless the plan, the
+      # MCP call, the Search query and the fused citations all ran.
+      - name: Smoke the retrieval path
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            http://127.0.0.1:3000/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"grounded-retrieval","messages":[{"role":"user","content":"When does the support desk answer?"}]}' \
+            > /tmp/retrieval-smoke.json
+          cat /tmp/retrieval-smoke.json
+          grep -q '07:00 to 19:00' /tmp/retrieval-smoke.json
+          grep -q '"document_id":"handbook.md"' /tmp/retrieval-smoke.json
+
       - name: Logs on failure
         if: failure()
         run: |

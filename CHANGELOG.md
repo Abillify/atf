@@ -73,6 +73,22 @@ releases:
   `GET /monitoring/approvals` and the widget, and names the limit plainly: every
   caller of this stack presents the same static token, so everyone here is one
   identity until `AUTHN_MODE=oidc` replaces it.
+- **Deploy** (`deploy/examples`): retrieval now answers and cites out of the box.
+  A one-shot `seed` service posts the new `demo/handbook.md` — invented
+  field-service policy for an invented company — into Search's `handbook`
+  collection once Search is healthy, and the Runtime starts only after it, so the
+  retrieval flow has a document to find on its very first request. The seed is
+  idempotent: re-posting the same file replaces the document rather than
+  duplicating it. Reaching Search was the missing piece — a `ragProfiles` plan
+  compiles into `vectorsearch/search` tool calls, so `flows/mcp.yaml` registers
+  Search's own MCP endpoint under exactly that name and
+  `EGRESS_ALLOW_PRIVATE_HOSTS` names `search` beside the model mock and the Gate.
+  The mock model answers a grounded prompt with one sentence copied out of the
+  seeded document, cited as `[1]`, which shows the citation path without a real
+  model and nothing beyond it: the passage is invented and the embedding is the
+  three-dimensional test vector, so the scores still say nothing about relevance.
+  `README.md` walks the request, and the Quickstart stack job in CI fails if the
+  answer stops citing the seeded document.
 
 ### Fixed
 

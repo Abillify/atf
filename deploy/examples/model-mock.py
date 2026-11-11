@@ -22,6 +22,20 @@ _MOCK_TYPE_VALUES = {
     "object": {},
 }
 
+# Markers the runtime puts in front of retrieved context: the fused source block
+# (RAG_CONTEXT_MARKER in apps/runtime/src/graph/exec-runtime.ts) and the grounding
+# headings (apps/runtime/src/graph/rag-grounding.ts). Seeing one means this request
+# is a grounded answer call - the retrieval ran and its result is in the prompt. The
+# mock then answers with one sentence copied out of the seeded handbook and cites it,
+# which is exactly what makes the citation path of flows/03-grounded-retrieval.yaml
+# visible without a real model.
+_GROUNDING_MARKERS = (
+    "The following sources are ordered by relevance",
+    "RELEVANT PASSAGES",
+    "RELEVANT SOURCES",
+    "COLLECTION OVERVIEW",
+)
+
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, status: int, payload: object) -> None:
@@ -130,6 +144,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._tool_call(request, offered[0], offered[1])
                 return
             content = "ATF quickstart is running with a deterministic mock model."
+            if _has_grounding(request):
+                # A grounded call. The one sentence below is copied verbatim from
+                # demo/handbook.md - the document the seed service ingests - and cited as [1],
+                # the number the runtime gives the only seeded document. The mock neither picks
+                # the citation nor understands the text; a real model answers from the passage.
+                content = (
+                    "According to the field service handbook, the support desk answers from "
+                    "07:00 to 19:00 Central European Time, Monday to Friday [1]. The mock model "
+                    "copies this sentence out of the retrieved passage and adds nothing to it."
+                )
             if _tool_round(request) > 0:
                 # Reached once the declared tools have been called, so the answer names what ran.
                 # It reports the round trip only - the mock never claims to have decided anything.
@@ -197,6 +221,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_: object) -> None:
         return
+
+
+def _has_grounding(request: object) -> bool:
+    """True when the prompt carries a retrieved-passage section from the runtime."""
+    if not isinstance(request, dict):
+        return False
+    for message in request.get("messages", []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and any(marker in content for marker in _GROUNDING_MARKERS):
+            return True
+    return False
 
 
 def _is_page_extraction(request: object) -> bool:

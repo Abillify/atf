@@ -19,16 +19,18 @@ customer data.
 | --- | --- | --- |
 | [`quickstart.yaml`](quickstart.yaml) | The smallest useful flow: one `llm` node | Nothing |
 | [`02-routed-support.yaml`](02-routed-support.yaml) | Structured classification and deterministic conditional routing | Nothing |
-| [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Search reachable, and a `handbook` collection with documents |
+| [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Nothing - the seed service loads `demo/handbook.md` into the `handbook` collection this flow reads |
 | [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Two tool paths: a lookup the model may take by itself, and a write declared as a `tool` node that waits for a person | Nothing - the quickstart starts Gate with `ticket_lookup` and `ticket_create` over a demo table and sets the approval rule |
-| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; the quickstart's Gate provides `ticket_create` for actions |
+| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | Nothing - the seeded `handbook` collection serves its question branch and its Gate provides `ticket_create` for actions |
 | [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
 
-The quickstart stack starts Search and Gate, and Gate arrives with the two tools above over a
-preloaded demo table - `04` runs against it as is. Search, on the other hand, ingests no
-documents, so `03` and the question branch of `05` validate and load but return no context until
-you add the stated collection. `quickstart.yaml`, `02-routed-support.yaml` and
-`06-request-pipeline.yaml` need neither.
+The quickstart starts Search and Gate, and Gate arrives with the two tools above over a
+preloaded demo table - `04` runs against it as is. A `seed` service posts
+`demo/handbook.md` into Search's `handbook` collection while the stack starts, so `03` and the
+question branch of `05` retrieve and cite right away. What that proves is the retrieval and
+citation path, not relevance: the handbook is an invented document and the test embedding maps
+every text to the same vector, so scores say nothing - relevance needs a real embedding model.
+`quickstart.yaml`, `02-routed-support.yaml` and `06-request-pipeline.yaml` need neither.
 
 [`compliance-policy.example.yaml`](compliance-policy.example.yaml) is a synthetic policy starting
 point and is intentionally ignored by both the flow validator and policy loader. Review and adapt

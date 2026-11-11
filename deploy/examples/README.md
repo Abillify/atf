@@ -1,6 +1,6 @@
 # Local unauthenticated quickstart
 
-This example starts all five ATF applications plus PostgreSQL/pgvector and a deterministic OpenAI-compatible mock. It is intended only for local functional smoke testing. Authentication, tenant isolation, TLS, durable Runtime state, Redis, real inference, and production hardening are deliberately disabled or omitted. Authorisation is the one control left switched on, with no policy file behind it, because Runtime consults the approval gate as part of authorisation - with it off, nothing in [`flows/04-tool-use-with-approval.yaml`](flows/04-tool-use-with-approval.yaml) would ever wait for a person. Every flow here is therefore admitted, and only the approval rule pauses a call.
+This example starts all five ATF applications plus PostgreSQL/pgvector, a deterministic OpenAI-compatible mock and a one-shot service that loads one demo document into Search. It is intended only for local functional smoke testing. Authentication, tenant isolation, TLS, durable Runtime state, Redis, real inference, and production hardening are deliberately disabled or omitted. Authorisation is the one control left switched on, with no policy file behind it, because Runtime consults the approval gate as part of authorisation - with it off, nothing in [`flows/04-tool-use-with-approval.yaml`](flows/04-tool-use-with-approval.yaml) would ever wait for a person. Every flow here is therefore admitted, and only the approval rule pauses a call.
 
 Two ways to start the same stack:
 
@@ -77,10 +77,12 @@ curl --fail-with-body http://localhost:3000/v1/chat/completions \
 The response comes from `model-mock.py`; it demonstrates the Runtime-to-model wiring, not model
 quality. The health checks confirm that Search, Gate and Extract start, but this curl does not
 exercise those services. Extract runs against the same mock as a vision model, so a conversion
-returns deterministic placeholder text rather than real extraction output. Search starts empty and
-its embeddings are deterministic three-dimensional smoke vectors, so nothing there is fit for
-relevance evaluation; [`flows/README.md`](flows/README.md) names the flows that need a filled
-collection. Gate, in contrast, is fully wired - the next section runs it end to end.
+returns deterministic placeholder text rather than real extraction output. Search is not empty:
+while the stack starts, a `seed` service posts [`demo/handbook.md`](demo/handbook.md) into the
+`handbook` collection that the retrieval flows read, which is what
+[Grounded retrieval](#grounded-retrieval-end-to-end) runs. Its embeddings are deterministic
+three-dimensional smoke vectors, so the ordering there proves the path and nothing about relevance.
+Gate is fully wired as well - the next section runs it end to end.
 
 ## Governed tool use, end to end
 
@@ -136,6 +138,33 @@ silence never becomes an action.
 
 `demo/init.sql` runs when the PostgreSQL volume is created, so a stack that predates it needs one
 `down --volumes` (see [Stop](#stop)) before the lookup returns rows.
+
+## Grounded retrieval, end to end
+
+Flow `grounded-retrieval` answers from what Search returns rather than from the mock's canned line,
+so it shows the retrieval and citation path:
+
+```bash
+curl --fail-with-body http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"grounded-retrieval","messages":[{"role":"user","content":"When does the support desk answer?"}]}'
+```
+
+The reply names the opening hours written in `demo/handbook.md` and cites them as `[1]`, and the
+`sources` array carries the same document under its reference - so the citation traces back to the
+file the seed service posted, without a model that understands anything.
+
+Two parts of that are worth naming. The Runtime reaches Search over Search's own MCP endpoint,
+registered under the name `vectorsearch` in [`flows/mcp.yaml`](flows/mcp.yaml): a `ragProfiles` plan
+compiles into `vectorsearch/search` calls, so that name is not a choice. And the mock model replies
+with one fixed sentence whenever the Runtime hands it retrieved sources - the quote shows the wiring,
+not comprehension, and the ranking in front of it comes from a three-dimensional test embedding, so
+its scores say nothing about relevance. Replace the mock with a real model and Search with a real
+embedding model and this flow file stays as it is.
+
+The `seed` service runs once per start, and re-posting the same file replaces the document instead of
+duplicating it, so starting the stack twice is harmless. `down --volumes` empties Search, and the
+next start seeds it again.
 
 ## Stop
 
