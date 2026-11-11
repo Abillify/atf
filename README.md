@@ -150,6 +150,34 @@ security posture, providers, budgets, and compliance evidence share one operator
 </p>
 <p align="center"><em>Control desktop navigation; this image is also maintained as a visual-regression snapshot.</em></p>
 
+The four images below are the governance screens of the same UI. Each one is a Playwright
+visual-regression baseline from [`apps/control/e2e/visual-governance.spec.ts`](apps/control/e2e/visual-governance.spec.ts),
+rendered against the e2e mock backend — every name, id, number and hostname in them is invented
+example data, never a production capture.
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-approvals-chromium-darwin.png" alt="Pending approvals panel showing two awaiting-approval tool calls, crm/send_email and crm/cancel_booking, each with its node id, tenant id, age, JSON arguments, and Approve and Deny buttons" width="576">
+      <br><strong>Approvals.</strong> A tool call that a flow marked as requiring sign-off parks here with its full arguments until an operator approves or denies it.
+    </td>
+    <td width="50%">
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-traces-chromium-darwin.png" alt="Execution Trace Viewer for execution exec-aabbccdd-1234 showing three steps retrieve, answer and crm/send_email with durations; the selected answer step shows model openai/gpt-4o-mini, latency 2720 ms, in-tokens 1840, out-tokens 214 and cost 0.0019 EUR" width="576">
+      <br><strong>Traces.</strong> Every execution replays step by step: per-step latency, the model that answered, token counts and the cost attributed to that single step.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-compliance-chromium-darwin.png" alt="Policy-as-Code Compliance page showing an active policy version 1.3.0 in fail-closed mode with data, model, approval, retention and audit rule counts, a dry-run evaluator, a replay simulator, and an audit report with violations, denials and approval counts" width="576">
+      <br><strong>Compliance.</strong> Declarative residency, model, approval and retention policies with a dry-run evaluator, a replay simulator, and a 24-hour audit report.
+    </td>
+    <td>
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-cost-chromium-darwin.png" alt="Cost dashboard with estimated cost by model in EUR, tokens by model, response cache analytics at 67.4 percent hit rate, and per-tenant 24-hour spend against budget caps" width="576">
+      <br><strong>Cost.</strong> Spend and tokens by model, response-cache analytics, and per-tenant 24-hour spend measured against each tenant's budget cap.
+    </td>
+  </tr>
+</table>
+
 ## Quickstart
 
 Requirements: Docker with Compose v2. Pulling the released images needs roughly 4 GB of free disk; building them from this checkout instead needs about 6 GB free memory and 10 GB of disk.
