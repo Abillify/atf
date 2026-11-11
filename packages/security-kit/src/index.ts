@@ -16,6 +16,12 @@
 export { safeEqual, safeEqualBytes } from "./compare.ts";
 export { createStaticTokenMatcher } from "./auth/static-token.ts";
 export {
+  resolveSecret,
+  applySecrets,
+  materializeSecrets,
+  SecretConfigError,
+} from "./auth/resolve-secret.ts";
+export {
   cborEncode,
   cborDecode,
   cborTagged,

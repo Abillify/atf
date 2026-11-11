@@ -42,6 +42,17 @@ releases:
 
 ### Added
 
+- **Runtime, Gate, Search, Extract, Control**: every service secret can be
+  supplied through a file instead of the environment variable itself (ADR 0040).
+  Setting `<NAME>_FILE` to the path of a mounted secret — a Kubernetes projected
+  volume, a Swarm secret under `/run/secrets/` — replaces `<NAME>`; the value is
+  read once at startup, one trailing line ending is stripped, and an unreadable
+  or empty file fails startup with the path in the message rather than falling
+  back to an empty credential. Setting both `<NAME>` and `<NAME>_FILE` is a
+  startup error naming both. The Helm chart needs no new keys: pass the mount
+  through each service's `extraEnv`, `extraVolumes` and the new
+  `extraVolumeMounts` pass-through. Rotation remains a restart, so the existing
+  runbook applies unchanged.
 - **Control**: the dashboard opens on an overview page. `/` and the brand link
   now lead to `/overview`, which aggregates seven read-only tiles — readiness,
   open approvals, governance posture, flow health, providers, MCP servers and

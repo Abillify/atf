@@ -9,6 +9,37 @@ deploy is required. Record each rotation (who, when, which key, reason) in the
 rotation log; the audit anchor (see below) makes the audit trail itself
 tamper-evident.
 
+## Supplying a secret through a file (`<NAME>_FILE`)
+
+Every variable below marked SECRET can be given as a file instead of an
+environment value (ADR 0040): set `<NAME>_FILE` to a path — a projected secret
+volume, an External Secrets sync, `docker --secret` — and the service reads the
+secret from it at startup. The rules are deliberately strict:
+
+- `<NAME>_FILE` wins only in the sense that setting **both** `<NAME>` and
+  `<NAME>_FILE` is a startup error naming both variables. A Secret expanded by
+  `envFrom` can therefore never silently override (or be overridden by) a mount.
+- Exactly one trailing line ending (`\n` or `\r\n`) is stripped, because secret
+  managers append one; everything else survives byte-for-byte, including
+  leading/trailing spaces and interior newlines.
+- An unreadable or empty file is a startup error with the path in the message —
+  never a fallback to `<NAME>` and never an empty secret.
+- The file is read **once, at config load**. Rotating the file's content is not
+  enough: the restart is still the rotation point, exactly as with a variable.
+  (Kubernetes propagates a projected-volume update into the container, but the
+  process keeps the value it read at startup.)
+
+Which variables accept a file is listed per service next to the SECRET markers
+in `docs/CONFIGURATION.md`. Path-valued variables that merely *look* like the
+pattern (`TLS_KEY_FILE`, `TLS_CERT_FILE`, `TLS_CLIENT_CA_FILE`,
+`SEARCH_CA_CERT_FILE`, `CONVERTER_CA_CERT_FILE`, `AUDIT_ANCHOR_FILE`,
+`OUTPOST_CONFIG_FILE`) are paths, not secret pointers, and are excluded.
+
+In Kubernetes, mount the directory and point the variable at the file — the
+umbrella chart's `values.yaml` documents the `extraEnv` + `extraVolumes` +
+`extraVolumeMounts` combination. A rotation then means: update the Secret (or
+its External Secrets source), then restart the pods.
+
 ## PII-Vault (`PII_VAULT_ENCRYPTION_KEY`)
 
 The vault stores tokenized PII in `pii_vault_entries`, encrypted with AES-256-GCM

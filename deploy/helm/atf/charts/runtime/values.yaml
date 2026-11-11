@@ -71,3 +71,8 @@ affinity: {}
 extraEnv: []
 # Additional envFrom entries (list of secretRef/configMapRef).
 extraEnvFrom: []
+# Additional pod volumes / mounts as YAML strings, e.g. a projected secret
+# directory for the NAME_FILE secret variables (ADR 0040, see the umbrella
+# values.yaml for an example).
+extraVolumes: ""
+extraVolumeMounts: ""

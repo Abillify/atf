@@ -14,6 +14,7 @@ import {
 } from "./schema.ts";
 import { expandOpenApiImports } from "./openapi.ts";
 import { expandMcpServerImports } from "./mcp-import.ts";
+import { materializeSecrets } from "@atf/security-kit";
 import {
   hasTopLevelSqlKeywords,
   TOP_LEVEL_ROW_LIMIT_KEYWORDS,
@@ -676,7 +677,21 @@ export function deprecatedEnvWarnings(
   return warnings;
 }
 
+/**
+ * Every mcp-gate variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). These are read straight from `process.env` — both by the `${VAR}`
+ * interpolation in the YAML files and by request-time subsystems — so the
+ * resolved values are written back in place before either runs.
+ */
+export const GATE_SECRET_VARS = [
+  "MCPGATE_TRANSACTION_HS256_SECRET",
+  "MCPGATE_APPROVAL_SECRET",
+  "MCPGATE_REDACTION_HASH_SECRET",
+] as const;
+
 export function loadConfig(explicitDir?: string): { config: AppConfig; dir: string } {
+  materializeSecrets(GATE_SECRET_VARS);
   const dir = resolveConfigDir(explicitDir);
   const merged = buildMerged(dir);
 
@@ -706,6 +721,7 @@ export function loadConfig(explicitDir?: string): { config: AppConfig; dir: stri
  * as in loadConfig. Server startup and hot-reload use this path.
  */
 export async function loadConfigAsync(explicitDir?: string): Promise<{ config: AppConfig; dir: string }> {
+  materializeSecrets(GATE_SECRET_VARS);
   const dir = resolveConfigDir(explicitDir);
   const merged = buildMerged(dir);
 

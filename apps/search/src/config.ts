@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import {
+  materializeSecrets,
   resolveOperationalProfile,
   type OperationalProfile,
   type ServerTlsConfig,
@@ -875,7 +876,38 @@ export function deprecatedOptionWarnings(
   return warnings;
 }
 
+/**
+ * Every Search variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). The list is explicit rather than a name-pattern sweep so that
+ * path-valued variables like `SEARCH_CA_CERT_FILE` are never mistaken for a
+ * secret-file pointer.
+ */
+export const SEARCH_SECRET_VARS = [
+  "OIDC_CLIENT_SECRET",
+  "OIDC_SESSION_SECRET",
+  "EMBED_API_KEY",
+  "EMBED_FALLBACK_API_KEY",
+  "API_TOKEN",
+  "API_TOKEN_NEXT",
+  "CONVERTER_TOKEN",
+  "SEARCH_EVIDENCE_SIGNING_KEY",
+  "TRANSACTION_HS256_SECRET",
+  "RERANK_API_KEY",
+  "RERANK_FALLBACK_API_KEY",
+  "HYDE_TOKEN",
+  "RETRIEVE_DECOMPOSE_TOKEN",
+  "SUMMARY_TOKEN",
+  "SPARSE_API_KEY",
+  "TOKENIZE_API_KEY",
+  "MONITOR_TOKEN",
+] as const;
+
 export function loadConfig(): Config {
+  // Resolve `NAME_FILE` secret pointers into their variables BEFORE the
+  // helpers below read the environment (ADR 0040). Failing fast here matches
+  // how loadConfig already rejects bad input: throw with the offending name.
+  materializeSecrets(SEARCH_SECRET_VARS);
   // ── Env-var parse helpers ───────────────────────────────────────────────────
   //
   // Each helper reads one env variable, applies a default, validates the value,

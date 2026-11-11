@@ -658,6 +658,8 @@ function render(sections: Section[]): string {
 		"",
 		"> Secrets belong in a secret manager, never in a committed file or a ConfigMap. Variables whose names end in `_SECRET`, `_KEY`, `_TOKEN`, or `_PASSWORD` must be treated as such.",
 		"",
+		"> In Runtime, Gate, Search, Extract and Control, a secret can also be supplied through a file: set `<NAME>_FILE` to its path (a mounted secret) instead of `<NAME>`. Setting both is a startup error, one trailing line ending is stripped, and an unreadable or empty file fails startup rather than falling back. Path-valued variables that merely match the pattern (`TLS_KEY_FILE`, `SEARCH_CA_CERT_FILE`, `AUDIT_ANCHOR_FILE`, ...) are not secret pointers. See ADR 0040 and `docs/runbooks/key-rotation.md`.",
+		"",
 		"## Contents",
 		"",
 	];

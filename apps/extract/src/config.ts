@@ -17,6 +17,7 @@
 import { PAGE_LABELS, type PageLabel } from "@atf/extract-contract/v1";
 import { figureKindSchema, type FigureKind } from "@atf/extract-contract/v2";
 import {
+  materializeSecrets,
   resolveOperationalProfile,
   type OperationalProfile,
   type ServerTlsConfig,
@@ -860,7 +861,29 @@ export const EXTRACT_SCOPES = [
   "extract.admin",
 ] as const;
 
+/**
+ * Every Extract variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). The list is explicit rather than a name-pattern sweep so that
+ * path-valued variables like `TLS_KEY_FILE` are never mistaken for a
+ * secret-file pointer.
+ */
+export const EXTRACT_SECRET_VARS = [
+  "SEARCH_TOKEN",
+  "SUMMARY_API_KEY",
+  "VISION_API_KEY",
+  "API_TOKEN",
+  "API_TOKEN_NEXT",
+  "MONITOR_TOKEN",
+  "OIDC_CLIENT_SECRET",
+  "OIDC_SESSION_SECRET",
+] as const;
+
 export function loadConfig(): Config {
+  // Resolve `NAME_FILE` secret pointers into their variables BEFORE the
+  // helpers below read the environment (ADR 0040). Failing fast here matches
+  // how loadConfig already rejects bad input: throw with the offending name.
+  materializeSecrets(EXTRACT_SECRET_VARS);
   // ── Env-var parse helpers ───────────────────────────────────────────────────
   // Each reads one variable, applies a default, validates, and throws a
   // descriptive Error. Same helper set as apps/search/src/config.ts so the two

@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import {
+  materializeSecrets,
   resolveOperationalProfile,
   UnknownOperationalProfileError,
   type ResolvedOperationalProfile,
@@ -54,12 +55,60 @@ function collectProviderRefs(value: unknown, out: Set<string>): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every Runtime variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). The list is explicit rather than a name-pattern sweep on purpose:
+ * a sweep would also match path-valued variables like `TLS_KEY_FILE` and
+ * read that file's contents into a new environment variable nobody asked
+ * for. `AUDIT_ANCHOR_SECRET` is deliberately absent: `AUDIT_ANCHOR_FILE`
+ * already exists with a different meaning (the anchor output path), so a
+ * `*_FILE` fallback there would silently overwrite a path with a secret.
+ */
+export const RUNTIME_SECRET_VARS = [
+  "MONITORING_TICKET_SECRET",
+  "AUDIT_PSEUDONYM_PEPPER",
+  "ERASURE_RECEIPT_SIGNING_KEY",
+  "RECEIPT_SIGNING_KEY",
+  "EVIDENCE_BUNDLE_SECRET",
+  "EVIDENCE_SIGNING_KEY",
+  "JWT_SECRET",
+  "OIDC_CLIENT_SECRET",
+  "OIDC_SESSION_SECRET",
+  "BYOK_ENCRYPTION_KEY",
+  "PII_VAULT_ENCRYPTION_KEY",
+  "PII_REMOTE_API_KEY",
+  "PII_IMAGE_REMOTE_API_KEY",
+  "PROVIDER_KEYS",
+  "CITATION_CHECK_TOKEN",
+  "ASSISTANT_DELEGATION_CLIENT_SECRET",
+  "ASSISTANT_ENCRYPTION_KEY",
+  "ROCKETCHAT_BOT_AUTH_TOKEN",
+  "ROCKETCHAT_WEBHOOK_TOKEN",
+  "ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET",
+  "ROCKETCHAT_CONNECT_SESSION_SECRET",
+  "TRANSACTION_SIGNING_KEY",
+  "AGENT_TRANSACTION_SECRET",
+  "GITOPS_WEBHOOK_SECRET",
+] as const;
+
+/**
  * Loads and validates all configuration from environment variables.
  *
  * On validation failure: writes a list of all failing variable names to stderr
  * and calls `process.exit(1)`.
  */
 export function loadConfig(): AppConfig {
+  // Resolve `NAME_FILE` secret pointers into their variables BEFORE anything
+  // else reads the environment (ADR 0040). Subsystems read some of these
+  // straight from `process.env` rather than through the parsed config, so the
+  // resolved values are written back in place — otherwise a mounted secret
+  // would be honored by the schema and ignored by the subsystem.
+  try {
+    materializeSecrets(RUNTIME_SECRET_VARS);
+  } catch (err) {
+    process.stderr.write(`[Config] ${(err as Error).message}\n`);
+    process.exit(1);
+  }
   // Apply an ATF_PRESET preset (if any) BEFORE parsing, so its defaults fill
   // only unset variables and Zod coercion/validation sees the effective
   // values. Explicit env vars always win over the preset (see ./profiles.ts).
