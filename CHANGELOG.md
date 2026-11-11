@@ -42,6 +42,17 @@ releases:
 
 ### Added
 
+- **Docs**: `docs/FLOW-COOKBOOK.md` is the pattern half of the flow documentation — twelve
+  recipes (classifier routing, model pools and sticky conversations, cheap-to-strong cascade,
+  RAG with a runtime source check, bounded tool loops, sub-flows and prompt files, variables and
+  calculations, parallel fan-out, an approval-guarded write, image inspection, small local model
+  switches, node failure policy), each stating the failure mode it prevents and what silently
+  does nothing when its precondition is missing. Every excerpt is taken from a complete flow
+  under `deploy/examples/flows/cookbook/`, all twelve validate (`12 valid, 0 invalid,
+  0 warning(s)`) and are wired into the CI flow step. The directory is deliberately invisible to
+  a running stack — the flow collector does not recurse — so patterns can be validated without
+  twelve more entries in `GET /v1/models`, and it carries its own `model-shortcuts.yaml` so a
+  recipe never depends on a shortcut the examples above happen to define.
 - **Docs**: `docs/tutorials/first-assistant.md` builds one assistant end to end on the
   quickstart — a document ingested, retrieved and cited, a tool call parked until a
   named person approves it, and the signed receipt verified offline — and names the

@@ -120,6 +120,21 @@ The twelve built-in node types: `llm`, `tool`, `router`, `classifier`, `parallel
 `memory`, `agent-harness`, `transform`, `trigger`, `assistant-context`, `assistant-learn`. Any
 other string resolves through the plugin node-handler registry.
 
+## One subdirectory: `cookbook/`
+
+[`cookbook/`](cookbook/) holds twelve single-pattern flows — the files behind
+[`docs/FLOW-COOKBOOK.md`](../../../docs/FLOW-COOKBOOK.md). They are **not** loaded by this
+stack: the flow collector scans `FLOWS_DIR` one level deep and does not recurse, so the
+directory is invisible to a running Runtime while CI validates all of it as its own flow root.
+Copying a recipe into production means copying the file up and giving it an `id` that does not
+collide (`cb-` prefixes keep that unlikely). Its `model-shortcuts.yaml` exists so the recipes
+resolve their shortcuts against themselves rather than against the file above.
+
+```bash
+cd apps/runtime
+bun run scripts/cli.ts validate ../../deploy/examples/flows/cookbook/ --require-version
+```
+
 Complete reference of every field, node type setting, placeholder, condition operator and
 calculation function: [`docs/FLOWS.md`](../../../docs/FLOWS.md) (generated from the engine's own
 schema and node type catalog). Overview: [`docs/CAPABILITIES.md`](../../../docs/CAPABILITIES.md) and

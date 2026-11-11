@@ -186,6 +186,13 @@ jobs:
           # provider from `{{vars.model_provider}}`, which defaults to a built-in
           # protocol, so the file validates against a registry that is not set at all.
           bun run scripts/cli.ts validate ../../deploy/blueprints/research-assistant/ --require-version
+          # Same reason for the cookbook (see docs/FLOW-COOKBOOK.md): every recipe is a
+          # complete flow, so a snippet in the docs cannot drift into something that does
+          # not load. Its own `model-shortcuts.yaml` makes the directory a flow root, so
+          # the recipes resolve their shortcuts against that file rather than against the
+          # examples above, and no PROVIDERS entry is needed either — the shortcuts name
+          # engines, which are resolved at execution time, not at load time.
+          bun run scripts/cli.ts validate ../../deploy/examples/flows/cookbook/ --require-version
 
   typecheck:
     name: Typecheck

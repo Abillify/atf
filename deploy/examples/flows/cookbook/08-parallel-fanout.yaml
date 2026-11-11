@@ -1,0 +1,128 @@
+id: cb-parallel-fanout
+name: Cookbook — parallel fan-out
+description: >-
+  Run independent work at the same time: a context plan that assembles several
+  collections per request, enrichment children that run beside it, one child that only
+  runs on a condition, and a concurrency ceiling that keeps a single local inference
+  server responsive.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+variables:
+  branch_limit: 4
+
+nodes:
+  - id: classify
+    type: classifier
+    label: Classify the request
+    llm: { shortcut: structured }
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent: { type: string, enum: [compare, incident, general] }
+          hasAttachment: { type: boolean }
+        required: [intent, hasAttachment]
+    config:
+      fallback: { intent: general, hasAttachment: false }
+
+  # The fan-out node. It does two independent things at once: it runs the children listed in
+  # `parallelNodes`, and it compiles `ragProfiles` into search calls. Both results are merged into
+  # the context the next node sees.
+  - id: fanout
+    type: parallel
+    label: Gather in parallel
+    # A child may be a bare node id or `{ node, condition }`. Children addressed only here need no
+    # edges of their own — the Studio draws them as dashed reference links, not as flow steps.
+    parallelNodes:
+      - recall
+      - risks
+      - { node: describe_image, condition: "classification.hasAttachment == true" }
+    config:
+      ragProfiles:
+        default: general
+        select:
+          - when: "classification.intent == 'compare'"
+            use: comparison
+          - when: "classification.intent == 'incident'"
+            use: incidents
+        profiles:
+          comparison:
+            - collection: product-docs
+              limit: "{{vars.branch_limit}}"
+            - collection: benchmarks
+              limit: 3
+          incidents:
+            - collection: postmortems
+              limit: "{{vars.branch_limit}}"
+              # `when` scopes one source inside a profile, so a profile can carry an optional source
+              # without needing its own profile.
+              when: "classification.intent == 'incident'"
+          general:
+            - collection: handbook
+              limit: 4
+        rerank:
+          topN: 5
+        maxDocuments: 8
+      # After fusion, a small model reduces each source to the relevant parts. Fail-open: on any
+      # problem the original chunks are used, so a weak extraction model cannot degrade the answer.
+      ragCompression:
+        enabled: true
+        llm: { shortcut: structured }
+        minChars: 500
+        maxTokens: 600
+      # In a threaded conversation, documents the user already saw compete at a reduced weight, so a
+      # follow-up question prefers fresh material instead of re-reading the same three chunks.
+      followupDownweight:
+        enabled: true
+        factor: 0.4
+        cap: 50
+      # The ceiling that matters on one GPU: with three children and two model calls each, an
+      # unbounded fan-out queues against the answering node. Two at a time keeps the first token fast.
+      maxFanoutConcurrency: 2
+
+  # Children of a parallel node are ordinary nodes with their own model and prompt. They must never
+  # appear as the source or target of an edge — that would make them a flow step and a second
+  # execution of the same work.
+  - id: recall
+    type: memory
+    label: Recall user facts
+    config: { topK: 5, minScore: 0.35 }
+
+  - id: risks
+    type: llm
+    label: List risks
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      List the concrete risks of the option the user asks about, at most three, each with
+      the reason it matters.
+
+  - id: describe_image
+    type: llm
+    label: Describe the attachment
+    # The conditional child. `inputFilter` is the second guard: even when the condition above is
+    # true, the node is skipped unless the latest message really carries an attachment — so a
+    # misclassification costs nothing instead of a model call that answers "no image".
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Describe what the attached image shows, factually, and note any identifier or number
+      visible in it.
+    config:
+      inputFilter: current-turn-attachments
+
+  - id: answer
+    type: llm
+    label: Answer
+    llm: { shortcut: chat }
+    systemPrompt: >-
+      Answer using the gathered context, the recalled user facts and the risk list. Cite
+      retrieved sources with their markers.
+
+edges:
+  - { source: classify, target: fanout }
+  - { source: fanout, target: answer }

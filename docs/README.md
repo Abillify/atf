@@ -11,6 +11,7 @@
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The variables a first production deployment needs per service |
 | [FLOWS.md](FLOWS.md) | You are writing or changing a flow. Generated from the flow schema and node type catalog |
 | [tutorials/first-assistant.md](tutorials/first-assistant.md) | You are building your first assistant end to end: your own document retrieved, a tool call held for approval, a signed receipt for the run |
+| [FLOW-COOKBOOK.md](FLOW-COOKBOOK.md) | You know the fields and want the patterns: which settings belong together and what each one prevents |
 | [../DEVELOPMENT.md](../DEVELOPMENT.md) | You are about to change code |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | You are deploying to production |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | You are opening a pull request |
@@ -53,6 +54,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables per service. **Generated** — run `bun run config-reference` |
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The short list per service for a first production deployment |
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
+| [FLOW-COOKBOOK.md](FLOW-COOKBOOK.md) | Twelve flow patterns, each a complete validated file under `deploy/examples/flows/cookbook/`, with the failure mode it prevents |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
 | [DEPRECATIONS.md](DEPRECATIONS.md) | Every deprecated option, field and header, with its replacement and removal version |
 | [STABILITY.md](STABILITY.md) | What is covered by semantic versioning from 1.0.0 and which features stay experimental |
