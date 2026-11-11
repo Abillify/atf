@@ -118,6 +118,37 @@ releases:
   The Quickstart stack job runs the tour itself: documentation that executes is
   gated like documentation that does not, so a vault, approval or receipt
   regression fails CI rather than a demo.
+- **Docs** (`ROADMAP.md`, `SUPPORT.md`, `GOVERNANCE.md`): a reader who decides
+  whether to adopt ATF could see what it does today but not where it is going,
+  who answers questions, or how a decision gets made. `ROADMAP.md` states the
+  direction with each item marked shipped, in progress, proposed or explicitly
+  out of scope, and names what is *not* planned so an evaluation does not have to
+  ask; `SUPPORT.md` says where to ask for help and what response a community
+  issue, a bug and a security report can expect; `GOVERNANCE.md` records who
+  maintains the project, how a change is accepted and how conflicts are resolved.
+  All three are linked from `README.md` and `docs/README.md` next to the existing
+  governance documents.
+- **Deploy** (`deploy/blueprints`): three worked configurations show how the
+  example flows and the reference configurations fit together for a real
+  deployment, which neither covers because both stay deliberately generic.
+  `research-assistant/` is a multi-stage flow — a planner narrows a question, a
+  tool loop researches it, a verifier rejects unsourced claims, an answer stage
+  writes the reply — with the prompts as separate files and a harness bounded by
+  `maxIterations`, `maxTimeMs` and `maxStagnantIterations`; `gate-sql-profile/` is
+  a Gate configuration for a read-mostly SQL profile, where the one write tool is
+  the only one behind an approval card that quotes the arguments rather than a
+  description of them, with the rate limit, host allowlist and proxy settings a
+  public endpoint needs; `dms-mirror/` is an Outpost that mirrors a document
+  store into a collection and deletes nothing without an operator's confirmation.
+  Every value was verified against a loader in this checkout, not from
+  documentation: the flow validates with and without a model provider configured,
+  the Gate configuration was run through `scripts/atf-doctor.ts`, and the Outpost
+  file through `loadConfig()`. The measured doctor output — clean in development,
+  refused in production until `auth.mode`, `tenantIsolation` and the host
+  allowlist are set — is printed in the blueprint, because a configuration that
+  admits what it is not ready for is more useful than one that looks finished.
+  Each README names the field to change, the secret to supply, and the check to
+  run before a rollout; CI validates the blueprint flows alongside the examples.
 
 ### Fixed
 
