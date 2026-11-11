@@ -223,6 +223,7 @@ if (import.meta.main) {
     auditLog,
     retentionService,
     auditAnchor,
+    auditForwarder,
     evidenceKey,
   } = obs;
 
@@ -1138,6 +1139,7 @@ if (import.meta.main) {
       },
       () => {
         auditAnchor?.stop();
+        auditForwarder?.stop();
         treeHeadSealer?.stop();
       },
       () => {

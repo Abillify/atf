@@ -1738,6 +1738,34 @@ export const MIGRATIONS: readonly Migration[] = [
        $do$`,
     ],
   },
+  {
+    version: 53,
+    name: "audit_forward_state — SIEM forwarding position (review follow-up G3)",
+    statements: [
+      // Persistent send position for the audit SIEM forwarder: one row per
+      // configured target URL holding the highest audit_log id already
+      // delivered. The forwarder advances it only after the target answered
+      // the batch with HTTP 2xx, so a crash between send and commit re-sends
+      // at most one batch (at-least-once, never a gap). Unlike the audit
+      // trail itself this table IS mutable by design — it is bookkeeping,
+      // not evidence — so the app roles get INSERT/UPDATE/SELECT here.
+      `CREATE TABLE IF NOT EXISTS audit_forward_state (
+         target     TEXT PRIMARY KEY,
+         last_id    BIGINT NOT NULL DEFAULT 0,
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `DO $do$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_app') THEN
+           EXECUTE 'GRANT INSERT, UPDATE, SELECT ON audit_forward_state TO aiperator_app';
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
+           EXECUTE 'GRANT INSERT, UPDATE, SELECT ON audit_forward_state TO aiperator_operator';
+         END IF;
+       END
+       $do$`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => Math.max(m.version, max),

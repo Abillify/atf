@@ -42,6 +42,17 @@ releases:
 
 ### Added
 
+- **Runtime**: the audit trail can be pushed to an external SIEM. With
+  `AUDIT_FORWARD_URL` (HTTPS webhook, `AUDIT_FORWARD_TOKEN` as bearer,
+  `AUDIT_FORWARD_BATCH_SIZE`, `AUDIT_FORWARD_INTERVAL_MS`) a background loop
+  ships `audit_log` entries as NDJSON batches through the Egress_Guard. The
+  send position persists in the new `audit_forward_state` table (migration 53)
+  and advances only after the target answered HTTP 2xx, so delivery is
+  at-least-once with no gap across restarts; with several replicas exactly one
+  sends (advisory lock `atf:audit_forward`). A rejected or unreachable target
+  becomes retrying backoff and the `aiperator_audit_forward_lag` gauge instead
+  of data loss. Forwarding needs the durable (Postgres) audit log; private
+  addresses stay blocked without `EGRESS_ALLOW_PRIVATE_HOSTS`.
 - **Runtime, Gate, Search, Extract, Control**: every service secret can be
   supplied through a file instead of the environment variable itself (ADR 0040).
   Setting `<NAME>_FILE` to the path of a mounted secret — a Kubernetes projected

@@ -498,6 +498,14 @@ Closing the two uncovered paths is a design decision of its own, recorded as ADR
   of the control.
 - **Tamper-evident audit log.** Audit entries are hash-chained and periodically anchored, so
   later modification is detectable (`AUDIT_ANCHOR_SECRET`, `AUDIT_ANCHOR_INTERVAL_MS`).
+- **SIEM forwarding.** With `AUDIT_FORWARD_URL` (HTTPS webhook), a background
+  loop pushes the audit trail as NDJSON batches through the Egress_Guard
+  (`AUDIT_FORWARD_BATCH_SIZE`, `AUDIT_FORWARD_INTERVAL_MS`, `AUDIT_FORWARD_TOKEN`
+  as bearer). The send position persists in `audit_forward_state` and advances
+  only after HTTP 2xx, so delivery is at-least-once with no gap across restarts;
+  with several replicas exactly one sends (advisory lock). A target that cannot
+  be reached becomes lag (`aiperator_audit_forward_lag`), never silent loss.
+  Requires the durable (Postgres) audit log.
 - **Retention and erasure.** Configurable retention sweeps and targeted erasure support
   right-to-be-forgotten requests (`RETENTION_ENABLED`, `RETENTION_MAX_AGE_DAYS`). Targets:
   `replay_snapshots`, `pii_vault`, `conversation_checkpoints`, `assistant_data`,

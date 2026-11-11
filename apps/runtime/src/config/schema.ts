@@ -279,6 +279,17 @@ export interface AppConfig {
   /** Optional append-only JSONL file to persist anchors outside the audit DB. */
   auditAnchorFile?: string;
   /**
+   * HTTPS webhook receiving audit entries as NDJSON batches via the
+   * Egress_Guard (`AUDIT_FORWARD_URL`, review follow-up G3). Unset = disabled.
+   */
+  auditForwardUrl?: string;
+  /** Bearer token for the SIEM webhook (`AUDIT_FORWARD_TOKEN`). */
+  auditForwardToken?: string;
+  /** Entries per forwarded batch (`AUDIT_FORWARD_BATCH_SIZE`, default 100). */
+  auditForwardBatchSize?: number;
+  /** Forwarding cycle interval in ms (`AUDIT_FORWARD_INTERVAL_MS`, default 15 s). */
+  auditForwardIntervalMs?: number;
+  /**
    * Secret pepper (`AUDIT_PSEUDONYM_PEPPER`, ≥ 32 characters) used to derive
    * keyed pseudonyms of erasure subjects for audit entries. Without it the
    * pseudonyms are unkeyed SHA-256 values that anyone who knows an identifier
@@ -1177,6 +1188,25 @@ export const EnvSchema = z.object({
    */
   AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().min(60_000).optional(),
   AUDIT_ANCHOR_FILE: z.string().optional(),
+  /**
+   * HTTPS webhook that receives the audit trail as NDJSON batches through the
+   * Egress_Guard (review follow-up G3). Unset = forwarding disabled. The
+   * send position persists in `audit_forward_state`, so delivery is
+   * at-least-once with no gap across restarts; with several replicas exactly
+   * one sends (advisory lock `atf:audit_forward`).
+   */
+  AUDIT_FORWARD_URL: z.string().url().optional(),
+  /** SECRET. Bearer token sent as `Authorization: Bearer …` to the SIEM webhook. */
+  AUDIT_FORWARD_TOKEN: z.string().min(16).optional(),
+  /** Audit entries per forwarded batch (default 100). */
+  AUDIT_FORWARD_BATCH_SIZE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional(),
+  /** Interval between forwarding cycles (default 15 s). */
+  AUDIT_FORWARD_INTERVAL_MS: z.coerce.number().int().min(1_000).optional(),
   /** SECRET (≥ 32 characters). Pepper for the keyed HMAC-SHA256 pseudonyms of erasure subjects in audit entries. Unset = unkeyed SHA-256 pseudonyms. */
   AUDIT_PSEUDONYM_PEPPER: z.string().min(32).optional(),
   // Remote erasure targets for the DSAR orchestrator (Req 2.9): a JSON array

@@ -67,6 +67,7 @@ function collectProviderRefs(value: unknown, out: Set<string>): void {
 export const RUNTIME_SECRET_VARS = [
   "MONITORING_TICKET_SECRET",
   "AUDIT_PSEUDONYM_PEPPER",
+  "AUDIT_FORWARD_TOKEN",
   "ERASURE_RECEIPT_SIGNING_KEY",
   "RECEIPT_SIGNING_KEY",
   "EVIDENCE_BUNDLE_SECRET",
@@ -239,6 +240,17 @@ export function loadConfig(): AppConfig {
       );
       process.exit(1);
     }
+    // The SIEM webhook carries the whole audit trail plus its bearer token,
+    // so a plaintext target is a config error in production, not a warning.
+    if (
+      env.AUDIT_FORWARD_URL !== undefined &&
+      !env.AUDIT_FORWARD_URL.toLowerCase().startsWith("https://")
+    ) {
+      process.stderr.write(
+        `[Config] AUDIT_FORWARD_URL must use https:// in production\n`,
+      );
+      process.exit(1);
+    }
   }
 
   return {
@@ -278,6 +290,18 @@ export function loadConfig(): AppConfig {
     auditAnchorSecret: env.AUDIT_ANCHOR_SECRET,
     auditAnchorIntervalMs: env.AUDIT_ANCHOR_INTERVAL_MS,
     auditAnchorFile: env.AUDIT_ANCHOR_FILE,
+    ...(env.AUDIT_FORWARD_URL !== undefined
+      ? { auditForwardUrl: env.AUDIT_FORWARD_URL }
+      : {}),
+    ...(env.AUDIT_FORWARD_TOKEN !== undefined
+      ? { auditForwardToken: env.AUDIT_FORWARD_TOKEN }
+      : {}),
+    ...(env.AUDIT_FORWARD_BATCH_SIZE !== undefined
+      ? { auditForwardBatchSize: env.AUDIT_FORWARD_BATCH_SIZE }
+      : {}),
+    ...(env.AUDIT_FORWARD_INTERVAL_MS !== undefined
+      ? { auditForwardIntervalMs: env.AUDIT_FORWARD_INTERVAL_MS }
+      : {}),
     auditPseudonymPepper: env.AUDIT_PSEUDONYM_PEPPER,
     ...(env.ERASURE_TARGETS !== undefined
       ? { erasureTargets: env.ERASURE_TARGETS }
