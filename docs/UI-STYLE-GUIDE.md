@@ -81,6 +81,17 @@ instead of raw shades everywhere, including badges and status dots:
 light and dark); DEFAULT/`soft`/`border` adapt via `.dark`. Text on any solid
 surface uses `text-on-solid` (`--on-solid`).
 
+**Labels go on `soft`, never on a translucent `solid`.** DEFAULT carries the
+label text, so it must clear 4.5:1 against both `bg-card` and its own
+`*-soft` — the DEFAULTs in `globals.css` are tuned for exactly that, and
+`src/__tests__/token-contrast.test.ts` recomputes the ratios from the CSS on
+every run. A `bg-*-solid/20` wash looks similar but composites the *fixed*
+`*-solid` over the card, which drags `text-success` down to ~3.6:1 in light
+mode and is invisible to `.dark`; badge/label surfaces therefore use
+`bg-*-soft text-*` (see `Badge`, `BoundaryPanel` role badges). Faint
+`bg-*-solid/10` fills that keep the inherited card foreground are fine — the
+rule is about pairing a *colored* DEFAULT label with a translucent fill.
+
 **Domain token families:**
 
 - `node-*` — graph node category fills (`bg-node-llm`,
@@ -244,7 +255,9 @@ forms unless it is the submit.
 ### Badge
 `variant`: `default` · `secondary` · `outline` · `success` · `warning` ·
 `destructive`. For status/labels only. Green=success, amber=warning,
-red=destructive, neutral=secondary/outline.
+red=destructive, neutral=secondary/outline. The coloured variants pair
+`bg-*-soft` with `text-*` — never a translucent `bg-*-solid/NN` (§3), because
+12 px labels need the token's 4.5:1 ratio.
 
 ### Card / CardHeader / CardTitle / CardContent
 The standard content container (`rounded-lg border border-border bg-card
@@ -361,7 +374,11 @@ are right-aligned; destructive actions separated.
 - [ ] Keyboard: everything reachable and operable; drawer/dialog trap + `Escape`.
 - [ ] Status not by color alone (add text/icon).
 - [ ] Images/icons: `alt` or `aria-hidden`.
-- [ ] Contrast ≥ 4.5:1 (body) / 3:1 (large) — guaranteed by the tokens.
+- [ ] Contrast ≥ 4.5:1 (body) / 3:1 (large) — the token DEFAULTs guarantee it
+  for text and label surfaces, and `src/__tests__/token-contrast.test.ts`
+  fails if a palette change breaks that. The check covers the tokens, not
+  bespoke combinations: anything off-token (a translucent `*-solid/NN` wash,
+  a hardcoded shade) is on you — run the axe sweep (`e2e/a11y-sweep.spec.ts`).
 
 ---
 

@@ -21,8 +21,12 @@ const variantClasses: Record<BadgeVariant, string> = {
   secondary: "bg-secondary text-secondary-foreground",
   destructive: "bg-destructive text-destructive-foreground",
   outline: "border border-border bg-transparent text-foreground",
-  success: "bg-success-solid/20 text-success border border-success-border",
-  warning: "bg-warning-solid/20 text-warning border border-warning-border",
+  // Labels are 12px, so the text needs body-text contrast. A translucent
+  // `*-solid/20` fill is not an approved surface (UI-STYLE-GUIDE.md §3) and
+  // dropped `text-success` to 3.6:1; the `*-soft` slot is the theme-aware
+  // surface designed for this and clears 4.5:1 in light and dark.
+  success: "bg-success-soft text-success border border-success-border",
+  warning: "bg-warning-soft text-warning border border-warning-border",
 };
 
 export function Badge({

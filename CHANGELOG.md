@@ -196,6 +196,21 @@ releases:
 
 ### Fixed
 
+- **Control** (accessibility): status labels failed WCAG AA contrast in the
+  light theme. The token DEFAULTs for `success`, `info`, `subflow` and
+  `accent-2` sat at 4.0–4.3:1 against a card, and badge labels compounded it —
+  their surface was a 20 % wash of the theme-*fixed* `*-solid`, which pulled
+  `text-success` down to 3.62:1 — while dark `--copilot` reached only 4.06:1 on
+  its own `--copilot-soft`. Badge labels and the boundary-panel role badges now
+  use the documented `*-soft` surface, and the four light DEFAULTs plus dark
+  `--copilot` moved to the lightness that clears 4.5:1 on both the card and
+  their own soft tint; the visible hue is unchanged. The promise in
+  `docs/UI-STYLE-GUIDE.md` that the tokens guarantee body-text contrast is now
+  enforced: `apps/control/src/__tests__/token-contrast.test.ts` recomputes
+  every family against both themes from `globals.css` itself, and
+  `e2e/a11y-sweep.spec.ts` is clean on all 30 routes (it had flagged the
+  overview and, through the shared badge, the posture page).
+
 - **Runtime** (tests): the check that validates every example flow validated
   every YAML file in `deploy/examples/flows` — including the reserved non-flow
   config a flows directory may legitimately hold, which is where the MCP server

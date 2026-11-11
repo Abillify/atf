@@ -51,10 +51,17 @@
      * Values follow the previous palettes (light: 600 text, 50 surface,
      * 200 border; dark: 400 text, 950 surface), with *-foreground tuned to
      * the solid variant (WCAG AA).
+     *
+     * CONTRACT: every DEFAULT ("text") value clears WCAG AA (4.5:1) on both
+     * `--card` and its own `--*-soft` surface, in the theme it is declared in.
+     * Status labels are 12px, so they need body-text contrast; axe reports a
+     * shortfall as a serious violation. `src/__tests__/token-contrast.test.ts`
+     * recomputes the ratios from this file so the contract cannot rot.
      */
     /* DEFAULT = text/accent value, -solid = solid fill (white -foreground),
        -soft = background surface, -border = border. */
-    --success: 142 72% 32%;
+    /* 30% L: 4.79:1 on card, 4.60:1 on --success-soft (was 4.30 / 4.12). */
+    --success: 142 72% 30%;
     --success-solid: 142 71% 45%;
     --success-solid-hover: 142 71% 35%;
     --success-foreground: 0 0% 100%;
@@ -76,7 +83,8 @@
     --danger-soft: 0 86% 97%;
     --danger-border: 0 93% 82%;
 
-    --info: 200 98% 39%;
+    /* 35% L: 4.95:1 on card, 4.63:1 on --info-soft (was 4.11 / 3.85). */
+    --info: 200 98% 35%;
     --info-solid: 199 89% 48%;
     --info-solid-hover: 200 98% 39%;
     --info-foreground: 0 0% 100%;
@@ -92,14 +100,16 @@
     --copilot-soft: 270 100% 98%;
     --copilot-border: 269 90% 88%;
 
-    --subflow: 175 80% 31%;
+    /* 28% L: 4.77:1 on card, 4.55:1 on --subflow-soft (was 4.01 / 3.82). */
+    --subflow: 175 80% 28%;
     --subflow-solid: 173 80% 40%;
     --subflow-solid-hover: 175 80% 31%;
     --subflow-foreground: 0 0% 100%;
     --subflow-soft: 173 80% 96%;
     --subflow-border: 175 83% 78%;
 
-    --accent-2: 330 81% 50%;
+    /* 46% L: 5.02:1 on card, 4.59:1 on --accent-2-soft (was 4.35 / 3.97). */
+    --accent-2: 330 81% 46%;
     --accent-2-solid: 330 81% 50%;
     --accent-2-solid-hover: 330 81% 40%;
     --accent-2-foreground: 0 0% 100%;
@@ -232,7 +242,9 @@
 
     /* Status tokens in the dark theme: text/accent values light, surfaces dark.
        *-solid and *-foreground stay theme-fixed (white text on
-       solid fills/dots works in both themes). */
+       solid fills/dots works in both themes). Every DEFAULT below clears AA on
+       both --card and its --*-soft surface (see the contract in :root); the
+       widest pair here is danger at 5.87:1. */
     --success: 142 69% 58%;
     --success-soft: 145 80% 10%;
     --success-border: 143 64% 24%;
@@ -249,7 +261,8 @@
     --info-soft: 201 80% 16%;
     --info-border: 204 80% 28%;
 
-    --copilot: 268 85% 67%;
+    /* 71% L: 5.77:1 on card, 4.82:1 on --copilot-soft (was 4.90 / 4.06). */
+    --copilot: 268 85% 71%;
     --copilot-soft: 274 87% 21%;
     --copilot-border: 269 61% 38%;
 
