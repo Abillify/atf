@@ -55,8 +55,32 @@ releases:
   unpublished. `ATF_VERSION` in `.env.example` is a new `verify:version`
   occurrence, which keeps a checkout from pulling images for a different release
   than the code it is reading.
+- **Deploy** (`deploy/examples`): the quickstart now demonstrates governed tool
+  use rather than describing it. Gate arrives with two tools over a preloaded
+  demo table — `gate/ticket_lookup` (read) and `gate/ticket_create` (write) —
+  registered through the new `flows/mcp.yaml`, and the model mock answers the
+  first turn with a real tool call instead of prose only. The tools read the
+  caller's name from the token (`:ctx.username`), never from the model, so
+  changing the prompt cannot widen the query. `flows/04-tool-use-with-approval.yaml`
+  shows both shapes side by side: a lookup the model may take by itself inside an
+  `llm` node, and the write declared as a `tool` node, which is the shape
+  `APPROVAL_REQUIRE_TOOLS` binds. Because Runtime consults that gate inside
+  authorisation, the runtime service runs with `AUTHZ_ENABLED=true` and no policy
+  file behind it — every flow is still admitted, only the approval rule pauses a
+  call — and `APPROVAL_TIMEOUT_MS` is raised, since the 30 second default expires
+  before a person has read the request in Control. A denied call writes nothing,
+  and a timeout rejects. `README.md` walks the round trip through
+  `GET /monitoring/approvals` and the widget, and names the limit plainly: every
+  caller of this stack presents the same static token, so everyone here is one
+  identity until `AUTHN_MODE=oidc` replaces it.
 
 ### Fixed
+
+- **Runtime** (tests): the check that validates every example flow validated
+  every YAML file in `deploy/examples/flows` — including the reserved non-flow
+  config a flows directory may legitimately hold, which is where the MCP server
+  list lives. It now skips exactly the base names the flow loader skips, through
+  a new exported `isReservedFlowBase`, so the two cannot drift apart again.
 
 - **Runtime** (approvals): the in-chat approval link
   `GET /monitoring/approvals/:id/decide` accepted a `?by=` query parameter even

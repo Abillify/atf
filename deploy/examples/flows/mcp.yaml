@@ -1,0 +1,20 @@
+# MCP servers the quickstart Runtime connects to. The loader takes this file from
+# FLOWS_DIR (`mcp.yaml` is a reserved name and is never parsed as a flow), so the
+# whole quickstart stays inside `deploy/examples/`.
+#
+# One server, named `gate`, because that name is the prefix flows use: a node
+# listing `gate/ticket_lookup` reaches the tool of that name below. The token here
+# is the quickstart's stand-in for a real identity - it matches the static token in
+# `gate/config.yaml`, and the Gate resolves it to the username `anja.weiss`, which
+# is what `ticket_lookup` filters on. Replace both with OIDC in a real deployment.
+servers:
+  - name: gate
+    url: http://gate:3000/mcp/v2026
+    transport: http
+    profile: "2026-07-28"
+    # The Runtime runs with AUTHN_MODE=disabled, so there is no end-user bearer to
+    # forward here; allowAnonymous is how the config says so out loud. The identity
+    # the Gate sees comes from the header below instead.
+    allowAnonymous: true
+    headers:
+      authorization: Bearer quickstart-local-token

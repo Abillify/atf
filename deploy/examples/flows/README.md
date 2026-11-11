@@ -20,15 +20,15 @@ customer data.
 | [`quickstart.yaml`](quickstart.yaml) | The smallest useful flow: one `llm` node | Nothing |
 | [`02-routed-support.yaml`](02-routed-support.yaml) | Structured classification and deterministic conditional routing | Nothing |
 | [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Search reachable, and a `handbook` collection with documents |
-| [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Agentic tool use where the write path needs a human decision | Gate with `ticket_lookup` and `ticket_create` tools; `APPROVAL_GATE_ENABLED=true` |
-| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; Gate with `ticket_create` for actions |
+| [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Two tool paths: a lookup the model may take by itself, and a write declared as a `tool` node that waits for a person | Nothing - the quickstart starts Gate with `ticket_lookup` and `ticket_create` over a demo table and sets the approval rule |
+| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; the quickstart's Gate provides `ticket_create` for actions |
 | [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
 
-The quickstart stack starts Search and Gate but ingests no documents and declares no tools.
-Flows 3 through 5 therefore validate and load, but their retrieval or tool branches are not a
-successful governed demo until you add the stated collection or tools. Depending on the branch,
-execution can return no context, a tool-not-found result, or an execution error; use
-`quickstart.yaml`, `02-routed-support.yaml` and `06-request-pipeline.yaml` for infrastructure-free runs.
+The quickstart stack starts Search and Gate, and Gate arrives with the two tools above over a
+preloaded demo table - `04` runs against it as is. Search, on the other hand, ingests no
+documents, so `03` and the question branch of `05` validate and load but return no context until
+you add the stated collection. `quickstart.yaml`, `02-routed-support.yaml` and
+`06-request-pipeline.yaml` need neither.
 
 [`compliance-policy.example.yaml`](compliance-policy.example.yaml) is a synthetic policy starting
 point and is intentionally ignored by both the flow validator and policy loader. Review and adapt
@@ -62,6 +62,10 @@ belongs in the flow. Omit it and no source is privileged.
 deployment configuration (`APPROVAL_REQUIRE_TOOLS`) or centrally in `compliance-policy.yaml`, not
 inside the flow. That is deliberate: a reviewer requirement that a flow author could delete by
 editing a flow file would not be a control. On timeout the action is rejected, never executed.
+The rule binds a tool the flow declares - a `tool` node, or an agent-harness delegation. A tool
+the model picks inside an `llm` node runs in the model's own loop, where a pause comes from an
+approval rule on the Gate tool or from an injection-taint finding instead; `04` shows both shapes
+side by side.
 
 **Data classes are declared.** `dataClasses` states what a flow processes, which is what data
 residency rules in `compliance-policy.yaml` match against. Classification is declarative rather

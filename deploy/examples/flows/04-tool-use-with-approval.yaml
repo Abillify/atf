@@ -1,13 +1,14 @@
 id: tool-use-with-approval
 name: Tool Use With Human Approval
 description: >-
-  An agentic step that may call tools exposed by Gate. Read tools run freely; the write tool
-  requires a human decision. Requires Gate to be reachable with tools named
-  ticket_lookup and ticket_create, and Runtime started with APPROVAL_GATE_ENABLED=true and
-  APPROVAL_REQUIRE_TOOLS covering the write tool. The quickstart Gate config declares no tools,
-  so add them before expecting a tool call.
+  Two tool paths in one flow. An agentic step may call Gate's read tool by itself; a second,
+  deterministic step calls the write tool, and that call waits for a person. Needs the Gate
+  service of this stack plus `mcp.yaml`, which registers it under the name `gate` - the tools are
+  then `gate/ticket_lookup` and `gate/ticket_create`, exactly as the quickstart Gate config
+  declares them. Runtime must run with APPROVAL_GATE_ENABLED=true and APPROVAL_REQUIRE_TOOLS
+  covering the write tool, which `compose.yaml` sets.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 dataClasses:
   - internal
   - personal
@@ -15,33 +16,51 @@ dataClasses:
 nodes:
   - id: assist
     type: llm
-    label: Assist with tools
-    # Tool names are Gate tool identifiers. The model chooses whether to call them; it cannot
-    # invent one, and it cannot exceed the scopes the caller's token carries. Gate injects the
-    # verified identity into the query, so a lookup returns only this caller's rows regardless
-    # of what the model asks for.
+    label: Look the caller's tickets up
+    # Tool references are MCP tool IDs: `<server>/<tool>`, the server being the `name` of an entry
+    # in `mcp.yaml` and the tool a Gate tool. The model may call this one; it cannot invent a
+    # tool, and it cannot widen its own reach - Gate builds the statement from the verified
+    # identity, so the lookup returns this caller's rows whatever the model asks for.
     tools:
-      - gate:ticket_lookup
-      - gate:ticket_create
+      - gate/ticket_lookup
     systemPrompt: >-
       Help the user with their support tickets.
 
-      Look up existing tickets before creating a new one. When you create a ticket, state that
-      it is awaiting human approval and do not claim it exists yet.
+      Call the lookup tool before answering about existing tickets, and never state that an
+      action succeeded unless a tool result confirms it.
 
-      Never state that an action succeeded unless a tool result confirms it.
+  - id: file-ticket
+    type: tool
+    label: File a ticket (needs a person)
+    # A `tool` node calls the tool itself, so no model decides anything here and `toolArgs` is the
+    # complete argument set - `{{query}}` is the incoming message, resolved when the node runs.
+    # This is also where APPROVAL_REQUIRE_TOOLS takes effect: the rule is consulted when the
+    # platform executes a tool the flow declares.
+    tools:
+      - gate/ticket_create
+    config:
+      toolArgs:
+        gate/ticket_create:
+          subject: "{{query}}"
 
-edges: []
+edges:
+  - { source: assist, target: file-ticket }
 
 # Approval behaviour is deployment configuration, not flow configuration, so that a reviewer
 # cannot be removed by editing a flow file:
 #
 #   APPROVAL_GATE_ENABLED=true
-#   APPROVAL_REQUIRE_TOOLS=gate:ticket_create
-#   APPROVAL_TIMEOUT_MS=300000
+#   APPROVAL_REQUIRE_TOOLS=gate/ticket_create
+#   APPROVAL_TIMEOUT_MS=600000
 #
 # On timeout the call is REJECTED. Silence never becomes an action. Pending approvals appear in
 # Control's reviewer inbox and, for compatible frontends, inline in the chat message.
+#
+# Which call is held matters: the list above binds a tool the flow declares - a `tool` node like
+# `file-ticket`, or an agent-harness delegation. A tool the model picks inside an `llm` node runs
+# inside the model's own loop, where a pause comes from Gate's own approval rule for that tool or
+# from an injection-taint finding instead. Declare the consequential call as a `tool` node when a
+# person has to see it first.
 #
 # The same effect can be declared centrally in compliance-policy.yaml via approvalRules, which
 # applies across every entry path including webhook triggers and replay, not only chat.

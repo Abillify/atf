@@ -28,6 +28,11 @@ services:
       PGDATA: /pg/18/data
     volumes:
       - postgres-data:/pg
+      # Invented demo rows for the Gate's `ticket_lookup` / `ticket_create` tools, in their own
+      # `demo` schema so they cannot collide with what Search creates here. The Postgres image
+      # runs this on FIRST boot only: an existing `postgres-data` volume is never re-initialised,
+      # so a stack that predates the file needs `docker compose ... down -v` once.
+      - ./demo/init.sql:/docker-entrypoint-initdb.d/10-demo.sql:ro
     deploy:
       resources:
         limits:
@@ -69,16 +74,31 @@ services:
       APP_ENV: development
       FLOWS_DIR: /config/flows
       AUTHN_MODE: disabled
-      AUTHZ_ENABLED: "false"
+      # The one control left switched on - see the approval block below for what it buys here.
+      AUTHZ_ENABLED: "true"
       TENANT_ISOLATION_ENABLED: "false"
       MONITORING_AUTH: "false"
       METRICS_AUTH: "false"
       CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
       PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","apiKey":"local-placeholder","local":true}]'
       DEFAULT_LLM: '{"provider":"quickstart","model":"example-chat"}'
-      # The egress guard refuses private addresses; model-mock lives on the
-      # compose network, so it is the one exact-host exception.
-      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock
+      # The egress guard refuses private addresses; model-mock and the Gate live on the compose
+      # network, so they are the exact-host exceptions. Both are named hosts, never a range.
+      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock,gate
+      # The tool-use flow (`flows/04-tool-use-with-approval.yaml`) is the point of the stack: its
+      # write tool stops in Control's reviewer inbox until someone decides. Approvals are
+      # deployment configuration, not flow configuration, so a reviewer cannot be edited away - and
+      # the tool ID here is the ID the flow declares (`<mcp server>/<gate tool>`, from
+      # flows/mcp.yaml), otherwise the gating would silently never match. The tool handler consults
+      # this gate as part of authorisation, which is why AUTHZ_ENABLED is on above; with it off the
+      # call would run unreviewed and the example would prove nothing. That is all authorisation
+      # adds here: no policy file is mounted and `AUTHN_MODE` stays disabled, so every flow is
+      # still admitted and only the approval rule pauses anything.
+      APPROVAL_GATE_ENABLED: "true"
+      APPROVAL_REQUIRE_TOOLS: gate/ticket_create
+      # The default is 30 s, which is shorter than it takes to open Control and read the
+      # pending call. A demo that expires while you are looking at it reads as a bug.
+      APPROVAL_TIMEOUT_MS: "600000"
     ports:
       - "${ATF_RUNTIME_PORT:-3000}:3000"
     volumes:
@@ -251,6 +271,11 @@ services:
         limits:
           cpus: "1"
           memory: 512M
+    # The demo tools read and write `demo.tickets`, so the Gate waits for a usable database
+    # rather than starting with a pool that fails its first query.
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

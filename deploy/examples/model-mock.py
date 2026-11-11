@@ -1,7 +1,26 @@
-"""Deterministic local OpenAI-compatible smoke mock; not an AI model."""
+"""Deterministic local OpenAI-compatible smoke mock; not an AI model.
+
+It answers embeddings, chat and page-extraction calls, and it drives the tool loop of
+`flows/04-tool-use-with-approval.yaml`: whatever tools a flow offers are called in the order the
+flow declares them, one per round, with arguments filled from each tool's own schema. That is a
+script, not a decision - which is exactly why the tool path can be demonstrated offline. The
+approvals, the identity injection and the database writes are all real.
+"""
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Invented arguments for the quickstart's demo tools, keyed by property name. Nothing here reads
+# the conversation, so the answers stay reproducible; unknown required properties fall back to a
+# neutral placeholder of the right type.
+_MOCK_ARGUMENTS = {"subject": "Quickstart: login page shows a blank screen"}
+_MOCK_TYPE_VALUES = {
+    "number": 1,
+    "integer": 1,
+    "boolean": False,
+    "array": [],
+    "object": {},
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -12,6 +31,56 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _tool_call(self, request: dict, name: str, arguments: str) -> None:
+        """Answer an offered-tool request with the next scripted tool call."""
+        call = {
+            "id": f"quickstart-call-{_tool_round(request)}",
+            "type": "function",
+            "index": 0,
+            "function": {"name": name, "arguments": arguments},
+        }
+        model = request.get("model", "example-chat")
+        if request.get("stream") is not True:
+            self._json(
+                200,
+                {
+                    "id": "chatcmpl-quickstart",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": None, "tool_calls": [call]},
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                },
+            )
+            return
+        base = {"id": "chatcmpl-quickstart", "object": "chat.completion.chunk", "created": 0, "model": model}
+        chunks = [
+            {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "tool_calls": [call]},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+        encoded = body.encode()
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("content-length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -53,7 +122,21 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/v1/chat/completions":
+            # One scripted tool call per round, before anything is answered in prose. The runtime
+            # executes it against Gate and sends the result back; that result is what makes the
+            # write tool stop in the reviewer inbox.
+            offered = _offered_tool(request)
+            if offered is not None:
+                self._tool_call(request, offered[0], offered[1])
+                return
             content = "ATF quickstart is running with a deterministic mock model."
+            if _tool_round(request) > 0:
+                # Reached once the declared tools have been called, so the answer names what ran.
+                # It reports the round trip only - the mock never claims to have decided anything.
+                content = (
+                    f"ATF quickstart: {_tool_round(request)} tool call(s) went through Gate and "
+                    "their results came back. The mock model adds nothing on top of them."
+                )
             if _is_page_extraction(request):
                 # @atf/extract expects <summary>, <figures> and <markdown>. Returning
                 # prose here would still work — its parser falls back to treating the
@@ -127,6 +210,61 @@ def _is_page_extraction(request: object) -> bool:
         ):
             return True
     return False
+
+
+def _tool_round(request: object) -> int:
+    """Number of tool results the conversation already holds, i.e. the script position."""
+    if not isinstance(request, dict):
+        return 0
+    messages = request.get("messages")
+    if not isinstance(messages, list):
+        return 0
+    return sum(
+        1 for message in messages if isinstance(message, dict) and message.get("role") == "tool"
+    )
+
+
+def _offered_tool(request: object) -> tuple[str, str] | None:
+    """The next tool call of the script: name plus JSON arguments, or None when done.
+
+    Tool names are echoed back exactly as offered, because the runtime maps them to MCP tools and
+    may have rewritten the ID for the provider's naming rules.
+    """
+    if not isinstance(request, dict):
+        return None
+    tools = request.get("tools")
+    if not isinstance(tools, list) or len(tools) == 0:
+        return None
+    index = _tool_round(request)
+    tool = tools[index] if index < len(tools) else None
+    if not isinstance(tool, dict):
+        return None
+    function = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+    name = function.get("name")
+    if not isinstance(name, str) or name == "":
+        return None
+    return name, json.dumps(_arguments_for(function))
+
+
+def _arguments_for(function: dict) -> dict:
+    """Fill every required property of the tool's own schema with an invented value."""
+    schema = function.get("parameters")
+    if not isinstance(schema, dict):
+        schema = function.get("inputSchema")
+    if not isinstance(schema, dict):
+        return {}
+    required = schema.get("required")
+    properties = schema.get("properties")
+    if not isinstance(required, list):
+        return {}
+    arguments: dict = {}
+    for key in required:
+        if not isinstance(key, str):
+            continue
+        declared = properties.get(key) if isinstance(properties, dict) else None
+        kind = declared.get("type") if isinstance(declared, dict) else None
+        arguments[key] = _MOCK_ARGUMENTS.get(key, _MOCK_TYPE_VALUES.get(str(kind), "placeholder"))
+    return arguments
 
 
 ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
