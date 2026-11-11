@@ -42,6 +42,7 @@ import {
   UserCog,
   ListChecks,
   Link2,
+  LayoutDashboard,
 } from "lucide-react";
 
 export interface NavItem {
@@ -60,6 +61,17 @@ export interface NavGroup {
 }
 
 export const NAV_GROUPS: NavGroup[] = [
+  {
+    groupKey: "nav.group.overview",
+    items: [
+      {
+        href: "/overview",
+        labelKey: "nav.overview",
+        hintKey: "nav.overview.hint",
+        icon: LayoutDashboard,
+      },
+    ],
+  },
   {
     groupKey: "nav.group.research",
     items: [

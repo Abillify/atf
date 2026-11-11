@@ -13,11 +13,14 @@ import { uiEn } from "./ui.en";
 
 export const en = {
   ...uiEn,
+  "nav.group.overview": "Overview",
   "nav.group.research": "Research & Optimisation",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Configuration",
   "nav.group.budgeting": "Budgeting",
 
+  "nav.overview": "Overview",
+  "nav.overview.hint": "Status at a glance",
   "nav.studio": "Studio",
   "nav.studio.hint": "Build & test flows",
   "nav.memory": "Memory",

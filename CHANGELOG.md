@@ -42,6 +42,17 @@ releases:
 
 ### Added
 
+- **Control**: the dashboard opens on an overview page. `/` and the brand link
+  now lead to `/overview`, which aggregates seven read-only tiles — readiness,
+  open approvals, governance posture, flow health, providers, MCP servers and
+  usage — each read from an existing Runtime endpoint (no new backend route) and
+  each linking to the page that owns it. Every tile degrades alone: a slow
+  endpoint shows a skeleton, an unauthorized one says so, and a service that was
+  never deployed — `/mcp/servers`, the posture report — renders an empty state
+  naming that cause instead of an error, because an optional service being absent
+  is not an outage. The overview is the first group in the sidebar, the ⌘K
+  palette and the breadcrumbs, and every string ships in both catalogues.
+
 - **Docs**: `docs/BENCHMARKS.md` publishes the measured evaluation numbers with
   their raw report files, committed under `docs/benchmarks/` in dated snapshot
   directories. Retrieval (eight configurations of the golden set and the German

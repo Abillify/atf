@@ -6,7 +6,7 @@ rules, and the accessibility baseline for the operator dashboard.
 
 > TL;DR — Build only from `@/lib/ui` primitives. Use semantic color tokens only
 > (never raw `gray-*`/`white`). Every screen is usable on a 360 px phone. The
-> nav is grouped into four sections and collapses to a burger drawer below the
+> nav is grouped into five sections and collapses to a burger drawer below the
 > `lg` breakpoint.
 
 ---
@@ -182,15 +182,21 @@ Mandatory:
 
 ## 7. Navigation (grouped + responsive burger)
 
-The dashboard nav is grouped into **four** sections. Labels are i18n keys
+The dashboard nav is grouped into **five** sections. Labels are i18n keys
 (§Req 9.7); group headers organize them:
 
 | Group (header)    | Destinations                                                                    |
 | ----------------- | ------------------------------------------------------------------------------- |
+| **Overview**      | Overview                                                                        |
 | **Research**      | Studio, Memory, Eval, Optimizer, Canary, Autopilot                              |
 | **Monitoring**    | Live Graph, Traces, History, Approvals, Shadow, Security, Providers             |
-| **Configuration** | Flows, Triggers, Assistants, Guardrails, PII Vault, Compliance, MCP             |
+| **Configuration** | Flows, Flow health, Triggers, Assistants, Guardrails, PII Vault, Compliance,    |
+|                   | Governance posture, Citation impact, MCP                                        |
 | **Budgeting**     | Cost & Tokens, Limits, Tenants, Models, Jobs                                    |
+
+`/overview` is the first group on its own and the app's landing route: `/`
+`redirect()`s to it, and the brand link in the header points at it. It is an
+aggregator (§9 "Overview tiles") rather than a feature page, so it owns no tab.
 
 The grouping, labels, and icons live in ONE source of truth —
 `src/lib/nav.ts` (`NAV_GROUPS` / `NAV_ITEMS`) — consumed by the sidebar, drawer,
@@ -208,7 +214,7 @@ entry.
 Behavior:
 
 - **≥ `lg`:** a persistent, **collapsible + pinnable** left **sidebar**
-  (`w-60` expanded ⇄ `w-16` icon-only), vertically scrollable, with the four
+  (`w-60` expanded ⇄ `w-16` icon-only), vertically scrollable, with the five
   group headers (`text-[11px] uppercase tracking-wider text-muted-foreground`)
   and icon + label links below each. Collapse state is persisted
   (`localStorage: aiperator_sidebar_collapsed`); collapsed links show the label
@@ -352,6 +358,17 @@ tab is deep-linkable via `?tab=<id>` read in a `useEffect` (matching the
 `?flow=` precedent on `/optimizer`); redirect stubs map removed routes onto the
 correct tab. Heavy panels load via `next/dynamic` (`ssr: false`). Panel bodies
 keep their own `<h2>` — the page `<h1>`/breadcrumb stays the host route.
+
+**Overview tiles** (`/overview`) — the landing page aggregates one read-only
+card per backend surface (readiness, approvals, posture, flow health,
+providers, MCP, usage) instead of duplicating their dashboards. Every tile is
+the same generic `Tile<T>`: an `<h2>` title, a query body, and a footer
+`<Link>` to the owning page — so a tile is a pointer, never a second editing
+UI. Each tile degrades on its own: pending → `aria-busy` + `<SkeletonBlock/>`,
+error → `<EmptyState/>` naming the cause (401/403 vs 404 vs unreachable, since
+an optional service being undeployed is not an outage), empty →
+`<EmptyState/>`. One tile failing must never blank the page, and each tile
+polls on its own interval so a slow endpoint cannot stall the rest.
 
 **Error** — `role="alert"` with `text-destructive`; a retry `Button` when
 recoverable. Route-level `error.tsx` for uncaught render errors.

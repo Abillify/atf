@@ -13,11 +13,14 @@ import { uiDe } from "./ui.de";
 
 export const de: Catalog = {
   ...uiDe,
+  "nav.group.overview": "Übersicht",
   "nav.group.research": "Recherche & Optimierung",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Konfiguration",
   "nav.group.budgeting": "Budgetierung",
 
+  "nav.overview": "Übersicht",
+  "nav.overview.hint": "Status auf einen Blick",
   "nav.studio": "Studio",
   "nav.studio.hint": "Flows bauen & testen",
   "nav.memory": "Memory",

@@ -4,10 +4,16 @@
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must go
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
-/** Returns an internal application target or the supplied safe fallback. */
+/**
+ * Returns an internal application target or the supplied safe fallback.
+ *
+ * The default fallback is the dashboard's own start page: `/` redirects to
+ * `/overview` (review follow-up F1), so a sign-in without a usable `returnTo`
+ * lands in the same place the root would have taken the operator.
+ */
 export function safeReturnTo(
   candidate: string | null | undefined,
-  fallback = "/graph",
+  fallback = "/overview",
 ): string {
   if (
     !candidate?.startsWith("/") ||

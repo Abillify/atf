@@ -27,6 +27,7 @@ describe("isBffPathAllowed", () => {
       "/triggers",
       "/triggers/t1/run",
       "/mcp/servers",
+      "/health/ready",
       "/v1/jobs/j1",
       "/v1/models",
       "/v1/models/gpt/retry",
@@ -41,6 +42,11 @@ describe("isBffPathAllowed", () => {
     expect(isBffPathAllowed("/v1/modelsXYZ")).toBe(false);
     expect(isBffPathAllowed("/mcp/serversXYZ")).toBe(false);
     expect(isBffPathAllowed("/v1/jobsX/y")).toBe(false);
+    // `/health/ready` is allowlisted, the bare liveness probe and any
+    // mid-segment variant are not.
+    expect(isBffPathAllowed("/health")).toBe(false);
+    expect(isBffPathAllowed("/health/readyz")).toBe(false);
+    expect(isBffPathAllowed("/healthXYZ/ready")).toBe(false);
   });
 
   test("allows Studio test runs and receipt verification", () => {
