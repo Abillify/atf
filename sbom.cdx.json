@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "9bd14bdc60ffa47c72628f34008596eb335bcd56b79be0f16a30f665231e1b5c"
+        "value": "c0cd00291a70719cbc247bd4a389f53b4c2df66232aca9b0ee3502472e2f1ad5"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -8234,15 +8234,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-xml-parser@5.11.2",
+      "bom-ref": "pkg:npm/fast-xml-parser@5.12.0",
       "name": "fast-xml-parser",
-      "version": "5.11.2",
+      "version": "5.12.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/fast-xml-parser@5.11.2",
+      "purl": "pkg:npm/fast-xml-parser@5.12.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -10448,15 +10448,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/is-unsafe@2.0.2",
+      "bom-ref": "pkg:npm/is-unsafe@2.0.3",
       "name": "is-unsafe",
-      "version": "2.0.2",
+      "version": "2.0.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/is-unsafe@2.0.2",
+      "purl": "pkg:npm/is-unsafe@2.0.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16874,15 +16874,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/strnum@2.4.2",
+      "bom-ref": "pkg:npm/strnum@2.5.1",
       "name": "strnum",
-      "version": "2.4.2",
+      "version": "2.5.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/strnum@2.4.2",
+      "purl": "pkg:npm/strnum@2.5.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
