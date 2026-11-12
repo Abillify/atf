@@ -2,10 +2,11 @@ id: grounded-retrieval
 name: Grounded Retrieval
 description: >-
   Retrieve from Search before answering, and cite the sources. Requires Search to be reachable
-  and a collection named "handbook" to contain documents. The quickstart stack starts Search but
-  ingests nothing, so this flow returns an ungrounded answer until you add documents.
+  and a collection named "handbook" to contain documents. The quickstart satisfies both: the
+  seed service loads demo/handbook.md into that collection, so the answer cites the handbook
+  out of the box.
 metadata:
-  version: 1.0.0
+  version: 1.0.1
 dataClasses:
   - internal
 

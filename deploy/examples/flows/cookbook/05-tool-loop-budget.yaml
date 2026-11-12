@@ -1,0 +1,86 @@
+id: cb-tool-loop-budget
+name: Cookbook — bounding an agent tool loop
+description: >-
+  An agentic node that reads documents with MCP tools, bounded on every axis that can
+  run away: the number of model-tool round trips, the character volume of tool output,
+  the arguments the model may send, the loop itself, and the whole execution. The point
+  is that a stuck model costs a bounded amount and stops visibly instead of consuming the
+  inference server.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+# Only safe because every tool here reads. A flow whose nodes write must not retry from the
+# start, or a partially applied change is applied twice.
+recovery:
+  retry: true
+# The outer ceiling: the run stops before the next model call once one of these is reached.
+# Set them so that one execution cannot exhaust a shared local inference server.
+budgets:
+  maxTokens: 30000
+  maxToolCalls: 12
+  maxWallMs: 90000
+
+variables:
+  search_collection: cases
+
+nodes:
+  # The agent loop. `tools` opens the loop; the settings below close it from four directions.
+  - id: research
+    type: llm
+    label: Research the case
+    llm: { shortcut: chat }
+    tools: [vectorsearch/search, vectorsearch/get_documents]
+    systemPrompt: >-
+      Research the case the user describes and report the findings as bullet points with
+      the document each finding came from. Stop as soon as the question is answered; do
+      not keep searching for confirmation.
+    config:
+      # 1. Round trips. The global default (MAX_TOOL_STEPS) is deliberately low; a researcher that
+      # reads several documents needs more, and this is where "more" is granted explicitly rather
+      # than by raising the global value for every flow.
+      maxToolSteps: 8
+
+      # 2. Arguments. Merged OVER what the model supplies, so the model still chooses `query` but
+      # can neither change the collection nor reach a store this flow was not granted. Without this
+      # the collection is a suggestion the model may rewrite.
+      toolArgs:
+        vectorsearch/search: { collection: "{{vars.search_collection}}", limit: 5 }
+        vectorsearch/get_documents: { collection: "{{vars.search_collection}}" }
+
+      # 3. Output volume. Tool results are the fastest way to overflow a small local model's window;
+      # the default is derived from the window, these caps make the budget explicit and smaller.
+      toolResultBudget:
+        perResultChars: 4000
+        perTurnChars: 12000
+
+      # 4. The loop itself. Counts identical calls, same-tool churn with varying arguments,
+      # mutating calls with no observable effect, and A→B→A→B cycles. Each detector warns first
+      # (a steering notice is injected) and blocks the repeated call second. Failed calls count
+      # toward churn, so a retry storm is caught too; time spent waiting for an approval is excluded.
+      toolLoopGuard:
+        identicalWarnAt: 2
+        identicalBlockAt: 3
+        churnWarnAt: 3
+        churnBlockAt: 5
+        churnWindowMs: 60000
+
+      # Narration before a tool call ("I will now search…") is buffered and dropped when a tool
+      # follows, so internal plans never reach the client.
+      suppressToolPreamble: true
+      # The calls stay visible in the client stream (name, status, duration) but their payloads do
+      # not — they still feed grounding, citations and monitoring.
+      streamToolResultDetails: false
+
+  # A synthesiser without tools: it works from the findings the loop carried forward, so it cannot
+  # extend the loop by deciding to look something else up.
+  - id: answer
+    type: llm
+    label: Answer
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Summarise the findings for the user. Answer only from the findings; if they are
+      incomplete, say what is missing.
+
+edges:
+  - { source: research, target: answer }

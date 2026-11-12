@@ -1,0 +1,34 @@
+# MCP servers the quickstart Runtime connects to. The loader takes this file from
+# FLOWS_DIR (`mcp.yaml` is a reserved name and is never parsed as a flow), so the
+# whole quickstart stays inside `deploy/examples/`.
+#
+# Two servers, named by the prefix flows use: a node listing `gate/ticket_lookup`
+# reaches the Gate tool of that name below, and `vectorsearch/search` reaches the
+# Search tool of that name. The Search name is not a choice: a parallel node's
+# `ragProfiles` plan compiles into ephemeral `vectorsearch/search` tool calls, so
+# retrieval only works when a server with exactly this name is registered here.
+#
+# The gate token below is the quickstart's stand-in for a real identity - it
+# matches the static token in `gate/config.yaml`, and the Gate resolves it to the
+# username `anja.weiss`, which is what `ticket_lookup` filters on. Replace both
+# with OIDC in a real deployment.
+servers:
+  - name: gate
+    url: http://gate:3000/mcp/v2026
+    transport: http
+    profile: "2026-07-28"
+    # The Runtime runs with AUTHN_MODE=disabled, so there is no end-user bearer to
+    # forward here; allowAnonymous is how the config says so out loud. The identity
+    # the Gate sees comes from the header below instead.
+    allowAnonymous: true
+    headers:
+      authorization: Bearer quickstart-local-token
+  # Search's own MCP endpoint - it serves the `search` tool under the service name
+  # `vectorsearch`. It runs with AUTHN_MODE=disabled like the Runtime, so there is
+  # no bearer to forward and no header to fake; a real deployment forwards the
+  # end-user token instead (see `forwardAuthToken` in docs/MCP-2026-CONTEXT-LAYER.md).
+  - name: vectorsearch
+    url: http://search:3000/mcp/v2026
+    transport: http
+    profile: "2026-07-28"
+    allowAnonymous: true

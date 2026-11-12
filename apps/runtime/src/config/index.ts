@@ -14,6 +14,8 @@
 export type {
   AppConfig,
   McpServerConfig,
+  ServiceLinkConfig,
+  ServiceLinkKind,
   EmbeddingConfig,
   TokenExchangeConfig,
   TokenExchangeActorConfig,
@@ -21,6 +23,7 @@ export type {
 export {
   EnvSchema,
   McpServerConfigSchema,
+  ServiceLinkConfigSchema,
   TokenExchangeConfigSchema,
   TokenExchangeActorConfigSchema,
   LlmConfigSchema,

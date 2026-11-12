@@ -172,7 +172,27 @@ jobs:
 
       - name: Flow examples validate
         working-directory: apps/runtime
-        run: bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version
+        env:
+          # `07-model-echo.yaml` is the one example that pins a provider instance by
+          # name — its whole point is to read back the prompt one specific model was
+          # given. Validate against the instance `deploy/examples/compose.yaml`
+          # configures; the validator reads names and protocols only, so no key here.
+          PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","local":true}]'
+        run: |
+          bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version
+          # The blueprints need a second, explicit call: the flow collector is not
+          # recursive, so a sibling directory is never picked up by the path above.
+          # No PROVIDERS entry is needed for them — `research-assistant.yaml` takes its
+          # provider from `{{vars.model_provider}}`, which defaults to a built-in
+          # protocol, so the file validates against a registry that is not set at all.
+          bun run scripts/cli.ts validate ../../deploy/blueprints/research-assistant/ --require-version
+          # Same reason for the cookbook (see docs/FLOW-COOKBOOK.md): every recipe is a
+          # complete flow, so a snippet in the docs cannot drift into something that does
+          # not load. Its own `model-shortcuts.yaml` makes the directory a flow root, so
+          # the recipes resolve their shortcuts against that file rather than against the
+          # examples above, and no PROVIDERS entry is needed either — the shortcuts name
+          # engines, which are resolved at execution time, not at load time.
+          bun run scripts/cli.ts validate ../../deploy/examples/flows/cookbook/ --require-version
 
   typecheck:
     name: Typecheck
@@ -703,6 +723,11 @@ jobs:
     name: Quickstart stack
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The trust tour below leaves one approval request unanswered on purpose. The quickstart
+      # default of ten minutes is right for a person reading the request and wrong for CI, so the
+      # stack and the tour are told the same number here rather than in two places.
+      ATF_APPROVAL_TIMEOUT_MS: 15000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -774,6 +799,42 @@ jobs:
             -H 'Content-Type: application/pdf' \
             -H 'X-Reference: quickstart-smoke.pdf' \
             --data-binary @/tmp/smoke.pdf
+
+      # Retrieval is the other half of the quickstart, and it is the half that
+      # needs two services to agree: the seed service posts demo/handbook.md
+      # into Search, and the Runtime reaches it over the `vectorsearch` MCP
+      # server in flows/mcp.yaml. The mock model returns its grounded sentence
+      # only when the prompt carries retrieved sources, and the citation names
+      # the seeded document, so this answer is impossible unless the plan, the
+      # MCP call, the Search query and the fused citations all ran.
+      - name: Smoke the retrieval path
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            http://127.0.0.1:3000/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"grounded-retrieval","messages":[{"role":"user","content":"When does the support desk answer?"}]}' \
+            > /tmp/retrieval-smoke.json
+          cat /tmp/retrieval-smoke.json
+          grep -q '07:00 to 19:00' /tmp/retrieval-smoke.json
+          grep -q '"document_id":"handbook.md"' /tmp/retrieval-smoke.json
+
+      # The tour is documentation that executes, so it is gated like documentation that does not:
+      # it fails when the vault, the approval rule or the receipts stop working, rather than in
+      # front of a reader five minutes into a demo. Bun and the workspace are needed because its
+      # last step runs the shipped offline verifier (`scripts/atf-verify.ts`) on the receipt.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Run the trust tour
+        run: |
+          set -euo pipefail
+          deploy/examples/tour.sh --runtime http://127.0.0.1:3000 \
+            --approval-window "$ATF_APPROVAL_TIMEOUT_MS"
 
       - name: Logs on failure
         if: failure()

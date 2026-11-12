@@ -1,0 +1,16 @@
+$ bun run scripts/eval/groundedness.ts
+# Answer-level groundedness — fixture 1.1.0
+
+Scorer: runtime lexical groundedness checker (deterministic, no model call).
+
+Mode: reference candidates. This calibrates the checker; it is not a measurement of any LLM.
+
+| Metric | Value |
+| --- | --- |
+| candidates | 24 |
+| accuracy vs curated label | 1 |
+| mean score, grounded candidates | 1 |
+| mean score, unsupported candidates | 0.042 |
+| unsupported-detection rate | 1 |
+| false-flag rate | 0 |
+

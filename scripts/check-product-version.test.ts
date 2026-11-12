@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	HELM_OCCURRENCES,
+	QUICKSTART_ENV_OCCURRENCES,
 	syncOccurrences,
 	type Occurrence,
 } from "./check-product-version.ts";
@@ -157,6 +158,82 @@ describe("syncOccurrences on Helm charts", () => {
 		expect(
 			problems.some((p) =>
 				p.includes("expected 6 occurrence(s) of Helm umbrella dependency version"),
+			),
+		).toBe(true);
+	});
+});
+
+/**
+ * The image-based quickstart (`deploy/examples/compose.images.yaml`) pulls its
+ * five service images by the `ATF_VERSION` tag declared in the example env
+ * file, so that tag has to track the product version like the manifests do.
+ */
+describe("syncOccurrences on the quickstart image version", () => {
+	let dir: string;
+	const envPath = "deploy/examples/.env.example";
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "atf-quickstart-version-"));
+		mkdirSync(join(dir, "deploy/examples"), { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	const writeEnv = (body: string) =>
+		writeFileSync(join(dir, envPath), body, "utf8");
+	const readEnv = () => readFileSync(join(dir, envPath), "utf8");
+	const envFixture = (version: string) => `ATF_RUNTIME_PORT=3000
+ATF_VERSION=${version}
+`;
+
+	test("sync mode rewrites the image tag", async () => {
+		writeEnv(envFixture("0.19.3"));
+		const { problems, rewritten } = await syncOccurrences(
+			QUICKSTART_ENV_OCCURRENCES,
+			"0.20.0",
+			dir,
+			false,
+		);
+		expect(problems).toEqual([]);
+		expect(rewritten).toEqual([
+			`${envPath}: Quickstart image version 0.19.3 → 0.20.0`,
+		]);
+		expect(readEnv()).toBe(envFixture("0.20.0"));
+	});
+
+	test("check mode reports a stale image tag without writing", async () => {
+		writeEnv(envFixture("0.19.3"));
+		const { problems, rewritten } = await syncOccurrences(
+			QUICKSTART_ENV_OCCURRENCES,
+			"0.20.0",
+			dir,
+			true,
+		);
+		expect(rewritten).toEqual([]);
+		expect(
+			problems.some((p) =>
+				p.includes(`${envPath}: Quickstart image version declares 0.19.3`),
+			),
+		).toBe(true);
+		expect(readEnv()).toBe(envFixture("0.19.3"));
+	});
+
+	test("a commented-out version is not an occurrence", async () => {
+		// The pattern is line-anchored, so documentation that mentions the key
+		// must not be counted — and a file without the key must fail loudly
+		// rather than pass silently.
+		writeEnv("# ATF_VERSION=0.19.3\nATF_RUNTIME_PORT=3000\n");
+		const { problems } = await syncOccurrences(
+			QUICKSTART_ENV_OCCURRENCES,
+			"0.19.3",
+			dir,
+			true,
+		);
+		expect(
+			problems.some((p) =>
+				p.includes(`expected 1 occurrence(s) of Quickstart image version`),
 			),
 		).toBe(true);
 	});

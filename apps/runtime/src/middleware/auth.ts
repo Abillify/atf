@@ -253,6 +253,28 @@ export function authMiddleware(
     // 1a. Authorization: Bearer header
     let token = extractBearerToken(ctx.req.header("Authorization"));
 
+    // 1a'. `x-api-key` — the header Anthropic-API clients send, accepted only
+    // on the Anthropic-compatible route (ADR 0038). Both headers with
+    // different values is ambiguous and refused rather than "first one wins".
+    if (ctx.req.path === "/v1/messages") {
+      const apiKeyHeader = ctx.req.header("x-api-key");
+      if (apiKeyHeader !== undefined && apiKeyHeader !== "") {
+        if (token !== null && token !== apiKeyHeader) {
+          return ctx.json(
+            {
+              error: {
+                message:
+                  "Authentication failed: Authorization and x-api-key carry different credentials.",
+                type: "authentication_error",
+              },
+            },
+            401,
+          );
+        }
+        token = apiKeyHeader;
+      }
+    }
+
     // 1b. body.metadata.token
     if (token === null) {
       let body: unknown;

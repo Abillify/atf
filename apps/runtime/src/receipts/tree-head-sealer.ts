@@ -31,6 +31,16 @@ export function createTreeHeadSealer(
 ): TreeHeadSealer {
   let timer: ReturnType<typeof setInterval> | undefined;
   const sealIfGrown = async (): Promise<boolean> => {
+    try {
+      // With the shared log (ADR 0039) another replica may have appended or
+      // sealed since the last tick.
+      await log.refresh?.();
+    } catch (err) {
+      logger?.warn("Receipt log refresh before sealing failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
     const latest = log.latestTreeHead();
     if (log.size() === 0 || (latest !== undefined && latest.treeSize >= log.size())) {
       return false;

@@ -255,6 +255,11 @@ Rendering of the common Deployment. Parameters (dict):
   readinessPath    readiness probe path
   extraVolumes     optional additional volume specs (YAML string)
   extraMounts      optional additional volumeMount specs (YAML string)
+
+Beyond these chart-internal mounts, every service also renders its own
+.Values.extraVolumes / .Values.extraVolumeMounts (YAML strings), which is how
+an operator mounts a projected secret directory for the `NAME_FILE` secret
+variables (ADR 0040) without the chart learning anything about its content.
 */}}
 {{- define "atf.deployment" -}}
 {{- $ctx := .ctx -}}
@@ -384,9 +389,15 @@ spec:
             {{- with .extraMounts }}
             {{- . | nindent 12 }}
             {{- end }}
+            {{- with $ctx.Values.extraVolumeMounts }}
+            {{- . | nindent 12 }}
+            {{- end }}
       volumes:
         {{- include "atf.volumes" $ctx | nindent 8 }}
         {{- with .extraVolumes }}
+        {{- . | nindent 8 }}
+        {{- end }}
+        {{- with $ctx.Values.extraVolumes }}
         {{- . | nindent 8 }}
         {{- end }}
 {{- end -}}

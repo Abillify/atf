@@ -171,4 +171,21 @@ describe("applyProfile", () => {
       }
     }
   });
+
+  it("trust-proxy fills the gateway controls and never overrides an explicit value", () => {
+    const r = applyProfile({ ATF_PRESET: "trust-proxy", INPUT_GUARDRAIL_MODE: "block" });
+    expect(r.error).toBeUndefined();
+    expect(r.env.PII_VAULT_ENABLED).toBe("true");
+    expect(r.env.CLIENT_TOOLS_ENABLED).toBe("true");
+    expect(r.env.AI_DISCLOSURE).toBe("header");
+    // Explicit env wins.
+    expect(r.env.INPUT_GUARDRAIL_MODE).toBe("block");
+    expect(r.applied).not.toContain("INPUT_GUARDRAIL_MODE");
+    // No operational-profile switch and no secrets.
+    expect(r.env.APP_ENV).toBeUndefined();
+    expect(r.env.DECISION_RECEIPTS_ENABLED).toBeUndefined();
+    for (const key of Object.keys(PROFILES["trust-proxy"] ?? {})) {
+      expect(key).not.toMatch(/(_SECRET|_KEY|_TOKEN|_PASSWORD)$/);
+    }
+  });
 });

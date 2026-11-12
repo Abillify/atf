@@ -1,0 +1,42 @@
+# A sub-flow: a reusable fragment of nodes and edges, merged into a flow that lists it under
+# `metadata.$include.subflows`. It carries no id, name or version of its own — the including flow
+# owns the identity, and a change here moves the including flow's version (the flow version check
+# follows includes).
+#
+# Keep sub-flows for a shape that genuinely repeats across flows — a research loop, a compliance
+# pre-check — not for every group of nodes. An include is indirection: the graph on the canvas is
+# the merged result, and the reader has to open two files to see why a node is there.
+
+nodes:
+  - id: research
+    type: llm
+    label: Research
+    llm: { shortcut: chat }
+    tools: [vectorsearch/search]
+    # A sub-flow resolves `#[[file:…]]` and `llm.shortcut` against the flow root it is loaded from,
+    # so the paths below are relative to `cookbook/`, not to `cookbook/subflows/`.
+    systemPrompt: "#[[file:prompts/cb-research.md]]"
+    config:
+      maxToolSteps: 6
+      # The sub-flow stays generic: the collection it searches comes from the including flow's
+      # variable, so one fragment serves several flows without a copy.
+      toolArgs:
+        vectorsearch/search: { collection: "{{vars.search_collection}}" }
+      # The model must actually retrieve — a findings-only answer written from memory is worthless
+      # here, so the node fails instead of emitting ungrounded prose.
+      requireToolUse: true
+
+  - id: findings
+    type: llm
+    label: Condense findings
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Condense the findings into at most five bullet points, each naming the document it
+      came from. Drop anything the question does not need.
+    config:
+      # Worker nodes should not abort a run with an empty completion: one empty turn inside a
+      # longer graph otherwise takes the whole execution down.
+      emptyResponseFallback: true
+
+edges:
+  - { source: research, target: findings }

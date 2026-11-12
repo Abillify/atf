@@ -12,6 +12,7 @@
  * Server-only module — reads deployment secrets from the environment.
  */
 
+import { resolveSecret } from "@atf/security-kit";
 import {
   deriveSessionKey,
   sealSessionPayload,
@@ -55,7 +56,17 @@ let cachedKey: CryptoKey | null | undefined;
 /** AES key derived from `CONTROL_SESSION_SECRET`; `null` when unusable. */
 export async function sessionKey(): Promise<CryptoKey | null> {
   if (cachedKey !== undefined) return cachedKey;
-  const secret = process.env["CONTROL_SESSION_SECRET"] ?? "";
+  let secret: string;
+  try {
+    // `CONTROL_SESSION_SECRET_FILE` is honored like the variable itself
+    // (ADR 0040). BFF mode is optional, so a misconfigured file follows the
+    // same fail-closed path as a too-short secret: sessions stay disabled.
+    secret = resolveSecret(process.env, "CONTROL_SESSION_SECRET") ?? "";
+  } catch (err) {
+    console.error(`[bff-session] ${(err as Error).message}`);
+    cachedKey = null;
+    return cachedKey;
+  }
   cachedKey = await deriveSessionKey(secret);
   return cachedKey;
 }

@@ -372,6 +372,13 @@ export interface TransparencyLog {
   latestTreeHead(): SignedTreeHead | undefined;
   /** All sealed heads (oldest first). */
   treeHeads(): readonly SignedTreeHead[];
+  /**
+   * Catch up with appends and sealed heads written by other replicas
+   * (ADR 0039). Absent on the per-process log, where there is nothing to
+   * catch up with. Call it before reading `size`, `entryByReceiptId` or
+   * `latestTreeHead` when the answer must cover the whole deployment.
+   */
+  refresh?(): Promise<void>;
   /** Inclusion proof for a receipt against a given tree size (default: latest sealed). */
   proofForReceipt(
     receiptId: string,

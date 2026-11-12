@@ -40,6 +40,36 @@ describe("loadConfig", () => {
     delete process.env.TEST_TOKEN;
   });
 
+  it("interpolates an environment reference from its _FILE pointer (ADR 0040)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    const secretFile = join(dir, "token.secret");
+    writeFileSync(secretFile, "from-file\n");
+    delete process.env.TEST_TOKEN;
+    process.env.TEST_TOKEN_FILE = secretFile;
+    try {
+      const { config } = loadConfig(dir);
+      expect(config.auth.static?.tokens[0]?.token).toBe("from-file");
+    } finally {
+      delete process.env.TEST_TOKEN_FILE;
+    }
+  });
+
+  it("refuses an environment reference whose variable and _FILE pointer are both set", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    const secretFile = join(dir, "token.secret");
+    writeFileSync(secretFile, "from-file\n");
+    process.env.TEST_TOKEN = "from-env";
+    process.env.TEST_TOKEN_FILE = secretFile;
+    try {
+      expect(() => loadConfig(dir)).toThrow(/TEST_TOKEN and TEST_TOKEN_FILE are both set/);
+    } finally {
+      delete process.env.TEST_TOKEN;
+      delete process.env.TEST_TOKEN_FILE;
+    }
+  });
+
   it("loads a per-tool directory and resolves queryFile", () => {
     const dir = makeConfigDir();
     writeFileSync(join(dir, "config.yaml"), BASE);

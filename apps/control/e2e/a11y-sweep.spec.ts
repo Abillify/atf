@@ -4,7 +4,7 @@
 /**
  * E2E: full-page accessibility sweep across every dashboard route.
  *
- * Runs axe-core over the whole page for all 27 destinations and fails on any
+ * Runs axe-core over the whole page for all 28 destinations and fails on any
  * `critical`/`serious` WCAG 2 A/AA violation. (The shell-scoped test in
  * a11y-responsive.spec.ts asserts *zero* violations on nav/header; this broader
  * sweep guards the page bodies against high-impact regressions without being
@@ -24,7 +24,7 @@ test.describe("Full-page a11y sweep", () => {
   });
 
   test("covers the dashboard pages", () => {
-    for (const route of ["/studio", "/graph", "/security", "/compliance", "/provider-testing"]) {
+    for (const route of ["/overview", "/studio", "/graph", "/security", "/compliance", "/provider-testing"]) {
       expect(ROUTES).toContain(route);
     }
     expect(ROUTES).not.toContain("/rag");

@@ -14,6 +14,7 @@ import {
 } from "./schema.ts";
 import { expandOpenApiImports } from "./openapi.ts";
 import { expandMcpServerImports } from "./mcp-import.ts";
+import { materializeSecrets, resolveSecret } from "@atf/security-kit";
 import {
   hasTopLevelSqlKeywords,
   TOP_LEVEL_ROW_LIMIT_KEYWORDS,
@@ -27,11 +28,19 @@ export function resolveConfigDir(explicit?: string): string {
   return explicit ?? process.env.MCPGATE_CONFIG_DIR ?? join(process.cwd(), "config");
 }
 
-/** Recursively replace ${VAR} and ${VAR:-default} in every string value. */
+/**
+ * Recursively replace ${VAR} and ${VAR:-default} in every string value.
+ *
+ * Gate secrets are mostly operator-named (`${CRM_DB_PASSWORD}` in a database
+ * or tool file), so no fixed list can cover them. Every reference therefore
+ * honours the `NAME_FILE` pointer of ADR 0040 through `resolveSecret`: with
+ * `CRM_DB_PASSWORD_FILE=/run/secrets/crm` the file content is substituted.
+ * Both set, an unreadable file or an empty file throw and stop the load.
+ */
 function interpolateEnv<T>(value: T): T {
   if (typeof value === "string") {
     return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_m, name, def) => {
-      const env = process.env[name];
+      const env = resolveSecret(process.env, name);
       if (env !== undefined && env !== "") return env;
       if (def !== undefined) return def;
       return "";
@@ -571,7 +580,7 @@ function resolveTokenExchangeSecrets(tools: AppConfig["tools"]): void {
     if (tool.type !== "mcp") continue;
     const exchange = tool.server.tokenExchange;
     if (exchange === undefined) continue;
-    const secret = process.env[exchange.clientSecretEnv];
+    const secret = resolveSecret(process.env, exchange.clientSecretEnv);
     if (secret === undefined || secret === "") {
       throw new Error(
         `MCP tool '${tool.name}' server.tokenExchange.clientSecretEnv references ` +
@@ -580,7 +589,7 @@ function resolveTokenExchangeSecrets(tools: AppConfig["tools"]): void {
     }
     exchange.clientSecret = secret;
     if (exchange.actor !== undefined) {
-      const actorSecret = process.env[exchange.actor.clientSecretEnv];
+      const actorSecret = resolveSecret(process.env, exchange.actor.clientSecretEnv);
       if (actorSecret === undefined || actorSecret === "") {
         throw new Error(
           `MCP tool '${tool.name}' server.tokenExchange.actor.clientSecretEnv references ` +
@@ -676,7 +685,22 @@ export function deprecatedEnvWarnings(
   return warnings;
 }
 
+/**
+ * Every mcp-gate variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). These are read straight from `process.env` — both by the `${VAR}`
+ * interpolation in the YAML files and by request-time subsystems — so the
+ * resolved values are written back in place before either runs.
+ */
+export const GATE_SECRET_VARS = [
+  "MCPGATE_TRANSACTION_HS256_SECRET",
+  "MCPGATE_APPROVAL_SECRET",
+  "MCPGATE_REDACTION_HASH_SECRET",
+  "MCPGATE_TRANSACTION_REDIS_URL",
+] as const;
+
 export function loadConfig(explicitDir?: string): { config: AppConfig; dir: string } {
+  materializeSecrets(GATE_SECRET_VARS);
   const dir = resolveConfigDir(explicitDir);
   const merged = buildMerged(dir);
 
@@ -706,6 +730,7 @@ export function loadConfig(explicitDir?: string): { config: AppConfig; dir: stri
  * as in loadConfig. Server startup and hot-reload use this path.
  */
 export async function loadConfigAsync(explicitDir?: string): Promise<{ config: AppConfig; dir: string }> {
+  materializeSecrets(GATE_SECRET_VARS);
   const dir = resolveConfigDir(explicitDir);
   const merged = buildMerged(dir);
 

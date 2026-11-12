@@ -510,6 +510,11 @@ export function resolveFlowRouting(opts: {
   canaryManager?: CanaryManager;
   abManager?: AbManager;
   flowGuardrailResolver?: FlowGuardrailResolver;
+  /**
+   * Trust-proxy lookup (ADR 0038): the pass-through flow id for a model name
+   * that is not a flow, or undefined. Real flows always win.
+   */
+  proxyFlowFor?: (model: string) => string | undefined;
 }): RoutingResult {
   const {
     requestModel,
@@ -537,6 +542,14 @@ export function resolveFlowRouting(opts: {
   const resolvedModel = flowDispatcher
     ? flowDispatcher.resolveFlow(requestModel, requestCtx)
     : requestModel;
+
+  // Trust-proxy mode: a model that is no flow (after dispatch) but matches a
+  // PROXY_MODELS entry runs its pass-through flow. Canary and A/B do not
+  // apply — there is no second version of a built-in flow.
+  const proxyFlow = opts.proxyFlowFor?.(resolvedModel);
+  if (proxyFlow !== undefined) {
+    return { flowToRun: proxyFlow, resolvedModel: proxyFlow };
+  }
 
   // Canary routing
   const routingKey =

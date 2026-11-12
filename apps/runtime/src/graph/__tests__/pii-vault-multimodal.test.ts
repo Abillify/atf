@@ -402,7 +402,7 @@ describe("withPiiVault — multimodal attachment handling", () => {
     }
     // text block tokenized (no raw email)
     expect(textBlock.text).not.toContain("a@b.com");
-    expect(textBlock.text).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(textBlock.text).toMatch(/\[\[PII:[A-Z_]+:[a-f0-9]{16}\]\]/);
     // image block replaced by a text notice
     expect(imageBlock.type).toBe("text");
     expect(imageBlock.text).toBe(DEFAULT_WITHHELD_NOTICE);
@@ -457,7 +457,7 @@ describe("withPiiVault — multimodal attachment handling", () => {
     expect(imageBlock.type).toBe("text");
     expect(imageBlock.text).toContain("[image description]");
     expect(imageBlock.text).not.toContain("jane@example.com");
-    expect(imageBlock.text).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(imageBlock.text).toMatch(/\[\[PII:[A-Z_]+:[a-f0-9]{16}\]\]/);
   });
 
   it("fail-closed redactor error aborts the whole run", async () => {

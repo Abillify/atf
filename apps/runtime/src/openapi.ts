@@ -96,6 +96,12 @@ const META_RULES: Array<
     auth: "bearer",
   },
   {
+    prefix: "/monitoring/services",
+    tag: "Monitoring",
+    summary: "Configured service links and MCP server status",
+    auth: "bearer",
+  },
+  {
     prefix: "/metrics",
     tag: "Monitoring",
     summary: "Prometheus metrics",
@@ -227,6 +233,13 @@ const META_RULES: Array<
     tag: "Inference",
     summary:
       "OpenAI-compatible responses API (AI_DISCLOSURE=header|field marks successful responses as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string))",
+    auth: "bearer",
+  },
+  {
+    prefix: "/v1/messages",
+    tag: "Inference",
+    summary:
+      "Anthropic Messages API (anthropic-version 2023-06-01) over the chat pipeline: flows and PROXY_MODELS pass-through models, JSON or SSE (message_start … message_stop). Authenticates with Authorization: Bearer or x-api-key. Unsupported fields (thinking, cache_control, top_k, metadata, server tools) are a 400 naming the field (ADR 0038)",
     auth: "bearer",
   },
   {

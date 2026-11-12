@@ -6,7 +6,7 @@ rules, and the accessibility baseline for the operator dashboard.
 
 > TL;DR — Build only from `@/lib/ui` primitives. Use semantic color tokens only
 > (never raw `gray-*`/`white`). Every screen is usable on a 360 px phone. The
-> nav is grouped into four sections and collapses to a burger drawer below the
+> nav is grouped into five sections and collapses to a burger drawer below the
 > `lg` breakpoint.
 
 ---
@@ -80,6 +80,17 @@ instead of raw shades everywhere, including badges and status dots:
 `*-solid` and `*-foreground` are intentionally theme-**fixed** (identical in
 light and dark); DEFAULT/`soft`/`border` adapt via `.dark`. Text on any solid
 surface uses `text-on-solid` (`--on-solid`).
+
+**Labels go on `soft`, never on a translucent `solid`.** DEFAULT carries the
+label text, so it must clear 4.5:1 against both `bg-card` and its own
+`*-soft` — the DEFAULTs in `globals.css` are tuned for exactly that, and
+`src/__tests__/token-contrast.test.ts` recomputes the ratios from the CSS on
+every run. A `bg-*-solid/20` wash looks similar but composites the *fixed*
+`*-solid` over the card, which drags `text-success` down to ~3.6:1 in light
+mode and is invisible to `.dark`; badge/label surfaces therefore use
+`bg-*-soft text-*` (see `Badge`, `BoundaryPanel` role badges). Faint
+`bg-*-solid/10` fills that keep the inherited card foreground are fine — the
+rule is about pairing a *colored* DEFAULT label with a translucent fill.
 
 **Domain token families:**
 
@@ -171,15 +182,21 @@ Mandatory:
 
 ## 7. Navigation (grouped + responsive burger)
 
-The dashboard nav is grouped into **four** sections. Labels are i18n keys
+The dashboard nav is grouped into **five** sections. Labels are i18n keys
 (§Req 9.7); group headers organize them:
 
 | Group (header)    | Destinations                                                                    |
 | ----------------- | ------------------------------------------------------------------------------- |
+| **Overview**      | Overview                                                                        |
 | **Research**      | Studio, Memory, Eval, Optimizer, Canary, Autopilot                              |
 | **Monitoring**    | Live Graph, Traces, History, Approvals, Shadow, Security, Providers             |
-| **Configuration** | Flows, Triggers, Assistants, Guardrails, PII Vault, Compliance, MCP             |
+| **Configuration** | Flows, Flow health, Triggers, Assistants, Guardrails, PII Vault, Compliance,    |
+|                   | Governance posture, Citation impact, MCP, Services                              |
 | **Budgeting**     | Cost & Tokens, Limits, Tenants, Models, Jobs                                    |
+
+`/overview` is the first group on its own and the app's landing route: `/`
+`redirect()`s to it, and the brand link in the header points at it. It is an
+aggregator (§9 "Overview tiles") rather than a feature page, so it owns no tab.
 
 The grouping, labels, and icons live in ONE source of truth —
 `src/lib/nav.ts` (`NAV_GROUPS` / `NAV_ITEMS`) — consumed by the sidebar, drawer,
@@ -197,7 +214,7 @@ entry.
 Behavior:
 
 - **≥ `lg`:** a persistent, **collapsible + pinnable** left **sidebar**
-  (`w-60` expanded ⇄ `w-16` icon-only), vertically scrollable, with the four
+  (`w-60` expanded ⇄ `w-16` icon-only), vertically scrollable, with the five
   group headers (`text-[11px] uppercase tracking-wider text-muted-foreground`)
   and icon + label links below each. Collapse state is persisted
   (`localStorage: aiperator_sidebar_collapsed`); collapsed links show the label
@@ -244,7 +261,9 @@ forms unless it is the submit.
 ### Badge
 `variant`: `default` · `secondary` · `outline` · `success` · `warning` ·
 `destructive`. For status/labels only. Green=success, amber=warning,
-red=destructive, neutral=secondary/outline.
+red=destructive, neutral=secondary/outline. The coloured variants pair
+`bg-*-soft` with `text-*` — never a translucent `bg-*-solid/NN` (§3), because
+12 px labels need the token's 4.5:1 ratio.
 
 ### Card / CardHeader / CardTitle / CardContent
 The standard content container (`rounded-lg border border-border bg-card
@@ -340,6 +359,17 @@ tab is deep-linkable via `?tab=<id>` read in a `useEffect` (matching the
 correct tab. Heavy panels load via `next/dynamic` (`ssr: false`). Panel bodies
 keep their own `<h2>` — the page `<h1>`/breadcrumb stays the host route.
 
+**Overview tiles** (`/overview`) — the landing page aggregates one read-only
+card per backend surface (readiness, approvals, posture, flow health,
+providers, MCP, usage) instead of duplicating their dashboards. Every tile is
+the same generic `Tile<T>`: an `<h2>` title, a query body, and a footer
+`<Link>` to the owning page — so a tile is a pointer, never a second editing
+UI. Each tile degrades on its own: pending → `aria-busy` + `<SkeletonBlock/>`,
+error → `<EmptyState/>` naming the cause (401/403 vs 404 vs unreachable, since
+an optional service being undeployed is not an outage), empty →
+`<EmptyState/>`. One tile failing must never blank the page, and each tile
+polls on its own interval so a slow endpoint cannot stall the rest.
+
 **Error** — `role="alert"` with `text-destructive`; a retry `Button` when
 recoverable. Route-level `error.tsx` for uncaught render errors.
 
@@ -361,7 +391,11 @@ are right-aligned; destructive actions separated.
 - [ ] Keyboard: everything reachable and operable; drawer/dialog trap + `Escape`.
 - [ ] Status not by color alone (add text/icon).
 - [ ] Images/icons: `alt` or `aria-hidden`.
-- [ ] Contrast ≥ 4.5:1 (body) / 3:1 (large) — guaranteed by the tokens.
+- [ ] Contrast ≥ 4.5:1 (body) / 3:1 (large) — the token DEFAULTs guarantee it
+  for text and label surfaces, and `src/__tests__/token-contrast.test.ts`
+  fails if a palette change breaks that. The check covers the tokens, not
+  bespoke combinations: anything off-token (a translucent `*-solid/NN` wash,
+  a hardcoded shade) is on you — run the axe sweep (`e2e/a11y-sweep.spec.ts`).
 
 ---
 

@@ -20,7 +20,11 @@ import { isToolErrorOutput, sanitizeToolResultOutput } from "../message-mapping.
 import { nodeStateKey } from "./node-instance.js";
 import { parseVectorSearchResults } from "../reranker.js";
 import type { HashRefHandleRegistry } from "../ref-handles.js";
-import { signApprovalLinkToken } from "../approval-link.js";
+import {
+  APPROVAL_LINK_GRACE_MS,
+  signApprovalLinkToken,
+} from "../approval-link.js";
+import { approvalMessages } from "../approval-messages.js";
 import type { PendingApproval } from "../approval-gate.js";
 import { makeToolCallChunk } from "../exec-runtime.js";
 import type { ExecRuntime } from "../exec-runtime.js";
@@ -803,14 +807,29 @@ export function createToolCallbacks(deps: {
 
     // --- Approval-required callback (human-in-the-loop).
     const onApprovalRequired = (pending: PendingApproval): void => {
+      // Every human-readable string of the approval interaction comes from the
+      // catalog, so the chat message and the widget it embeds can be shown in
+      // one language (`APPROVAL_MESSAGE_LOCALE`).
+      const msg = approvalMessages(getRuntime().appConfig.approvalMessageLocale);
       const base = (getRuntime().appConfig.approvalBaseUrl ?? "").replace(/\/$/, "");
       const linkSecret = getRuntime().appConfig.oidcSessionSecret;
+      // The capability token travels in the URL — chat history, access logs
+      // and the Referer of the widget iframe — so it must not outlive the
+      // approval it authorizes. The gate auto-denies at the per-request
+      // override (compliance-policy `approvalRules[].timeoutMs`, ADR-0009) or
+      // at its own `APPROVAL_TIMEOUT_MS`; the token gets exactly that
+      // lifetime plus a short grace, so a reviewer who opens the widget right
+      // before the deadline can still read the outcome. No second default:
+      // when neither the request nor a gate reports a timeout, no capability
+      // token is minted and the links fall back to operator RBAC.
+      const approvalTimeoutMs =
+        pending.timeoutMs ?? getRuntime().approvalGate?.timeoutMs;
       const linkToken =
-        linkSecret !== undefined
+        linkSecret !== undefined && approvalTimeoutMs !== undefined
           ? signApprovalLinkToken(
               pending.id,
               linkSecret,
-              Date.now() + 3_600_000,
+              Date.now() + approvalTimeoutMs + APPROVAL_LINK_GRACE_MS,
             )
           : undefined;
       const decideTokenQuery =
@@ -827,7 +846,7 @@ export function createToolCallbacks(deps: {
           ? argEntries
               .map(([k, v]) => `**${k}**: ${JSON.stringify(v)}`)
               .join(", ")
-          : "_keine Argumente_";
+          : `_${msg.noArguments}_`;
 
       const widgetTokenQuery =
         linkToken !== undefined
@@ -836,14 +855,14 @@ export function createToolCallbacks(deps: {
       const widgetUrl = `${base}/monitoring/approvals/${pending.id}/widget${widgetTokenQuery}`;
       const approvalMessage =
         base.length > 0
-          ? `\n\n<iframe src="${widgetUrl}" title="Freigabe erforderlich: ${toolLabel}" ` +
+          ? `\n\n<iframe src="${widgetUrl}" title="${msg.approvalRequired}: ${toolLabel}" ` +
             `style="width:100%;max-width:520px;height:172px;border:1px solid rgba(127,127,127,.3);` +
             `border-radius:8px;background:transparent" loading="lazy"></iframe>\n\n`
-          : `\n\n> ⏳ **Freigabe erforderlich:** \`${toolLabel}\`\n` +
+          : `\n\n> ⏳ **${msg.approvalRequired}:** \`${toolLabel}\`\n` +
             `>\n` +
-            `> Argumente: ${argSummary}\n` +
+            `> ${msg.arguments}: ${argSummary}\n` +
             `>\n` +
-            `> [✅ Genehmigen](${approveUrl}) | [🚫 Ablehnen](${denyUrl})\n\n`;
+            `> [✅ ${msg.approve}](${approveUrl}) | [🚫 ${msg.deny}](${denyUrl})\n\n`;
 
       void (async () => {
         try {

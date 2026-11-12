@@ -529,7 +529,11 @@ interface AuditRow {
   prev_hash: string;
 }
 
-function rowToRecord(r: AuditRow): AuditRecord {
+/**
+ * Map a persisted `audit_log` row to its wire record. Exported for the SIEM
+ * forwarder (G3), which ships the same shape the export endpoint serves.
+ */
+export function auditRowToRecord(r: AuditRow): AuditRecord {
   return {
     id: Number(r.id),
     actor: r.actor,
@@ -759,7 +763,7 @@ export class PostgresAuditLog implements AuditLog {
           params,
         ),
       );
-      return rows.map(rowToRecord);
+      return rows.map(auditRowToRecord);
     } catch (err) {
       this.logger?.warn("Audit query failed; serving in-memory mirror", {
         error: err instanceof Error ? err.message : String(err),
@@ -778,7 +782,7 @@ export class PostgresAuditLog implements AuditLog {
         ),
       );
       const row = rows[0];
-      return row !== undefined ? rowToRecord(row) : undefined;
+      return row !== undefined ? auditRowToRecord(row) : undefined;
     } catch {
       return this.mirror.getById(id);
     }
@@ -822,7 +826,7 @@ export class PostgresAuditLog implements AuditLog {
       // ascending order regardless of which branch produced the rows.
       const ordered = limit !== undefined ? rows.slice().reverse() : rows;
       const cutoff = await this.readCanonicalCutoff();
-      return verifyAuditChain(ordered.map(rowToRecord), cutoff !== undefined ? { legacyCutoffId: cutoff } : {});
+      return verifyAuditChain(ordered.map(auditRowToRecord), cutoff !== undefined ? { legacyCutoffId: cutoff } : {});
     } catch (err) {
       this.logger?.warn("Audit chain verification query failed; verifying in-memory mirror instead", {
         error: err instanceof Error ? err.message : String(err),

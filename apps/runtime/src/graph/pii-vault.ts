@@ -56,10 +56,46 @@ function vaultAad(executionId: string, token: string): string {
 // Tokenization (pure)
 // ---------------------------------------------------------------------------
 
-/** Token wrapper — distinctive enough that a model reproducing it verbatim is unambiguous, and cheap to detect on the way back out. */
+/**
+ * Token wrapper — distinctive enough that a model reproducing it verbatim is
+ * unambiguous, and cheap to detect on the way back out.
+ *
+ * Two forms exist (ADR 0036):
+ *   - typed    `[[PII:EMAIL:<16 hex>]]` — the default; the model learns what
+ *     kind of value stands there (an address, an IBAN, a name);
+ *   - untyped  `[[PII:<16 hex>]]`       — the original form, still minted with
+ *     `PII_VAULT_TYPED_TOKENS=false`.
+ * Both are always accepted on the way back, so a response that quotes an
+ * older placeholder still resolves. The 16-hex id alone identifies the vault
+ * entry; the type tag is a hint for the model and is never trusted.
+ */
 const TOKEN_PREFIX = "[[PII:";
 const TOKEN_SUFFIX = "]]";
-const TOKEN_PATTERN = "\\[\\[PII:([a-f0-9]{16})\\]\\]";
+/** Longest type tag a placeholder may carry. */
+const TOKEN_TYPE_MAX = 16;
+const TOKEN_PATTERN = `\\[\\[PII:(?:[A-Z_]{1,${TOKEN_TYPE_MAX}}:)?([a-f0-9]{16})\\]\\]`;
+/** Marker a string must contain before it is worth scanning for placeholders. */
+export const PII_TOKEN_MARKER = TOKEN_PREFIX;
+
+/** Uppercase type tag of a placeholder, e.g. `creditCard` → `CREDIT_CARD`. */
+export function piiTypeTag(type: PiiType): string {
+  return type
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toUpperCase()
+    .replace(/[^A-Z_]/g, "_")
+    .slice(0, TOKEN_TYPE_MAX);
+}
+
+/** Renders the placeholder for a vault token id. */
+export function piiPlaceholder(
+  token: string,
+  type: PiiType,
+  typed: boolean,
+): string {
+  return typed
+    ? `${TOKEN_PREFIX}${piiTypeTag(type)}:${token}${TOKEN_SUFFIX}`
+    : TOKEN_PREFIX + token + TOKEN_SUFFIX;
+}
 /** Builds a fresh regex instance — never share one `g`-flagged RegExp across calls (its `lastIndex` is mutable shared state). */
 function tokenRegex(): RegExp {
   return new RegExp(TOKEN_PATTERN, "g");
@@ -67,7 +103,18 @@ function tokenRegex(): RegExp {
 
 /** Generates an unpredictable, collision-resistant token id (not derived from the value — a value cannot be recovered from the token alone). */
 function newTokenId(): string {
-  return crypto.randomBytes(8).toString("hex");
+  // A token id must never look like personal data itself. Sixteen random hex
+  // characters contain a run of seven or more decimal digits in a few percent
+  // of all draws, and such a run is a phone number to the detectors: a second
+  // pass over already tokenized text (tool output, a debug-trace redaction,
+  // the output guardrail in front of the detokenizer) would then cut a
+  // placeholder in half and leave it unresolvable. Ids with four or more
+  // consecutive digits are therefore redrawn — about two bits of the 64 are
+  // spent on it.
+  for (;;) {
+    const id = crypto.randomBytes(8).toString("hex");
+    if (!/[0-9]{4}/.test(id)) return id;
+  }
 }
 
 export interface TokenizeResult {
@@ -84,13 +131,11 @@ export interface TokenizeResult {
 }
 
 /**
- * Replaces every detected PII span in `text` with a fresh `[[PII:<id>]]`
- * placeholder. Pure — does not touch the vault; callers persist `entries`
- * themselves (see {@link PiiVault.tokenize}). A distinct token is minted for
- * every occurrence, even a repeated value, so two mentions of the same email
- * in one message get two tokens — simpler and safer than value-based reuse
- * (a bug that jumbles two subjects' mappings cannot conflate them if there's
- * no shared token to begin with).
+ * Replaces every detected PII span in `text` with a fresh, untyped
+ * `[[PII:<id>]]` placeholder. Pure — does not touch a vault and keeps no
+ * state, so every occurrence gets its own token. This is the stateless
+ * building block; {@link PiiVault.tokenize} is what a request goes through,
+ * and it adds the type tag and the per-execution reuse of ADR 0036.
  */
 export function tokenizeText(
   text: string,
@@ -132,13 +177,15 @@ export function detokenizeText(
 }
 
 /**
- * Streaming-safe detokenizer: a placeholder token is fixed-width and short
- * (`[[PII:` + 16 hex chars + `]]` = 24 chars), so — unlike the guardrail's
+ * Streaming-safe detokenizer: a placeholder token is short and bounded
+ * (`[[PII:` + optional type tag and `:` + 16 hex chars + `]]`, at most 41
+ * chars), so — unlike the guardrail's
  * PII detectors, which can match unbounded-length values — a small trailing
  * buffer is enough to guarantee a token split across two deltas is never
  * missed. Mirrors {@link "./output-guardrails.js"}'s `GuardrailStream` shape.
  */
-const DETOKENIZE_WINDOW = TOKEN_PREFIX.length + 16 + TOKEN_SUFFIX.length; // 24
+const DETOKENIZE_WINDOW =
+  TOKEN_PREFIX.length + TOKEN_TYPE_MAX + 1 + 16 + TOKEN_SUFFIX.length; // 41, the longest typed form
 
 /**
  * Computes the index up to which `buffer` is safe to emit: the naive
@@ -310,6 +357,79 @@ interface VaultRow {
   encrypted_value: string;
 }
 
+/**
+ * Columns written per vault entry, in statement order. One entry contributes
+ * exactly this many positional parameters, which is what
+ * {@link vaultInsertBatchRows} divides the driver's parameter ceiling by.
+ */
+const VAULT_INSERT_COLUMNS =
+  "token, execution_id, tenant_id, pii_type, encrypted_value, detector";
+const VAULT_INSERT_PARAMS_PER_ROW = 6;
+
+/**
+ * Largest batch written by one statement. PostgreSQL's ceiling is 65 535
+ * parameters, which six parameters per row would put at over 10 000 rows — the
+ * limit here is 500 instead, well clear of it, so that a column added to
+ * {@link VAULT_INSERT_COLUMNS} later cannot push a full batch past the ceiling,
+ * and so a single statement stays small enough that a failure tells the warning
+ * log which 500 entries were lost rather than which 10 000.
+ */
+const VAULT_INSERT_MAX_ROWS = 500;
+
+/** How many entries fit in one INSERT without exceeding the parameter ceiling. */
+export function vaultInsertBatchRows(
+  paramsPerRow: number = VAULT_INSERT_PARAMS_PER_ROW,
+): number {
+  if (paramsPerRow < 1) return VAULT_INSERT_MAX_ROWS;
+  return Math.max(1, Math.min(VAULT_INSERT_MAX_ROWS, Math.floor(65_535 / paramsPerRow)));
+}
+
+/**
+ * One multi-row `INSERT … ON CONFLICT (token) DO NOTHING` for `rowCount`
+ * entries. Placeholders are positional across the whole statement, so row `i`
+ * occupies `$6i+1 … $6i+6` — {@link vaultInsertParams} builds the values in the
+ * same order.
+ */
+function vaultInsertStatement(rowCount: number): string {
+  const rows: string[] = [];
+  for (let i = 0; i < rowCount; i++) {
+    const base = i * VAULT_INSERT_PARAMS_PER_ROW;
+    rows.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`,
+    );
+  }
+  return (
+    `INSERT INTO pii_vault_entries (${VAULT_INSERT_COLUMNS}) VALUES ${rows.join(", ")} ` +
+    "ON CONFLICT (token) DO NOTHING"
+  );
+}
+
+/** Flatten one batch of entries into positional parameters, row by row. */
+function vaultInsertParams(
+  batch: readonly PiiVaultEntry[],
+  executionId: string,
+  tenantId: string | undefined,
+  encrypt: (value: string, token: string) => string,
+): unknown[] {
+  const params: unknown[] = [];
+  for (const e of batch) {
+    params.push(
+      e.token,
+      executionId,
+      tenantId ?? null,
+      e.type,
+      // AAD binds the ciphertext to (executionId, token) — the exact pair the
+      // WHERE clause in `resolve()` looks up by. Copying an `encrypted_value`
+      // row into a different execution_id/token (SQL-injection, backup
+      // restore, or an insider with DB access) then fails to decrypt instead
+      // of silently resolving under the wrong execution's authority.
+      encrypt(e.value, e.token),
+      e.detector ?? null,
+    );
+  }
+  return params;
+}
+
 export class PostgresPiiVaultStore implements PiiVaultStore {
   private readonly mirror = new InMemoryPiiVaultStore();
 
@@ -319,25 +439,34 @@ export class PostgresPiiVaultStore implements PiiVaultStore {
     private readonly logger?: Logger,
   ) {}
 
+  /**
+   * Writes `entries` in as few statements as possible — one multi-row INSERT
+   * per {@link vaultInsertBatchRows} entries — instead of one round-trip per
+   * entry. A single message that tokenizes 1 200 spans used to cost 1 200
+   * sequential queries on the request path, before the first provider call;
+   * it now costs three (500 rows each). Encryption and the per-entry AAD are unchanged, and so
+   * is the durability contract: a failing database logs a warning, stops
+   * issuing batches, and the in-memory mirror below still serves every
+   * `resolve()`/`clear()` for this execution.
+   */
   async put(
     executionId: string,
     tenantId: string | undefined,
     entries: readonly PiiVaultEntry[],
   ): Promise<void> {
     if (entries.length === 0) return;
+    const maxRows = vaultInsertBatchRows();
     try {
-      for (const e of entries) {
-        // AAD binds the ciphertext to (executionId, token) — the exact pair the
-        // WHERE clause in `resolve()` looks up by. Copying an `encrypted_value`
-        // row into a different execution_id/token (SQL-injection, backup
-        // restore, or an insider with DB access) then fails to decrypt instead
-        // of silently resolving under the wrong execution's authority.
-        const encrypted = this.cipher.encrypt(e.value, vaultAad(executionId, e.token));
+      for (let offset = 0; offset < entries.length; offset += maxRows) {
+        const batch = entries.slice(offset, offset + maxRows);
         await this.db.query(
-          `INSERT INTO pii_vault_entries (token, execution_id, tenant_id, pii_type, encrypted_value, detector)
-             VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (token) DO NOTHING`,
-          [e.token, executionId, tenantId ?? null, e.type, encrypted, e.detector ?? null],
+          vaultInsertStatement(batch.length),
+          vaultInsertParams(
+            batch,
+            executionId,
+            tenantId,
+            (value, token) => this.cipher.encrypt(value, vaultAad(executionId, token)),
+          ),
         );
       }
     } catch (err) {
@@ -455,6 +584,18 @@ export interface PiiVaultConfig {
    * (the resolver depends on the guardrail policy, which is built later at bootstrap).
    */
   detectorResolver?: PiiDetectorResolver;
+  /**
+   * Mint typed placeholders (`[[PII:EMAIL:…]]`). Default true
+   * (`PII_VAULT_TYPED_TOKENS`); false keeps the untyped form.
+   */
+  typedTokens?: boolean;
+  /**
+   * Reuse one placeholder for a repeated value of the same type within one
+   * execution, so the model can tell that two mentions are the same entity.
+   * Default true (`PII_VAULT_CONSISTENT_TOKENS`); false mints a fresh token
+   * per occurrence. Never shared across executions.
+   */
+  consistentTokens?: boolean;
 }
 
 /**
@@ -521,6 +662,13 @@ export interface PiiVaultActionSummary {
   byDetector: Record<string, number>;
 }
 
+/**
+ * Distinct values one execution may map to a reusable token. Beyond it new
+ * values still get a placeholder, just not a reusable one, so a pathological
+ * input cannot grow the per-execution map without bound.
+ */
+const VALUE_TOKEN_CAP = 10_000;
+
 /** Bounded ring size for post-release action summaries (per replica). */
 const ACTION_SUMMARY_RING_SIZE = 500;
 
@@ -531,6 +679,10 @@ class PiiVaultImpl implements PiiVault {
   private metrics?: PiiVaultMetrics;
   private readonly actionSummaries = new Map<string, PiiVaultActionSummary>();
   private readonly actionSummaryOrder: string[] = [];
+  private readonly typedTokens: boolean;
+  private readonly consistentTokens: boolean;
+  /** executionId → (`type\0value` → token id); see {@link mintToken}. */
+  private readonly valueTokens = new Map<string, Map<string, string>>();
 
   constructor(
     private readonly store: PiiVaultStore,
@@ -538,6 +690,8 @@ class PiiVaultImpl implements PiiVault {
   ) {
     this.piiTypes = config.piiTypes;
     this.detectorResolver = config.detectorResolver;
+    this.typedTokens = config.typedTokens ?? true;
+    this.consistentTokens = config.consistentTokens ?? true;
   }
 
   /** Merges a batch of tokenized entries into the execution's action summary. */
@@ -607,77 +761,112 @@ class PiiVaultImpl implements PiiVault {
     // config" → fall through to the sync regex-only path below. The plan may
     // carry a per-flow PII type subset; when absent, the vault's global default
     // (`PII_VAULT_TYPES`) applies.
+    //
+    // Fail-mode of the pipeline: `registry.detect` returns `[]` when detection
+    // ran and found no PII (→ the text passes through unchanged), and THROWS a
+    // `PiiDetectionError` when a detector failed under `failMode: "closed"`.
+    // That throw propagates out of `tokenize` so the request fails rather than
+    // forwarding un-tokenized PII to the provider.
     if (this.detectorResolver !== undefined && flowId !== undefined) {
       const plan = this.detectorResolver.resolve(flowId);
       if (plan !== undefined) {
-        const types = plan.piiTypes ?? this.piiTypes;
-        return this.tokenizeWithRegistry(
-          plan.registry,
-          executionId,
-          tenantId,
+        const matches = await plan.registry.detect(
           text,
-          types,
+          plan.piiTypes ?? this.piiTypes,
         );
+        return this.replaceSpans(executionId, tenantId, text, matches);
       }
     }
-    const { text: tokenized, entries } = tokenizeText(text, this.piiTypes);
-    if (entries.length > 0) {
-      await this.store.put(executionId, tenantId, entries);
-      this.recordProvenance(entries);
-      this.recordActionSummary(executionId, entries);
-    }
-    return tokenized;
+    // The sync path is regex-only (findPiiMatches), so provenance is "regex".
+    const matches = findPiiMatches(text, this.piiTypes).map((m) => ({
+      start: m.start,
+      end: m.end,
+      type: m.type,
+      detector: "regex",
+    }));
+    return this.replaceSpans(executionId, tenantId, text, matches);
   }
 
   /**
-   * Tokenization path using a resolved detector registry. Runs the flow's
-   * detectors (regex, NER, remote) concurrently, then builds placeholder
-   * tokens from the merged, provenance-tagged match list.
-   *
-   * Fail-mode: `registry.detect` returns `[]` when detection ran and found no
-   * PII (→ pass the text through unchanged), and THROWS a `PiiDetectionError`
-   * when a detector failed under `failMode: "closed"`. That throw propagates
-   * out of `tokenize` so the request fails rather than forwarding un-tokenized
-   * PII to the provider — the correct fail-closed behaviour for a privacy control.
+   * Returns the token id standing for `(type, value)` in this execution and
+   * whether it was minted now. With consistent tokens a repeated value gets
+   * the id it already has, so the model sees one entity instead of two; the
+   * map lives only in this process and only until `release()`, and it is never
+   * consulted for another execution. Past {@link VALUE_TOKEN_CAP} distinct
+   * values the execution keeps working with a fresh token per occurrence.
    */
-  private async tokenizeWithRegistry(
-    registry: import("./pii-detector.js").PiiDetectorRegistry,
+  private mintToken(
+    executionId: string,
+    type: PiiType,
+    value: string,
+  ): { token: string; fresh: boolean } {
+    if (!this.consistentTokens) return { token: newTokenId(), fresh: true };
+    let byValue = this.valueTokens.get(executionId);
+    if (byValue === undefined) {
+      byValue = new Map();
+      this.valueTokens.set(executionId, byValue);
+    }
+    const key = `${type}\u0000${value}`;
+    const known = byValue.get(key);
+    if (known !== undefined) return { token: known, fresh: false };
+    const token = newTokenId();
+    if (byValue.size < VALUE_TOKEN_CAP) byValue.set(key, token);
+    return { token, fresh: true };
+  }
+
+  /**
+   * Replaces every detected span with its placeholder and persists the
+   * mappings minted for it. Spans are expected sorted and non-overlapping; one
+   * that runs backwards or outside the text is skipped (defensive — the remote
+   * detector already validates, and the merge keeps spans ordered).
+   *
+   * The vault stores the ACTUAL sliced text, not a detector-reported value, so
+   * the egress round-trip restores exactly what was removed even if a detector
+   * normalized its report (e.g. NER subword artifacts).
+   */
+  private async replaceSpans(
     executionId: string,
     tenantId: string | undefined,
     text: string,
-    piiTypes: readonly PiiType[] | undefined,
+    matches: ReadonlyArray<{
+      start: number;
+      end: number;
+      type: PiiType;
+      detector?: string;
+    }>,
   ): Promise<string> {
-    const matches = await registry.detect(text, piiTypes);
     if (matches.length === 0) return text; // ran, found nothing → pass through
 
-    const entries: PiiVaultEntry[] = [];
+    /** Every replaced occurrence — what the summary and the metric count. */
+    const occurrences: PiiVaultEntry[] = [];
+    /** The mappings minted here — what the store still has to learn. */
+    const minted: PiiVaultEntry[] = [];
     let out = "";
     let cursor = 0;
     for (const m of matches) {
-      // Guard against a detector reporting a span that runs backwards or
-      // outside the text (defensive — the remote detector already validates,
-      // and merge keeps spans sorted & non-overlapping).
       if (m.start < cursor || m.end > text.length || m.end <= m.start) continue;
+      const value = text.slice(m.start, m.end);
+      const { token, fresh } = this.mintToken(executionId, m.type, value);
       out += text.slice(cursor, m.start);
-      const token = newTokenId();
-      out += TOKEN_PREFIX + token + TOKEN_SUFFIX;
-      // Store the ACTUAL sliced text (not the detector-reported value) so the
-      // egress detokenize round-trip restores exactly what was removed, even if
-      // a detector normalized its reported value (e.g. NER subword artifacts).
-      entries.push({
+      out += piiPlaceholder(token, m.type, this.typedTokens);
+      const entry: PiiVaultEntry = {
         token,
         type: m.type,
-        value: text.slice(m.start, m.end),
-        detector: m.detector,
-      });
+        value,
+        ...(m.detector !== undefined ? { detector: m.detector } : {}),
+      };
+      occurrences.push(entry);
+      if (fresh) minted.push(entry);
       cursor = m.end;
     }
     out += text.slice(cursor);
 
-    if (entries.length > 0) {
-      await this.store.put(executionId, tenantId, entries);
-      this.recordProvenance(entries);
-      this.recordActionSummary(executionId, entries);
+    if (minted.length > 0) {
+      await this.store.put(executionId, tenantId, minted);
+    }
+    if (occurrences.length > 0) {
+      this.recordProvenance(occurrences);
+      this.recordActionSummary(executionId, occurrences);
     }
     return out;
   }
@@ -740,6 +929,7 @@ class PiiVaultImpl implements PiiVault {
   }
 
   async release(executionId: string): Promise<void> {
+    this.valueTokens.delete(executionId);
     await this.store.clear(executionId);
   }
 }
@@ -762,6 +952,8 @@ export function createPiiVault(
   }
   logger?.info("Reversible PII tokenization vault enabled", {
     piiTypes: config.piiTypes && config.piiTypes.length > 0 ? config.piiTypes : "all",
+    typedTokens: config.typedTokens ?? true,
+    consistentTokens: config.consistentTokens ?? true,
   });
   return new PiiVaultImpl(store, config);
 }

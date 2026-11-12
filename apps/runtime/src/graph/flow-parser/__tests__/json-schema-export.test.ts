@@ -7,6 +7,7 @@ import path from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { buildFlowJsonSchema, FLOW_SCHEMA_ID } from "../json-schema-export.js";
+import { isReservedFlowBase } from "../loader.js";
 import { validateFlowDefinition } from "../../flow-parser.js";
 
 const fixture = { id: "public-schema-fixture", name: "Public schema fixture", nodes: [{ id: "start", type: "llm" }], edges: [] };
@@ -125,9 +126,13 @@ describe("flow.schema.json accepts the source form", () => {
       "examples",
       "flows",
     );
+    // Same skip rules the loader applies when it walks a flows directory: a
+    // flows dir may hold non-flow config under a reserved name (`mcp.yaml`
+    // declares the MCP servers these flows call) and documentation templates.
     const files = fs
       .readdirSync(dir)
-      .filter((f) => /\.ya?ml$/.test(f) && !f.includes(".example."));
+      .filter((f) => /\.ya?ml$/.test(f) && !f.includes(".example."))
+      .filter((f) => !isReservedFlowBase(path.basename(f, path.extname(f))));
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) {
       expect({

@@ -1,0 +1,148 @@
+{
+  "label": "session-scoring",
+  "set": {
+    "version": "1.1.0",
+    "kind": "synthetic",
+    "description": "Invented German requirements, interface and operations text; no real documents. Sample output carries deliberate defects to exercise the scorer."
+  },
+  "produced": "produced-sample",
+  "summary": {
+    "cases": 3,
+    "pages": 5,
+    "missingPages": 1,
+    "cer": {
+      "distance": 54,
+      "length": 750,
+      "cer": 0.072
+    },
+    "headingF1": {
+      "truePositives": 7,
+      "falsePositives": 0,
+      "falseNegatives": 2,
+      "precision": 1,
+      "recall": 0.777777778,
+      "f1": 0.875
+    },
+    "headingF1WithLevel": {
+      "truePositives": 6,
+      "falsePositives": 1,
+      "falseNegatives": 3,
+      "precision": 0.857142857,
+      "recall": 0.666666667,
+      "f1": 0.75
+    },
+    "teds": 0.390350877,
+    "tedsStructure": 0.394736842,
+    "tables": 2,
+    "extraTables": 0
+  },
+  "cases": [
+    {
+      "id": "anforderungen",
+      "pages": 2,
+      "missingPages": [],
+      "cer": {
+        "distance": 1,
+        "length": 476,
+        "cer": 0.00210084
+      },
+      "headings": {
+        "text": {
+          "truePositives": 4,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 1,
+          "recall": 0.8,
+          "f1": 0.888888889
+        },
+        "withLevel": {
+          "truePositives": 3,
+          "falsePositives": 1,
+          "falseNegatives": 2,
+          "precision": 0.75,
+          "recall": 0.6,
+          "f1": 0.666666667
+        }
+      },
+      "tables": null
+    },
+    {
+      "id": "schnittstellen",
+      "pages": 1,
+      "missingPages": [],
+      "cer": {
+        "distance": 0,
+        "length": 79,
+        "cer": 0
+      },
+      "headings": {
+        "text": {
+          "truePositives": 1,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "withLevel": {
+          "truePositives": 1,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        }
+      },
+      "tables": {
+        "expected": 1,
+        "teds": [
+          0.780701754
+        ],
+        "tedsStructure": [
+          0.789473684
+        ],
+        "extra": 0
+      }
+    },
+    {
+      "id": "betriebshandbuch",
+      "pages": 2,
+      "missingPages": [
+        2
+      ],
+      "cer": {
+        "distance": 53,
+        "length": 195,
+        "cer": 0.271794872
+      },
+      "headings": {
+        "text": {
+          "truePositives": 2,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 1,
+          "recall": 0.666666667,
+          "f1": 0.8
+        },
+        "withLevel": {
+          "truePositives": 2,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 1,
+          "recall": 0.666666667,
+          "f1": 0.8
+        }
+      },
+      "tables": {
+        "expected": 1,
+        "teds": [
+          0
+        ],
+        "tedsStructure": [
+          0
+        ],
+        "extra": 0
+      }
+    }
+  ]
+}

@@ -18,7 +18,8 @@ and contracts. Before every upgrade, take a backup as described in
 ## Generic upgrade procedure
 
 1. Read the release notes of every skipped version (especially the
-   **Migration** sections in the [CHANGELOG](../CHANGELOG.md)).
+   **Migration** sections in the [CHANGELOG](../CHANGELOG.md); entries older
+   than `0.19.0` are in its [archive](changelog/0.x-archive.md)).
 2. Back up the Runtime, Search and Extract databases, the Extract source store
    (`SOURCE_STORE_DIR`), the Search asset store (inside the Search database with
    the default `ASSET_STORE_BACKEND=postgres`, or `ASSET_STORE_DIR` with the
@@ -100,12 +101,13 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
   stays unchanged. Runtime and Gate serve `/openapi.json` and
   `/openapi.yaml`.
 - Review the **Changed** and **Security** sections of `[0.15.0]` in the
-  CHANGELOG: several production-gate rules now refuse configurations that
-  used to start.
+  [changelog archive](changelog/0.x-archive.md#0150-2026-10-13): several
+  production-gate rules now refuse configurations that used to start.
 
 ### 0.15 → 0.16
 
-Review the `[0.16.0]` section of the [CHANGELOG](../CHANGELOG.md), in particular its
+Review the `[0.16.0]` section of the
+[changelog archive](changelog/0.x-archive.md#0160-2026-10-15), in particular its
 **Migration** subsection. Steps, in order:
 
 1. Take a backup, then run the migrations (`bun run migrate` or the Helm hooks): Runtime
@@ -195,7 +197,8 @@ embedding settings are not affected.
 
 ### 0.16 → 0.17
 
-Review the `[0.16.2]` and `[0.17.0]` sections of the [CHANGELOG](../CHANGELOG.md).
+Review the `[0.16.2]` and `[0.17.0]` sections of the
+[changelog archive](changelog/0.x-archive.md#0170-2026-10-18).
 One behaviour change arrives with 0.16.2: an **unknown collection** on a Search
 read or search route is now a typed `404` with `COLLECTION_NOT_FOUND` instead of
 `403`. Clients and alerting rules that treated `403` on a read as "the collection
@@ -212,7 +215,8 @@ links); without either, a node that requests the tool emits a
 
 ### 0.17 → 0.18
 
-Review the `[0.18.0]` section of the [CHANGELOG](../CHANGELOG.md). Search global
+Review the `[0.18.0]` section of the
+[changelog archive](changelog/0.x-archive.md#0180-2026-10-18). Search global
 schema version stays **9**, Runtime **47**, Extract **5** — no migration step,
 but the HTTP surface changes:
 
@@ -644,6 +648,40 @@ Changes since 0.21.0 that need operator attention:
 3. Search: the IP rate limit (`RATE_LIMIT`, default 120 requests per minute) now also covers the read routes (`/documents`, `/document`, `/summaries`, `/folders`, `/collection-stats`), the collection admin routes, `/ui` and the browser login. A client that polls these routes from one IP above the limit gets 429; raise `RATE_LIMIT` (or call through the Gate) if that is expected traffic. The MCP endpoints stay unlimited here. Extract limits `POST /login` and the OIDC routes the same way.
 4. Gate: with `server.cors.origins: ["*"]` the CORS answer is a literal `*` without credentials. A browser client that needs cookies across origins must be listed by its origin.
 
+### 0.25 → next (unreleased)
+
+1. **Approval links ask twice.** `GET /monitoring/approvals/:id/decide` renders a confirmation
+   page; only the second, signed click decides (`APPROVAL_LINK_CONFIRM=false` restores one
+   click). The Control inbox is unaffected. The in-chat approval text is English by default;
+   `APPROVAL_MESSAGE_LOCALE=de` keeps German.
+2. **PII placeholders are typed and consistent.** The model now sees `[[PII:EMAIL:…]]` instead of
+   `[[PII:…]]`, and one placeholder per distinct value per execution. Both forms are restored in
+   responses. A prompt, guardrail rule or downstream parser that matched the old 16-hex form
+   literally needs updating, or set `PII_VAULT_TYPED_TOKENS=false` /
+   `PII_VAULT_CONSISTENT_TOKENS=false`.
+3. **Shared receipt transparency log.** With `DATABASE_URL`, the Runtime builds the receipt tree
+   from `receipt_log` under an advisory lock (ADR 0039), so every replica proves against the
+   same tree and the `REPLICAS > 1` warning disappears. Upgrade **all receipt-issuing replicas
+   together**: an old replica appends without the lock, and during a mixed rollout its rows can
+   commit out of order. Receipts and proofs issued before the switch stay valid with
+   `atf-verify`; heads sealed by the old per-process logs are kept in `receipt_tree_heads` but
+   no longer used for new proofs. Receipt issuance now fails when the database is unreachable
+   instead of continuing in memory.
+4. **Migration 53** adds `audit_forward_state` (SIEM forwarding position, operator role only).
+5. **Secrets from files.** Every secret, the database and Redis URLs included, can be given as
+   `<NAME>_FILE`. Setting both `<NAME>` and `<NAME>_FILE` stops the service — check `envFrom`
+   Secrets before mounting the same value as a file.
+6. **New, off by default:** `PROXY_MODELS` and `POST /v1/messages` (trust-proxy mode,
+   [TRUST-PROXY.md](TRUST-PROXY.md)), `PII_VAULT_DETOKENIZE_TOOLS`,
+   `PII_VAULT_SCOPE=messages+context`, `AUDIT_FORWARD_URL`, `SERVICE_LINKS`. With
+   `PII_VAULT_SCOPE=messages+context`, tool-detail frames and the debug trace show
+   placeholders for values inside tool results; citations streamed to the caller keep the real
+   text.
+7. **Gate:** imported MCP tools keep the downstream annotations, so a tool without
+   `readOnlyHint: true` is classified `write` as before but now also *advertises* the
+   downstream hints to clients. `mcpServers[].requiredScopes` and
+   `mcpServers[].server.allowPrivateAddress` are new.
+
 ### Not yet shared between replicas (roadmap)
 
 These are known single-process behaviours, not defects of a correct single-replica
@@ -652,7 +690,7 @@ deployment. With `REPLICAS > 1` they show up as warnings; plan around them.
 | Behaviour | What happens with several replicas | What to do now |
 | --- | --- | --- |
 | Runtime media store (`show_figure` links) | A link minted by one replica 404s on another | Pin figure traffic to one replica or route `/v1/media/:id` stickily |
-| Runtime receipts transparency log | Each replica keeps its own log | Run receipts on one replica, or accept per-replica logs |
+| Runtime receipts transparency log *(without `DATABASE_URL` only)* | Each replica keeps its own log | Configure `DATABASE_URL`; the log is then shared (ADR 0039) |
 | Gate pagination cursors | Signed with a per-process key unless `server.pagination.secret` is set | Set `server.pagination.secret` |
 | Gate approval / invocation stores | In memory without Redis | `MCPGATE_TRANSACTION_REDIS_URL` (already fatal in production for `> 1` replica) |
 

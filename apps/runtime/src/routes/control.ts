@@ -20,6 +20,7 @@
  * No `any` at module boundaries.
  */
 
+import crypto from "node:crypto";
 import { Hono } from "hono";
 import type {
   ApprovalRegistry,
@@ -34,7 +35,19 @@ import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
-import { verifyApprovalLinkToken } from "../graph/approval-link.js";
+import {
+  checkApprovalLinkToken,
+  readApprovalLinkExpiry,
+  signApprovalConfirmToken,
+  verifyApprovalConfirmToken,
+  verifyApprovalLinkToken,
+  type ApprovalLinkTokenStatus,
+} from "../graph/approval-link.js";
+import {
+  approvalMessages,
+  formatMessage,
+  type ApprovalMessages,
+} from "../graph/approval-messages.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import {
   AUDIT_UNAVAILABLE_BODY,
@@ -62,6 +75,23 @@ export interface ControlRouterDeps {
   auditLog?: AuditLog;
   /** Browser origins allowed to embed approval HTML; defaults to same-origin only. */
   approvalFrameAncestors?: readonly string[];
+  /**
+   * Two-step confirmation for `GET /monitoring/approvals/:id/decide`. Default
+   * true: the first click renders a confirmation page and only the second,
+   * signed click resolves the approval. Needed because chat and mail clients
+   * fetch links automatically (previews, prefetchers, security scanners), and a
+   * single state-changing GET would let such a fetch approve a consequential
+   * tool call. The confirmation is an HMAC keyed with `approvalLinkSecret`,
+   * or with a random per-process key when no secret is configured. Only an
+   * explicit `false` restores the one-click behaviour.
+   */
+  approvalLinkConfirm?: boolean;
+  /**
+   * Language of every string rendered by the approval pages, matching the
+   * language of the chat message that embeds them (`APPROVAL_MESSAGE_LOCALE`).
+   * Unknown or unset values fall back to English.
+   */
+  approvalMessageLocale?: string;
 }
 
 interface ResolveBody {
@@ -103,9 +133,13 @@ function escapeHtml(s: string): string {
  * plain markup). `headExtra` injects extra `<head>` markup (e.g. a
  * `<meta http-equiv="refresh">` so a pending widget reloads itself when the
  * countdown ends — JS-free environments cannot reload on their own). */
-function approvalShell(body: string, headExtra = ""): string {
+function approvalShell(
+  body: string,
+  msg: ApprovalMessages,
+  headExtra = "",
+): string {
   return (
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="${escapeHtml(msg.lang)}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     headExtra +
     `<style>` +
@@ -131,25 +165,73 @@ function approvalShell(body: string, headExtra = ""): string {
   );
 }
 
+/**
+ * Renders the first step of a two-click approval link: the question, the
+ * confirmation link (which carries the signed `confirm` nonce) and a link back
+ * to the widget. Script-free like the widget itself — the sandboxed iframe has
+ * no `allow-scripts`, so the confirmation has to be an ordinary link.
+ */
+function renderApprovalConfirm(
+  pending: PendingApproval | undefined,
+  decision: "approved" | "denied",
+  href: string,
+  backHref: string,
+  msg: ApprovalMessages,
+): string {
+  const verb = decision === "approved" ? msg.approve : msg.deny;
+  const cls = decision === "approved" ? "approve" : "deny";
+  const tool =
+    pending?.tool.split("/").pop() ?? pending?.tool ?? msg.unnamedTool;
+  // The template comes from the catalog and the tool name from the request:
+  // escape the template first, then substitute an already-escaped tool name so
+  // it keeps its <code> formatting.
+  const question = formatMessage(
+    escapeHtml(
+      decision === "approved" ? msg.confirmApprove : msg.confirmDeny,
+    ),
+    { tool: `<code>${escapeHtml(tool)}</code>` },
+  );
+  return approvalShell(
+    `<div class="tool">${question}</div>` +
+      `<div class="note">${escapeHtml(msg.confirmExplanation)}</div>` +
+      `<div class="row">` +
+      `<a class="btn ${cls}" href="${escapeHtml(href)}" rel="nofollow">` +
+      `${decision === "approved" ? "✅" : "🚫"} ${escapeHtml(verb)}</a>` +
+      `<a class="btn" href="${escapeHtml(backHref)}" rel="nofollow">${escapeHtml(
+        msg.back,
+      )}</a>` +
+      `</div>`,
+    msg,
+  );
+}
+
 /** Renders the final, single-button state (only the decision that was taken). */
-function renderResolvedState(resolved: ResolvedApproval | undefined): string {
+function renderResolvedState(
+  resolved: ResolvedApproval | undefined,
+  msg: ApprovalMessages,
+): string {
   if (resolved === undefined) {
     return approvalShell(
-      `<div class="tool">⏳ Approval</div>` +
-        `<div class="note">This request is no longer available ` +
-        `(already handled or expired).</div>`,
+      `<div class="tool">⏳ ${escapeHtml(msg.approvalLabel)}</div>` +
+        `<div class="note">${escapeHtml(msg.noLongerAvailable)}</div>`,
+      msg,
     );
   }
   const cls = resolved.approved ? "approve" : "deny";
-  const label = resolved.approved ? "✅ Approved" : "🚫 Denied";
+  const label = resolved.approved
+    ? `✅ ${escapeHtml(msg.approved)}`
+    : `🚫 ${escapeHtml(msg.denied)}`;
   const note =
     resolved.timedOut === true
-      ? `<div class="note">Automatically denied (timed out).</div>`
+      ? `<div class="note">${escapeHtml(msg.timedOut)}</div>`
       : resolved.by !== undefined
-        ? `<div class="note">by ${escapeHtml(resolved.by)}</div>`
+        ? `<div class="note">${escapeHtml(
+            formatMessage(msg.resolvedBy, { by: resolved.by }),
+          )}</div>`
         : "";
   return approvalShell(
     `<div class="row"><span class="btn ${cls} done">${label}</span></div>${note}`,
+    msg,
   );
 }
 
@@ -166,7 +248,11 @@ function renderResolvedState(resolved: ResolvedApproval | undefined): string {
  * the window. The literal duration/step values are baked into a per-widget
  * `<style>` because CSS `steps()` does not accept custom properties.
  */
-function renderCountdown(requestedAt: string, timeoutMs: number): string {
+function renderCountdown(
+  requestedAt: string,
+  timeoutMs: number,
+  msg: ApprovalMessages,
+): string {
   const startedAt = Date.parse(requestedAt);
   const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
   const remainingMs = Math.max(0, timeoutMs - elapsed);
@@ -197,8 +283,12 @@ function renderCountdown(requestedAt: string, timeoutMs: number): string {
     (animated ? `@keyframes cd-tick{from{--cd:${steps}}}` : "") +
     `.cd .num::after{content:counter(cd)}` +
     `</style>` +
-    `<div class="cd" title="Automatic denial in ${remainingSec}s" ` +
-    `aria-label="Automatic denial in ${remainingSec} seconds">` +
+    `<div class="cd" title="${escapeHtml(
+      formatMessage(msg.countdownTitle, { seconds: String(remainingSec) }),
+    )}" ` +
+    `aria-label="${escapeHtml(
+      formatMessage(msg.countdownAria, { seconds: String(remainingSec) }),
+    )}">` +
     `<svg viewBox="0 0 44 44" aria-hidden="true">` +
     `<circle class="trk" cx="22" cy="22" r="16"></circle>` +
     `<circle class="prg" cx="22" cy="22" r="16"></circle></svg>` +
@@ -220,13 +310,17 @@ function renderApprovalWidget(
   pending: PendingApproval | undefined,
   resolved: ResolvedApproval | undefined,
   timeoutMs: number,
+  msg: ApprovalMessages,
   linkToken?: string,
 ): string {
   // Already resolved (or resolved meanwhile): show only the chosen button.
-  if (pending === undefined) return renderResolvedState(resolved);
+  if (pending === undefined) return renderResolvedState(resolved, msg);
 
   const toolLabel = escapeHtml(pending.tool.split("/").pop() ?? pending.tool);
-  const title = escapeHtml(pending.title ?? `Approval required: ${pending.tool.split("/").pop() ?? pending.tool}`);
+  const title = escapeHtml(
+    pending.title ??
+      `${msg.approvalRequired}: ${pending.tool.split("/").pop() ?? pending.tool}`,
+  );
   const message = pending.message !== undefined
     ? `<div class="message">${escapeHtml(pending.message)}</div>`
     : "";
@@ -243,7 +337,7 @@ function renderApprovalWidget(
               )}`,
           )
           .join(", ")
-      : "<em>no arguments</em>";
+      : `<em>${escapeHtml(msg.noArguments)}</em>`;
 
   // The decide endpoint sits next to this one (…/:id/decide). A relative href
   // keeps the navigation on the backend origin that served the iframe document,
@@ -272,14 +366,15 @@ function renderApprovalWidget(
   return approvalShell(
     `<div class="head">` +
       `<div class="tool">⏳ ${title} <code>${toolLabel}</code></div>` +
-      renderCountdown(pending.requestedAt, timeoutMs) +
+      renderCountdown(pending.requestedAt, timeoutMs, msg) +
       `</div>` +
       message +
       `<div class="args">${argSummary}</div>` +
       `<div class="row">` +
-      `<a class="btn approve" href="decide?decision=approved${decideTokenQuery}" rel="nofollow">✅ Approve</a>` +
-      `<a class="btn deny" href="decide?decision=denied${decideTokenQuery}" rel="nofollow">🚫 Deny</a>` +
+      `<a class="btn approve" href="decide?decision=approved${decideTokenQuery}" rel="nofollow">✅ ${escapeHtml(msg.approve)}</a>` +
+      `<a class="btn deny" href="decide?decision=denied${decideTokenQuery}" rel="nofollow">🚫 ${escapeHtml(msg.deny)}</a>` +
       `</div>`,
+    msg,
     refreshMeta,
   );
 }
@@ -298,7 +393,20 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
     );
   };
   const authRequired = deps.authRequired ?? false;
+  // One catalog for every approval page this router renders, matching the
+  // language of the chat message that embeds them.
+  const msg = approvalMessages(deps.approvalMessageLocale);
   const approvalLinkSecret = deps.approvalLinkSecret;
+  // Two-step confirmation is on unless explicitly switched off. Its nonce is
+  // signed with the link secret; a deployment without one (no capability
+  // links, e.g. the open plane of a local stack) signs with a random
+  // per-process key instead, so a prefetched `decide` URL is harmless there
+  // too. A nonce from another replica then fails verification and the page
+  // asks the reviewer to open the approval again — configure the shared
+  // secret for multi-replica deployments.
+  const approvalLinkConfirm = deps.approvalLinkConfirm ?? true;
+  const confirmSecret =
+    approvalLinkSecret ?? crypto.randomBytes(32).toString("base64url");
   const operatorAuth =
     deps.operatorAuth ?? createOperatorAuthorizer({ authRequired });
 
@@ -355,6 +463,26 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
     );
   };
 
+  /**
+   * Capability-token status for READ-ONLY rendering of one approval. An
+   * expired token still proves which approval it was minted for, and that
+   * approval has by then auto-denied, so its terminal state leaks nothing the
+   * token holder was not already shown — while a 401 would leave the chat
+   * widget dead for as long as the message is open. Never used to accept a
+   * decision: that path keeps requiring {@link approvalLinkAuthorized}.
+   */
+  const approvalLinkStatus = (
+    ctx: { req: { query: (k: string) => string | undefined } },
+    id: string,
+  ): ApprovalLinkTokenStatus => {
+    if (approvalLinkSecret === undefined) return "invalid";
+    return checkApprovalLinkToken(
+      ctx.req.query("token"),
+      id,
+      approvalLinkSecret,
+    );
+  };
+
   // -------------------------------------------------------------------------
   // Approvals
   // -------------------------------------------------------------------------
@@ -378,13 +506,27 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       // The widget is loaded by the end user's browser (an <iframe> in the
       // chat) which cannot send an operator bearer. Accept the per-approval
       // capability token bound to this id; otherwise require operator RBAC.
-      if (!approvalLinkAuthorized(ctx, id)) {
+      //
+      // Rendering is read-only, so an EXPIRED token still identifies the
+      // approval it was minted for and is honoured here: the token expires
+      // with the gate's auto-deny plus a grace, and a chat that stays open
+      // must keep showing that outcome instead of turning into a 401. Deciding
+      // (`decide`) never accepts an expired token.
+      const linkStatus = approvalLinkStatus(ctx, id);
+      if (linkStatus === "invalid") {
         const actor = await guard(ctx, "approvals:write");
         if (!actor) return unauthorized(ctx);
       }
       const pending = (await approvalGate.listPending()).find(
         (p) => p.id === id,
       );
+      // Belt and braces: an expired capability never shows live request
+      // details or working buttons, only the outcome. If the approval were
+      // somehow still pending (clock skew, a replica that never ran the
+      // timer), the neutral card is rendered instead.
+      if (linkStatus === "expired" && pending !== undefined) {
+        return ctx.html(renderResolvedState(undefined, msg));
+      }
       const resolved =
         pending === undefined ? await approvalGate.getResolved(id) : undefined;
       return ctx.html(
@@ -392,16 +534,19 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
           pending,
           resolved,
           approvalGate.timeoutMs,
+          msg,
           ctx.req.query("token"),
         ),
       );
     });
 
     // GET /monitoring/approvals/:id/decide?decision=approved|denied&by=name
-    // One-click approve/deny link — designed for embedding in chat messages.
-    // No JSON body required; decision comes from the query parameter.
-    // Renders the shared approval shell so it looks identical to the widget
-    // (the iframe navigates here on click). Shows only the chosen button.
+    // Approve/deny link — designed for embedding in chat messages. No JSON
+    // body required; decision comes from the query parameter. Renders the
+    // shared approval shell so it looks identical to the widget (the iframe
+    // navigates here on click). Shows only the chosen button. With
+    // APPROVAL_LINK_CONFIRM (default) a link click first renders a
+    // confirmation page and only the second click resolves.
     router.get("/monitoring/approvals/:id/decide", async (ctx) => {
       approvalWidgetHeaders(ctx);
       const id = ctx.req.param("id");
@@ -424,32 +569,99 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       if (decision !== "approved" && decision !== "denied") {
         return ctx.html(
           approvalShell(
-            `<div class="tool">❌ Invalid decision</div>` +
-              `<div class="note">Parameter <code>decision</code> must be ` +
-              `<code>approved</code> or <code>denied</code>.</div>`,
+            `<div class="tool">❌ ${escapeHtml(msg.invalidDecision)}</div>` +
+              `<div class="note">${escapeHtml(msg.invalidDecisionNote)}</div>`,
+            msg,
           ),
           400,
         );
       }
-      // Reviewer identity for the audit trail / widget. Precedence: an explicit
-      // ?by= override; then — on the OPEN plane (no RBAC), where the reviewer is
-      // the end user clicking their own in-chat widget — the user who triggered
-      // the request; then the authenticated operator identity. This replaces the
-      // generic "anonymous" fallback with the real person whenever we know them.
       const pending = (await approvalGate.listPending()).find(
         (p) => p.id === id,
       );
+      // Two-step confirmation (default on whenever a secret exists). Every GET
+      // caller goes through it, an authenticated operator too — the state
+      // change should never hang off a URL a crawler can present. The Control
+      // dashboard resolves through `POST /monitoring/approvals/:id`, which
+      // stays a single step. First click renders the confirmation page with a
+      // signed nonce, second click verifies it for THIS approval and decision.
+      if (approvalLinkConfirm) {
+        // Nothing left to confirm: show the outcome instead of asking a
+        // question whose answer can no longer take effect.
+        if (pending === undefined) {
+          const prior = await approvalGate.getResolved(id);
+          return ctx.html(renderResolvedState(prior, msg), prior ? 200 : 404);
+        }
+        const linkToken = ctx.req.query("token") ?? "";
+        const confirm = ctx.req.query("confirm");
+        // The confirmation is bound to the capability token's expiry, so it
+        // cannot outlive the link it was minted from — not even when the same
+        // approval id gets a freshly minted link later.
+        const linkExpiresAtMs = readApprovalLinkExpiry(linkToken) ?? 0;
+        if (confirm === undefined) {
+          const nonce = signApprovalConfirmToken(
+            id,
+            decision,
+            linkExpiresAtMs,
+            confirmSecret,
+          );
+          // Relative hrefs, like the widget's own links: the Runtime may be
+          // published under a path prefix (`APPROVAL_BASE_URL`), and a
+          // root-absolute path would leave it.
+          const tokenQuery =
+            linkToken === ""
+              ? ""
+              : `&token=${encodeURIComponent(linkToken)}`;
+          return ctx.html(
+            renderApprovalConfirm(
+              pending,
+              decision,
+              `decide?decision=${decision}${tokenQuery}&confirm=${encodeURIComponent(nonce)}`,
+              `widget${linkToken === "" ? "" : `?token=${encodeURIComponent(linkToken)}`}`,
+              msg,
+            ),
+          );
+        }
+        if (
+          !verifyApprovalConfirmToken(
+            confirm,
+            id,
+            decision,
+            linkExpiresAtMs,
+            confirmSecret,
+          )
+        ) {
+          return ctx.html(
+            approvalShell(
+              `<div class="tool">❌ ${escapeHtml(msg.invalidConfirmation)}</div>` +
+                `<div class="note">${escapeHtml(
+                  msg.invalidConfirmationNote,
+                )}</div>`,
+              msg,
+            ),
+            400,
+          );
+        }
+      }
+      // Reviewer identity for the audit trail / widget. When the caller is an
+      // AUTHENTICATED operator (`via` is "token"/"jwt"), the authenticated
+      // identity is authoritative and `?by=` is ignored — otherwise a forged
+      // query parameter would attribute the decision to someone else, exactly
+      // the audit-falsification the POST handler already prevents. On the OPEN
+      // plane (no RBAC / a link-scoped actor), where the reviewer is the end
+      // user clicking their own in-chat widget, precedence is: an explicit
+      // `?by=`, then the user who triggered the request, then the actor name.
       const by =
-        ctx.req.query("by") ??
-        (actor.via === "open" ? pending?.requestedBy : undefined) ??
-        actor.name;
+        actor.via === "open"
+          ? (ctx.req.query("by") ?? pending?.requestedBy ?? actor.name)
+          : actor.name;
       const approved = decision === "approved";
       const ok = await approvalGate.resolve(id, { approved, by });
       if (!ok) {
         // Already resolved (or expired): re-render the retained final state so
         // a double-click / reload still shows just the decision that was taken.
         const prior = await approvalGate.getResolved(id);
-        return ctx.html(renderResolvedState(prior), prior ? 200 : 404);
+        return ctx.html(renderResolvedState(prior, msg), prior ? 200 : 404);
       }
       // Regulierte Aktion (Req 1.4): the decision is only presented as saved
       // once it is durably audited — otherwise 503 (never a success without a
@@ -464,26 +676,41 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
             role: actor.role,
             action: "approvals.resolve",
             target: id,
-            details: { approved, via: "link" },
+            details: {
+              approved,
+              via: "link",
+              // The identity the request was actually authenticated as, kept
+              // alongside (possibly different from) the reviewer name above.
+              authenticatedAs: actor.name,
+            },
           });
         } catch {
           return ctx.html(
             approvalShell(
-              `<div class="tool">⚠️ ${approved ? "Approved" : "Denied"} — audit entry missing</div>` +
-                `<div class="note">The decision took effect, but it could not be ` +
-                `recorded in the audit trail. Please inform your operator.</div>`,
+              `<div class="tool">⚠️ ${escapeHtml(
+                formatMessage(msg.auditEntryMissing, {
+                  decision: approved ? msg.approved : msg.denied,
+                }),
+              )}</div>` +
+                `<div class="note">${escapeHtml(
+                  msg.auditEntryMissingNote,
+                )}</div>`,
+              msg,
             ),
             AUDIT_UNAVAILABLE_STATUS,
           );
         }
       }
       return ctx.html(
-        renderResolvedState({
-          id,
-          approved,
-          by,
-          decidedAt: new Date().toISOString(),
-        }),
+        renderResolvedState(
+          {
+            id,
+            approved,
+            by,
+            decidedAt: new Date().toISOString(),
+          },
+          msg,
+        ),
       );
     });
 

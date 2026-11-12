@@ -158,6 +158,90 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<v
     })
   );
 
+  // ---------------------------------------------------------------------
+  // Overview tiles (review follow-up F1).
+  //
+  // The overview reads seven endpoints; without defaults every tile would
+  // render as unavailable, which is a real state but a useless fixture. A
+  // spec that needs a specific payload registers its own route afterwards —
+  // Playwright matches routes in reverse registration order, so a later
+  // `page.route()` for the same pattern wins.
+  // ---------------------------------------------------------------------
+  await page.route("**/monitoring/approvals", (route) =>
+    route.fulfill({ json: { pending: [], resolved: [] } })
+  );
+  await page.route("**/monitoring/flow-health**", (route) =>
+    route.fulfill({
+      json: {
+        generatedAt: new Date().toISOString(),
+        flows: flows.map((f) => ({
+          id: f.id,
+          source: "file",
+          version: "1",
+          shadowsFile: false,
+        })),
+        loadFailures: [],
+      },
+    })
+  );
+  await page.route("**/monitoring/posture**", (route) =>
+    route.fulfill({
+      json: {
+        generatedAt: new Date().toISOString(),
+        operationalProfile: "production",
+        preset: null,
+        status: "ok",
+        summary: { ok: 30, warn: 0, fail: 0 },
+        checks: [],
+        productionGate: { fatal: [], warnings: [] },
+      },
+    })
+  );
+  await page.route("**/monitoring/providers**", (route) =>
+    route.fulfill({
+      json: {
+        providers: [],
+        pools: [],
+        global: { queueDepth: 0, activeExecutions: 0 },
+      },
+    })
+  );
+  await page.route("**/mcp/servers", (route) =>
+    route.fulfill({ json: { servers: [] } })
+  );
+  await page.route("**/monitoring/services**", (route) =>
+    route.fulfill({
+      json: {
+        services: [
+          { name: "Search", kind: "search", url: "https://search.example.com" },
+          { name: "Extract", kind: "extract", url: "https://extract.example.com" },
+        ],
+        mcp: [
+          {
+            name: "erp",
+            url: "http://erp.internal:4000/mcp",
+            transport: "http",
+            status: "connected",
+          },
+        ],
+      },
+    })
+  );
+  await page.route("**/monitoring/usage**", (route) =>
+    route.fulfill({
+      json: {
+        usage: history.map((execution) => ({
+          execution_id: execution.execution_id,
+          flow_id: execution.flow_id,
+          model: "openai/gpt-4o-mini",
+          total_tokens: 200,
+          cost: 0.0002,
+          created_at: execution.started_at,
+        })),
+      },
+    })
+  );
+
   // Metrics
   await page.route("**/metrics", (route) =>
     route.fulfill({ status: 200, body: "# no metrics in test\n" })

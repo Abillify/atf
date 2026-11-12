@@ -38,6 +38,7 @@ beforeEach(() => {
   delete process.env.LLM_STREAM_FALLBACK_POLICY;
   delete process.env.LLM_HTTP_KEEP_ALIVE;
   delete process.env.MCP_SERVERS;
+  delete process.env.SERVICE_LINKS;
   delete process.env.PROVIDERS;
   delete process.env.DEFAULT_LLM;
   delete process.env.PROFILE;
@@ -440,6 +441,132 @@ describe("loadConfig() — valid configurations", () => {
     const server0 = config.mcpServers[0];
     if (server0 === undefined) throw new Error("expected an mcp server entry");
     expect(server0.name).toBe("my-mcp");
+  });
+
+  test("succeeds with SERVICE_LINKS as empty JSON array", () => {
+    const config = expectConfigSuccess({ SERVICE_LINKS: "[]" });
+    expect(config.serviceLinks).toEqual([]);
+  });
+
+  test("succeeds with valid SERVICE_LINKS JSON", () => {
+    const links = JSON.stringify([
+      { name: "Search", kind: "search", url: "https://search.example.com" },
+      { name: "Gate", kind: "gate", url: "http://localhost:3003" },
+    ]);
+    const config = expectConfigSuccess({ SERVICE_LINKS: links });
+    expect(config.serviceLinks).toHaveLength(2);
+    expect(config.serviceLinks?.[0]?.name).toBe("Search");
+    expect(config.serviceLinks?.[1]?.kind).toBe("gate");
+  });
+
+  test("rejects javascript: service links at startup", () => {
+    const links = JSON.stringify([
+      { name: "XSS", kind: "other", url: "javascript:alert(1)" },
+    ]);
+    const { stderrOutput } = expectConfigFailure({ SERVICE_LINKS: links });
+    expect(stderrOutput.join("")).toContain("SERVICE_LINKS");
+  });
+
+  test("rejects data: service links at startup", () => {
+    const links = JSON.stringify([
+      { name: "Leak", kind: "other", url: "data:text/html,<script>" },
+    ]);
+    const { stderrOutput } = expectConfigFailure({ SERVICE_LINKS: links });
+    expect(stderrOutput.join("")).toContain("SERVICE_LINKS");
+  });
+
+  test("rejects service links that carry credentials", () => {
+    const links = JSON.stringify([
+      { name: "Search", kind: "search", url: "https://ops:hunter2@search.example.com" },
+    ]);
+    const { stderrOutput } = expectConfigFailure({ SERVICE_LINKS: links });
+    expect(stderrOutput.join("")).toContain("SERVICE_LINKS");
+    expect(stderrOutput.join("")).not.toContain("hunter2");
+  });
+
+  test("rejects malformed SERVICE_LINKS JSON at startup", () => {
+    const { stderrOutput } = expectConfigFailure({
+      SERVICE_LINKS: "{not json}",
+    });
+    expect(stderrOutput.join("")).toContain("SERVICE_LINKS");
+  });
+
+  test("rejects unknown service link kinds at startup", () => {
+    const links = JSON.stringify([
+      { name: "Weird", kind: "printer", url: "https://x.example.com" },
+    ]);
+    const { stderrOutput } = expectConfigFailure({ SERVICE_LINKS: links });
+    expect(stderrOutput.join("")).toContain("SERVICE_LINKS");
+  });
+
+  test("reads a secret from NAME_FILE, including connection URLs (ADR 0040)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atf-secret-file-"));
+    try {
+      const dbFile = join(dir, "database-url");
+      const pepperFile = join(dir, "pepper");
+      writeFileSync(dbFile, "postgres://app:s3cret@db.internal:5432/atf\n");
+      writeFileSync(pepperFile, "pepper-from-file\n");
+      delete process.env.DATABASE_URL;
+      delete process.env.API_KEY_PEPPER;
+      const config = expectConfigSuccess({
+        DATABASE_URL_FILE: dbFile,
+        API_KEY_PEPPER_FILE: pepperFile,
+      });
+      expect(config.databaseUrl).toBe(
+        "postgres://app:s3cret@db.internal:5432/atf",
+      );
+      expect(config.apiKeyPepper).toBe("pepper-from-file");
+      // The pointer is consumed: later readers see only the resolved value.
+      expect(process.env.DATABASE_URL_FILE).toBeUndefined();
+    } finally {
+      delete process.env.DATABASE_URL;
+      delete process.env.API_KEY_PEPPER;
+      delete process.env.DATABASE_URL_FILE;
+      delete process.env.API_KEY_PEPPER_FILE;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("AUDIT_ANCHOR_FILE stays a path next to AUDIT_ANCHOR_SECRET_FILE", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atf-secret-file-"));
+    try {
+      const secretFile = join(dir, "anchor-secret");
+      writeFileSync(secretFile, "anchor-secret-value\n");
+      delete process.env.AUDIT_ANCHOR_SECRET;
+      const config = expectConfigSuccess({
+        AUDIT_ANCHOR_SECRET_FILE: secretFile,
+        AUDIT_ANCHOR_FILE: "/var/lib/atf/anchors.jsonl",
+      });
+      expect(config.auditAnchorSecret).toBe("anchor-secret-value");
+      expect(process.env.AUDIT_ANCHOR_FILE).toBe("/var/lib/atf/anchors.jsonl");
+    } finally {
+      delete process.env.AUDIT_ANCHOR_SECRET;
+      delete process.env.AUDIT_ANCHOR_SECRET_FILE;
+      delete process.env.AUDIT_ANCHOR_FILE;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects plain http: service links in production", () => {
+    const links = JSON.stringify([
+      { name: "Search", kind: "search", url: "http://search.internal" },
+    ]);
+    const { stderrOutput } = expectConfigFailure({
+      APP_ENV: "production",
+      SERVICE_LINKS: links,
+    });
+    expect(stderrOutput.join("")).toContain("https://");
+  });
+
+  test("accepts plain http: service links outside production", () => {
+    const links = JSON.stringify([
+      { name: "Search", kind: "search", url: "http://search.internal" },
+    ]);
+    const config = expectConfigSuccess({
+      APP_ENV: "development",
+      SERVICE_LINKS: links,
+    });
+    expect(config.serviceLinks?.[0]?.url).toBe("http://search.internal");
   });
 
   test("accepts a per-server connectTimeoutMs within bounds", () => {

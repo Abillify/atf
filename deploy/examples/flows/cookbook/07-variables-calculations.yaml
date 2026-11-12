@@ -1,0 +1,73 @@
+id: cb-variables-calculations
+name: Cookbook — variables, constants and calculations
+description: >-
+  One place for the values a flow tunes: flow variables that a request may override,
+  calculations that derive from them at load time, and the deployment-wide constants file
+  they would normally read. Everything a reviewer needs to change per tenant is at the top
+  of the file instead of distributed across prompts.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+variables:
+  # Plain values. A request can override any of them, and the derived values below are then
+  # recomputed — that is what makes an override safe rather than a partial edit.
+  tenant_group: finance
+  search_collection: policies
+  # Numbers stay numbers: a value that is exactly one placeholder keeps the referenced value's
+  # type, so `limit` below receives a number and not the string "8".
+  retrieval_limit: 8
+
+  # Derived at load time, in dependency order — the order written here does not matter, a cycle
+  # does and is a validation error.
+  #
+  # A small model's window is shared between prompt and output, so the output budget is expressed
+  # as a share of it rather than as a number someone has to keep in sync by hand.
+  answer_max_tokens: "{{= min(2048, floor(vars.context_length / 4)) }}"
+  # `coalesce` picks the first value that is neither null nor empty, which is how a per-tenant
+  # override falls back to a default without a conditional expression.
+  answer_style: "{{= coalesce(vars.tenant_style, 'briefly, in three sentences') }}"
+  # A calculation may branch; the ternary is the only conditional a load-time expression has.
+  history_turns: "{{= vars.tenant_group == 'finance' ? 12 : 6 }}"
+  label_prefix: "{{= upper(vars.tenant_group) }}:"
+
+  # Values a caller overrides per request usually come with a default declared here. An undeclared
+  # `{{vars.*}}` is only a warning inside a node (a request may supply it) but an error inside
+  # `variables`, because the derivation of another value depends on it existing.
+  tenant_style: ""
+  context_length: 8192
+
+nodes:
+  - id: gather
+    type: parallel
+    label: Gather sources
+    config:
+      ragProfiles:
+        default: main
+        profiles:
+          main:
+            - collection: "{{vars.search_collection}}"
+              # The variable above is a number, so it lands in a numeric field unchanged.
+              limit: "{{vars.retrieval_limit}}"
+              minScore: 0.25
+
+  - id: answer
+    type: llm
+    label: Answer
+    llm:
+      shortcut: structured
+      # Generation limits are model parameters, so the derived values belong here and not in
+      # `config`. The node's own parameters also win over a model preset's.
+      parameters:
+        maxTokens: "{{vars.answer_max_tokens}}"
+        contextLength: "{{vars.context_length}}"
+    config:
+      maxHistoryTurns: "{{vars.history_turns}}"
+      # Text values interpolate inside longer strings, always as text.
+      turnContext: "{{= vars.label_prefix }} group={{vars.tenant_group}} date={{now.date}}"
+
+edges:
+  - { source: gather, target: answer }

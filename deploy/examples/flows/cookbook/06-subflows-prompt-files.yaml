@@ -1,0 +1,67 @@
+id: cb-subflows-prompt-files
+name: Cookbook — sub-flows and prompt files
+description: >-
+  Split a flow across files: the research loop lives in a sub-flow, the instructions live
+  in a Markdown prompt file, and one setting of the included node is overridden with
+  `$include.patches` instead of forking the fragment. The flow file stays the place that
+  says what this flow does; the reused parts stay in one copy.
+metadata:
+  version: 1.0.0
+  # Included from subflows/cb-research.yaml: the `research` and `findings` nodes and the edge
+  # between them appear in this graph as if written here. The Studio draws the merged result, and
+  # the flow version check follows the include — a change to the fragment must bump this version.
+  $include:
+    subflows:
+      - subflows/cb-research.yaml
+    # Patch a node the include brought in, by its id, instead of copying the sub-flow and diverging
+    # from it. A patch that addresses an unknown node id stops the flow from loading, so a rename
+    # inside the fragment cannot silently leave a stale patch behind.
+    patches:
+      research:
+        config:
+          # The generic fragment allows six round trips; this flow knows its corpus is small.
+          maxToolSteps: 4
+        # Purely cosmetic here, to show that a patch may address any node field. A patch replaces
+        # the whole value of the key it sets, so patch an `llm` block or a prompt only when this
+        # flow genuinely differs — otherwise change the fragment.
+        label: Research the case corpus
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+variables:
+  # The sub-flow reads this. A sub-flow is merged into the including flow, so it resolves
+  # references against the merged document: the including flow declares what the fragment needs.
+  search_collection: cases
+  answer_style: "at most three sentences"
+
+nodes:
+  - id: greet
+    type: llm
+    label: Acknowledge the request
+    llm: { shortcut: structured }
+    # `#[[file:…]]` is resolved when the flow loads, relative to the flow root — so the file is
+    # versioned with the flow, reviewed in a diff, and openable by anyone who can read the flow.
+    # Keep the file to the instructions; put values the request changes into a variable instead.
+    systemPrompt: "#[[file:prompts/cb-greet.md]]"
+    config:
+      maxOutputChars: 2000
+
+  - id: answer
+    type: llm
+    label: Final answer
+    llm: { shortcut: chat }
+    # Two mechanisms meet in this prompt: the include is resolved at load time, the runtime
+    # placeholders and `{{vars.*}}` references per run. A prompt file may contain both.
+    systemPrompt: "#[[file:prompts/cb-final.md]]\nAnswer {{vars.answer_style}}."
+    config:
+      # The findings already carry their `[n]` markers, so the raw chunks need no second copy here.
+      dropRagContext: true
+
+edges:
+  # The included nodes are ordinary nodes of this graph, so they have to be wired into it: an
+  # include brings nodes in, it does not place them. Every node must be reachable from the first
+  # node, or validation fails — a fragment that is merged but unreachable is dead code.
+  - { source: greet, target: research }
+  - { source: findings, target: answer }

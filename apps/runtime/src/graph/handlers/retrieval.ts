@@ -20,6 +20,7 @@ import { getRuntime, lastUserQuery } from "../exec-runtime.js";
 import type { AgentState } from "../graph-engine.js";
 import type { RetrievedChunk } from "../vector-store.js";
 import { markTaintFromRetrieval, reportingValidator } from "../injection-findings.js";
+import { getPiiContextScope } from "../pii-tool-boundary.js";
 
 interface RetrievalNodeConfig {
   /** Vector collection to search (required for the node to do anything). */
@@ -240,7 +241,7 @@ export function createRetrievalNodeHandler(
       const validator = reportingValidator(runtime, node.id);
       // TAINT_MODE=on-untrusted-source: retrieved text taints the run on arrival.
       markTaintFromRetrieval(runtime, node.id, `retrieval/${collection}`, chunks.length);
-      const chunkTexts =
+      const scannedTexts =
         validator !== undefined
           ? ((validator.validate(
               chunks.map((c) => c.text),
@@ -249,6 +250,14 @@ export function createRetrievalNodeHandler(
               typeof t === "string" ? t : (chunks[i]?.text ?? ""),
             )
           : chunks.map((c) => c.text);
+      // PII_VAULT_SCOPE=messages+context (ADR 0036, step 4): the chunks the
+      // model reads — and the copy the groundedness gate scores — carry
+      // placeholders; the citations streamed to the caller keep the real text.
+      const piiScope = getPiiContextScope();
+      const chunkTexts =
+        piiScope !== undefined
+          ? await piiScope.tokenizeValue(runtime.ctx, scannedTexts)
+          : scannedTexts;
 
       // Build a grounding context system message the next LLM node will see.
       const systemMsg = new SystemMessage({
@@ -283,9 +292,9 @@ export function createRetrievalNodeHandler(
           result: {
             collection,
             retrieved: chunks.length,
-            chunks: chunks.map((c) => ({
+            chunks: chunks.map((c, i) => ({
               id: c.id,
-              text: c.text,
+              text: piiScope !== undefined ? (chunkTexts[i] ?? "") : c.text,
               score: c.score,
               ...(c.scoreScale !== undefined ? { score_scale: c.scoreScale } : {}),
             })),

@@ -13,11 +13,14 @@ import { uiDe } from "./ui.de";
 
 export const de: Catalog = {
   ...uiDe,
+  "nav.group.overview": "Übersicht",
   "nav.group.research": "Recherche & Optimierung",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Konfiguration",
   "nav.group.budgeting": "Budgetierung",
 
+  "nav.overview": "Übersicht",
+  "nav.overview.hint": "Status auf einen Blick",
   "nav.studio": "Studio",
   "nav.studio.hint": "Flows bauen & testen",
   "nav.memory": "Memory",
@@ -66,6 +69,8 @@ export const de: Catalog = {
   "nav.citationImpact.hint": "Antworten mit geänderten Quellen",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Verbundene MCP-Server",
+  "nav.services": "Dienste",
+  "nav.services.hint": "Fach-Oberflächen und MCP-Status",
 
   "nav.cost": "Kosten & Tokens",
   "nav.cost.hint": "Ausgaben & Token-Verbrauch",

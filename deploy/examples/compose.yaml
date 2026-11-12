@@ -28,6 +28,11 @@ services:
       PGDATA: /pg/18/data
     volumes:
       - postgres-data:/pg
+      # Invented demo rows for the Gate's `ticket_lookup` / `ticket_create` tools, in their own
+      # `demo` schema so they cannot collide with what Search creates here. The Postgres image
+      # runs this on FIRST boot only: an existing `postgres-data` volume is never re-initialised,
+      # so a stack that predates the file needs `docker compose ... down -v` once.
+      - ./demo/init.sql:/docker-entrypoint-initdb.d/10-demo.sql:ro
     deploy:
       resources:
         limits:
@@ -59,30 +64,135 @@ services:
       timeout: 3s
       retries: 20
 
+  # One-shot key service for the decision receipts the Runtime signs below. On the first start
+  # it writes a fresh Ed25519 seed into a volume; every later start leaves the file alone, so the
+  # stack keeps signing with the same key until `down --volumes` throws it away.
+  #
+  # THIS IS A DEMO KEY, generated on purpose instead of supplied. It is unauthenticated, it is
+  # deleted with the volume, and it is never rotated - none of it is a pattern for a real
+  # deployment, where the key comes out of a secret store and its backup is a named task
+  # (docs/runbooks/key-rotation.md). What the demo does show is the shape of the proof: a
+  # signature only this process can produce, checked offline against a JWKS the Runtime serves.
+  receipt-key:
+    # The same tag the mock above uses: the generator needs only `sh`, and reusing an image this
+    # stack already pulls keeps the demo to three images instead of four.
+    image: python:3.13-alpine
+    # `head -c 32 /dev/urandom | base64` is exactly the accepted "base64-encoded 32-byte Ed25519
+    # seed" form (apps/runtime/src/receipts/signing-key.ts), and the `test -s` guard is what makes
+    # a restart harmless: replacing the key would invalidate every receipt the old one signed.
+    #
+    # `umask 022` rather than a private mode, because the reader is not the writer: the published
+    # Runtime image runs as uid 65532, this service writes as root, and an owner-only file would
+    # leave Bun ignoring an unreadable `--env-file` and the Runtime aborting on a missing
+    # `RECEIPT_SIGNING_KEY`. That trade-off is only acceptable for a throwaway key inside a volume
+    # no other service mounts, and it is the clearest reason this is a demo and not a pattern.
+    command:
+      - sh
+      - -c
+      - |
+        umask 022
+        test -s /keys/receipt-seed.env && exit 0
+        printf 'RECEIPT_SIGNING_KEY=%s\n' "$(head -c 32 /dev/urandom | base64)" > /keys/receipt-seed.env
+    volumes:
+      - receipt-keys:/keys
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 32M
+
   runtime:
     build:
       context: ../..
       dockerfile: deploy/examples/Dockerfile
       target: runtime
+    # The generated seed has to arrive in the process environment, and Bun can read it from the
+    # file itself: `--env-file` before `run` loads it into the environment of the started script.
+    # That is the CMD of deploy/examples/Dockerfile with this one flag in front, chosen over
+    # `sh -c 'export …'` because the published Runtime image has no shell - see
+    # `compose.images.yaml`, which repeats the pattern for that image's entrypoint. A missing
+    # file is not a silent failure either: the Runtime then refuses to start with the message
+    # about `RECEIPT_SIGNING_KEY`, and `depends_on` below makes that case near impossible.
+    entrypoint:
+      [
+        "bun",
+        "--env-file=/keys/receipt-seed.env",
+        "run",
+        "--cwd",
+        "apps/runtime",
+        "start",
+      ]
     environment:
       PORT: "3000"
       APP_ENV: development
       FLOWS_DIR: /config/flows
       AUTHN_MODE: disabled
-      AUTHZ_ENABLED: "false"
+      # The one control left switched on - see the approval block below for what it buys here.
+      AUTHZ_ENABLED: "true"
       TENANT_ISOLATION_ENABLED: "false"
       MONITORING_AUTH: "false"
       METRICS_AUTH: "false"
       CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
       PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","apiKey":"local-placeholder","local":true}]'
       DEFAULT_LLM: '{"provider":"quickstart","model":"example-chat"}'
-      # The egress guard refuses private addresses; model-mock lives on the
-      # compose network, so it is the one exact-host exception.
-      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock
+      # The egress guard refuses private addresses; model-mock, the Gate and Search live on
+      # the compose network, so they are the exact-host exceptions. Search is here because
+      # a `ragProfiles` plan compiles into `vectorsearch/search` MCP calls (flows/mcp.yaml),
+      # which is how the retrieval flow reaches it. All three are named hosts, never a range.
+      EGRESS_ALLOW_PRIVATE_HOSTS: model-mock,gate,search
+      # The tool-use flow (`flows/04-tool-use-with-approval.yaml`) is the point of the stack: its
+      # write tool stops in Control's reviewer inbox until someone decides. Approvals are
+      # deployment configuration, not flow configuration, so a reviewer cannot be edited away - and
+      # the tool ID here is the ID the flow declares (`<mcp server>/<gate tool>`, from
+      # flows/mcp.yaml), otherwise the gating would silently never match. The tool handler consults
+      # this gate as part of authorisation, which is why AUTHZ_ENABLED is on above; with it off the
+      # call would run unreviewed and the example would prove nothing. That is all authorisation
+      # adds here: no policy file is mounted and `AUTHN_MODE` stays disabled, so every flow is
+      # still admitted and only the approval rule pauses anything.
+      APPROVAL_GATE_ENABLED: "true"
+      APPROVAL_REQUIRE_TOOLS: gate/ticket_create
+      # The default is 30 s, which is shorter than it takes to open Control and read the
+      # pending call. A demo that expires while you are looking at it reads as a bug.
+      # Overridable because the guided tour demonstrates the other half of the rule - an
+      # unanswered request is a rejection - and ten minutes of waiting would hide it:
+      # `ATF_APPROVAL_TIMEOUT_MS` in `.env.example`, spelled out in `TOUR.md`.
+      APPROVAL_TIMEOUT_MS: "${ATF_APPROVAL_TIMEOUT_MS:-600000}"
+      # Reversible tokenisation (docs/CAPABILITIES.md): personal data in the prompt becomes a
+      # placeholder before the provider is called, and the real value returns on the way out. It
+      # is on here because it is the one control this stack can show *inside* a request - the
+      # mock model repeats the prompt it received, so a reader can compare the two forms
+      # (`flows/07-model-echo.yaml`, step 1 of `TOUR.md`). The mapping lives in this process, as
+      # this stack sets no `DATABASE_URL`, so it is gone on restart - which is also why no
+      # `PII_VAULT_ENCRYPTION_KEY` is set: there is nothing at rest to encrypt. Add that key once
+      # a database is configured, or the mapping is stored unencrypted.
+      PII_VAULT_ENABLED: "true"
+      # The types the built-in regex detector recognises without a model. Listing them keeps the
+      # startup warning about model-only types (person, location, organisation) out of a log a
+      # first-time reader is supposed to be able to read.
+      PII_VAULT_TYPES: "email,phone,iban,card"
+      # Decision receipts: every execution - successful or refused - leaves one signed Ed25519
+      # receipt behind, verifiable offline with `bun run atf-verify` against the Runtime's
+      # `/.well-known/atf-receipt-jwks.json`. Turning this on without a signing key aborts the
+      # start on purpose, which is why the key comes from the `receipt-key` service above: a
+      # throwaway demo seed in a volume, never a production pattern (docs/runbooks/key-rotation.md).
+      # Receipts stay in memory here for the same reason the PII vault does - no database.
+      DECISION_RECEIPTS_ENABLED: "true"
+      # Trust-proxy mode (docs/TRUST-PROXY.md): model names an existing client already sends are
+      # mapped to the mock, so `POST /v1/messages` with `claude-…` or `/v1/chat/completions` with
+      # `gpt-4.1` runs a built-in pass-through flow under the same controls as the flows above.
+      # Ignored by Runtime images before the feature (0.25.6 and earlier).
+      PROXY_MODELS: '[{"match":"claude-*","provider":"quickstart","model":"example-chat"},{"match":"gpt-4.1","provider":"quickstart","model":"example-chat"}]'
     ports:
       - "${ATF_RUNTIME_PORT:-3000}:3000"
     volumes:
       - ./flows:/config/flows:ro
+      - receipt-keys:/keys:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -95,6 +205,17 @@ services:
     depends_on:
       model-mock:
         condition: service_healthy
+      # The signing seed exists before the Runtime's first start attempt, so the receipt path is
+      # never left half-configured.
+      receipt-key:
+        condition: service_completed_successfully
+      # The retrieval flow reads through the `vectorsearch` MCP server (flows/mcp.yaml), so
+      # Search answers before the Runtime starts; and the handbook is seeded before the
+      # first request can ask about it, so the documented citation works immediately.
+      search:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -175,6 +296,32 @@ services:
       timeout: 3s
       retries: 30
 
+  # One-shot seed service: posts demo/handbook.md into the `handbook` collection
+  # so the retrieval flow (flows/03-grounded-retrieval.yaml) finds and cites a
+  # real document out of the box. Idempotent (Search keys the document by its
+  # X-Reference and recognises identical bytes), so `up` a second time does not
+  # duplicate it; after `down -v` it seeds the fresh volume again. The image is
+  # the one `model-mock` already uses — seeding pulls nothing new.
+  seed:
+    image: python:3.13-alpine
+    command: ["python", "/seed/seed-handbook.py"]
+    volumes:
+      - ./demo/seed-handbook.py:/seed/seed-handbook.py:ro
+      - ./demo/handbook.md:/handbook/handbook.md:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    depends_on:
+      search:
+        condition: service_healthy
+
   extract:
     build:
       context: ../..
@@ -251,6 +398,11 @@ services:
         limits:
           cpus: "1"
           memory: 512M
+    # The demo tools read and write `demo.tickets`, so the Gate waits for a usable database
+    # rather than starting with a pool that fails its first query.
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -259,3 +411,7 @@ services:
 
 volumes:
   postgres-data:
+  # Holds the throwaway Ed25519 seed for the decision receipts. `down --volumes` deletes it and
+  # the next start generates a new one - which also means older receipts stop verifying, the same
+  # way they do after a real key rotation without an overlap window.
+  receipt-keys:

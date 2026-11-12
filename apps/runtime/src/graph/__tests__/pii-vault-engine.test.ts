@@ -116,7 +116,7 @@ describe("withPiiVault", () => {
 
     const seen = at(capture.receivedMessages ?? [], 0).content as string;
     expect(seen).not.toContain("jane@example.com");
-    expect(seen).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(seen).toMatch(/\[\[PII:[A-Z_]+:[a-f0-9]{16}\]\]/);
   });
 
   it("detokenizes streamed response chunks before the caller sees them", async () => {

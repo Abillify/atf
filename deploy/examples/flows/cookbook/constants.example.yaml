@@ -1,0 +1,21 @@
+# Copy this file to `constants.yaml` next to your `FLOWS_DIR` flows and fill in the values.
+#
+# `constants.yaml` is deployment-wide: one file, read once per flow root, referenced from every
+# flow as `{{const.<name>}}`. Use it for what is true for the whole installation and should not be
+# repeated in every flow — a default output budget, a support contact, the region inference runs
+# in. Use a flow's `variables` for what one flow tunes, and a request's variable overrides for what
+# one call changes.
+#
+# This file deliberately keeps the `.example` suffix: `constants.yaml` is a reserved name in the
+# flows directory and a real one belongs to the deployment, not to the examples. It is also the
+# reason the recipes in this directory reference no `{{const.*}}` value — see README.md.
+
+constants:
+  # Output budget shared by every answering node, in tokens.
+  answer_max_tokens: 2048
+  # Default retrieval depth for a single-source flow.
+  retrieval_limit: 6
+  # Injected into prompts that name a human contact instead of hard-coding an address.
+  support_contact: support@example.invalid
+  # Which region inference happens in — a value an auditor reads, so it is written once.
+  region: eu-central

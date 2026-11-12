@@ -318,7 +318,7 @@ export default function DashboardLayout({
             <Menu className="h-5 w-5" aria-hidden="true" />
           </Button>
           <Link
-            href="/graph"
+            href="/overview"
             className="truncate text-lg font-semibold text-foreground transition-colors hover:text-accent"
           >
             {t("chrome.brand")}

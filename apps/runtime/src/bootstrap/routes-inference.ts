@@ -54,6 +54,7 @@ import {
 } from "../observability/evidence-key.js";
 import { createReceiptsRouter } from "../routes/receipts.js";
 import { createResponsesRouter } from "../routes/responses.js";
+import { createMessagesRouter } from "../routes/messages.js";
 import { createAtfJwksRouter } from "../routes/atf-jwks.js";
 import { createTransactionJwksRouter, createTransactionJwksSource } from "../routes/transaction-jwks.js";
 import type { ReceiptSigningKey } from "../receipts/signing-key.js";
@@ -336,18 +337,23 @@ export async function registerInferenceRoutes(
     app.use("/v1/chat/completions", disclosure);
     app.use("/v1/responses", disclosure);
     app.use("/v1/responses/*", disclosure);
+    app.use("/v1/messages", disclosure);
   }
-  app.route(
-    "/",
-    createChatRouter(
-      flowRegistry,
-      graphEngine,
-      monitoringService,
-      jwtVerifier,
-      flowDispatcher,
-      inferenceRouterOptions,
-    ),
+  const chatRouter = createChatRouter(
+    flowRegistry,
+    graphEngine,
+    monitoringService,
+    jwtVerifier,
+    flowDispatcher,
+    inferenceRouterOptions,
   );
+  app.route("/", chatRouter);
+
+  // Anthropic Messages API (`POST /v1/messages`, ADR 0038) — a translation
+  // layer that hands every request to the chat router above in-process, so it
+  // runs the identical pipeline. The trust-proxy entry point for clients that
+  // speak the Anthropic API.
+  app.route("/", createMessagesRouter(chatRouter));
 
   // OpenAI Responses API (`POST /v1/responses`) — same pipeline as chat, with a
   // translation layer for the Responses request/response shapes. Clients like

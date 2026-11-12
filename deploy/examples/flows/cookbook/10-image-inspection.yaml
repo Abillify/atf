@@ -1,0 +1,108 @@
+id: cb-image-inspection
+name: Cookbook — image analysis without a vision answering model
+description: >-
+  Answer questions about an attached screenshot from a cheap text-only model. The images are
+  parked as `img-N` references and the node gets a tool that asks a vision model about them on
+  demand, plus a `show_figure` tool that embeds a document figure from a search hit into the
+  answer. Both guarded so a text-only turn costs nothing.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+nodes:
+  # Skipping first is the cheapest rule in the cookbook: a node with `inputFilter` makes no model
+  # call at all when there is nothing to look at. On a classifier the skip resolves to
+  # `config.fallback`, which is why the filter is only honoured there when a fallback is declared.
+  - id: triage
+    type: classifier
+    label: Does the message need the image?
+    llm: { shortcut: structured }
+    classifierSchema:
+      classKey: needsImage
+      schema:
+        type: object
+        properties:
+          needsImage: { type: boolean }
+        required: [needsImage]
+    config:
+      inputFilter: current-turn-attachments
+      fallback: { needsImage: false }
+
+  - id: route
+    type: router
+    label: Route on the answer
+
+  - id: describe
+    type: llm
+    label: Transcribe the attachment
+    # An ordinary answering node stays text-only — the model itself never receives image bytes.
+    # `imageInspection` keeps the images out of its prompt as `img-1`, `img-2`, … and gives it a
+    # tool to ask the vision model about a reference. The vision model is mandatory and must
+    # actually accept images: a model the capability registry does not know fails closed, so a
+    # self-hosted one is attested with `parameters.visionInput: true`.
+    llm: { shortcut: chat }
+    systemPrompt: >-
+      Transcribe everything readable in the attached image, preserving numbers, identifiers
+      and layout. Output the transcription only.
+    config:
+      inputFilter: current-turn-attachments
+      imageInspection:
+        llm:
+          provider: openai
+          model: a-vision-model
+          parameters:
+            # Attestation for a model the capability registry does not know. Without it the node
+            # refuses to run rather than sending images to a model that would ignore them.
+            visionInput: true
+        description: >-
+          Ask what an attached image shows. Pass the image reference (img-1) and a specific
+          question; the answer is text.
+        imageDescription: "Image reference, e.g. img-1"
+        # The vision answer is injected into the context of the answering model, so it is capped:
+        # an unbounded transcription of a dense screenshot pushes the user's own question out.
+        maxAnswerChars: 4000
+        # Enables `asset:<id>[#bbox]` references in addition to `img-N`, fetched through the MCP
+        # `get_asset` tool of the named server. `#bbox` crops, which is how a model points at one
+        # table cell instead of a whole page.
+        assetSource:
+          server: vectorsearch
+          collection: docs
+          variant: preview
+
+  - id: answer
+    type: llm
+    label: Answer with the transcription
+    llm: { shortcut: chat }
+    systemPrompt: >-
+      Answer the user's question. Use the transcription of the attachment when the question
+      is about it. Where a figure explains the answer better than words, embed it.
+    config:
+      # `show_figure`: the model passes an `asset:<id>[#bbox]` reference taken from a search hit,
+      # the bytes are fetched with the caller's own ACL (fail-closed) and handed back as a
+      # short-lived media link the model pastes into its answer. Two deployment gates have to be on
+      # for this to exist at all — `EMBED_SEARCH_FIGURES=true` and `MEDIA_BASE_URL` — and because
+      # the link is a capability URL (knowledge = access), its lifetime is the media store's TTL.
+      figureEmbedding:
+        assetSource:
+          server: vectorsearch
+          collection: docs
+          # preview, not full: the figure is embedded in an answer, not zoomed into.
+          variant: preview
+
+edges:
+  - { source: triage, target: route }
+  - { source: route, target: describe, conditions: "classification.needsImage == true" }
+  - { source: route, target: answer, conditions: "classification.needsImage != true" }
+  - { source: describe, target: answer }
+
+# Pitfalls:
+#
+# - `imageInspection` answers a question about an image; it does not make the answering node
+#   multimodal. A node that must see the image itself needs a vision model and no inspection block.
+# - Both blocks name an MCP server that exposes `get_asset`. Naming a server that is not registered
+#   in `mcp.yaml` validates — the reference is a string — and fails at runtime.
+# - `inputFilter` on a classifier needs `config.fallback`; without it the filter is ignored with a
+#   trace warning and the classifier runs on every text-only turn.

@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import {
+  materializeSecrets,
   resolveOperationalProfile,
   UnknownOperationalProfileError,
   type ResolvedOperationalProfile,
@@ -54,12 +55,70 @@ function collectProviderRefs(value: unknown, out: Set<string>): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every Runtime variable marked SECRET in `docs/CONFIGURATION.md` that can be
+ * supplied through a file instead of the variable itself (`NAME_FILE`, ADR
+ * 0040). The list is explicit rather than a name-pattern sweep on purpose:
+ * a sweep would also match path-valued variables like `TLS_KEY_FILE` and
+ * read that file's contents into a new environment variable nobody asked
+ * for. Connection URLs are included because they carry the database or Redis
+ * password, and `PROVIDERS` / `OPERATOR_TOKENS` because their JSON holds API
+ * keys and bearer tokens. `AUDIT_ANCHOR_SECRET_FILE` is the pointer for
+ * `AUDIT_ANCHOR_SECRET`; it is unrelated to `AUDIT_ANCHOR_FILE`, the anchor
+ * output path, which stays a path.
+ */
+export const RUNTIME_SECRET_VARS = [
+  "MONITORING_TICKET_SECRET",
+  "PROVIDERS",
+  "AUDIT_PSEUDONYM_PEPPER",
+  "AUDIT_ANCHOR_SECRET",
+  "API_KEY_PEPPER",
+  "OPERATOR_TOKENS",
+  "DATABASE_URL",
+  "DATABASE_OPERATOR_URL",
+  "REDIS_URL",
+  "AUDIT_FORWARD_TOKEN",
+  "ERASURE_RECEIPT_SIGNING_KEY",
+  "RECEIPT_SIGNING_KEY",
+  "EVIDENCE_BUNDLE_SECRET",
+  "EVIDENCE_SIGNING_KEY",
+  "JWT_SECRET",
+  "OIDC_CLIENT_SECRET",
+  "OIDC_SESSION_SECRET",
+  "BYOK_ENCRYPTION_KEY",
+  "PII_VAULT_ENCRYPTION_KEY",
+  "PII_REMOTE_API_KEY",
+  "PII_IMAGE_REMOTE_API_KEY",
+  "PROVIDER_KEYS",
+  "CITATION_CHECK_TOKEN",
+  "ASSISTANT_DELEGATION_CLIENT_SECRET",
+  "ASSISTANT_ENCRYPTION_KEY",
+  "ROCKETCHAT_BOT_AUTH_TOKEN",
+  "ROCKETCHAT_WEBHOOK_TOKEN",
+  "ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET",
+  "ROCKETCHAT_CONNECT_SESSION_SECRET",
+  "TRANSACTION_SIGNING_KEY",
+  "AGENT_TRANSACTION_SECRET",
+  "GITOPS_WEBHOOK_SECRET",
+] as const;
+
+/**
  * Loads and validates all configuration from environment variables.
  *
  * On validation failure: writes a list of all failing variable names to stderr
  * and calls `process.exit(1)`.
  */
 export function loadConfig(): AppConfig {
+  // Resolve `NAME_FILE` secret pointers into their variables BEFORE anything
+  // else reads the environment (ADR 0040). Subsystems read some of these
+  // straight from `process.env` rather than through the parsed config, so the
+  // resolved values are written back in place — otherwise a mounted secret
+  // would be honored by the schema and ignored by the subsystem.
+  try {
+    materializeSecrets(RUNTIME_SECRET_VARS);
+  } catch (err) {
+    process.stderr.write(`[Config] ${(err as Error).message}\n`);
+    process.exit(1);
+  }
   // Apply an ATF_PRESET preset (if any) BEFORE parsing, so its defaults fill
   // only unset variables and Zod coercion/validation sees the effective
   // values. Explicit env vars always win over the preset (see ./profiles.ts).
@@ -175,6 +234,34 @@ export function loadConfig(): AppConfig {
   // silently fall back to forwarding the un-exchanged (wrong-audience) token.
   resolveTokenExchangeSecrets(mcpServers);
 
+  // Service links are rendered as clickable URLs in the Control UI, so plain
+  // http: is a development convenience only — in production every link must
+  // be https: (scheme itself is already restricted by ServiceLinkConfigSchema,
+  // which rejects javascript:/data: at parse time).
+  if (appEnv === "production") {
+    const insecure = env.SERVICE_LINKS.filter(
+      (link) => !link.url.toLowerCase().startsWith("https://"),
+    );
+    if (insecure.length > 0) {
+      process.stderr.write(
+        `[Config] SERVICE_LINKS entries must use https:// in production: ` +
+          `${insecure.map((link) => link.name).join(", ")}\n`,
+      );
+      process.exit(1);
+    }
+    // The SIEM webhook carries the whole audit trail plus its bearer token,
+    // so a plaintext target is a config error in production, not a warning.
+    if (
+      env.AUDIT_FORWARD_URL !== undefined &&
+      !env.AUDIT_FORWARD_URL.toLowerCase().startsWith("https://")
+    ) {
+      process.stderr.write(
+        `[Config] AUDIT_FORWARD_URL must use https:// in production\n`,
+      );
+      process.exit(1);
+    }
+  }
+
   return {
     ...(profile !== undefined ? { profile } : {}),
     port: env.PORT,
@@ -191,6 +278,7 @@ export function loadConfig(): AppConfig {
     appEnv,
     monitoringTransport: env.MONITORING_TRANSPORT,
     mcpServers,
+    serviceLinks: env.SERVICE_LINKS,
     mcpSchemaCompatibilityMode: env.MCP_SCHEMA_COMPATIBILITY_MODE,
     ...(env.PROVIDERS.length > 0 ? { providers: env.PROVIDERS } : {}),
     anthropicPromptCacheEnabled: env.ANTHROPIC_PROMPT_CACHE,
@@ -211,6 +299,18 @@ export function loadConfig(): AppConfig {
     auditAnchorSecret: env.AUDIT_ANCHOR_SECRET,
     auditAnchorIntervalMs: env.AUDIT_ANCHOR_INTERVAL_MS,
     auditAnchorFile: env.AUDIT_ANCHOR_FILE,
+    ...(env.AUDIT_FORWARD_URL !== undefined
+      ? { auditForwardUrl: env.AUDIT_FORWARD_URL }
+      : {}),
+    ...(env.AUDIT_FORWARD_TOKEN !== undefined
+      ? { auditForwardToken: env.AUDIT_FORWARD_TOKEN }
+      : {}),
+    ...(env.AUDIT_FORWARD_BATCH_SIZE !== undefined
+      ? { auditForwardBatchSize: env.AUDIT_FORWARD_BATCH_SIZE }
+      : {}),
+    ...(env.AUDIT_FORWARD_INTERVAL_MS !== undefined
+      ? { auditForwardIntervalMs: env.AUDIT_FORWARD_INTERVAL_MS }
+      : {}),
     auditPseudonymPepper: env.AUDIT_PSEUDONYM_PEPPER,
     ...(env.ERASURE_TARGETS !== undefined
       ? { erasureTargets: env.ERASURE_TARGETS }
@@ -298,6 +398,11 @@ export function loadConfig(): AppConfig {
           .map((s) => s.trim())
           .filter((s) => s !== "")
       : undefined,
+    piiVaultTypedTokens: env.PII_VAULT_TYPED_TOKENS,
+    piiVaultConsistentTokens: env.PII_VAULT_CONSISTENT_TOKENS,
+    piiVaultDetokenizeTools: env.PII_VAULT_DETOKENIZE_TOOLS,
+    piiVaultScope: env.PII_VAULT_SCOPE,
+    proxyModels: env.PROXY_MODELS,
     piiDetectors: env.PII_DETECTORS
       ? env.PII_DETECTORS.split(",")
           .map((s) => s.trim())
@@ -383,7 +488,9 @@ export function loadConfig(): AppConfig {
     approvalGateEnabled: env.APPROVAL_GATE_ENABLED,
     approvalRequireTools: env.APPROVAL_REQUIRE_TOOLS,
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,
+    approvalLinkConfirm: env.APPROVAL_LINK_CONFIRM,
     approvalBaseUrl: env.APPROVAL_BASE_URL,
+    approvalMessageLocale: env.APPROVAL_MESSAGE_LOCALE,
     approvalFrameAncestors: env.APPROVAL_FRAME_ANCESTORS,
     mediaBaseUrl: env.MEDIA_BASE_URL ?? env.APPROVAL_BASE_URL,
     embedSearchFigures: env.EMBED_SEARCH_FIGURES,

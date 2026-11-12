@@ -39,6 +39,30 @@ global:
   #   search   -> POSTGRES_URL, EMBED_*, optional RERANK_*, CONVERTER_TOKEN
   #   extract  -> EXTRACT_DATABASE_URL, VISION_*
   #   control  -> session/OIDC material
+  #
+  # Every variable marked SECRET in docs/CONFIGURATION.md is also read from a
+  # file when <NAME>_FILE is set instead (ADR 0040), which is how a projected
+  # secret volume or an External Secrets sync is mounted rather than expanded
+  # into env values. Per service, <service>.extraEnv carries the pointer and
+  # <service>.extraVolumes/<service>.extraVolumeMounts the mount, e.g. for the
+  # Runtime receipt key:
+  #
+  #   runtime:
+  #     extraEnv:
+  #       - name: RECEIPT_SIGNING_KEY_FILE
+  #         value: /run/secrets/atf/receipt-signing-key
+  #     extraVolumes: |
+  #       - name: atf-secrets
+  #         projected:
+  #           sources:
+  #             - secret: { name: atf-runtime-secrets }
+  #     extraVolumeMounts: |
+  #       - name: atf-secrets
+  #         mountPath: /run/secrets/atf
+  #         readOnly: true
+  #
+  # Setting both NAME and NAME_FILE is a startup error on purpose, so a Secret
+  # expanded by envFrom can never silently win over (or lose to) a mount.
   secrets:
     runtime: ""
     gate: ""

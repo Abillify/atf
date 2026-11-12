@@ -1,0 +1,128 @@
+# Blueprint: an Outpost mirroring two folders into one Extract collection.
+#
+# The Outpost runs where the documents are — a file server, a department share — and the
+# network connection only ever goes out. Nothing has to be opened inbound, which is the
+# whole reason this component exists instead of a crawler on the server side.
+#
+# This file is read from /config/outpost.yaml inside the container (see README.md for the
+# mount). It deliberately holds no secrets: an unknown `apiToken:` key is stripped rather
+# than used, so a stray secret here is silently ignored instead of loaded. Credentials go
+# in environment variables, or in files named by a `_FILE` variable.
+#
+# One thing to decide before anything else: `collection`. It is the access-control
+# boundary in Extract, and it is in the name of every document already ingested — renaming
+# it later means re-ingesting everything, not updating a setting.
+
+# Where to hand documents. HTTPS is required; a plain http:// URL is refused unless
+# `allowInsecureLocalhost` is set for a local test.
+extractUrl: https://extract.example.internal
+collection: department_documents
+
+# Re-read the tree every 15 minutes. The interval is a cost/benefit knob, not a freshness
+# guarantee: each pass hashes every file it sees, so a short interval on a large share
+# spends the day re-hashing unchanged documents. Deletions are not handled here — see
+# `mirrorDelete` on the source.
+syncIntervalSec: 900
+
+# The health endpoint, on loopback. It answers without a token, so binding it to 0.0.0.0
+# would hand anyone on the network a list of configured sources and their last sync state.
+# Keep it here and read it from the host (`curl 127.0.0.1:8787/healthz`).
+health:
+  bind: 127.0.0.1
+  port: 8787
+
+# Optional: sign in to the identity provider so the Outpost can ingest with a caller's own
+# rights instead of its service token. Without it, every document is ingested under the
+# Outpost's token and the ACLs below are the only thing shaping access.
+# oidc:
+#   issuer: https://id.example.internal
+#   clientId: atf-outpost
+#   scopes:
+#     - openid
+#     - profile
+
+sources:
+  # A mounted folder. `path` is the path INSIDE the Outpost container, which is where the
+  # mount puts it — not where it lives on the host. Getting these two confused is the most
+  # common reason a source reports zero files.
+  - id: dept-share
+    type: local
+    path: /sources/dept-share
+    # Watch for changes rather than waiting for the interval, so an edited file is picked
+    # up in seconds. On a network share (NFS/SMB), events are unreliable or absent — then
+    # leave this false and rely on `syncIntervalSec`, which always re-reads.
+    watch: true
+    # Never follow symlinks: a link out of the folder turns a folder-scoped mirror into
+    # whatever the share's operator happened to point at, and the ACL below cannot see it.
+    followSymlinks: false
+    # Only these documents. Patterns are matched against the path relative to `path`.
+    include:
+      - "**/*.pdf"
+      - "**/*.docx"
+      - "**/*.xlsx"
+    # Anything temporary or personal never leaves the folder — lock files and drafts carry
+    # content a reader was never meant to see, and ingesting them makes it searchable.
+    exclude:
+      - "**/~$*"
+      - "**/*.tmp"
+      - "**/Drafts/**"
+    # Tags travel with the document and are what a flow filters retrieval on. Write them
+    # here, per source, where they are reviewable — not in a prompt.
+    tags:
+      - department-finance
+      - source-share
+    # Free-form key/value metadata, visible to retrieval filters. Values are strings only.
+    metadata:
+      origin: dept-share
+      review: annual
+    # Who may retrieve these documents once they are in Extract. The Outpost sends this
+    # list and Extract intersects it with the Outpost token's own rights: a name listed
+    # here but without the `extract.acl.assign` scope on the token does NOT get access —
+    # the ingest item fails with an ACL-applied mismatch instead of quietly opening up.
+    # Users must match how identities are written in Extract (`dana.keller`), not how the
+    # file server spells them.
+    acl:
+      users:
+        - dana.keller
+      groups:
+        - finance
+    # When a file disappears from the source, delete it from the collection too. Off by
+    # default here on purpose: a source mounted one level too high, or an unmounted volume
+    # that reads as an empty folder, otherwise becomes a mass deletion in the collection.
+    # With this on, deletions are held for `atf-outpost confirm-deletes dept-share` and
+    # `deleteThresholdPercent` refuses the batch outright above that share of the mirror.
+    mirrorDelete: false
+    deleteThresholdPercent: 25
+
+  # An S3-compatible bucket: same pipeline, different transport. Credentials never appear
+  # below. `store` reads the Outpost's own credential store, and falls back to the standard
+  # AWS chain when nothing is stored there — which in a container means the
+  # `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` pair (see README.md).
+  - id: archive-bucket
+    type: s3
+    bucket: department-archive
+    # A prefix scopes the mirror to one folder of a bucket that holds other things too.
+    # Without it, every object in the bucket is ingested, including whatever another team
+    # put there under the same credentials.
+    prefix: 2026/
+    region: eu-central-1
+    # Only needed for an S3-compatible service (MinIO, R2, Ceph). Leave unset for AWS S3.
+    endpoint: https://s3.example.internal
+    # Path-style addressing (`host/bucket/key`) is what most self-hosted services expect;
+    # AWS itself does not need it.
+    forcePathStyle: true
+    credentials: store
+    tags:
+      - department-finance
+      - source-archive
+    metadata:
+      origin: archive-bucket
+      retention: "10y"
+    acl:
+      groups:
+        - finance
+    # An archive's contents are authoritative: a object deleted upstream is gone, and a
+    # copy left in the collection is a document nobody can cite any more. On for this
+    # source, still behind the threshold and the confirmation step above.
+    mirrorDelete: true
+    deleteThresholdPercent: 25

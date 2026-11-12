@@ -1,0 +1,287 @@
+# Blueprint: a Gate in front of one domain database.
+#
+# Replace three things and this is a real deployment: the identity provider block, the
+# database connection, and the three tool queries. Everything else below is a decision
+# you should keep, and each one says why.
+#
+# The placeholders are `${VAR:-…}` on purpose: an unset variable interpolates to an empty
+# string, which then fails the schema and the whole config refuses to load. A default
+# lets you run `atf-doctor` against this file before you own any secrets. Nothing in here
+# is a usable credential — see README.md for what has to be set for real.
+server:
+  host: 0.0.0.0
+  port: 3100
+  name: atf-blueprint-gate
+  # Cursor pagination signs its cursors so one caller cannot walk another caller's pages.
+  # One replica with an in-memory session store does not strictly need it; setting the
+  # secret now is what makes `ATF_GATE_REPLICAS=2` a config change rather than an outage.
+  pagination:
+    secret: ${ATF_BLUEPRINT_GATE_CURSOR_SECRET:-blueprint-cursor-secret-change-me-please}
+  # No HTTP tool lives in this file, so nothing here needs to reach out. The host below
+  # is a reserved, unroutable example: an empty list is refused outright in production,
+  # and a wildcard would let a future HTTP tool talk to a cloud metadata endpoint.
+  outbound:
+    allowedHosts:
+      - outbound-disabled.invalid
+  rateLimit:
+    # `memory` is correct for one replica and silently per-replica on several: each
+    # process counts its own requests. Switch `type` to `redis` (plus `redisUrl`) when
+    # scaling, or one caller simply round-robins across replicas.
+    enabled: true
+    windowMs: 60000
+    max: 60
+    store:
+      type: memory
+    # Off by default, and off here: with a verified identity below, a per-IP limit lets one
+    # busy NAT gateway starve a whole office. Turn this on when callers are people; it is
+    # keyed on the token subject and applies in addition to the IP limit.
+    perIdentity:
+      enabled: false
+      windowMs: 60000
+      max: 20
+
+# Development identity: one static token that resolves to a username and carries the
+# scopes the tools below ask for. The production gate rejects `mode: static` outright, so
+# this block cannot survive into a real deployment — swap it for the commented oauth
+# block and every tool keeps working, because each one reads `:ctx.*` and never accepts a
+# user name from the model.
+auth:
+  mode: static
+  static:
+    tokens:
+      - token: ${ATF_BLUEPRINT_GATE_TOKEN:-blueprint-local-token-change-me-0123456789}
+        subject: blueprint-caller
+        username: dana.keller
+        scopes:
+          - contracts:read
+          - contracts:write
+# auth:
+#   mode: oauth
+#   oauth:
+#     discoveryUrl: ${ATF_BLUEPRINT_OIDC_DISCOVERY_URL}
+#     issuer: ${ATF_BLUEPRINT_OIDC_ISSUER}
+#     audience: atf-blueprint
+#     # Leave `algorithms` alone unless the IdP insists: the default is RS256, and adding
+#     # HS256 lets anyone holding the shared secret mint tokens this Gate accepts.
+#     usernameClaim: preferred_username
+#     groupClaim: groups
+#     # Without this, every user the IdP knows may call every tool the token's scopes
+#     # allow; groupScopes is where org structure becomes access.
+#     groupScopes:
+#       contracts-read:
+#         - contracts:read
+
+authorization:
+  enabled: true
+
+# Single domain, single tenant: nothing is partitioned, so nothing filters by tenant.
+# Turn this on the moment two customers share this Gate — it then requires every tool
+# query to bind `:ctx.tenantId` itself, which none of the queries below do. That is a
+# deliberate to-do, not an oversight: it is the first thing to change, not a setting to
+# flip quietly.
+tenantIsolation:
+  enabled: false
+
+policies:
+  # Deny by default, allow per tool. With `allow`, a tool added next month is reachable
+  # the moment it loads; with `deny`, it is invisible until someone says otherwise.
+  defaultEffect: deny
+  rules:
+    - effect: allow
+      match:
+        tool: contract_lookup
+    - effect: allow
+      match:
+        tool: case_list
+    # The write path. A person in front of a screen has to see what is about to be filed
+    # and say yes; the model's confidence is not a substitute. `ttlMs` (default 5 min)
+    # then decides the outcome by itself — an unanswered approval expires, it never
+    # silently executes.
+    - effect: approval
+      match:
+        tool: case_note_add
+        access: write
+      approval:
+        title: File a note in the contract case
+        message: >-
+          The assistant wants to add a note. Read the body: it came from a model and is
+          about to be stored under your name.
+        # What the reviewer sees before deciding. `value` is rendered against the call,
+        # so `{{args.x}}` reads the argument the model actually sent — an approval card
+        # that quotes the plan instead of the arguments approves nothing in particular.
+        fields:
+          - name: case
+            label: Case
+            value: "{{args.case_id}}"
+          - name: note
+            label: Note text
+            value: "{{args.body}}"
+  approval:
+    # Separation of duties: the principal that asked may not be the one who approves.
+    # Off, an automated caller answers its own request and the gate measures nothing.
+    requireDifferentApprover: true
+    ttlMs: 600000
+    # Needed to sign approval tokens across replicas. Keep it out of the file in a real
+    # deployment and read it from the environment like the placeholder here.
+    secret: ${ATF_BLUEPRINT_GATE_APPROVAL_SECRET:-blueprint-approval-secret-change-me}
+
+# The reviewer UI shows live tool calls with their arguments and results, which is exactly
+# what you want while debugging and exactly what you do not want open by default. With
+# `enabled: false` there is no UI to protect; before turning it on, add
+# `monitoring.oidc` including a non-empty `requiredGroups`, or every user of the IdP sees
+# every call.
+monitoring:
+  enabled: false
+
+databases:
+  contracts:
+    client: pg
+    connection:
+      host: ${ATF_BLUEPRINT_DB_HOST:-postgres}
+      port: 5432
+      user: ${ATF_BLUEPRINT_DB_USER:-atf}
+      password: ${ATF_BLUEPRINT_DB_PASSWORD:-change-me}
+      database: ${ATF_BLUEPRINT_DB_NAME:-contracts}
+    pool:
+      min: 0
+      max: 2
+    # A missing index should cost one tool call, not the pool: tool calls arrive over
+    # long-lived MCP sessions, so an uncapped query can hold a connection forever.
+    statementTimeoutMs: 10000
+
+tools:
+  - name: contract_lookup
+    type: database
+    database: contracts
+    access: read
+    requiredScopes:
+      - contracts:read
+    description: >-
+      One contract by number, with the contact of the person who owns it. The contract
+      number is the only input; ownership is checked in SQL against the verified caller.
+    rowLimit: 5
+    # Named booleans over the verified identity. They never contain SQL and never see
+    # caller input — they only pick which pre-written fragment of the query runs, and
+    # which columns get masked afterwards.
+    conditions:
+      contractor_reader:
+        any:
+          - context: groups
+            containsAny:
+              - contractors
+    # Post-processing of the rows, so it also catches a column the query had to select.
+    # Redaction is applied only when its condition is verifiably true; if authorization
+    # were ever disabled, every guard here stays ON rather than off.
+    redact:
+      # Unconditional: a phone number is never something a model needs to answer a
+      # question about a contract.
+      - column: owner_phone
+        strategy: mask
+        placeholder: "[withheld]"
+      # Conditional: staff may have the address, people from the `contractors` group
+      # receive the row without the key at all.
+      - column: owner_address
+        when: contractor_reader
+        strategy: omit
+    inputSchema:
+      type: object
+      properties:
+        contract_number:
+          type: string
+          description: Contract number as written on the document, e.g. "C-2026-0142".
+      required:
+        - contract_number
+    # Never `SELECT *`: every column you select is a column a model may repeat. Bind
+    # identity from `:ctx.*` — the caller cannot forge it, and there is no argument for
+    # the model to get wrong.
+    query: |
+      SELECT c.number, c.status, c.signed_at, c.owner_name, c.owner_phone, c.owner_address
+      FROM contracts.contract c
+      WHERE c.number = :param.contract_number
+        AND (c.owner_username = :ctx.username OR :ctx.username = ANY (c.team_usernames))
+
+  - name: case_list
+    type: database
+    database: contracts
+    access: read
+    requiredScopes:
+      - contracts:read
+    description: >-
+      Contract cases assigned to the caller, most recently changed first, one page at a
+      time. Takes no filters; ask for the next page with the `nextCursor` the previous
+      page returned.
+    # Paging is the Gate's job: it wraps the query and mints signed cursors, so the SQL
+    # below must not contain LIMIT or OFFSET of its own.
+    pagination:
+      enabled: true
+      pageSize: 25
+      maxPageSize: 100
+      # Required with pagination, and validated as plain columns — no expressions. The
+      # order must be stable across pages, which `updated_at` alone is not: two rows
+      # touched in the same transaction share a timestamp and would straddle a page edge.
+      orderBy:
+        - updated_at DESC
+        - id DESC
+      # Keyset ("seek") paging on the same columns: a page never shifts when rows are
+      # written while the caller is reading, and deep pages cost the same as the first.
+      keyset:
+        - updated_at
+        - id
+    conditions:
+      all_cases_reader:
+        any:
+          - context: scopes
+            containsAny:
+              - contracts:read-all
+    # `{{if:…}}…{{else}}…{{endif}}` selects between two SQL fragments the author wrote —
+    # the only conditional SQL a config file is allowed to contain. Caller input still
+    # arrives exclusively through `:param.*` / `:ctx.*` bind tokens. There is no
+    # negation operator, so the two branches are written out.
+    query: |
+      SELECT id, title, stage, updated_at
+      FROM contracts.case
+      WHERE assignee_username = :ctx.username
+      {{if:all_cases_reader}}
+        AND stage <> 'cancelled'
+      {{else}}
+        AND stage NOT IN ('cancelled', 'archived')
+      {{endif}}
+      ORDER BY updated_at DESC, id DESC
+
+  - name: case_note_add
+    type: database
+    database: contracts
+    access: write
+    requiredScopes:
+      - contracts:write
+    description: >-
+      Append a note to a contract case in the caller's name. Returns the stored row; an
+      empty result means the note was NOT written.
+    rowLimit: 1
+    # A model gets to choose the text and the case, nothing else. The author is the
+    # verified caller, so a note can never be attributed to somebody else, and `additionalProperties`
+    # stays closed so an invented argument is refused rather than ignored.
+    inputSchema:
+      type: object
+      additionalProperties: false
+      properties:
+        case_id:
+          type: integer
+          description: Identifier of the case, as returned by case_list.
+        body:
+          type: string
+          maxLength: 2000
+          description: The note, written for a human reader of the case.
+      required:
+        - case_id
+        - body
+    # `RETURNING` makes the write verifiable in the same call; the approval card above is
+    # what makes it a human decision. Note the ownership check in the WHERE clause: the
+    # caller may only write to a case they hold.
+    query: |
+      INSERT INTO contracts.case_note (case_id, author_username, body)
+      SELECT c.id, :ctx.username, :param.body
+      FROM contracts.case c
+      WHERE c.id = :param.case_id
+        AND c.assignee_username = :ctx.username
+      RETURNING id, case_id, author_username, body, created_at

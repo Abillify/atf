@@ -13,183 +13,190 @@
  * exposes only the base64url helpers.
  */
 
-export { safeEqual, safeEqualBytes } from "./compare.ts";
+export {
+	applySecrets,
+	materializeSecrets,
+	resolveSecret,
+	SecretConfigError,
+} from "./auth/resolve-secret.ts";
 export { createStaticTokenMatcher } from "./auth/static-token.ts";
 export {
-  cborEncode,
-  cborDecode,
-  cborTagged,
-  cborMap,
-  CborEncodeError,
-  CborDecodeError,
-  type CborValue,
-  type CborTagged,
-  type CborMap,
-} from "./cbor/index.ts";
-export {
-  COSE_ALG_EDDSA,
-  ED25519_PUB_KEY_BYTES,
-  ED25519_SIG_BYTES,
-  coseSign1,
-  coseSign1Verify,
-  cborEncodeSign1,
-  cborDecodeSign1,
-  decodeProtectedHeader,
-  importEd25519PrivateKeySeed,
-  exportEd25519RawPublicKey,
-  ed25519RawKeyToJwk,
-  jwkToEd25519RawKey,
-  type CoseSign1,
-  type CoseSign1Options,
-  type Ed25519PublicJwk,
-} from "./cose/index.ts";
-export {
-  createServerWithOptionalTls,
-  TlsServerConfigError,
-  type ServerTlsConfig,
-} from "./server/tls-server.ts";
-export {
-  createClientTlsInit,
-  ClientTlsConfigError,
-  type ClientTlsOptions,
-} from "./http/client-tls.ts";
-export {
-  parseBooleanHeader,
-  readHeader,
-  readListHeader,
-  decodeIfBase64,
-  sanitizeHeaderValue,
-} from "./headers.ts";
-export {
-  base64UrlEncode,
-  base64UrlEncodePadded,
-  base64UrlDecode,
-  base64UrlDecodeToString,
-  base64UrlEncodeString,
-} from "./base64url.ts";
-
-export {
-  parseIPv4,
-  parseIPv6,
-  isForbiddenAddress,
-  isAlwaysForbiddenAddress,
-  FORBIDDEN_HOST_PATTERNS,
-  isHostAllowed,
-} from "./egress/addresses.ts";
-export {
-  createEgressGuard,
-  EgressError,
-  type EgressGuard,
-  type EgressGuardOptions,
-  type GuardedResponse,
-  type GuardedRequestInit,
-  type HostResolver,
-  type ResolvedAddress,
-} from "./egress/guard.ts";
-
-export {
-  createDiscoveryClient,
-  DiscoveryError,
-  parseMaxAgeMs,
-  validateJwksUri,
-  DEFAULT_MIN_POSITIVE_TTL_MS,
-  DEFAULT_NEGATIVE_TTL_MS,
-  DEFAULT_MAX_NEGATIVE_TTL_MS,
-  type DiscoveryClient,
-  type DiscoveryOptions,
-  type OidcDiscoveryDocument,
-} from "./jwt/discovery.ts";
-export {
-  createJwtVerifier,
-  JwtVerificationError,
-  type IssuerConfig,
-  type JwtVerifier,
-  type JwtVerifierOptions,
-  type JwtRejectionReason,
-  type VerifiedJwt,
-} from "./jwt/verifier.ts";
-
-export {
-  gcraCheck,
-  type GcraConfig,
-  type GcraDecision,
-  type GcraState,
-  type FailMode,
-  type RateLimitBackend,
-  type RateLimitResult,
-} from "./rate-limit/gcra.ts";
-export {
-  createMemoryRateLimitBackend,
-  type MemoryBackendOptions,
-} from "./rate-limit/memory.ts";
-export {
-  createRateLimitMiddleware,
-  type RateLimitMiddleware,
-  type RateLimitMiddlewareOptions,
-  type RateLimitRequest,
-  type RateLimitResponse,
-} from "./rate-limit/middleware.ts";
-export {
-  createRedisRateLimitBackend,
-  createLazyRedisRateLimitBackend,
-  GCRA_LUA,
-  type LazyRedisBackendOptions,
-  type LazyRedisRateLimitBackend,
-  type RedisBackendOptions,
-  type RedisEvalClient,
-} from "./rate-limit/redis.ts";
-
-export {
-  createProdGate,
-  requireExplicitAuthMode,
-  forbidWildcardCors,
-  requireTicketSecret,
-  requireEnabled,
-  requireSecretLength,
-  forbidSharedSecrets,
-  requirePositiveTimeout,
-  type ProdGate,
-  type ProdGateFinding,
-} from "./prod-gate/rules.ts";
-export {
-  reportProdGate,
-  type ReportSink,
-  type ReportOutcome,
-} from "./prod-gate/reporter.ts";
-export {
-  OPERATIONAL_PROFILES,
-  OPERATIONAL_PROFILE_ENV_VAR,
-  UnknownOperationalProfileError,
-  normalizeOperationalProfile,
-  profileShadowWarning,
-  resolveOperationalProfile,
-  type OperationalProfile,
-  type ResolvedOperationalProfile,
-} from "./prod-gate/profile.ts";
-
-export {
-  TokenExchanger,
-  ActorTokenProvider,
-  createTokenEndpointResolver,
-  EXCHANGE_EXPIRY_MARGIN_MS,
-  TOKEN_TYPE_ACCESS_TOKEN,
-  TOKEN_TYPE_JWT,
-  type ActorClientCredentialsConfig,
-  type ClientAuthMethod,
-  type ExchangeLogger,
-  type ExchangeResult,
-  type ExchangedToken,
-  type FetchLike,
-  type TokenEndpointResolver,
-  type TokenExchangeConfig,
+	type ActorClientCredentialsConfig,
+	ActorTokenProvider,
+	type ClientAuthMethod,
+	createTokenEndpointResolver,
+	EXCHANGE_EXPIRY_MARGIN_MS,
+	type ExchangedToken,
+	type ExchangeLogger,
+	type ExchangeResult,
+	type FetchLike,
+	TOKEN_TYPE_ACCESS_TOKEN,
+	TOKEN_TYPE_JWT,
+	type TokenEndpointResolver,
+	type TokenExchangeConfig,
+	TokenExchanger,
 } from "./auth/token-exchange.ts";
 export {
-  LOG_REDACTED,
-  hashIdentifier,
-  isSensitiveLogKey,
-  pinoLogRedaction,
-  redactLogFields,
-  redactLogString,
-  withMaskedChildBindings,
+	base64UrlDecode,
+	base64UrlDecodeToString,
+	base64UrlEncode,
+	base64UrlEncodePadded,
+	base64UrlEncodeString,
+} from "./base64url.ts";
+export {
+	CborDecodeError,
+	CborEncodeError,
+	type CborMap,
+	type CborTagged,
+	type CborValue,
+	cborDecode,
+	cborEncode,
+	cborMap,
+	cborTagged,
+} from "./cbor/index.ts";
+export { safeEqual, safeEqualBytes } from "./compare.ts";
+export {
+	COSE_ALG_EDDSA,
+	type CoseSign1,
+	type CoseSign1Options,
+	cborDecodeSign1,
+	cborEncodeSign1,
+	coseSign1,
+	coseSign1Verify,
+	decodeProtectedHeader,
+	ED25519_PUB_KEY_BYTES,
+	ED25519_SIG_BYTES,
+	type Ed25519PublicJwk,
+	ed25519RawKeyToJwk,
+	exportEd25519RawPublicKey,
+	importEd25519PrivateKeySeed,
+	jwkToEd25519RawKey,
+} from "./cose/index.ts";
+export {
+	type AllowlistPartition,
+	type CidrRange,
+	FORBIDDEN_HOST_PATTERNS,
+	isAddressInCidr,
+	isAlwaysForbiddenAddress,
+	isForbiddenAddress,
+	isHostAllowed,
+	parseCidr,
+	parseIPv4,
+	parseIPv6,
+	partitionAllowlistEntries,
+} from "./egress/addresses.ts";
+export {
+	createEgressGuard,
+	EgressError,
+	type EgressGuard,
+	type EgressGuardOptions,
+	type GuardedRequestInit,
+	type GuardedResponse,
+	type HostResolver,
+	type ResolvedAddress,
+} from "./egress/guard.ts";
+export {
+	decodeIfBase64,
+	parseBooleanHeader,
+	readHeader,
+	readListHeader,
+	sanitizeHeaderValue,
+} from "./headers.ts";
+export {
+	ClientTlsConfigError,
+	type ClientTlsOptions,
+	createClientTlsInit,
+} from "./http/client-tls.ts";
+
+export {
+	createDiscoveryClient,
+	DEFAULT_MAX_NEGATIVE_TTL_MS,
+	DEFAULT_MIN_POSITIVE_TTL_MS,
+	DEFAULT_NEGATIVE_TTL_MS,
+	type DiscoveryClient,
+	DiscoveryError,
+	type DiscoveryOptions,
+	type OidcDiscoveryDocument,
+	parseMaxAgeMs,
+	validateJwksUri,
+} from "./jwt/discovery.ts";
+export {
+	createJwtVerifier,
+	type IssuerConfig,
+	type JwtRejectionReason,
+	JwtVerificationError,
+	type JwtVerifier,
+	type JwtVerifierOptions,
+	type VerifiedJwt,
+} from "./jwt/verifier.ts";
+export {
+	hashIdentifier,
+	isSensitiveLogKey,
+	LOG_REDACTED,
+	pinoLogRedaction,
+	redactLogFields,
+	redactLogString,
+	withMaskedChildBindings,
 } from "./log-redact.ts";
+export {
+	normalizeOperationalProfile,
+	OPERATIONAL_PROFILE_ENV_VAR,
+	OPERATIONAL_PROFILES,
+	type OperationalProfile,
+	profileShadowWarning,
+	type ResolvedOperationalProfile,
+	resolveOperationalProfile,
+	UnknownOperationalProfileError,
+} from "./prod-gate/profile.ts";
+export {
+	type ReportOutcome,
+	type ReportSink,
+	reportProdGate,
+} from "./prod-gate/reporter.ts";
+export {
+	createProdGate,
+	forbidSharedSecrets,
+	forbidWildcardCors,
+	type ProdGate,
+	type ProdGateFinding,
+	requireEnabled,
+	requireExplicitAuthMode,
+	requirePositiveTimeout,
+	requireSecretLength,
+	requireTicketSecret,
+} from "./prod-gate/rules.ts";
+export {
+	type FailMode,
+	type GcraConfig,
+	type GcraDecision,
+	type GcraState,
+	gcraCheck,
+	type RateLimitBackend,
+	type RateLimitResult,
+} from "./rate-limit/gcra.ts";
+export {
+	createMemoryRateLimitBackend,
+	type MemoryBackendOptions,
+} from "./rate-limit/memory.ts";
+export {
+	createRateLimitMiddleware,
+	type RateLimitMiddleware,
+	type RateLimitMiddlewareOptions,
+	type RateLimitRequest,
+	type RateLimitResponse,
+} from "./rate-limit/middleware.ts";
+export {
+	createLazyRedisRateLimitBackend,
+	createRedisRateLimitBackend,
+	GCRA_LUA,
+	type LazyRedisBackendOptions,
+	type LazyRedisRateLimitBackend,
+	type RedisBackendOptions,
+	type RedisEvalClient,
+} from "./rate-limit/redis.ts";
+export {
+	createServerWithOptionalTls,
+	type ServerTlsConfig,
+	TlsServerConfigError,
+} from "./server/tls-server.ts";
 export { trimTrailingSlashes } from "./url-trim.ts";
