@@ -231,6 +231,10 @@ describe("/overview — operator start page", () => {
       const link = card.querySelector("a");
       expect(link?.getAttribute("href")).toBe(href);
     }
+    // A usage row opens its trace through the query deep link the traces page
+    // reads (`/traces?execution=<id>`); there is no `/traces/<id>` route.
+    const rowLink = (await screen.findAllByTestId("usage-row"))[0]?.querySelector("a");
+    expect(rowLink?.getAttribute("href")).toBe("/traces?execution=e-1");
   });
 
   test("an empty deployment renders the explained empty states", async () => {

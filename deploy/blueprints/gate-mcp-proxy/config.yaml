@@ -1,0 +1,123 @@
+# Blueprint: the Gate as a governed front door for an existing MCP server.
+#
+# Clients that already speak MCP (a coding agent, a desktop assistant) connect to this Gate
+# instead of to the MCP server behind it. They see the same tools, but every call now runs
+# with a verified identity, a scope check, a policy decision, an approval for writes, and an
+# audit record. Pair it with the Runtime's trust-proxy mode (docs/TRUST-PROXY.md) and both
+# the model traffic and the tool traffic of such a client are governed.
+#
+# Replace three things and this is a real deployment: the identity provider block, the
+# downstream server URL, and the scope names. Every `${VAR:-…}` has a placeholder default so
+# the file loads offline; none of the defaults is a usable credential.
+server:
+  host: 0.0.0.0
+  port: 3200
+  name: atf-blueprint-mcp-proxy
+  # Only the downstream MCP server may be reached. An empty list is refused in production,
+  # and a wildcard would let an imported tool definition point the Gate anywhere.
+  outbound:
+    allowedHosts:
+      - ${ATF_BLUEPRINT_MCP_HOST:-mcp-server.example.invalid}
+  rateLimit:
+    enabled: true
+    windowMs: 60000
+    max: 120
+    store:
+      type: memory
+    # Agent clients call tools in bursts; a per-identity limit keeps one runaway agent from
+    # using up the downstream server for everyone else.
+    perIdentity:
+      enabled: true
+      windowMs: 60000
+      max: 60
+
+# Development identity, refused by the production gate. Swap it for the oauth block below:
+# the scope names stay the same, so the import and the policies keep working.
+auth:
+  mode: static
+  static:
+    tokens:
+      - token: ${ATF_BLUEPRINT_MCP_TOKEN:-blueprint-mcp-token-change-me-0123456789}
+        subject: blueprint-agent
+        username: jordan.lee
+        scopes:
+          - crm:use
+# auth:
+#   mode: oauth
+#   oauth:
+#     discoveryUrl: ${ATF_BLUEPRINT_OIDC_DISCOVERY_URL}
+#     issuer: ${ATF_BLUEPRINT_OIDC_ISSUER}
+#     audience: atf-mcp-proxy
+#     usernameClaim: preferred_username
+#     groupClaim: groups
+#     # Only members of this group may use the CRM tools at all.
+#     groupScopes:
+#       crm-users:
+#         - crm:use
+
+authorization:
+  enabled: true
+
+tenantIsolation:
+  enabled: false
+
+# The downstream server's tools become this Gate's tools. They are discovered at load time,
+# so a tool the downstream server adds next month appears here too — which is why the
+# policy below denies by default and why `pin` exists for tools whose definition must not
+# change silently.
+mcpServers:
+  - server:
+      url: ${ATF_BLUEPRINT_MCP_URL:-https://mcp-server.example.invalid/mcp}
+      # The Gate authenticates to the downstream server with its own credential, never with
+      # the caller's token: passthrough would hand the downstream a token minted for the Gate.
+      # Use `tokenExchange` instead when the downstream must see the end user.
+      token: ${ATF_BLUEPRINT_MCP_DOWNSTREAM_TOKEN:-blueprint-downstream-token-change-me}
+      timeoutMs: 30000
+      # Set to true only for a server inside your network (RFC 1918 address via split DNS).
+      # Loopback and metadata addresses stay refused either way.
+      allowPrivateAddress: false
+    prefix: crm_
+    # Every imported tool requires this scope: a caller without it neither sees nor calls one.
+    requiredScopes:
+      - crm:use
+    # A tool counts as `read` only when the downstream server says `readOnlyHint: true`;
+    # everything else is `write` and falls under the approval rule below.
+    overrides:
+      # Example of narrowing one tool: hide a parameter and fix it to a safe value.
+      - name: contact_search
+        replaceParams:
+          limit: 25
+
+policies:
+  # Deny unknown tools until someone allows them. With `allow`, a tool the downstream server
+  # adds is reachable the moment this Gate reloads.
+  defaultEffect: deny
+  rules:
+    - effect: allow
+      match:
+        tool: crm_*
+        access: read
+    # Writes need a person. Agents call tools in loops; one misread instruction should end in
+    # an approval card, not in a deleted record.
+    - effect: approval
+      match:
+        tool: crm_*
+        access: write
+      approval:
+        title: The agent wants to change CRM data
+        message: >-
+          Check the tool and the arguments. They come from a model acting for the user named
+          below.
+  approval:
+    # An agent talking MCP directly has no person in front of it, so it must not be able to
+    # approve its own request. A reviewer with `approvals:resolve` (a different principal of
+    # the same tenant) decides; an unanswered approval expires after `ttlMs`.
+    requireDifferentApprover: true
+    approverScope: approvals:resolve
+    ttlMs: 300000
+    secret: ${ATF_BLUEPRINT_MCP_APPROVAL_SECRET:-blueprint-approval-secret-change-me}
+
+monitoring:
+  enabled: false
+
+tools: []

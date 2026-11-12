@@ -116,6 +116,25 @@ export const PROFILES: Record<string, ProfileDefaults> = {
     TENANT_RLS_REQUIRED: "true",
   },
 
+  /**
+   * Trust-proxy gateway in front of existing AI clients (ADR 0038): the
+   * controls that apply to pass-through traffic, without the production
+   * operational profile (set `ATF_PROFILE=production` for that). Guardrails
+   * flag rather than block, so a coding agent is not stopped by a heuristic;
+   * the flags land in the audit trail. Decision receipts need a signing key and
+   * stay explicit, like in every preset. `PROXY_MODELS` is still required.
+   */
+  "trust-proxy": {
+    PII_VAULT_ENABLED: "true",
+    INPUT_GUARDRAILS_ENABLED: "true",
+    INPUT_GUARDRAIL_MODE: "flag",
+    OUTPUT_GUARDRAILS_ENABLED: "true",
+    CLIENT_TOOLS_ENABLED: "true",
+    IDEMPOTENCY_ENABLED: "true",
+    RETENTION_ENABLED: "true",
+    AI_DISCLOSURE: "header",
+  },
+
   /** Throughput/cost-optimised — caching levers only, no posture changes. */
   performance: {
     ...PERFORMANCE_CACHES,

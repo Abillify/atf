@@ -29,8 +29,15 @@ secret from it at startup. The rules are deliberately strict:
   (Kubernetes propagates a projected-volume update into the container, but the
   process keeps the value it read at startup.)
 
-Which variables accept a file is listed per service next to the SECRET markers
-in `docs/CONFIGURATION.md`. Path-valued variables that merely *look* like the
+This covers the service variables marked SECRET in `docs/CONFIGURATION.md`,
+`AUDIT_ANCHOR_SECRET`, `OPERATOR_TOKENS`, `PROVIDERS`, and the connection URLs
+that carry a password (`DATABASE_URL`, `DATABASE_OPERATOR_URL`, `REDIS_URL`,
+`POSTGRES_URL`, `EXTRACT_DATABASE_URL`, `RATE_LIMIT_REDIS_URL`,
+`MCPGATE_TRANSACTION_REDIS_URL`). In the Gate, every `${VAR}` reference in the
+YAML configuration and every `clientSecretEnv` honours `VAR_FILE` the same way,
+so an operator-named database password can be mounted too. The lists live in
+the code (`RUNTIME_SECRET_VARS`, `SEARCH_SECRET_VARS`, `EXTRACT_SECRET_VARS`,
+`GATE_SECRET_VARS`). Path-valued variables that merely *look* like the
 pattern (`TLS_KEY_FILE`, `TLS_CERT_FILE`, `TLS_CLIENT_CA_FILE`,
 `SEARCH_CA_CERT_FILE`, `CONVERTER_CA_CERT_FILE`, `AUDIT_ANCHOR_FILE`,
 `OUTPOST_CONFIG_FILE`) are paths, not secret pointers, and are excluded.

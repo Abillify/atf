@@ -272,6 +272,18 @@ const RLS_SETUP_STATEMENTS: readonly string[] = [
      END IF;
    END
    $$`,
+  // The SIEM forwarding position is operator-plane bookkeeping: a tenant-plane
+  // connection that could move it forward could hide audit entries from the
+  // receiver (migration 53 repeats this for databases onboarded earlier).
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'audit_forward_state') THEN
+       EXECUTE 'REVOKE INSERT, UPDATE, DELETE ON public.audit_forward_state FROM aiperator_app';
+       EXECUTE 'GRANT INSERT, UPDATE, SELECT ON public.audit_forward_state TO aiperator_operator';
+     END IF;
+   END
+   $$`,
   // Req 15.3 (platform-hardening): the Decision_Receipt transparency log is
   // append-only evidence as well — take UPDATE/DELETE back from the blanket
   // grant above (mirrors audit_log; migration 46 repeats this idempotently).

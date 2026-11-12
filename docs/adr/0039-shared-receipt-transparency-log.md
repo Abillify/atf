@@ -4,7 +4,7 @@ Date: 2026-11-11
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Implemented as `PostgresTransparencyLog`; see "Implementation notes".
 
 ## Context
 
@@ -132,3 +132,18 @@ leaf order.
   log partitions (one log for all tenants is the current and proposed shape,
   since leaves are already per-receipt and proofs reveal nothing about other
   leaves).
+
+## Implementation notes
+
+- `PostgresTransparencyLog` (`apps/runtime/src/receipts/postgres-transparency-log.ts`) keeps a
+  mirror of `receipt_log` and extends it with `refresh()`; the interface gained an optional
+  `refresh()` that the receipt routes (on a miss) and the tree-head sealer call before reading.
+- The leaf index is the row's rank in `ORDER BY seq`, not `seq`: an `ON CONFLICT DO NOTHING`
+  insert consumes a sequence value, so `seq` can have gaps.
+- Sealed heads are adopted only when their root matches the shared tree at their size; heads
+  from the per-process era stay in `receipt_tree_heads` and remain valid for the proofs issued
+  with them.
+- `PostgresReceiptLogSink` remains for the in-memory log's tests and tooling; the Runtime no
+  longer wires it.
+- Tests: `postgres-transparency-log.pg.test.ts` (three concurrent instances, sequence gaps,
+  cross-instance proofs, legacy heads, restart), gated on `TEST_POSTGRES_URL`.

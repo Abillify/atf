@@ -72,7 +72,8 @@ instead of an opinion.
 
 The interesting part is that the two texts differ. The Runtime's Debug_Trace
 (`GET /monitoring/debug/<X-Execution-Id>`) records what the node was given, and there the address
-reads `[[PII:4aa332177d8cebc0]]`; the answer that comes back to the caller contains
+reads `[[PII:EMAIL:4aa3cb7c8d1e0fab]]` (Runtime 0.25.6 and earlier: `[[PII:4aa332177d8cebc0]]`,
+without the type); the answer that comes back to the caller contains
 `maria.huber@example.com` again. The same request therefore proves both halves: tokenisation before
 the provider, substitution on the way out.
 
@@ -141,6 +142,25 @@ would teach the wrong lesson.
 | `did not expire within …` | The stack is still on the ten minute default. Restart with `ATF_APPROVAL_TIMEOUT_MS=15000` and pass `--approval-window 15000`. |
 | `no placeholder in the Debug_Trace` | The vault is off, or the message contains nothing its detectors recognise. The demo text is chosen so that it does. |
 | `atf-verify rejected a genuine receipt` | The volume's key changed underneath the stored receipts — expected after `down --volumes`, since the receipt and the key no longer belong together. |
+
+## Bonus: point an existing client at ATF
+
+Not part of `tour.sh`, because it needs a Runtime built from this checkout (the published
+0.25.6 images predate it). The quickstart maps `claude-*` and `gpt-4.1` to the mock through
+`PROXY_MODELS`, so a client that speaks the Anthropic or the OpenAI API needs nothing but a new
+base URL:
+
+```bash
+curl -s http://127.0.0.1:3000/v1/messages \
+  -H 'content-type: application/json' -H 'x-api-key: <your-key>' \
+  -d '{"model":"claude-sonnet-4-5","max_tokens":200,
+       "messages":[{"role":"user","content":"Please write to maria.huber@example.com"}]}'
+```
+
+The answer comes back in the Anthropic `message` shape; the debug trace of the execution
+(`X-Execution-Id`) shows `flow_id: __proxy__.0` and a `[[PII:EMAIL:…]]` placeholder where the
+address was. The quickstart runs without authentication, so any key is accepted here. Details:
+[Trust-proxy mode](../../docs/TRUST-PROXY.md).
 
 ## Where to go next
 

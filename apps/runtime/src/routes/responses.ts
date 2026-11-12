@@ -19,6 +19,7 @@
  * No `any` at module boundaries.
  */
 
+import { isProxyRegistry } from "../graph/flow-registry-proxy.js";
 import { Hono } from "hono";
 import type { FlowRegistry } from "../graph/flow-parser.js";
 import type { FlowDispatcher } from "../graph/flow-dispatcher.js";
@@ -324,6 +325,9 @@ export function createResponsesRouter(
       canaryManager,
       abManager,
       flowGuardrailResolver,
+      ...(isProxyRegistry(flowRegistry)
+        ? { proxyFlowFor: (model: string) => flowRegistry.proxyFlowFor(model) }
+        : {}),
     });
     const {
       flowToRun,

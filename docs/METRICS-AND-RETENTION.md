@@ -41,7 +41,7 @@ value; histograms expose `_bucket`, `_count` and `_sum` series per metric.
 | aiperator_approvals_total | runtime | counter | Approval-gate decisions by decision. | — |
 | aiperator_audit_write_failures_total | runtime | counter | Audit-log write failures. | — |
 | aiperator_audit_forward_entries_total | runtime | counter | Audit entries delivered to the SIEM webhook (`AUDIT_FORWARD_URL`), counted per batch after HTTP 2xx. | — |
-| aiperator_audit_forward_failures_total | runtime | counter | Failed SIEM forwarding attempts, labelled `status` (HTTP rejection) or `error="transport"`. | warn when steadily increasing |
+| aiperator_audit_forward_failures_total | runtime | counter | Failed SIEM forwarding attempts, labelled `reason` (`http_<status>` for a rejection, `transport` for a connection error or timeout). | warn when steadily increasing |
 | aiperator_audit_forward_lag | runtime | gauge | Audit-log entries beyond the SIEM forwarding position — how far behind the webhook the Runtime is. | warn when steadily increasing |
 | aiperator_degraded_total | runtime | counter | Degraded or fail-open component events. | — |
 | aiperator_history_compaction_skipped | runtime | counter | History compaction attempts skipped. | — |
@@ -61,6 +61,7 @@ value; histograms expose `_bucket`, `_count` and `_sum` series per metric.
 | aiperator_llm_structured_unparsable_total | runtime | counter | Structured outputs that could not be parsed. | — |
 | aiperator_objective_solver_total | runtime | counter | Objective-solver events by outcome. | — |
 | aiperator_pii_vault_tokens_total | runtime | counter | PII tokens stored in the vault. | — |
+| aiperator_pii_vault_tool_detokenized_total | runtime | counter | Tool calls whose arguments got real values back at the PII tool boundary (`PII_VAULT_DETOKENIZE_TOOLS`), labelled `tool`. | review when a tool appears that you did not expect |
 | aiperator_policy_stale_total | runtime | counter | Stale-policy detections. | — |
 | aiperator_prompt_prefix_chars_total | runtime | counter | Characters processed in prompt prefixes. | — |
 | aiperator_prompt_prefix_observations_total | runtime | counter | Prompt-prefix observations. | — |

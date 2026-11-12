@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Artur Krueger
 
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
  * Tests for the audit SIEM forwarder (review follow-up G3): batching,
  * at-least-once position semantics (retry after 500, no gap after restart),
@@ -463,9 +464,14 @@ describe("createAuditForwarder", () => {
       seen.some(
         (s) =>
           s.name === "aiperator_audit_forward_failures_total" &&
-          s.labels.status === "429",
+          s.labels.reason === "http_429",
       ),
     ).toBe(true);
+    // A receiver outage is when the gauge matters: the lag is recomputed
+    // after a failed send too, not only after a clean drain.
+    const probeAfterFailure = lagProbe;
+    if (probeAfterFailure === undefined) throw new Error("expected a lag probe");
+    expect(probeAfterFailure()).toBe(rows.length);
   });
 
   test("start/stop is idempotent and stop halts the timer", async () => {

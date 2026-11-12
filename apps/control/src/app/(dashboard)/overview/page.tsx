@@ -692,7 +692,7 @@ function UsageTile({
                 <tr key={row.execution_id} data-testid="usage-row">
                   <td className="max-w-[16rem] truncate py-1 pr-3">
                     <Link
-                      href={`/traces/${row.execution_id}`}
+                      href={`/traces?execution=${encodeURIComponent(row.execution_id)}`}
                       className="hover:underline"
                       title={row.flow_id}
                     >

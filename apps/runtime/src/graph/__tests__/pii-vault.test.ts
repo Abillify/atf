@@ -14,6 +14,7 @@ import {
   PostgresPiiVaultStore,
   createPiiVault,
   vaultInsertBatchRows,
+  piiTypeTag,
 } from "../pii-vault.js";
 import type { PiiVault, PiiVaultConfig, PiiVaultStore } from "../pii-vault.js";
 import { SecretCipher } from "../secret-cipher.js";
@@ -485,6 +486,151 @@ describe("PostgresPiiVaultStore", () => {
   });
 });
 
+describe("typed and consistent placeholders (ADR 0036)", () => {
+  /** Store that counts what it was asked to persist. */
+  function countingStore(): { store: PiiVaultStore; puts: number[] } {
+    const inner = new InMemoryPiiVaultStore();
+    const puts: number[] = [];
+    const store: PiiVaultStore = {
+      put: async (executionId, tenantId, entries) => {
+        puts.push(entries.length);
+        await inner.put(executionId, tenantId, entries);
+      },
+      resolve: (executionId, token) => inner.resolve(executionId, token),
+      clear: (executionId) => inner.clear(executionId),
+    };
+    return { store, puts };
+  }
+  const TYPED = /\[\[PII:([A-Z_]+):([a-f0-9]{16})\]\]/g;
+
+  it("tags a placeholder with the type of the value it stands for", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    const out = await vault.tokenize(
+      "exec-typed",
+      undefined,
+      "mail jane@example.com, pay DE89370400440532013000",
+    );
+    const tags = [...out.matchAll(TYPED)].map((m) => m[1]);
+    expect(tags).toEqual(["EMAIL", "IBAN"]);
+    expect(await vault.detokenize("exec-typed", out)).toBe(
+      "mail jane@example.com, pay DE89370400440532013000",
+    );
+  });
+
+  it("maps camelCase types to an upper snake tag", () => {
+    expect(piiTypeTag("creditCard")).toBe("CREDIT_CARD");
+    expect(piiTypeTag("deTaxId")).toBe("DE_TAX_ID");
+    expect(piiTypeTag("email")).toBe("EMAIL");
+  });
+
+  it("keeps the untyped form with typedTokens: false", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), {
+      enabled: true,
+      typedTokens: false,
+    });
+    const out = await vault.tokenize("exec-untyped", undefined, "to jane@example.com");
+    expect(out).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(await vault.detokenize("exec-untyped", out)).toBe("to jane@example.com");
+  });
+
+  it("resolves typed and untyped placeholders side by side, and ignores a wrong type tag", async () => {
+    const store = new InMemoryPiiVaultStore();
+    await store.put("exec-mixed", undefined, [
+      { token: "0123456789abcdef", type: "email", value: "old@example.com" },
+      { token: "fedcba9876543210", type: "iban", value: "DE89370400440532013000" },
+    ]);
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    // The model may quote either form, and may even garble the tag: only the
+    // 16-hex id selects the entry.
+    expect(
+      await vault.detokenize(
+        "exec-mixed",
+        "a [[PII:0123456789abcdef]] b [[PII:IBAN:fedcba9876543210]] c [[PII:PERSON:0123456789abcdef]]",
+      ),
+    ).toBe("a old@example.com b DE89370400440532013000 c old@example.com");
+  });
+
+  it("gives a repeated value one placeholder and one vault entry per execution", async () => {
+    const { store, puts } = countingStore();
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    const first = await vault.tokenize(
+      "exec-same",
+      "tenant-a",
+      "jane@example.com wrote; reply to jane@example.com",
+    );
+    const second = await vault.tokenize("exec-same", "tenant-a", "cc jane@example.com");
+    const ids = [...`${first} ${second}`.matchAll(TYPED)].map((m) => m[2]);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    // One mapping was written, in the first call; the second call wrote none.
+    expect(puts).toEqual([1]);
+    // The summary still counts every occurrence.
+    expect(vault.getActionSummary("exec-same")?.totalTokenized).toBe(3);
+  });
+
+  it("never reuses a placeholder across executions or after release", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    const idOf = (text: string): string | undefined => [...text.matchAll(TYPED)][0]?.[2];
+    const a = idOf(await vault.tokenize("exec-a", "t", "jane@example.com"));
+    const b = idOf(await vault.tokenize("exec-b", "t", "jane@example.com"));
+    expect(a).toBeDefined();
+    expect(a).not.toBe(b);
+    await vault.release("exec-a");
+    const again = idOf(await vault.tokenize("exec-a", "t", "jane@example.com"));
+    expect(again).not.toBe(a);
+  });
+
+  it("mints a token per occurrence with consistentTokens: false", async () => {
+    const { store, puts } = countingStore();
+    const vault = mustCreatePiiVault(store, { enabled: true, consistentTokens: false });
+    const out = await vault.tokenize(
+      "exec-distinct",
+      undefined,
+      "jane@example.com and jane@example.com",
+    );
+    const ids = [...out.matchAll(TYPED)].map((m) => m[2]);
+    expect(new Set(ids).size).toBe(2);
+    expect(puts).toEqual([2]);
+  });
+
+  it("restores a typed placeholder split at every position across two stream deltas", async () => {
+    const store = new InMemoryPiiVaultStore();
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    const tokenized = await vault.tokenize(
+      "exec-stream",
+      undefined,
+      "card 4111 1111 1111 1111 please",
+    );
+    expect(tokenized).toMatch(/\[\[PII:CREDIT_CARD:[a-f0-9]{16}\]\]/);
+    const text = `before ${tokenized} and a long enough tail to push the buffer past its window`;
+    for (let cut = 1; cut < text.length; cut++) {
+      const stream = vault.createDetokenizeStream("exec-stream");
+      const emitted =
+        (await stream.push(text.slice(0, cut))) +
+        (await stream.push(text.slice(cut))) +
+        (await stream.flush());
+      expect(emitted).not.toContain("[[PII:");
+      expect(emitted).toContain("4111 1111 1111 1111");
+    }
+  });
+
+  it("does not re-detect its own placeholders as PII", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    // Token ids are random, so one draw proves little: a digit-heavy id used
+    // to be picked up as a phone number on a second pass.
+    for (let i = 0; i < 400; i++) {
+      const exec = `exec-idem-${i}`;
+      const once = await vault.tokenize(
+        exec,
+        undefined,
+        "jane@example.com, DE89370400440532013000",
+      );
+      expect(await vault.tokenize(exec, undefined, once)).toBe(once);
+      expect(once).not.toMatch(/[0-9]{4}/);
+    }
+  });
+});
+
 describe("createPiiVault", () => {
   it("returns undefined when disabled", () => {
     expect(
@@ -624,7 +770,7 @@ describe("PiiVault — per-flow detector resolver", () => {
       "helpdesk",
     );
     expect(tokenized).not.toContain("Anna Schmidt");
-    expect(tokenized).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(tokenized).toMatch(/\[\[PII:[A-Z_]+:[a-f0-9]{16}\]\]/);
     // Round-trips back to the real value on egress.
     expect(await vault.detokenize("exec-1", tokenized)).toContain(
       "Anna Schmidt",

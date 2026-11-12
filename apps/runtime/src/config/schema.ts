@@ -15,6 +15,7 @@
  *
  */
 
+import type { ProxyModelEntry } from "../graph/flow-registry-proxy.js";
 import { z } from "zod";
 import type { OperationalProfile } from "@atf/security-kit";
 import type { ProviderKeys } from "../graph/provider-key-pool.js";
@@ -431,6 +432,16 @@ export interface AppConfig {
   piiVaultEnabled?: boolean;
   piiVaultEncryptionKey?: string;
   piiVaultTypes?: string[];
+  /** Typed placeholders (`PII_VAULT_TYPED_TOKENS`, default true; ADR 0036). */
+  piiVaultTypedTokens?: boolean;
+  /** One placeholder per distinct value per execution (`PII_VAULT_CONSISTENT_TOKENS`, default true). */
+  piiVaultConsistentTokens?: boolean;
+  /** Trust-proxy model mapping (`PROXY_MODELS`, ADR 0038). Empty = off. */
+  proxyModels?: ProxyModelEntry[];
+  /** `PII_VAULT_SCOPE`: `messages` (default) or `messages+context` (ADR 0036, step 4). */
+  piiVaultScope?: "messages" | "messages+context";
+  /** Tool patterns whose arguments are detokenized before the call (`PII_VAULT_DETOKENIZE_TOOLS`). */
+  piiVaultDetokenizeTools?: string[];
   /** Comma-separated list of PII detector backends to enable: "regex", "ner", "remote". Default: "regex". */
   piiDetectors?: string[];
   /** BERT-NER model identifier (HuggingFace hub ID or local path). */
@@ -905,6 +916,14 @@ export const ServiceLinkConfigSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `url scheme must be https: or http:, got "${parsed.protocol}"`,
+        });
+      }
+      // The list is served to every operator with `monitoring:read` and
+      // rendered as a link, so it must not be a place for credentials.
+      if (parsed.username !== "" || parsed.password !== "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "url must not contain credentials (user:password@host)",
         });
       }
     }),
@@ -1687,6 +1706,54 @@ export const EnvSchema = z.object({
   PII_VAULT_ENCRYPTION_KEY: z.string().optional(),
   /** Comma-separated PiiType subset, e.g. "email,phone,iban". Empty = all types. */
   PII_VAULT_TYPES: z.string().optional(),
+  /**
+   * Typed placeholders (`[[PII:EMAIL:…]]` instead of `[[PII:…]]`), so the model
+   * knows what kind of value was replaced. Default true; both forms are always
+   * restored in the response (ADR 0036).
+   */
+  PII_VAULT_TYPED_TOKENS: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
+  /**
+   * One placeholder per distinct value within an execution, so two mentions of
+   * the same person or address read as one entity. Default true; false mints a
+   * placeholder per occurrence. Never shared across executions (ADR 0036).
+   */
+  PII_VAULT_CONSISTENT_TOKENS: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
+  /**
+   * Comma-separated tool patterns (`server/tool`, bare name, `server/*`, `*`)
+   * whose arguments get the real values back in place of vault placeholders
+   * immediately before the call. A listed tool, and whatever it talks to,
+   * receives personal data — list only tools inside your trust boundary.
+   * Default empty: tools receive placeholders (ADR 0036).
+   */
+  PII_VAULT_DETOKENIZE_TOOLS: z
+    .string()
+    .optional()
+    .transform((raw): string[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      return raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }),
+  /**
+   * What the vault tokenizes. `messages` (default): the inbound conversation.
+   * `messages+context`: additionally tool results and retrieved chunks before
+   * they enter the model context, so personal data from your own systems does
+   * not reach the provider either (ADR 0036, step 4).
+   */
+  PII_VAULT_SCOPE: z.enum(["messages", "messages+context"]).default("messages"),
   /** Comma-separated PII detector backends: "regex", "ner", "remote". Default: "regex". */
   PII_DETECTORS: z.string().optional(),
   /** BERT-NER model identifier (ONNX build; HuggingFace hub or local path). Default: Xenova/bert-base-multilingual-cased-ner-hrl */
@@ -2040,6 +2107,9 @@ export const EnvSchema = z.object({
   TOOL_EGRESS_MODE: z.enum(["redact", "block"]).default("redact"),
   // Egress_Guard (Req 7.1, 7.2): exact hostnames (split-DNS exceptions) that
   // may resolve to RFC1918/ULA — and in development, loopback — addresses.
+  // An entry may also be a CIDR range (e.g. `10.64.0.0/14`), which permits
+  // any address inside the range; ranges match the resolved address, never a
+  // hostname. Link-local/CGNAT/metadata stay forbidden in every form.
   EGRESS_ALLOW_PRIVATE_HOSTS: z
     .string()
     .optional()
@@ -2943,6 +3013,49 @@ export const EnvSchema = z.object({
             ...issue,
             path: ["CANARY_JUDGE_MODEL", ...issue.path],
           });
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
+  /**
+   * Trust-proxy mode (ADR 0038): JSON list of `{ "match", "provider", "model" }`.
+   * A request whose model is not a flow but matches `match` (exact, or a prefix
+   * ending in `*`) runs a built-in pass-through flow against `provider`/`model`
+   * under every engine control. Real flows always win. Empty = off.
+   * Example: `[{"match":"claude-*","provider":"anthropic-main","model":"claude-sonnet-4-5"}]`.
+   */
+  PROXY_MODELS: z
+    .string()
+    .optional()
+    .transform((raw, ctx): ProxyModelEntry[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "PROXY_MODELS must be a JSON array",
+        });
+        return z.NEVER;
+      }
+      const result = z
+        .array(
+          z
+            .object({
+              match: z.string().min(1).regex(/^[^*]*\*?$/, {
+                message: "match is an exact name or a prefix ending in a single *",
+              }),
+              provider: z.string().min(1),
+              model: z.string().min(1),
+            })
+            .strict(),
+        )
+        .safeParse(parsed);
+      if (!result.success) {
+        result.error.issues.forEach((issue) => {
+          ctx.addIssue({ ...issue, path: ["PROXY_MODELS", ...issue.path] });
         });
         return z.NEVER;
       }

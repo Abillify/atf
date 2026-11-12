@@ -20,6 +20,10 @@ releases:
 
 ### Security
 
+- **Runtime** (PII vault): a vault token id could contain a run of digits that
+  the phone-number detector recognises, so a second detection pass over already
+  tokenized text cut the placeholder in half and left it unresolvable. Token ids
+  with four or more consecutive digits are now redrawn.
 - **Runtime** (approvals): a single `GET` on the in-chat approval link used to
   resolve the approval, so a link preview, prefetcher or security scanner in a
   chat or mail client could approve a consequential tool call without anyone
@@ -28,7 +32,10 @@ releases:
   page, and only a second click carrying a signed `confirm` value — an HMAC over
   the approval id, the decision and the link expiry, valid 120 seconds —
   resolves the request. This applies to every `GET` caller, an authenticated
-  operator included; the Control dashboard keeps its one-step `POST` route. Set
+  operator included; the Control dashboard keeps its one-step `POST` route. It
+  also applies without a configured link secret (the confirmation is then signed
+  with a random per-process key), and a link to an approval that is already
+  resolved shows the outcome instead of a question. Set
   `APPROVAL_LINK_CONFIRM=false` to restore the one-click links.
 - **Runtime** (approvals): the capability token carried by the in-chat approval
   widget and decision links was minted with a fixed one-hour expiry, so it outlived
@@ -42,6 +49,54 @@ releases:
 
 ### Added
 
+- **Runtime** (trust-proxy mode, experimental): ATF can sit in front of AI clients
+  that already exist (ADR 0038, [docs/TRUST-PROXY.md](docs/TRUST-PROXY.md)).
+  `PROXY_MODELS` maps model names a client sends (`claude-*`, `gpt-4.1`) to a
+  provider instance and model; such a request runs a built-in pass-through flow
+  (`__proxy__.<n>`) under every engine control — guardrails, PII vault, budgets,
+  admission, receipts — with the client's tools passed through. Real flows always
+  win over a mapping; exact names are listed in `GET /v1/models`.
+  `POST /v1/messages` serves the Anthropic Messages API (JSON and SSE) by
+  translating onto the unchanged chat pipeline, accepts `x-api-key` on that route,
+  and refuses fields it cannot honour (`thinking`, `cache_control`, `top_k`,
+  `metadata`, server tools, …) with a 400 that names the field. New preset
+  `ATF_PRESET=trust-proxy`.
+- **Gate**: imported MCP tools (`mcpServers`) keep the downstream server's
+  annotations, can require scopes (`mcpServers[].requiredScopes`, per tool
+  `overrides[].requiredScopes`), and a downstream MCP server inside the network
+  can be reached with `mcpServers[].server.allowPrivateAddress` (RFC 1918 /
+  unique-local for that exact host; loopback and metadata stay refused). New
+  blueprint `deploy/blueprints/gate-mcp-proxy/`: an existing MCP server behind the
+  Gate for agent clients.
+- **Runtime** (PII vault): `PII_VAULT_SCOPE=messages+context` also tokenizes tool
+  results and retrieved chunks before they enter the model context, after the
+  injection scan and citation registration (ADR 0036, step 4). Citations streamed
+  to the caller keep the real text; a detector failure under
+  `PII_DETECTOR_FAIL_MODE=closed` fails the tool call or retrieval instead of
+  sending plaintext. Default `messages`, unchanged.
+- **Runtime** (decision receipts): with `DATABASE_URL` the transparency log is
+  shared by all replicas (ADR 0039). Appends run under an advisory lock, leaf
+  order comes from `receipt_log`, and every replica proves against the same tree,
+  so the `REPLICAS > 1` warning for receipts is gone. Formats are unchanged;
+  receipts and proofs issued before stay valid with `atf-verify`. Upgrade
+  receipt-issuing replicas together, and note that receipt issuance now depends on
+  the database being reachable.
+- **Runtime** (PII vault): placeholders now carry the type of the value they
+  replace (`[[PII:EMAIL:…]]`), and a value that occurs several times in one
+  execution keeps one placeholder, so the model can tell an address from a name
+  and two mentions of one person from two people (ADR 0036, steps 1–2). Both are
+  on by default and switch off with `PII_VAULT_TYPED_TOKENS=false` and
+  `PII_VAULT_CONSISTENT_TOKENS=false`; the untyped form is still restored in
+  responses. Reuse never crosses executions, and the in-process value map is
+  cleared with the execution.
+- **Runtime** (PII vault): `PII_VAULT_DETOKENIZE_TOOLS` lists tools (same
+  patterns as `APPROVAL_REQUIRE_TOOLS`) whose arguments get the real values back
+  immediately before the call — after egress DLP, taint and approval checks —
+  so a lookup by e-mail address works with the vault on (ADR 0036, step 3).
+  Approval prompts, audit records, debug traces, the tool journal and receipts
+  keep the placeholder form. The list is empty by default; every listed tool and
+  its backend receive personal data. New counter
+  `aiperator_pii_vault_tool_detokenized_total{tool}`.
 - **Runtime**: the audit trail can be pushed to an external SIEM. With
   `AUDIT_FORWARD_URL` (HTTPS webhook, `AUDIT_FORWARD_TOKEN` as bearer,
   `AUDIT_FORWARD_BATCH_SIZE`, `AUDIT_FORWARD_INTERVAL_MS`) a background loop
@@ -52,7 +107,10 @@ releases:
   sends (advisory lock `atf:audit_forward`). A rejected or unreachable target
   becomes retrying backoff and the `aiperator_audit_forward_lag` gauge instead
   of data loss. Forwarding needs the durable (Postgres) audit log; private
-  addresses stay blocked without `EGRESS_ALLOW_PRIVATE_HOSTS`.
+  addresses stay blocked without `EGRESS_ALLOW_PRIVATE_HOSTS`. A request is
+  abandoned after 30 seconds, failures are counted in
+  `aiperator_audit_forward_failures_total{reason}`, and only the operator
+  database role may write the position.
 - **Runtime, Gate, Search, Extract, Control**: every service secret can be
   supplied through a file instead of the environment variable itself (ADR 0040).
   Setting `<NAME>_FILE` to the path of a mounted secret — a Kubernetes projected
@@ -63,7 +121,13 @@ releases:
   startup error naming both. The Helm chart needs no new keys: pass the mount
   through each service's `extraEnv`, `extraVolumes` and the new
   `extraVolumeMounts` pass-through. Rotation remains a restart, so the existing
-  runbook applies unchanged.
+  runbook applies unchanged. The file form also covers the connection URLs that
+  carry a password (`DATABASE_URL`, `DATABASE_OPERATOR_URL`, `REDIS_URL`,
+  `POSTGRES_URL`, `EXTRACT_DATABASE_URL`, `RATE_LIMIT_REDIS_URL`,
+  `MCPGATE_TRANSACTION_REDIS_URL`), `AUDIT_ANCHOR_SECRET`, `API_KEY_PEPPER`,
+  `OPERATOR_TOKENS` and `STATS_QUERY_PEPPER`, and in the Gate every `${VAR}`
+  reference in the YAML configuration and every `clientSecretEnv`, so an
+  operator-named database password can be mounted as well.
 - **Control**: the dashboard opens on an overview page. `/` and the brand link
   now lead to `/overview`, which aggregates seven read-only tiles — readiness,
   open approvals, governance posture, flow health, providers, MCP servers and
@@ -79,8 +143,8 @@ releases:
   search/extract/gate/other, absolute `url`) and serves it — alongside the MCP
   servers and their live connection status, without headers or tokens — on
   `GET /monitoring/services` behind `monitoring:read`. A link with an active
-  scheme (`javascript:`, `data:`) is rejected at startup, and `APP_ENV=production`
-  additionally requires `https://`. Control renders both in a new `/services`
+  scheme (`javascript:`, `data:`) or with credentials in the URL is rejected at
+  startup, and `APP_ENV=production` additionally requires `https://`. Control renders both in a new `/services`
   page: each link opens in a new tab with `rel="noopener noreferrer"` after a
   second client-side scheme check, and each MCP server shows connected or
   unreachable.
@@ -205,27 +269,20 @@ releases:
   The Quickstart stack job runs the tour itself: documentation that executes is
   gated like documentation that does not, so a vault, approval or receipt
   regression fails CI rather than a demo.
-- **Docs** (ADRs 0037–0040): four design records, all `Proposed`, cover the
-  open architecture questions the review follow-up surfaced but did not
-  implement: showing the knowledge base in Control without breaking the
-  "Control talks only to the Runtime" rule (0037), a trust-proxy mode that
-  governs traffic from existing AI clients without a flow file (0038),
-  sharing the receipt transparency log between replicas so `REPLICAS > 1`
-  stops forking the tree (0039), and file-supplied secrets with a design for
-  external key management (0040).
-- **Docs** (ADRs 0041–0044): four more `Proposed` records for the integration
-  questions the review follow-up deliberately left to a human decision: the
-  channel interface extracted from the Rocket.Chat implementation as the
-  contract a second channel (Slack, Teams) would implement, with the forged-
-  event and replay threats mapped per function (0041); identity provisioning
-  as OIDC group claims plus a small deprovisioning endpoint wired into the
-  ADR 0025 erasure orchestrator, instead of a SCIM server over a local user
-  store ATF does not have (0042); exposing flows as A2A agents with the
-  agent card generated from existing flow metadata and no confirmation
-  bypass, protocol details flagged `TODO(human)` until verified against the
-  spec (0043); and MCP elicitation as an additional approval surface on the
-  stateful gate transports, leaving the transaction token as the only thing
-  that authorizes (0044).
+- **Docs** (ADRs 0036–0044): nine architecture decisions, all `Accepted`.
+  Implemented: the PII vault beyond the model boundary (0036), trust-proxy mode
+  (0038), the shared receipt transparency log (0039) and secrets from files
+  (0040, layer 1). Decided, with an implementation plan in the record: the
+  knowledge base in Control through a read-only Runtime proxy with a
+  `knowledge:read` permission and `purpose: "operator-read"` transaction tokens
+  (0037); external key management through a `KeyProvider` seam, evidence keys
+  first (0040, layer 2); a channel interface extracted from Rocket.Chat with
+  generalised channel tables, then Slack, then Teams (0041); OIDC claims for
+  entitlements plus a deprovisioning endpoint instead of a SCIM server (0042);
+  flows as A2A agents over JSON-RPC, checked against A2A 1.0.0, with flow skills
+  only on the authenticated extended card (0043); and MCP elicitation as an
+  optional surface for Gate approvals that never bypasses separation of duties
+  (0044).
 - **Docs** (`ROADMAP.md`, `SUPPORT.md`, `GOVERNANCE.md`): a reader who decides
   whether to adopt ATF could see what it does today but not where it is going,
   who answers questions, or how a decision gets made. `ROADMAP.md` states the
@@ -260,6 +317,9 @@ releases:
 
 ### Fixed
 
+- **Tooling**: the route reference and the OpenAPI catalog only recognised a
+  router created inline in `app.route(...)`; a router held in a variable lost its
+  routes from `ARCHITECTURE.md` and `docs/openapi/runtime.json`.
 - **Control** (accessibility): status labels failed WCAG AA contrast in the
   light theme. The token DEFAULTs for `success`, `info`, `subflow` and
   `accent-2` sat at 4.0–4.3:1 against a card, and badge labels compounded it —
@@ -290,6 +350,13 @@ releases:
   previous precedence is unchanged.
 
 ### Changed
+
+- **Runtime, Extract** (internal): three oversized modules are split by topic
+  without code changes — `graph/agent-tools.ts` into hooks, citations, client
+  tools, media and image inspection; `mcp/wrapper/client.ts` into the service
+  contract, error classification and pure helpers; `jobs/job-runner.ts` into its
+  config types and page helpers. The original modules re-export everything that
+  was public, so imports elsewhere are unchanged.
 
 - **Runtime** (approvals): the approval text rendered into the chat and the pages
   of the in-chat widget are no longer hard-coded German. Both read from one message
@@ -357,7 +424,7 @@ releases:
   the vault. It also records that every occurrence gets its own token, that the
   mapping is cleared in the `finally` of each execution while the value-free
   action summary survives in a bounded ring, and that an unresolvable placeholder
-  is left visible rather than dropped. ADR 0036 (Proposed) records the design for
+  is left visible rather than dropped. ADR 0036 records the design for
   closing the gap — typed placeholders, one token per value per execution,
   allowlisted detokenization at the tool boundary, and a `PII_VAULT_SCOPE` for
   context — with no implementation behind it yet.

@@ -20,8 +20,6 @@ Practical consequences:
   maintainer's explicit sign-off, not just a passing CI.
 - Releases follow the gated workflow documented in the repository's release process:
   version bump, changelog, redaction scan, the full gate suite, then a signed tag.
-  TODO(human): whether release approval beyond the maintainer (e.g. a company
-  officer) is formally required is not written down anywhere in this repository.
 
 ## How contracts and ADRs change
 
@@ -47,14 +45,6 @@ Open a [Discussion](https://github.com/abillify/atf/discussions) with the propos
 open a pull request with an ADR in status `Proposed` — the ADR template's trade-off
 sections are the expected format for the argument. Maintainers respond in the open;
 there is no separate RFC process.
-
-## Becoming a maintainer
-
-TODO(human): there is no written path to gaining commit or review rights outside
-Abillify Technology GmbH. Until one exists, expect that contributions land through the
-contributor agreement and maintainer review described in
-[CONTRIBUTING.md](CONTRIBUTING.md), and that decision-making stays with the team
-named in [AUTHORS.md](AUTHORS.md).
 
 ## Changes to this document
 

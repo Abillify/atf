@@ -4,7 +4,8 @@ Date: 2026-11-11
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Implemented as described; deviations are listed under
+"Implementation notes" at the end.
 
 ## Context
 
@@ -174,3 +175,22 @@ explicit env var always beats the profile.
   requests (a client naming a real flow id through the Anthropic API) or is
   proxy-only; whether `count_tokens` gets an endpoint; and how prompt caching
   is revisited once upstream providers expose usable cache breakpoints.
+
+## Implementation notes
+
+- **Flow ids.** One pass-through flow per `PROXY_MODELS` entry, id `__proxy__.<n>` (n = position
+  in the list), version `1`, `metadata.hidden: true`. A single `__proxy__` id cannot carry a
+  different provider/model per entry. The pass-through flows resolve by id but are not part of
+  `FlowRegistry.list()`, so validation, metrics and the Studio never see them.
+- **Routing.** `resolveFlowRouting` asks the proxy registry after dispatch; canary and A/B do not
+  apply to pass-through flows.
+- **`/v1/messages`** does not duplicate the chat pipeline: it translates the request and calls
+  the mounted chat router in-process, handing over the verified identity the outer middleware
+  established. Every control of `/v1/chat/completions` therefore applies unchanged. `top_k` is
+  refused too — the internal pipeline has no equivalent parameter.
+- **`x-api-key`** is read only on `/v1/messages`; both headers with different values are a 401.
+- **Model list.** Exact `match` names appear in `GET /v1/models`; prefix patterns do not.
+- **Gate side.** The blueprint `deploy/blueprints/gate-mcp-proxy/` needed two Gate additions:
+  `mcpServers[].requiredScopes` (imported tools could not require a scope) and
+  `mcpServers[].server.allowPrivateAddress` (an MCP server inside the network was unreachable).
+  Imported tools now also keep the downstream annotations.

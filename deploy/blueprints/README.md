@@ -1,6 +1,6 @@
 # Deployment blueprints
 
-Three reusable starting points, each one a single service's configuration written so that
+Four reusable starting points, each one a single service's configuration written so that
 the **non-obvious settings explain themselves**. They are deliberately neutral: no customer,
 host, collection or domain prompt text. What they carry is structure and reasoning — the
 things that are expensive to rediscover — while every name is a placeholder you replace.
@@ -9,6 +9,7 @@ things that are expensive to rediscover — while every name is a placeholder yo
 | --- | --- | --- |
 | [`research-assistant/`](research-assistant/) | Runtime (flow) | A bounded research loop over Search, an independent verifier, and a sources section repaired by code instead of requested in a prompt. |
 | [`gate-sql-profile/`](gate-sql-profile/) | Gate | A domain database as three MCP tools: two reads and one write behind a human approval, identity bound with `:ctx.*`, conditional redaction, signed cursor pagination. |
+| [`gate-mcp-proxy/`](gate-mcp-proxy/) | Gate | An existing MCP server behind the Gate for agent clients: imported tools with a required scope, deny by default, approval for writes by a different principal. |
 | [`dms-mirror/`](dms-mirror/) | Outpost | A file share and an S3 bucket mirrored into one Extract collection, with ACLs, delete thresholds and secrets kept out of the file. |
 
 ## How these differ from `../examples/`

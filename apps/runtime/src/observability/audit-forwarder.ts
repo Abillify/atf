@@ -37,6 +37,12 @@ export const DEFAULT_AUDIT_FORWARD_BATCH_SIZE = 100;
 export const DEFAULT_AUDIT_FORWARD_INTERVAL_MS = 15_000;
 /** Backoff ceiling after consecutive failures. */
 const MAX_BACKOFF_MS = 300_000;
+/**
+ * Upper bound for one webhook request. The drain holds a pinned operator
+ * connection and the sender advisory lock while it waits, so a receiver that
+ * accepts the socket and never answers must not hold both indefinitely.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface AuditForwarderOptions {
   /** Webhook receiving the NDJSON batches (HTTPS in production). */
@@ -213,9 +219,24 @@ class PostgresAuditForwarder implements AuditForwarder {
     }
   }
 
-  /** Send batches until the log is drained or a send fails. */
+  /**
+   * Send batches until the log is drained or a send fails. The lag is
+   * recomputed on every exit, a failed send included: an outage of the
+   * receiver is exactly when the gauge has to keep growing.
+   */
   private async drain(db: Database): Promise<void> {
     let lastId = await ForwardPositionStore.read(db, this.opts.url);
+    try {
+      lastId = await this.sendBatches(db, lastId);
+    } finally {
+      this.lag = await this.computeLag(db, lastId);
+      this.opts.metrics?.setAuditForwardLagProbe?.(() => this.lag);
+    }
+  }
+
+  /** Returns the highest id the target acknowledged. */
+  private async sendBatches(db: Database, startId: number): Promise<number> {
+    let lastId = startId;
     for (;;) {
       const rows = await db.query<ForwardRow>(
         `SELECT id, actor, role, action, target, outcome, details, created_at, hash, prev_hash
@@ -237,15 +258,18 @@ class PostgresAuditForwarder implements AuditForwarder {
           method: "POST",
           headers,
           body,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
       } catch (err) {
         this.recordFailure(err, rows.length);
-        return;
+        return lastId;
       }
+      // The body is not needed; release the socket either way.
+      await res.body?.cancel().catch(() => {});
       if (res.status < 200 || res.status >= 300) {
         this.opts.metrics?.recordCounter(
           "aiperator_audit_forward_failures_total",
-          { status: String(res.status) },
+          { reason: `http_${res.status}` },
         );
         this.failures += 1;
         this.consecutiveFailures += 1;
@@ -255,7 +279,7 @@ class PostgresAuditForwarder implements AuditForwarder {
           entries: rows.length,
           backoffMs: this.currentBackoffMs(),
         });
-        return;
+        return lastId;
       }
       const last = rows[rows.length - 1];
       if (last === undefined) break;
@@ -272,8 +296,7 @@ class PostgresAuditForwarder implements AuditForwarder {
       this.backoffUntil = 0;
       if (rows.length < this.batchSize) break;
     }
-    this.lag = await this.computeLag(db, lastId);
-    this.opts.metrics?.setAuditForwardLagProbe?.(() => this.lag);
+    return lastId;
   }
 
   private async computeLag(db: Database, lastId: number): Promise<number> {
@@ -296,7 +319,7 @@ class PostgresAuditForwarder implements AuditForwarder {
   private recordFailure(err: unknown, entries: number): void {
     this.opts.metrics?.recordCounter(
       "aiperator_audit_forward_failures_total",
-      { error: "transport" },
+      { reason: "transport" },
     );
     this.failures += 1;
     this.consecutiveFailures += 1;

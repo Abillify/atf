@@ -3,11 +3,12 @@
 
 # 41. A channel interface derived from the Rocket.Chat implementation
 
-Date: 2026-11-13
+Date: 2026-11-11
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Not yet implemented; the order of work is fixed under "Implementation
+plan".
 
 ## Context
 
@@ -21,9 +22,8 @@ and third channel, the review asked for the implicit interface inside the
 Rocket.Chat code to be made explicit — what a channel actually has to do —
 so new channels implement a contract instead of copying a file.
 
-This ADR performs that extraction. It proposes no SDK dependency and no
-schema change; it is the design input for a later, separately approved
-implementation task.
+This record performs that extraction and fixes the order in which the
+interface, the schema generalisation and further channels are built.
 
 ## Decision
 
@@ -48,12 +48,24 @@ Channel-specific residue stays behind a per-channel adapter implementing:
 `lookupVerifiedEmail(channelUserId)`. Everything else — bindings, pairing
 records, runs, outbox, approval routing — is reused unchanged.
 
-Required configuration and routes per additional channel (shape, not names
-yet final): one webhook route (`POST /integrations/<channel>/events`), one
-shared-secret variable (`<CHANNEL>_WEBHOOK_SECRET`, registered as SECRET in
-`docs/CONFIGURATION.md` with a `*_FILE` variant per ADR 0040), the existing
-`<channel>` columns on bindings/outbox tables generalized to
-`(channel_type, channel_user_id, room_id)`.
+Configuration and routes per additional channel: one webhook route
+(`POST /integrations/<channel>/events`) and one verification secret
+(`<CHANNEL>_SIGNING_SECRET`, marked SECRET in `docs/CONFIGURATION.md`, `NAME_FILE` per
+ADR 0040). For Teams the verification input is the Bot Framework token instead of a shared
+secret; its signing keys are fetched through the Runtime's egress guard like every other
+outbound call.
+
+Schema: today's tables are Rocket.Chat-specific (`assistant_rocketchat_bindings` keyed by
+`server_url, rocket_user_id, room_id`; `assistant_rocketchat_outbox`;
+`rocketchat_connect_requests`). They are generalised to `assistant_channel_bindings`,
+`assistant_channel_outbox` and `channel_connect_requests` with a `channel_type` column and
+`(channel_type, server_url, channel_user_id, room_id)` as the binding identity. A migration copies
+the Rocket.Chat rows with `channel_type = 'rocketchat'`; the old tables stay readable for one
+minor release and are then dropped. The retention and erasure targets
+(`assistant_data`, `rocketchat_connect_requests`) follow the rename.
+
+In-channel approvals use the existing approval links with their two-step confirmation; no
+interactive buttons in the first iteration.
 
 No new SDK dependency is proposed. Slack and Teams webhook verification and
 message posting are small, well-specified HTTP calls; adding two SDKs for
@@ -84,11 +96,18 @@ of code. This decision needs revisiting only if interactive components
     participates in the binding proof.
   - **Enumeration.** Unbound users receive an indistinguishable `202`
     response; keep this so channels do not leak which identities are bound.
-- The extraction itself (interface + rename of binding columns) is a
-  refactor with no behavior change and can land before any second channel
-  exists; it should be its own task with the existing Rocket.Chat tests as
-  the regression net.
-- Until a second channel actually ships, the interface stays a hypothesis
-  with one implementation. The ADR accepts that risk deliberately: the
-  alternative — designing from first principles without a second data point
-  — failed visibly enough in the review to justify extracting from code.
+- Until a second channel ships, the interface has one implementation. That risk is accepted
+  deliberately: extracting from working code is safer than designing from first principles.
+
+## Implementation plan
+
+1. **Refactor, no behaviour change.** `ChatChannel` adapter interface; Rocket.Chat moves behind
+   it; tables generalised with the copy migration. Regression net: the existing Rocket.Chat
+   route, connect and outbox tests, unchanged.
+2. **Slack** as the second channel: HMAC verification of `v0:<timestamp>:<body>` with a ±5 minute
+   window, Web API `chat.postMessage` over the egress guard, idempotency key
+   `slack:<channel>:<ts>`.
+3. **Microsoft Teams** as the third: Bot Framework token validation, idempotency key from the
+   activity id.
+
+Each step is its own change with its own CHANGELOG entry; no SDK is added for either channel.

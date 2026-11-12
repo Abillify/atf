@@ -877,6 +877,8 @@ export const EXTRACT_SECRET_VARS = [
   "MONITOR_TOKEN",
   "OIDC_CLIENT_SECRET",
   "OIDC_SESSION_SECRET",
+  "EXTRACT_DATABASE_URL",
+  "RATE_LIMIT_REDIS_URL",
 ] as const;
 
 export function loadConfig(): Config {

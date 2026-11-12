@@ -681,7 +681,7 @@ describe("approval-link capability token (in-chat widget)", () => {
     expect(widget).toContain('<html lang="de">');
     expect(widget).toContain("Freigabe erforderlich");
     expect(widget).toContain("keine Argumente");
-    expect(widget).toContain("Freigeben");
+    expect(widget).toContain("Genehmigen");
     expect(widget).toContain("Ablehnen");
     expect(widget).not.toContain(">Approve<");
 
@@ -701,7 +701,7 @@ describe("approval-link capability token (in-chat widget)", () => {
         `/monitoring/approvals/${id}/decide?decision=approved&token=${encodeURIComponent(token)}&confirm=${nonce}`,
       )
     ).text();
-    expect(decided).toContain("Freigegeben");
+    expect(decided).toContain("Genehmigt");
     expect(decided).not.toContain(">Approved<");
   });
 
@@ -736,8 +736,27 @@ describe("approval-link capability token (in-chat widget)", () => {
     });
     const id = await firstPendingId(gate);
 
-    const res = await a.request(
+    // No link secret is configured: the confirmation is still required and is
+    // signed with the router's per-process key, so a prefetched URL on the
+    // open plane resolves nothing.
+    const first = await a.request(
       `/monitoring/approvals/${id}/decide?decision=approved&by=carol`,
+    );
+    expect(first.status).toBe(200);
+    const page = await first.text();
+    expect(await gate.listPending()).toHaveLength(1);
+    expect((await audit.list()).some((r) => r.action === "approvals.resolve")).toBe(
+      false,
+    );
+    // The confirmation and back links stay relative to the decide URL, so a
+    // Runtime published under a path prefix keeps working.
+    expect(page).toContain('href="decide?decision=approved&amp;confirm=');
+    expect(page).toContain('href="widget"');
+    const nonce = /confirm=([A-Za-z0-9._%-]+)/.exec(page)?.[1];
+    if (nonce === undefined) throw new Error("no confirmation link rendered");
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved&by=carol&confirm=${nonce}`,
     );
     expect(res.status).toBe(200);
     const decided = await decision;
@@ -746,6 +765,27 @@ describe("approval-link capability token (in-chat widget)", () => {
     const records = await audit.list();
     const resolve = records.find((r) => r.action === "approvals.resolve");
     expect(resolve?.details?.authenticatedAs).toBe("anonymous");
+  });
+
+  test("a decide link for an already resolved approval shows the outcome, not a question", async () => {
+    const gate = mustCreateApprovalGate({ enabled: true, timeoutMs: 5000 });
+    const a = app({ approvalGate: gate });
+    const decision = gate.request({
+      executionId: "e1",
+      nodeId: "n1",
+      tool: "bank/pay",
+      args: {},
+    });
+    const id = await firstPendingId(gate);
+    await gate.resolve(id, { approved: false, by: "dora" });
+    await decision;
+
+    const res = await a.request(
+      `/monitoring/approvals/${id}/decide?decision=approved`,
+    );
+    const html = await res.text();
+    expect(html).toContain("Denied");
+    expect(html).not.toContain("confirm=");
   });
 });
 

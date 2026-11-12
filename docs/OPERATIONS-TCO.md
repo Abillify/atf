@@ -63,7 +63,7 @@ Runtime and Gate, 8 for Search and Extract, 4 for Control; CPU 70 %) and
 
 | Component | Replicas | Notes |
 | --- | --- | --- |
-| runtime | 2–6 (HPA) | rate limits and approvals shared through `REDIS_URL` (incl. the GitOps webhook limiter); not fully stateless: SSE sessions pin to a pod and the metrics ring, replay buffer, red-team schedule, the decision-receipt transparency log and the media store are per process (`runbooks/scaling.md`) — use sticky routing or accept reconnects |
+| runtime | 2–6 (HPA) | rate limits and approvals shared through `REDIS_URL` (incl. the GitOps webhook limiter); not fully stateless: SSE sessions pin to a pod, and the metrics ring, replay buffer, red-team schedule and media store are per process (the decision-receipt transparency log is shared through the database, ADR 0039) (`runbooks/scaling.md`) — use sticky routing or accept reconnects |
 | gate | 2 (HPA) | identity rate limits and redeemed approval tokens shared with `store.type=redis`; SSE sessions are per process (sticky routing for `/sse` and `/monitor/stream`) |
 | search | 2–8 (HPA) | no per-process user state; set `RATE_LIMIT_REDIS_URL` **and** `REPLICAS` above one replica (the production gate refuses `REPLICAS > 1` without it) so throttling is per-client fleet-wide; DB pool sized per replica — total connections must fit Postgres `max_connections` |
 | extract | 2–4 | job worker uses Postgres row locks, so replicas are safe; set `RATE_LIMIT_REDIS_URL` and `REPLICAS` above one replica; more replicas = more parallel jobs: peak vision calls ≈ `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas` against the VLM. `TEMP_DIR` (conversions, derived-PDF cache) is per pod |

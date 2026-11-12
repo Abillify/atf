@@ -61,6 +61,8 @@ Experimental features may change in a minor release; each change is listed in th
 | Bench cases from executions | `bun run scripts/cli.ts bench capture` |
 | SharePoint source of the Outpost | source type `sharepoint` |
 | Output format of `atf-doctor` | the table and the `--json` document |
+| Trust-proxy mode | `PROXY_MODELS`, `POST /v1/messages`, the `trust-proxy` preset |
+| PII vault beyond messages | `PII_VAULT_SCOPE=messages+context`, `PII_VAULT_DETOKENIZE_TOOLS` |
 
 A feature leaves this list when it has proven itself in use; it then becomes
 stable in the minor release that announces it.

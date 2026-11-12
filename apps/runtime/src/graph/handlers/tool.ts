@@ -37,6 +37,7 @@ import {
 } from "../reranker.js";
 import { buildGroundingSections } from "../rag-grounding.js";
 import { approvalRequestedBy } from "../approval-gate.js";
+import { getPiiContextScope, getPiiToolBoundary } from "../pii-tool-boundary.js";
 import { policyRequiresToolApproval } from "../../compliance/policy-evaluator.js";
 import type { AgentState } from "../graph-engine.js";
 import {
@@ -414,6 +415,20 @@ export function createToolNodeHandler(
             toolRef,
             JSON.stringify(callArgs),
           );
+          // PII vault at the tool boundary (ADR 0036): for a tool listed in
+          // PII_VAULT_DETOKENIZE_TOOLS the real values replace the placeholders
+          // from here on — in the transaction payload and on the wire. The
+          // approval, the effective-args trace above and the grounding below
+          // keep `callArgs`, the placeholder form.
+          const piiBoundary = getPiiToolBoundary();
+          const wireCallArgs =
+            piiBoundary !== undefined
+              ? await piiBoundary.detokenizeArgs(
+                  toolRef,
+                  runtime.ctx.executionId,
+                  callArgs,
+                )
+              : callArgs;
           const startMs = Date.now();
           const transactionEnabled = await shouldIssueTransaction(
             runtime.mcpWrapper,
@@ -437,7 +452,7 @@ export function createToolNodeHandler(
                 toolRef,
                 toolCallId,
                 {
-                  payload: callArgs,
+                  payload: wireCallArgs,
                   bindSession:
                     runtime.mcpWrapper.forwardsCallerSession?.(serverName) ??
                     true,
@@ -458,7 +473,7 @@ export function createToolNodeHandler(
             result = await runtime.mcpWrapper.callTool(
               serverName,
               bareName,
-              callArgs,
+              wireCallArgs,
               runtime.ctx,
               // Cancel with the flow, so an expired run stops calling tools —
               // relevant for the pagination loop below, which would otherwise
@@ -515,10 +530,18 @@ export function createToolNodeHandler(
           // Gate's `_meta` label taints the run when the content arrives.
           markTaintFromUntrustedSource(runtime, node.id, toolRef, groundedContent, result._meta);
           const validator = reportingValidator(runtime, node.id);
-          const safeContent =
+          const scannedContent =
             validator !== undefined
               ? validator.validate(groundedContent, toolRef).content
               : groundedContent;
+          // PII_VAULT_SCOPE=messages+context (ADR 0036, step 4): the result is
+          // tokenized after the injection scan and the taint labels, before it
+          // is stored, streamed as tool detail, or handed to the next model.
+          const piiScope = getPiiContextScope();
+          const safeContent =
+            piiScope !== undefined
+              ? await piiScope.tokenizeValue(runtime.ctx, scannedContent)
+              : scannedContent;
           accumulated.push({
             tool_call_id: toolCallId,
             tool_name: toolRef,
@@ -752,16 +775,23 @@ export function createToolNodeHandler(
           // reuses this exact [n] instead of getting a duplicate number. As the
           // first emitter in the stream this yields indices 1..k — matching the
           // [1..k] the overview/passage sections were numbered with above.
+          // With PII_VAULT_SCOPE=messages+context the citations were built
+          // from tokenized results; the caller gets the real text back.
+          const scope = getPiiContextScope();
+          const callerCitations =
+            scope !== undefined
+              ? await scope.restoreValue(runtime.ctx, orderedCitations)
+              : orderedCitations;
           if (runtime.registerCitations !== undefined) {
             await runtime.registerCitations(
               orderedKeys.flatMap((key, i) => {
-                const citation = orderedCitations[i];
+                const citation = callerCitations[i];
                 // unreachable: orderedKeys/orderedCitations are 1:1 by construction
                 return citation === undefined ? [] : [{ key, citation }];
               }),
             );
           } else {
-            await runtime.onCitations?.(orderedCitations);
+            await runtime.onCitations?.(callerCitations);
           }
         } catch {
           /* ignore client disconnect */

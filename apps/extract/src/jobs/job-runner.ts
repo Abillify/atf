@@ -48,8 +48,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Logger } from "pino";
-import { buildAssetId, figureLocalId, pageLocalId, tileLocalId, sha256Hex } from "@atf/extract-contract";
+import { buildAssetId, figureLocalId, tileLocalId, sha256Hex } from "@atf/extract-contract";
 import {
   buildFigureId,
   buildFigurePlaceholder,
@@ -57,7 +56,6 @@ import {
   type BoundingBox,
 } from "@atf/extract-contract/v1";
 import type {
-  AssetRef,
   Block,
   BBox,
   IdentifyRequest,
@@ -68,10 +66,8 @@ import type {
 } from "@atf/extract-contract/v2";
 import { Readable } from "node:stream";
 import { RevisionTransientError } from "../revision-client.js";
-import type { SourceStore } from "../source-store.js";
 import { resolveFormat } from "../formats.js";
 import { ExtractError } from "../errors.js";
-import type { OcrClient } from "../pipeline/ocr.js";
 import { quotedParentOf, withQuotedHistory } from "../pipeline/native/index.js";
 import { textFingerprint } from "./fingerprint.js";
 import {
@@ -93,7 +89,6 @@ import {
   resolveVersion,
   type JobIdentity,
 } from "./identity.js";
-import type { ExtractStore } from "../persistence/index.js";
 import {
   LeaseLostError,
   type JobRow,
@@ -167,14 +162,12 @@ import {
 import type { PrevPageContext } from "../vision/prompts.js";
 import { SUMMARY_PROMPT_VERSION } from "../summary/prompts.js";
 import { TransientSummaryFailure } from "../summary/client.js";
-import type { StageObservation } from "../http-metrics.js";
 import { createDedupRegistry, renderHash, type DedupRegistry } from "./page-dedup.js";
-import type { PageAnalyzer, PreparedAnalyzer } from "./page-analyzer.js";
+import type { PreparedAnalyzer } from "./page-analyzer.js";
 import type { PageAnalysis } from "../pipeline/bbox-layout.js";
-import { snapFigureBBox } from "../pipeline/bbox-snap.js";
 import type { FigureKind } from "@atf/extract-contract/v2";
-import type { PreparedSource, PageImage, PageRenderer, RenderedPageInput } from "./page-renderer.js";
-import type { Emitter, AssetLoader } from "./emitter.js";
+import type { PreparedSource, PageImage, RenderedPageInput } from "./page-renderer.js";
+import type { AssetLoader } from "./emitter.js";
 import type { AssetBody } from "../revision-client.js";
 import {
   createDocumentPass,
@@ -184,6 +177,30 @@ import {
 import type { SummaryClient } from "../summary/client.js";
 import { createSummaryGenerator, type SummaryGenerator } from "../summary/generator.js";
 import type { EmitOutcome } from "./emitter.js";
+import type {
+  JobRunnerDeps,
+} from "./job-runner-config.js";
+import {
+  OCR_FALLBACK_WARNING,
+  TRUNCATION_WARNING,
+  buildPageRecord,
+  emptyRecord,
+  errMessage,
+  figureOrdinalOf,
+  filenameOf,
+  isCroppable,
+  pageAssetId,
+  parsedOfRow,
+  pass2Gate,
+  refineFigures,
+  reparseable,
+} from "./job-runner-pages.js";
+export type {
+  JobRunnerConfig,
+  JobRunnerDeps,
+  RunnerMetrics,
+  SourceIdentifier,
+} from "./job-runner-config.js";
 
 /** The per-page stages, in order. The last one is the scheduler's cursor. */
 
@@ -222,194 +239,6 @@ export const CURSOR_STAGE = EMITTED_STAGE;
  * memory to about this many beyond the pages in flight.
  */
 const RENDER_LOOKAHEAD_PAGES = 8;
-
-/** Tunables for a run. */
-export interface JobRunnerConfig {
-  /** Pages of one job in flight at once; bounds the scheduler's memory. */
-  pageConcurrency: number;
-  /** Rough per-page token estimate for the budget guard before a model call. */
-  visionTokenEstimate: number;
-  /** Recorded on the page record's pipeline-ish fields. */
-  visionModel: string;
-  renderDpi: number;
-  /**
-   * FIGURE_DPI — the resolution a figure crop is re-rendered at for Pass 2.
-   * The crop shown to the Pass-2 model is rendered at
-   * this DPI, higher than the model-resolution page, so small labels stay
-   * legible.
-   */
-  figureDpi: number;
-  /** The figure kinds that get a Pass-2 transcription (FIGURE_PASS2_KINDS). */
-  figurePass2Kinds: FigureKind[];
-  /**
-   * The smallest figure, as a fraction of page area, worth a Pass-2 call
-   * (FIGURE_PASS2_MIN_AREA). A figure below this fraction is described only.
-   */
-  figurePass2MinArea: number;
-  /**
-   * The minimum percentage of a figure's `labels` that must appear in its
-   * Pass-2 transcription before it is trusted (LABEL_COVERAGE_MIN). Below it,
-   * Extract warns and retries Pass 2 once.
-   */
-  labelCoverageMin: number;
-  /**
-   * The long edge, in pixels, a single tile of a large-format page is rendered
-   * towards (TILE_TARGET_PIXELS). Drives the tile count
-   * and per-tile DPI. Default 2000 when omitted.
-   */
-  tileTargetPixels?: number;
-  /**
-   * The fraction a tile's own extent adjacent tiles overlap by
-   * (TILE_OVERLAP_FRACTION). Default 0.1 (10 %) when omitted.
-   */
-  tileOverlapFraction?: number;
-  /**
-   * Hard ceiling on `cols × rows` tiles for one page (TILE_MAX_PER_PAGE; budget
-   * guard). Default 16 when omitted.
-   */
-  tileMaxPerPage?: number;
-  /**
-   * Hard pixel ceiling on a single tile's rendered area (RENDER_MAX_PIXELS).
-   * Default 40 MP when omitted; keeps a tile decode under the bomb guard.
-   */
-  renderMaxPixels?: number;
-  /**
-   * Enable the deterministic text fast-path (TEXT_FAST_PATH; task 2.9,
-   * ). When true, a `text` page with no table/figure candidates
-   * and usable S2 geometry builds its blocks from that geometry with no vision
-   * call. Default off when omitted, so a runner constructed without this config
-   * behaves exactly as before this task.
-   */
-  textFastPath?: boolean;
-  /**
-   * The ink-outside-blocks ceiling for fast-path eligibility
-   * (TEXT_FAST_PATH_MAX_INK_RATIO). A `text` page qualifies
-   * only when its ink outside the text blocks is at or below this fraction.
-   * Default 0.04 when omitted.
-   */
-  textFastPathMaxInkRatio?: number;
-  /**
-   * The summary text-LLM model id, folded into a summary stage's
-   * input hash so a model change recomputes. Undefined when SUMMARY_URL is not
-   * configured (the summary pass is then skipped).
-   */
-  summaryModel?: string | undefined;
-  /**
-   * Rough per-summary output-token estimate for the budget guard before a
-   * summary model call. Default 512 when omitted.
-   */
-  summaryTokenEstimate?: number | undefined;
-  /**
-   * USD per million tokens of the vision model (VISION_INPUT/OUTPUT_TOKEN_COST),
-   * booked into the job's `cost_usd` per call. Omitted books tokens only.
-   */
-  visionPricing?: ModelPricing | undefined;
-  /** USD per million tokens of the summary model (SUMMARY_INPUT/OUTPUT_TOKEN_COST). */
-  summaryPricing?: ModelPricing | undefined;
-  /**
-   * JOB_MAX_TRANSIENT_WAIT_MS: how long a run keeps retrying
-   * a transiently failing dependency (vision, text LLM, Search) in place, with
-   * backoff, before it hands the job back as `paused(dependency)` with an
-   * auto-resume instant. Default 0: pause on the first transient stall.
-   */
-  maxTransientWaitMs?: number;
-  /**
-   * VISION_BUDGET_PAGES_PER_DAY: VLM pages the
-   * job's tenant may spend per UTC day across all its jobs. 0 (default when
-   * omitted) disables the cap. Only consulted for a job with an attributable
-   * tenant; over the cap the run fails with `BUDGET_EXCEEDED`.
-   */
-  visionBudgetPagesPerDay?: number;
-  /**
-   * MAX_PAGES: the ceiling on the pages a single job may
-   * process. The v1 extractor refuses an over-long document before any model
-   * call; the v2 runner must apply the same ceiling, or a job whose token
-   * budget is unset (and a job with no attributable tenant, which the daily
-   * budget leaves uncapped) drives vision over every page without bound. 0
-   * (default when omitted) disables the check, matching the v1 extractor.
-   */
-  maxPages?: number;
-}
-
-export interface JobRunnerDeps {
-  store: ExtractStore;
-  vision: VisionClient;
-  renderer: PageRenderer;
-  events: JobEventBus;
-  config: JobRunnerConfig;
-  logger: Logger;
-  /**
-   * The deterministic S2 page analyzer. Optional: when present, the
-   * runner analyses each page's geometry and feeds the numbered-heading
-   * candidates to the Pass-1 prompt. Absent in a
-   * deployment or test that has not wired S2 — the page then falls through to
-   * vision with no hints, exactly as before this task.
-   */
-  analyzer?: PageAnalyzer | null;
-  /**
-   * The outbox emitter. Optional: a deployment without Search runs
-   * processing → emitting and completes without sending anything, exactly as
-   * before this task. When present, the runner invokes it in the `emitting`
-   * phase, streaming the staged outbox to Search and reconciling on resume.
-   */
-  emitter?: Emitter | null;
-  /**
-   * The text-LLM client for the summary hierarchy.
-   * Optional: a deployment without `SUMMARY_URL` passes `null`, the summary pass
-   * is skipped cleanly and `document.end.summaries` stays empty — the job still
-   * completes. When present, the document pass produces section summaries as
-   * sections close and chapter/document summaries at the end, each a
-   * checkpointed stage over this client. The per-job generator is constructed
-   * inside the run so it binds to the run's stage runner and budget ledger.
-   */
-  summaryClient?: SummaryClient | null;
-  /**
-   * Observability hooks. Optional so the runner is
-   * testable with a no-op. `recordFastPath` counts each page's route — the
-   * deterministic text fast-path or the vision path — which `/metrics` exposes
-   * as the "Anteil Fast-Path" share. `recordTextFidelity` keeps the fast-path
-   * page's fidelity check on the same counter a vision page uses, so the check
-   * "stays active" as a real, measured call.
-   */
-  metrics?: RunnerMetrics | null;
-  /**
-   * Search's source identification (dedup, canonical reference). Optional: a
-   * deployment without Search, or a test, ingests every source as before —
-   * no duplicate skipping, but the version is still detected and emitted.
-   */
-  identifier?: SourceIdentifier | null;
-  /**
-   * The content-addressed source store, for e-mail attachments: each one is
-   * stored and ingested as a job of its own. Without it attachments are only
-   * listed in the e-mail's text.
-   */
-  sourceStore?: SourceStore | null;
-  /**
-   * The Tesseract OCR fallback. Optional: when
-   * absent or disabled (`OCR_FALLBACK=off`, the default), a VLM outage fails a
-   * scanned page for a later retry exactly as before. When enabled, the runner
-   * recognises the page image with Tesseract instead and records a warning on
-   * the page, so a model outage degrades to searchable OCR text rather than
-   * missing content.
-   */
-  ocr?: OcrClient | null;
-  /** The wall clock used for backoff decisions; injectable for tests. */
-  now?: () => Date;
-  /**
-   * Wait `ms` (or until `signal` aborts) before retrying a transient stall in
-   * place. Injectable so tests can advance a fake clock instead of sleeping.
-   */
-  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
-}
-
-/** The slice of the revision client the runner uses to identify a source. */
-export interface SourceIdentifier {
-  identify(args: {
-    request: IdentifyRequest;
-    collection?: string | undefined;
-    signal?: AbortSignal | undefined;
-  }): Promise<IdentifyResponse | null>;
-}
 
 /**
  * Per-run context carried through async continuations (the concurrent page
@@ -455,20 +284,6 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** The observability surface the runner records against. */
-export interface RunnerMetrics {
-  /** Count a page's route: the deterministic fast path, or the vision path. */
-  recordFastPath(route: "fast-path" | "vision"): void;
-  /** Record a text-fidelity check outcome for a page. */
-  recordTextFidelity(options: { flagged: boolean; missingTokens: number }): void;
-  /**
-   * Record one stage execution: outcome, duration and model
-   * tokens. Optional so a metrics stub without it still type-checks; the
-   * production wiring passes the shared {@link import("../http-metrics.js").HttpMetrics}.
-   */
-  recordStage?(observation: StageObservation): void;
-}
-
 /**
  * The Prometheus stage label of a checkpoint stage. Summary stages carry the
  * section id in their stage string (`summary:section:<id>`); they collapse onto
@@ -488,7 +303,7 @@ function stageMetricLabel(stage: string): string {
 export const PIPELINE_REVISION = "2.1.0";
 
 /** The persisted parsed shape of the vision stage, enough to rebuild a page. */
-interface VisionStageParsed {
+export interface VisionStageParsed {
   summary: string | undefined;
   markdown: string;
   figures: Array<{
@@ -3980,318 +3795,6 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   return { run };
-}
-
-// ── mapping helpers ──────────────────────────────────────────────────────
-
-const TRUNCATION_WARNING =
-  "Die Modellantwort war auch beim größten Token-Budget abgeschnitten; der Seiteninhalt ist unvollständig.";
-
-/** Recorded on a page whose text came from the Tesseract fallback. */
-const OCR_FALLBACK_WARNING =
-  "Das Vision-Modell war nicht erreichbar; der Text dieser Seite wurde stattdessen mit Tesseract-OCR erkannt und ist möglicherweise unvollständig.";
-
-/** The parsed result of a checkpoint row, or undefined when it has none. */
-function parsedOfRow<T>(row: PageStageRow): T | undefined {
-  const output = row.output;
-  if (isStageOutput(output)) return (output.parsed ?? undefined) as T | undefined;
-  return undefined;
-}
-
-/**
- * True when a checkpoint carries a raw model response a reparse can re-read:
- * a finished unit, or one that failed permanently after the model answered. A
- * unit in a transient backoff is left for its retry.
- */
-function reparseable(row: PageStageRow): boolean {
-  if (!isStageOutput(row.output) || typeof row.output.raw !== "string") return false;
-  return row.status === "done" || (row.status === "failed" && row.next_attempt_at === null);
-}
-
-/** A human-readable message from any thrown value. */
-function errMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** The ordinal `n` of a page-scoped figure id `p<page>-f<n>` (1 when unparsable). */
-function figureOrdinalOf(figureId: string): number {
-  const match = /-f(\d+)$/.exec(figureId);
-  const n = match?.[1] !== undefined ? Number.parseInt(match[1], 10) : Number.NaN;
-  return Number.isFinite(n) && n > 0 ? n : 1;
-}
-
-/** A figure has a usable, positive-area bbox. */
-function isCroppable(bbox: BoundingBox | undefined): bbox is BoundingBox {
-  return bbox !== undefined && isValidBoundingBox(bbox);
-}
-
-/** The normalised area (0–1) of a bbox `[x1,y1,x2,y2]`. */
-function bboxArea(bbox: BoundingBox): number {
-  return Math.max(0, bbox[2] - bbox[0]) * Math.max(0, bbox[3] - bbox[1]);
-}
-
-/**
- * Decide whether a figure gets Pass 2. A figure
- * runs Pass 2 only when its kind is in `FIGURE_PASS2_KINDS`, it has a usable
- * bbox, and that bbox covers at least `minArea` of the page. The Pass-2 crop
- * uses the S4-snapped bbox when present, falling back to the raw
- * Pass-1 bbox. Returns the bbox to crop when Pass 2 should run.
- */
-function pass2Gate(
-  figure: VisionStageParsed["figures"][number],
-  kinds: ReadonlySet<string>,
-  minArea: number,
-): { run: false } | { run: true; bbox: BoundingBox } {
-  const kind = figure.kind ?? "other";
-  if (!kinds.has(kind)) return { run: false };
-  const bbox = isCroppable(figure.snappedBbox)
-    ? figure.snappedBbox
-    : isCroppable(figure.bbox)
-      ? figure.bbox
-      : undefined;
-  if (bbox === undefined) return { run: false };
-  if (bboxArea(bbox) < minArea) return { run: false };
-  return { run: true, bbox };
-}
-
-/** Convert a v1 (readonly) bbox to the v2 record's mutable tuple. */
-function toBBox(bbox: BoundingBox): BBox {
-  return [bbox[0], bbox[1], bbox[2], bbox[3]];
-}
-
-/** The page-image asset id for a page. */
-function pageAssetId(reference: string, page: number): string {
-  return buildAssetId(reference, pageLocalId(page));
-}
-
-/**
- * S4 deterministic refinement of the Pass-1 figures. For each figure with a
- * usable bbox, snap the box to the ink and the adjacent text blocks and
- * collect the text-layer words inside it as `regionText`/`labels`; a figure
- * without a box is passed through untouched.
- *
- * This is deliberately folded onto the `vision1` checkpoint rather than being a
- * separate `refined` stage. S4 is deterministic and its only inputs are the
- * rendered page image and this page's S2 analysis — both already in hand inside
- * the vision stage — so computing it here and persisting the result on the
- * checkpoint means a resume (or a render-hash reuse) replays the snapped bbox
- * and region text with no recompute, which a separate stage would only
- * duplicate. The concurrent scheduler drives whole pages, not per-stage fan-out
- * within a page, so a distinct S4 stage would add a checkpoint round-trip
- * without changing resume behaviour. `snapFigureBBox` never throws, so a page
- * is never failed over refinement.
- *
- * Returns the figures in input order with `snappedBbox`/`regionText`/`labels`
- * filled in where available.
- */
-async function refineFigures(
-  figures: ParsedVisionPage["figures"],
-  image: PageImage,
-  analysis: PageAnalysis | null,
-): Promise<VisionStageParsed["figures"]> {
-  const refined: VisionStageParsed["figures"] = [];
-  for (const f of figures) {
-    const base = { id: f.id, description: f.description, kind: f.kind, caption: f.caption, bbox: f.bbox };
-    if (!isCroppable(f.bbox)) {
-      refined.push(base);
-      continue;
-    }
-    const result = await snapFigureBBox(toBBox(f.bbox), {
-      image: { buffer: image.buffer, width: image.width, height: image.height },
-      analysis,
-    });
-    refined.push({
-      ...base,
-      snappedBbox: result.bbox as unknown as BoundingBox,
-      ...(result.regionText !== undefined ? { regionText: result.regionText } : {}),
-      ...(result.labels !== undefined ? { labels: result.labels } : {}),
-    });
-  }
-  return refined;
-}
-
-/**
- * Build a contract-valid v2 page record from the parsed vision output.
- *
- * The Pass-1 body Markdown is mapped to typed blocks by the deterministic
- * {@link parseMarkdownBlocks} (headings with numbering, paragraphs, lists,
- * tables with cells and continuation flags, code); each figure block is placed
- * at its `![figure_<id>]` position in the reading order, and figures the body
- * never referenced follow at the end. A fast-path page emits its S2 blocks
- * verbatim. Because the mapping is a pure function of the persisted
- * checkpoint, a resume or a `reparse` rebuilds the identical record.
- */
-function buildPageRecord(
-  reference: string,
-  page: number,
-  parsed: VisionStageParsed,
-): PageRecord {
-  const blocks: Block[] = [];
-  const warnings = [...parsed.warnings];
-  const assets: AssetRef[] = [];
-
-  // ── figure blocks, keyed by figure id for placement in the flow ──────────
-  const figureBlocks = new Map<string, Block>();
-  const figureOrder: string[] = [];
-  let figureOrdinal = 0;
-  for (const figure of parsed.figures) {
-    figureOrdinal += 1;
-    const assetId = buildAssetId(reference, figureLocalId(figure.id));
-    // Prefer the S4-snapped bbox for the emitted block and asset so
-    // consumers see the refined region; fall back to the raw Pass-1 bbox, then
-    // the full page.
-    const resolvedBbox = isCroppable(figure.snappedBbox)
-      ? figure.snappedBbox
-      : isCroppable(figure.bbox)
-        ? figure.bbox
-        : ([0, 0, 1, 1] as BoundingBox);
-    const bbox = toBBox(resolvedBbox);
-    figureOrder.push(figure.id);
-    figureBlocks.set(figure.id, {
-      id: `p${page}-fb${figureOrdinal}`,
-      page,
-      type: "figure",
-      figureId: figure.id,
-      // The model-supplied kind; falls back to "other" for a
-      // checkpoint written before this field existed.
-      kind: figure.kind ?? "other",
-      ...(figure.caption !== undefined ? { caption: figure.caption } : {}),
-      description: figure.description,
-      // The verbatim text-layer words inside the snapped bbox and their
-      // deduplicated labels. Absent for a scan or a
-      // container without `-bbox-layout` geometry.
-      ...(figure.regionText !== undefined ? { regionText: figure.regionText } : {}),
-      ...(figure.labels !== undefined && figure.labels.length > 0 ? { labels: figure.labels } : {}),
-      // The structured Pass-2 transcription (task 2.5, S5). Present only for a
-      // gated kind that ran Pass 2; `renderMarkdown` renders it per format.
-      ...(figure.transcription !== undefined ? { transcription: figure.transcription } : {}),
-      bbox,
-      assetId,
-    });
-    assets.push({ assetId, kind: "figure", localId: figureLocalId(figure.id), page, bbox });
-  }
-
-  // ── body blocks in reading order ─────────────────────────────────────────
-  if (parsed.fastPath === true && parsed.fastPathBlocks !== undefined) {
-    // A fast-path page carries its blocks (heading/paragraph/list, all
-    // source:"text-layer") built from the S2 geometry; no vision markdown.
-    blocks.push(...parsed.fastPathBlocks);
-  } else if (parsed.markdown.trim() !== "") {
-    const body = parseMarkdownBlocks(parsed.markdown, {
-      page,
-      source: parsed.usedOcr ? "vision" : "text-layer",
-    });
-    for (const item of body.items) {
-      if (item.kind === "block") {
-        blocks.push(item.block);
-        continue;
-      }
-      // A figure placeholder: the figure block goes exactly here.
-      const figureBlock = figureBlocks.get(item.figureId);
-      if (figureBlock !== undefined) {
-        blocks.push(figureBlock);
-        figureBlocks.delete(item.figureId);
-      }
-    }
-    warnings.push(...body.warnings);
-  }
-  // Figures the body did not reference follow the text, in figure order.
-  for (const id of figureOrder) {
-    const figureBlock = figureBlocks.get(id);
-    if (figureBlock !== undefined) blocks.push(figureBlock);
-  }
-
-  // ── tiling (S6): a page-spanning drawing figure with its tiles ───────────
-  // A large-format page that was tiled emits one `technical_drawing` figure
-  // covering the whole page. It carries the merged, overlap-deduplicated
-  // transcription and the `tiles[]` refs; each tile is a `tile` asset
-  // addressable by its own bbox for the research zoom. The tile bytes are not
-  // stored — they reproduce on demand from the content-addressed source,
-  // exactly like a figure crop.
-  if (parsed.tiled !== undefined && parsed.tiled.tiles.length > 0) {
-    figureOrdinal += 1;
-    const wholePage = toBBox([0, 0, 1, 1] as BoundingBox);
-    const figureId = `p${page}-tiled`;
-    const figureAssetId = buildAssetId(reference, figureLocalId(figureId));
-    blocks.push({
-      id: `p${page}-fb${figureOrdinal}`,
-      page,
-      type: "figure",
-      figureId,
-      kind: "technical_drawing",
-      description:
-        "Großformatige Seite, in überlappende Kacheln zerlegt und zusammengeführt (S6).",
-      transcription: parsed.tiled.transcription,
-      tiles: parsed.tiled.tiles,
-      bbox: wholePage,
-      assetId: figureAssetId,
-    });
-    // The whole-page figure crop asset (the plan as one image).
-    assets.push({
-      assetId: figureAssetId,
-      kind: "figure",
-      localId: figureLocalId(figureId),
-      page,
-      bbox: wholePage,
-    });
-    // Each tile as its own addressable `tile` asset with its region bbox.
-    for (const tile of parsed.tiled.tiles) {
-      assets.push({
-        assetId: tile.assetId,
-        kind: "tile",
-        localId: tileLocalId(tile.tileId),
-        page,
-        bbox: tile.bbox,
-      });
-    }
-  }
-
-  // The page image itself is always an addressable asset.
-  assets.push({
-    assetId: buildAssetId(reference, pageLocalId(page)),
-    kind: "page",
-    localId: pageLocalId(page),
-    page,
-  });
-
-  return {
-    type: "page",
-    page,
-    size: { wPt: parsed.size.wPt, hPt: parsed.size.hPt },
-    // The deterministic page class. Falls back to
-    // the v1 heuristic for a checkpoint written before this field existed.
-    class: parsed.pageClass ?? (parsed.usedOcr ? "scan" : "text"),
-    ...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
-    blocks,
-    assets,
-    warnings,
-    // `fastPath` records that the page took the deterministic text fast-path
-    // a consumer and the eval harness read it as the per-page
-    // fast-path signal alongside the /metrics counter.
-    fidelity: { ocr: parsed.usedOcr, ...(parsed.fastPath === true ? { fastPath: true } : {}) },
-  };
-}
-
-/** A minimal valid page record, for the budget-pause path. */
-function emptyRecord(page: number): PageRecord {
-  return {
-    type: "page",
-    page,
-    size: { wPt: 1, hPt: 1 },
-    class: "text",
-    blocks: [],
-    assets: [],
-    warnings: [],
-  };
-}
-
-/** The source filename, from the config snapshot when present, else the reference. */
-function filenameOf(job: JobRow): string {
-  const source = (job.config as { source?: { filename?: unknown } }).source;
-  if (source !== undefined && typeof source.filename === "string" && source.filename !== "") {
-    return source.filename;
-  }
-  return job.reference;
 }
 
 export type { PageRenderer } from "./page-renderer.js";

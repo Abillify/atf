@@ -62,11 +62,21 @@ import { initRuntimeEgress } from "./security/egress.js";
 // ── Bootstrap modules ─────────────────────────────────────────────────────
 import { buildPersistence } from "./bootstrap/persistence.js";
 import { withPiiVault } from "./graph/pii-vault-engine.js";
+import { createProxyRegistry } from "./graph/flow-registry-proxy.js";
+import {
+  createPiiContextScope,
+  createPiiToolBoundary,
+  setPiiContextScope,
+  setPiiToolBoundary,
+} from "./graph/pii-tool-boundary.js";
 import { withDecisionReceipts } from "./receipts/receipts-engine-decorator.js";
 import { InMemoryReceiptStore } from "./receipts/receipt-store.js";
 import { parseReceiptSigningKey } from "./receipts/signing-key.js";
-import { InMemoryTransparencyLog } from "./receipts/transparency-log.js";
-import { PostgresReceiptLogSink } from "./receipts/receipt-log-sink.js";
+import {
+  InMemoryTransparencyLog,
+  type TransparencyLog,
+} from "./receipts/transparency-log.js";
+import { PostgresTransparencyLog } from "./receipts/postgres-transparency-log.js";
 import { createTreeHeadSealer } from "./receipts/tree-head-sealer.js";
 import { buildObservability } from "./bootstrap/observability.js";
 import { buildCache } from "./bootstrap/cache.js";
@@ -329,6 +339,42 @@ if (import.meta.main) {
     );
   }
 
+  // PII vault at the tool boundary (ADR 0036): tools listed in
+  // PII_VAULT_DETOKENIZE_TOOLS get the real values back in their arguments
+  // right before the call. Empty list (the default) registers nothing, and
+  // tools keep receiving placeholders.
+  const piiToolPatterns = config.piiVaultDetokenizeTools ?? [];
+  // PII_VAULT_SCOPE=messages+context (ADR 0036, step 4): tool results and
+  // retrieved chunks are tokenized before they enter the model context.
+  setPiiContextScope(
+    piiVault !== undefined && config.piiVaultScope === "messages+context"
+      ? createPiiContextScope(piiVault)
+      : undefined,
+  );
+  if (piiVault === undefined && config.piiVaultScope === "messages+context") {
+    logger.warn(
+      "PII_VAULT_SCOPE=messages+context is set but PII_VAULT_ENABLED is not — no effect",
+    );
+  } else if (piiVault !== undefined && config.piiVaultScope === "messages+context") {
+    logger.info("PII vault scope: messages, tool results and retrieved content");
+  }
+  if (piiVault !== undefined) {
+    const boundary = createPiiToolBoundary(piiVault, piiToolPatterns, metrics);
+    setPiiToolBoundary(boundary);
+    if (boundary !== undefined) {
+      logger.warn(
+        "PII vault: listed tools receive real values in their arguments " +
+          "(PII_VAULT_DETOKENIZE_TOOLS) — every listed tool and its backend " +
+          "are inside the personal-data boundary",
+        { tools: piiToolPatterns },
+      );
+    }
+  } else if (piiToolPatterns.length > 0) {
+    logger.warn(
+      "PII_VAULT_DETOKENIZE_TOOLS is set but PII_VAULT_ENABLED is not — the list has no effect",
+    );
+  }
+
   const toolAuthzLoader = createToolAuthzLoader(config.flowsDir, logger, {
     failClosed: config.toolAuthzFailClosed === true,
     // Req 7.7: a failed policy reload increments aiperator_policy_stale_total
@@ -433,6 +479,16 @@ if (import.meta.main) {
   // "Run & Trace" so it executes the canvas, not the live version.
   const studioTests = createStudioTestRegistry(flowRegistry);
   flowRegistry = studioTests;
+  // Trust-proxy mode (ADR 0038): model names from PROXY_MODELS resolve to
+  // built-in pass-through flows. Real flows always win.
+  if ((config.proxyModels ?? []).length > 0) {
+    flowRegistry = createProxyRegistry(flowRegistry, config.proxyModels ?? []);
+    logger.info("Trust-proxy model mapping active (PROXY_MODELS)", {
+      entries: (config.proxyModels ?? []).map(
+        (e) => `${e.match} → ${e.provider}/${e.model}`,
+      ),
+    });
+  }
 
   // 8. MCP
   const { mcpWrapper, knownToolIds, toolGroupSummarizer } = await buildMcp(
@@ -722,23 +778,27 @@ if (import.meta.main) {
     config.receiptSigningKey !== undefined
       ? await parseReceiptSigningKey(config.receiptSigningKey)
       : undefined;
-  const transparencyLog =
-    receiptSigningKey !== undefined
-      ? new InMemoryTransparencyLog(
-          receiptSigningKey.privateKey,
-          receiptSigningKey.kid,
-          ...(database !== undefined
-            ? [new PostgresReceiptLogSink(database)]
-            : []),
-        )
-      : undefined;
-  // Continue the durable log after a restart instead of starting a new tree
-  // at position 0 (Req 15.3); a no-op without a database.
-  if (transparencyLog !== undefined && database !== undefined) {
-    const hydrated = await transparencyLog.hydrate();
-    logger.info("Decision-receipt transparency log hydrated", {
-      entries: hydrated,
+  // With a database the log is shared between replicas (ADR 0039): leaf
+  // order comes from `receipt_log`, appended under an advisory lock, so every
+  // replica proves against the same tree. Without one it stays per process.
+  let transparencyLog: TransparencyLog | undefined;
+  if (receiptSigningKey !== undefined && database !== undefined) {
+    const shared = new PostgresTransparencyLog(
+      database,
+      receiptSigningKey.privateKey,
+      receiptSigningKey.kid,
+    );
+    await shared.refresh();
+    logger.info("Decision-receipt transparency log shared via receipt_log", {
+      entries: shared.size(),
+      sealedHeads: shared.treeHeads().length,
     });
+    transparencyLog = shared;
+  } else if (receiptSigningKey !== undefined) {
+    transparencyLog = new InMemoryTransparencyLog(
+      receiptSigningKey.privateKey,
+      receiptSigningKey.kid,
+    );
   }
   // Periodic signed tree heads (Req 15.3): sealed on the audit-anchor
   // interval while audit anchoring is active; persisted in receipt_tree_heads.

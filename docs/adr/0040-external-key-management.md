@@ -4,136 +4,119 @@ Date: 2026-11-11
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Layer 1 (`NAME_FILE`) is implemented. Layer 2 (`KeyProvider`) is the
+accepted design for external key management; its first implementation step is defined below
+and not yet built.
 
 ## Context
 
-ATF's signing and encryption keys arrive through environment variables:
-`EVIDENCE_SIGNING_KEY`, `RECEIPT_SIGNING_KEY`, `ERASURE_RECEIPT_SIGNING_KEY`,
-`SEARCH_EVIDENCE_SIGNING_KEY`, `PII_VAULT_ENCRYPTION_KEY`,
-`BYOK_ENCRYPTION_KEY`, `TRANSACTION_HS256_SECRET` (and its per-service
-variants), `CONTROL_SESSION_SECRET`, `OIDC_CLIENT_SECRET`, `PROVIDER_KEYS`,
-and roughly two dozen more marked SECRET in `docs/CONFIGURATION.md`. There is
-no `*_FILE` variant for any of them — the only file-based secret in the whole
-surface is `TLS_KEY_FILE`, which is a TLS listener input, not a pattern to
-reuse — and no shared loader: each service reads its variables through its own
-Zod `EnvSchema`.
+ATF's signing and encryption keys, service tokens and connection strings arrived only through
+environment variables: `EVIDENCE_SIGNING_KEY`, `RECEIPT_SIGNING_KEY`,
+`ERASURE_RECEIPT_SIGNING_KEY`, `SEARCH_EVIDENCE_SIGNING_KEY`, `PII_VAULT_ENCRYPTION_KEY`,
+`BYOK_ENCRYPTION_KEY`, the transaction-token secrets, `CONTROL_SESSION_SECRET`,
+`OIDC_CLIENT_SECRET`, `PROVIDERS` (which carries API keys), `DATABASE_URL` and the other
+connection URLs (which carry passwords), and the rest of the variables marked SECRET in
+`docs/CONFIGURATION.md`. The only file-based inputs were TLS material (`TLS_KEY_FILE` and
+siblings), which are paths, not a secret pattern.
 
-That is awkward in exactly the environments the enterprise track targets.
-Kubernetes secret mounts (`projected` volumes, External Secrets Operator,
-Sealed Secrets) deliver secrets as files by default; pushing them into env
-vars requires an extra translation step whose failure modes are silent (a
-trailing newline from `echo $SECRET > env` corrupts base64 keys in ways that
-surface as "invalid key" at first use, not at deploy). And a KMS/HSM — the
-answer to "where should signing keys live" in a regulated deployment — is not
-reachable at all: the private key bytes are consumed directly wherever they
-are needed.
+That is awkward where enterprise deployments run. Kubernetes secret mounts (projected volumes,
+External Secrets Operator, Sealed Secrets) and Docker/Swarm secrets deliver secrets as files;
+pushing them into environment variables needs an extra translation step whose failure modes are
+silent (a trailing newline corrupts a base64 key and surfaces as "invalid key" at first use). A
+KMS or HSM — the answer to "where should signing keys live" in a regulated deployment — was not
+reachable at all: private key bytes are consumed directly wherever they are needed.
 
-This ADR splits the two concerns, because they are not equally ready:
-
-1. **`*_FILE` variants** are a small, mechanical, uncontroversial improvement.
-   The implementation part lives in the review follow-up (G2); this ADR pins
-   the semantics so the implementation and the docs agree.
-2. **External key management (KMS/HSM)** is a real architectural change —
-   keys stop being data the process holds and become an operation the process
-   calls. It gets a design here and nothing more; no KMS dependency is added
-   by any current task.
+The two concerns are not equally ready, so this record splits them.
 
 ## Decision
 
-Proposed, in two layers.
+### Layer 1 — `NAME_FILE` before `NAME` (implemented)
 
-### Layer 1 — `resolveSecret(env, name)`: `NAME_FILE` before `NAME`
+`resolveSecret(env, name)` and `materializeSecrets(names)` in `@atf/security-kit`
+(`packages/security-kit/src/auth/resolve-secret.ts`) are the single implementation:
 
-A single function in `@atf/security-kit`, used by every service's config
-loading for every variable marked SECRET:
+- If `NAME_FILE` is set, the file is read, exactly one trailing `\n` or `\r\n` is stripped, and
+  the content is the value. Nothing else is trimmed.
+- If only `NAME` is set, it is used verbatim, as before.
+- Both set is a startup error naming both variables — never a precedence rule. Ambiguity about
+  which key signed a receipt is an evidence problem, not a configuration preference.
+- An unreadable file is a startup error with the path and the OS error; an empty file is a
+  startup error. Neither falls back to `NAME` or to an empty secret.
+- Reading happens once, at configuration load. Rotation remains a restart
+  (`docs/runbooks/key-rotation.md`).
 
-- If `NAME_FILE` is set, read the file at that path, use its content with one
-  trailing `\n` (and `\r\n`) trimmed, and ignore `NAME` entirely.
-- Else if `NAME` is set, use it verbatim (today's behavior, unchanged — no
-  trimming of the variable itself, so a secret that legitimately ends in
-  whitespace is not silently altered).
-- If both are set, fail at startup with a message naming both variables —
-  never pick one. Ambiguity about which key signed a receipt is an evidence
-  problem, not a config preference.
-- If `NAME_FILE` is set but the file cannot be read, fail at startup with the
-  path and the OS error, not a generic "secret missing" — a typo'd secret path
-  and an absent secret need different fixes.
-- Empty content is a configuration error, not "the secret is the empty
-  string".
+Coverage:
 
-Reading happens once, at config load, like every other variable — no live
-re-read, so a secret rotation stays a restart (which is already the rotation
-story for these keys; see `docs/runbooks/key-rotation.md`, which this change
-extends with the file path). The function is pure `env → value` so each
-service keeps its own Zod schema; the schemas gain the `*_FILE` twin as an
-optional string, and the config-reference generator picks them up like any
-other variable.
+- Runtime, Search, Extract and Gate resolve an explicit list per service (`RUNTIME_SECRET_VARS`,
+  `SEARCH_SECRET_VARS`, `EXTRACT_SECRET_VARS`, `GATE_SECRET_VARS`) at the top of configuration
+  loading and write the resolved values back into the process environment, so subsystems that
+  read `process.env` directly see them too. The lists are explicit rather than a name pattern,
+  so path-valued variables (`TLS_KEY_FILE`, `SEARCH_CA_CERT_FILE`, `AUDIT_ANCHOR_FILE`,
+  `OUTPOST_CONFIG_FILE`, …) are never read as secret pointers. They include the connection URLs
+  (`DATABASE_URL`, `DATABASE_OPERATOR_URL`, `REDIS_URL`, `POSTGRES_URL`,
+  `EXTRACT_DATABASE_URL`, `RATE_LIMIT_REDIS_URL`, `MCPGATE_TRANSACTION_REDIS_URL`),
+  `PROVIDERS` and `OPERATOR_TOKENS`.
+- In the Gate, every `${VAR}` reference in the YAML configuration and every
+  `tokenExchange.clientSecretEnv` honours `VAR_FILE` the same way, because Gate secrets are
+  operator-named and no fixed list can cover them.
+- Control resolves `CONTROL_SESSION_SECRET` the same way.
+- The configuration reference documents the rule once for all services instead of adding a
+  `*_FILE` row per variable; the Helm chart passes mounts through
+  `extraVolumes`/`extraVolumeMounts` and documents an example.
 
-### Layer 2 — `KeyProvider`: keys as an operation, not data
+### Layer 2 — `KeyProvider`: keys as an operation, not data (accepted design)
 
-Design only. A key becomes reachable through an interface rather than as
-bytes:
+A key becomes reachable through an interface rather than as bytes:
 
 ```ts
 interface KeyProvider {
-  /** Stable key id this provider answers for (appears in kid/`kid` headers). */
-  readonly keyId: string;
-  /** Sign a payload; the private key never leaves the provider. */
-  sign(payload: Uint8Array): Promise<Uint8Array>;
-  /** Decrypt a payload, if the key is an encryption key. */
-  decrypt?(ciphertext: Uint8Array): Promise<Uint8Array>;
+  /** Sign `payload` with the key `keyId`; the private key never leaves the provider. */
+  sign(keyId: string, payload: Uint8Array): Promise<Uint8Array>;
+  /** Encrypt / decrypt for encryption keys (PII vault, BYOK). */
+  encrypt?(keyId: string, plaintext: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+  decrypt?(keyId: string, ciphertext: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+  /** Public key material for the JWKS endpoints, by key id. */
+  publicKey(keyId: string): Promise<JsonWebKey>;
+  /** Key ids this provider currently signs with, newest first. */
+  activeKeyIds(): readonly string[];
 }
 ```
 
-Where it would plug in, per current key consumer:
+Where it plugs in:
 
 | Key | Today | With a provider |
 | --- | --- | --- |
-| `EVIDENCE_SIGNING_KEY` (Ed25519, ADR 0030) | WebCrypto `CryptoKey` from PEM/seed at boot | `sign()` on the provider; verification unchanged (public key via JWKS) |
-| `RECEIPT_SIGNING_KEY` / `tree-head-sealer.ts` | same | same |
-| `PII_VAULT_ENCRYPTION_KEY` (AES-GCM) | raw 32-byte key in memory | `decrypt()` + `encrypt()`; the vault's per-entry AAD contract must be provider-independent |
-| `TRANSACTION_HS256_SECRET` | HMAC with shared secret | **not a fit** — HMAC needs the secret on both sides; an asymmetric replacement (ADR 0035's ES256/EdDSA path) is the actual migration, and the provider design must not imply HS256 can be externalized |
+| `EVIDENCE_SIGNING_KEY` (Ed25519, ADR 0030) | `CryptoKey` from seed at boot | `sign()`; JWKS from `publicKey()` |
+| `RECEIPT_SIGNING_KEY`, tree-head sealing | same | same |
+| `ERASURE_RECEIPT_SIGNING_KEY`, `SEARCH_EVIDENCE_SIGNING_KEY` | same | same |
+| `PII_VAULT_ENCRYPTION_KEY`, `BYOK_ENCRYPTION_KEY` (AES-GCM) | raw 32 bytes in memory | `encrypt()`/`decrypt()` with the existing per-entry AAD |
+| HS256 transaction secrets | HMAC with a shared secret | **not a fit** — the migration is ES256/EdDSA transaction tokens (ADR 0035), whose signing key then goes through the provider |
 
-Design constraints the implementation must honor:
+Rules the implementation must keep:
 
-- **No SDK dependency in the core.** The interface is the dependency; a KMS
-  adapter (AWS KMS, GCP KMS, PKCS#11) is a separate optional package. ATF's
-  dependency policy (supply-chain review per package, `supply-chain:check`)
-  makes "one SDK per cloud" expensive, so the first implementation is the
-  interface plus the existing in-process provider, and cloud adapters follow
-  only with a named customer requirement.
-- **Latency budget.** A KMS sign call is 5–50 ms over the network. Receipt
-  sealing and audit anchoring are periodic — fine. Per-execution operations
-  (transaction tokens) are not, which again points at the asymmetric-token
-  path rather than per-signature KMS calls. The design therefore scopes
-  `KeyProvider` to the *evidence* keys first (receipts, audit anchors,
-  erasure receipts, search evidence packs), where call volume is anchored to
-  the sealing cadence, not to traffic.
-- **Key id discipline.** Every signature format already carries a `kid`; the
-  provider must be able to serve an old key id for verification-side
-  operations after rotation, which means a provider is a *set* of key handles
-  in practice, addressed by id — the interface above shows the single-key
-  shape for clarity; the implementation will take `keyId` per call.
-- **Fail closed.** A provider that cannot reach its KMS must fail signing
-  operations loudly (receipt issuance pauses, the production gate reports
-  degraded), never fall back to a cached or generated key. A silently
-  substituted signing key is worse than no receipt.
+- **No SDK in the core.** The interface and an in-process provider (today's behaviour, keys from
+  layer 1) live in the core. Cloud and HSM adapters (AWS KMS, GCP KMS, Azure Key Vault, PKCS#11)
+  are separate optional packages, added one at a time with a named deployment that needs them —
+  each SDK is a supply-chain review (`supply-chain:check`).
+- **Evidence keys first.** Their call volume follows the sealing and issuance cadence, not
+  request traffic, so a 5–50 ms remote sign call is acceptable. Per-request operations are not
+  routed through a remote provider.
+- **Key ids are explicit.** Every signature format already carries a `kid`; a provider serves
+  several key ids so verification works across rotations.
+- **Fail closed.** A provider that cannot reach its KMS fails the signing operation; receipt
+  issuance or sealing stops and `/health/ready` reports it. It never falls back to a cached,
+  local or generated key.
+
+First implementation step (when scheduled): introduce the interface with the in-process
+provider and route the four evidence-signing call sites through it, with no behaviour change
+and no new dependency. Remote adapters follow as separate decisions.
 
 ## Consequences
 
-- **For operators (layer 1):** Helm/K8s deployments mount secrets as files and
-  set `NAME_FILE=/run/secrets/name`; docker-compose keeps env vars. Both paths
-  are tested; `docs/runbooks/key-rotation.md` gains the file variant; the Helm
-  chart documents a mounted-secret example.
-- **For the config surface:** roughly 30 new optional `*_FILE` variables in
-  `docs/CONFIGURATION.md`. That is noise the reference table pays for one
-  time; the alternative (per-service file conventions) is worse.
-- **For layer 2:** nothing changes today. The value of writing the design now
-  is that the evidence-signing call sites can be nudged toward a single
-  seam (one module that holds the `CryptoKey`) as they are touched, so a
-  future provider does not require touching twelve files.
-- **Explicitly out:** rotating keys automatically, splitting a key per
-  tenant, and any concrete KMS integration. ADR 0025 (cross-service erasure)
-  and ADR 0030 (asymmetric evidence chain) remain the governing records for
-  what the keys protect; this ADR changes only how they are supplied.
+- Operators mount secrets as files in Kubernetes and Docker (`NAME_FILE`), and the startup
+  refuses ambiguous or broken configurations instead of failing at first use.
+- The evidence-signing call sites converge on one seam, so a KMS adapter later touches one
+  module instead of every signer.
+- Explicitly out of scope: automatic key rotation, per-tenant keys, live re-reading of secret
+  files, and any concrete KMS integration. ADR 0025 and ADR 0030 remain the records for what the
+  keys protect; this record governs only how they are supplied.

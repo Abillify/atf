@@ -20,6 +20,7 @@
  * No `any` at module boundaries.
  */
 
+import crypto from "node:crypto";
 import { Hono } from "hono";
 import type {
   ApprovalRegistry,
@@ -80,8 +81,9 @@ export interface ControlRouterDeps {
    * signed click resolves the approval. Needed because chat and mail clients
    * fetch links automatically (previews, prefetchers, security scanners), and a
    * single state-changing GET would let such a fetch approve a consequential
-   * tool call. `approvalLinkSecret` must be set — the confirmation is an HMAC
-   * with the same secret. When unset or false the one-click behaviour stays.
+   * tool call. The confirmation is an HMAC keyed with `approvalLinkSecret`,
+   * or with a random per-process key when no secret is configured. Only an
+   * explicit `false` restores the one-click behaviour.
    */
   approvalLinkConfirm?: boolean;
   /**
@@ -395,10 +397,16 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
   // language of the chat message that embeds them.
   const msg = approvalMessages(deps.approvalMessageLocale);
   const approvalLinkSecret = deps.approvalLinkSecret;
-  // Confirmation needs a secret to sign the nonce with; without one the
-  // one-click flow is the only option, regardless of the switch.
-  const approvalLinkConfirm =
-    deps.approvalLinkConfirm ?? approvalLinkSecret !== undefined;
+  // Two-step confirmation is on unless explicitly switched off. Its nonce is
+  // signed with the link secret; a deployment without one (no capability
+  // links, e.g. the open plane of a local stack) signs with a random
+  // per-process key instead, so a prefetched `decide` URL is harmless there
+  // too. A nonce from another replica then fails verification and the page
+  // asks the reviewer to open the approval again — configure the shared
+  // secret for multi-replica deployments.
+  const approvalLinkConfirm = deps.approvalLinkConfirm ?? true;
+  const confirmSecret =
+    approvalLinkSecret ?? crypto.randomBytes(32).toString("base64url");
   const operatorAuth =
     deps.operatorAuth ?? createOperatorAuthorizer({ authRequired });
 
@@ -532,7 +540,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       );
     });
 
-        // GET /monitoring/approvals/:id/decide?decision=approved|denied&by=name
+    // GET /monitoring/approvals/:id/decide?decision=approved|denied&by=name
     // Approve/deny link — designed for embedding in chat messages. No JSON
     // body required; decision comes from the query parameter. Renders the
     // shared approval shell so it looks identical to the widget (the iframe
@@ -577,7 +585,13 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
       // dashboard resolves through `POST /monitoring/approvals/:id`, which
       // stays a single step. First click renders the confirmation page with a
       // signed nonce, second click verifies it for THIS approval and decision.
-      if (approvalLinkConfirm && approvalLinkSecret !== undefined) {
+      if (approvalLinkConfirm) {
+        // Nothing left to confirm: show the outcome instead of asking a
+        // question whose answer can no longer take effect.
+        if (pending === undefined) {
+          const prior = await approvalGate.getResolved(id);
+          return ctx.html(renderResolvedState(prior, msg), prior ? 200 : 404);
+        }
         const linkToken = ctx.req.query("token") ?? "";
         const confirm = ctx.req.query("confirm");
         // The confirmation is bound to the capability token's expiry, so it
@@ -589,9 +603,11 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
             id,
             decision,
             linkExpiresAtMs,
-            approvalLinkSecret,
+            confirmSecret,
           );
-          const base = `/monitoring/approvals/${encodeURIComponent(id)}`;
+          // Relative hrefs, like the widget's own links: the Runtime may be
+          // published under a path prefix (`APPROVAL_BASE_URL`), and a
+          // root-absolute path would leave it.
           const tokenQuery =
             linkToken === ""
               ? ""
@@ -600,8 +616,8 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
             renderApprovalConfirm(
               pending,
               decision,
-              `${base}/decide?decision=${decision}${tokenQuery}&confirm=${nonce}`,
-              `${base}/widget${linkToken === "" ? "" : `?token=${encodeURIComponent(linkToken)}`}`,
+              `decide?decision=${decision}${tokenQuery}&confirm=${encodeURIComponent(nonce)}`,
+              `widget${linkToken === "" ? "" : `?token=${encodeURIComponent(linkToken)}`}`,
               msg,
             ),
           );
@@ -612,7 +628,7 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
             id,
             decision,
             linkExpiresAtMs,
-            approvalLinkSecret,
+            confirmSecret,
           )
         ) {
           return ctx.html(

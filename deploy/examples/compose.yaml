@@ -183,6 +183,11 @@ services:
       # throwaway demo seed in a volume, never a production pattern (docs/runbooks/key-rotation.md).
       # Receipts stay in memory here for the same reason the PII vault does - no database.
       DECISION_RECEIPTS_ENABLED: "true"
+      # Trust-proxy mode (docs/TRUST-PROXY.md): model names an existing client already sends are
+      # mapped to the mock, so `POST /v1/messages` with `claude-…` or `/v1/chat/completions` with
+      # `gpt-4.1` runs a built-in pass-through flow under the same controls as the flows above.
+      # Ignored by Runtime images before the feature (0.25.6 and earlier).
+      PROXY_MODELS: '[{"match":"claude-*","provider":"quickstart","model":"example-chat"},{"match":"gpt-4.1","provider":"quickstart","model":"example-chat"}]'
     ports:
       - "${ATF_RUNTIME_PORT:-3000}:3000"
     volumes:

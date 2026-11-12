@@ -60,13 +60,22 @@ function collectProviderRefs(value: unknown, out: Set<string>): void {
  * 0040). The list is explicit rather than a name-pattern sweep on purpose:
  * a sweep would also match path-valued variables like `TLS_KEY_FILE` and
  * read that file's contents into a new environment variable nobody asked
- * for. `AUDIT_ANCHOR_SECRET` is deliberately absent: `AUDIT_ANCHOR_FILE`
- * already exists with a different meaning (the anchor output path), so a
- * `*_FILE` fallback there would silently overwrite a path with a secret.
+ * for. Connection URLs are included because they carry the database or Redis
+ * password, and `PROVIDERS` / `OPERATOR_TOKENS` because their JSON holds API
+ * keys and bearer tokens. `AUDIT_ANCHOR_SECRET_FILE` is the pointer for
+ * `AUDIT_ANCHOR_SECRET`; it is unrelated to `AUDIT_ANCHOR_FILE`, the anchor
+ * output path, which stays a path.
  */
 export const RUNTIME_SECRET_VARS = [
   "MONITORING_TICKET_SECRET",
+  "PROVIDERS",
   "AUDIT_PSEUDONYM_PEPPER",
+  "AUDIT_ANCHOR_SECRET",
+  "API_KEY_PEPPER",
+  "OPERATOR_TOKENS",
+  "DATABASE_URL",
+  "DATABASE_OPERATOR_URL",
+  "REDIS_URL",
   "AUDIT_FORWARD_TOKEN",
   "ERASURE_RECEIPT_SIGNING_KEY",
   "RECEIPT_SIGNING_KEY",
@@ -389,6 +398,11 @@ export function loadConfig(): AppConfig {
           .map((s) => s.trim())
           .filter((s) => s !== "")
       : undefined,
+    piiVaultTypedTokens: env.PII_VAULT_TYPED_TOKENS,
+    piiVaultConsistentTokens: env.PII_VAULT_CONSISTENT_TOKENS,
+    piiVaultDetokenizeTools: env.PII_VAULT_DETOKENIZE_TOOLS,
+    piiVaultScope: env.PII_VAULT_SCOPE,
+    proxyModels: env.PROXY_MODELS,
     piiDetectors: env.PII_DETECTORS
       ? env.PII_DETECTORS.split(",")
           .map((s) => s.trim())

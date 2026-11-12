@@ -4,169 +4,132 @@ Date: 2026-11-11
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Option (a), a read-only Runtime proxy, is the decision. Not yet
+implemented; the implementation plan is part of this record.
 
 ## Context
 
-The operator dashboard covers the Runtime's own surface — flows, executions,
-approvals, posture — but an operator who wants to answer "what is actually in
-the knowledge base right now?" still has to leave the dashboard. Collections,
-documents and extraction jobs live in Search and Extract, and Control has no
-view on them. The review follow-up (F3) asks for that view.
+The operator dashboard covers the Runtime's own surface — flows, executions, approvals,
+posture — but an operator who wants to answer "what is actually in the knowledge base right
+now?" still has to leave the dashboard. Collections, documents and extraction jobs live in
+Search and Extract, and Control has no view on them.
 
-The obstacle is not rendering, it is an architectural rule. Control is built so
-that every backend call goes to the Runtime and nowhere else: the BFF proxy
-(`apps/control/src/lib/bff-allowlist.ts`) forwards only Runtime path prefixes,
-the browser holds only the Runtime session/API credential, and the Runtime is
-the single place that turns an operator identity into a scoped
-transaction token (ADR 0035). Search and Extract authenticate with their own
-API tokens (`SEARCH_API_TOKEN`, `EXTRACT_API_TOKEN`); neither knows what an
-operator is, and per ADR 0035 a token minted for one service must not be valid
-at another. Giving the browser — or the Next server — direct Search or Extract
-credentials would end that design: the dashboard would hold a second class of
-long-lived service credentials, and every future authorization rule would have
-to be enforced in two places.
+The obstacle is not rendering, it is an architectural rule. Control is built so that every
+backend call goes to the Runtime and nowhere else: the BFF proxy
+(`apps/control/src/lib/bff-allowlist.ts`) forwards only Runtime path prefixes, the browser holds
+only the Runtime session or API credential, and the Runtime is the single place that turns an
+operator identity into a scoped transaction token (ADR 0035). Search and Extract authenticate
+with their own service credentials (`API_TOKEN` per service, or OIDC); neither knows what an
+operator is, and per ADR 0035 a token minted for one service is refused by another. Giving the
+browser — or the Next server — direct Search or Extract credentials would end that design: the
+dashboard would hold a second class of long-lived service credentials, and every future
+authorization rule would have to be enforced in two places.
 
-Two ways out exist that keep the rule. Both are described here; neither is
-implemented, and this ADR deliberately does not pick one without a review.
+### What is behind those surfaces today
 
-### What is actually behind those surfaces today
+The endpoints a knowledge-base view needs exist (checked against `docs/openapi/search.json` and
+`docs/openapi/extract.json`):
 
-The endpoints a knowledge-base view needs already exist and are stable enough
-to build against. From `docs/openapi/search.json`:
-
-| Need | Search endpoint |
+| Need | Service and endpoint |
 | --- | --- |
-| List collections with metadata | `GET /collections` |
-| Document/chunk counts per collection | `GET /collection-stats` |
-| List documents in a collection | `GET /documents` |
-| One document reassembled from chunks | `GET /document` |
-| Folder navigation | `GET /folders` |
-| Stored summaries | `GET /summaries`, `GET /summary` |
-| Recent ingest/search statistics | `GET /admin/stats` |
+| Collections with metadata | Search `GET /collections` |
+| Document and chunk counts per collection | Search `GET /collection-stats` |
+| Documents in a collection | Search `GET /documents` |
+| Folder navigation | Search `GET /folders` |
+| Stored summaries | Search `GET /summaries`, `GET /summary` |
+| One document reassembled from chunks | Search `GET /document` |
+| Recent ingest and search statistics | Search `GET /admin/stats` |
+| Extraction jobs and queue overview | Extract `GET /v2/jobs`, `GET /v2/jobs/summary` |
+| One job and its figures | Extract `GET /v2/jobs/{id}`, `GET /v2/jobs/{id}/figures` |
 
-From `docs/openapi/extract.json`:
-
-| Need | Extract endpoint |
-| --- | --- |
-| Persistent extraction jobs (create, list) | `GET /v2/jobs` |
-| Queue overview (queued/running/failed counts) | `GET /v2/jobs/summary` |
-| One job's status | `GET /v2/jobs/{id}` |
-| Job controls (pause/resume/cancel/retry-failed/reparse) | `POST /v2/jobs/{id}/…` |
-| Figures extracted by a job | `GET /v2/jobs/{id}/figures` |
-
-Search also owns the mutating side (`POST /ingest`, `POST /ingest-batch`,
-`DELETE /delete`, `DELETE /collections/{name}`, the whole `/v2/...` revision
-protocol); Extract owns `POST /v2/uploads` and `POST /v1/ingest`. This ADR
-scopes the dashboard to **read-only** in both directions: a dashboard that can
-drop a collection is a different risk conversation, and the write paths already
-have better frontends (the ingest APIs and the Outpost).
+Search also owns the mutating side (`POST /ingest`, `DELETE /collections/{name}`, the `/v2`
+revision protocol), Extract owns uploads and job controls (`/v2/uploads`,
+`POST /v2/jobs/{id}/pause|resume|cancel|retry-failed|reparse`).
 
 ## Decision
 
-Proposed for review — one of the two options below becomes the decision once a
-human reviewer picks it. Both options share the same constraints:
+**Option (a): a thin, read-only Runtime proxy.** The Runtime gains operator-scoped routes that
+read from Search and Extract on behalf of the signed-in operator. Control adds one page and a
+few allowlist prefixes and learns nothing about Search or Extract.
 
-- read-only endpoints only;
-- tenant scoping enforced server-side, never by a UI filter;
-- no new long-lived credential in the browser or in the Next server;
-- every proxied path enumerated in an allowlist, mirroring
-  `bff-allowlist.ts`'s posture (prefix match at segment boundaries, default
-  deny).
-
-### Option (a) — a thin read-only Runtime proxy
-
-The Runtime gains a small set of operator-scoped routes that fetch from Search
-and Extract with the Runtime's existing service credentials and the operator's
-identity attached, e.g.:
+### Routes
 
 ```
-GET /monitoring/knowledge/collections      → Search  GET /collections, /collection-stats
-GET /monitoring/knowledge/documents        → Search  GET /documents, /document, /folders
-GET /monitoring/knowledge/jobs             → Extract GET /v2/jobs, /v2/jobs/summary
+GET /monitoring/knowledge/collections          → Search  GET /collections + GET /collection-stats
+GET /monitoring/knowledge/documents            → Search  GET /documents, GET /folders
+GET /monitoring/knowledge/summaries            → Search  GET /summaries
+GET /monitoring/knowledge/stats                → Search  GET /admin/stats
+GET /monitoring/knowledge/jobs                 → Extract GET /v2/jobs, GET /v2/jobs/summary
+GET /monitoring/knowledge/jobs/{id}            → Extract GET /v2/jobs/{id}
 ```
 
-Control adds one page and three allowlist prefixes; it learns nothing new about
-Search or Extract.
+The proxy forwards only these upstream paths with only the query parameters each one documents
+(enumerated allowlist, default deny), and never forwards a client-supplied tenant.
 
-- **Files touched.** Runtime: a new `routes/knowledge.ts` (shape mirrors
-  `routes/services.ts` — `operatorAuth.authorize(header, token,
-  "monitoring:read")`), registration in `bootstrap/routes-management.ts`,
-  `openapi.ts` META_RULES entry, regenerated route table/OpenAPI. Control: one
-  page under `(dashboard)/knowledge/`, `nav.ts` entry, both catalogues,
-  `bff-allowlist.ts` prefixes, mock-backend routes.
-- **Permissions.** A new operator scope (e.g. `knowledge:read`) rather than
-  reusing `monitoring:read`, because the payload is corpus content, not
-  operational metrics: document titles and folder names are the customer's
-  data. Whether `GET /document` (full reassembled text) is inside the scope or
-  a second, stricter one is the main open question for review.
-- **Tenant separation.** The Runtime must pass the operator's tenant through:
-  Search's list endpoints take a collection/tenant filter, and the proxy must
-  derive it from the verified operator identity, not from a query parameter.
-  This is exactly the transaction-token pattern of ADR 0035 — the Runtime
-  mints a Search-audience token carrying the tenant, and Search enforces it.
-  The deviation to note honestly: ADR 0035's tokens authorize *executions*;
-  reusing the mechanism for an operator-initiated read needs either a new
-  audience or a claim distinguishing the two, and Search must reject the wrong
-  kind. That is real work on both sides, not a call-site change.
-- **Cost.** Roughly: Runtime route + auth + tests ≈ 2–3 days; Search-side
-  token-claim acceptance ≈ 1–2 days; Control page + i18n + e2e ≈ 2–3 days.
-  The OpenAPI/route-table regeneration is mechanical.
+### Permissions
 
-### Option (b) — embed the existing surfaces
+- New operator permission `knowledge:read` for every route above. It is separate from
+  `monitoring:read` because the payload is the customer's corpus metadata — document titles and
+  folder names — not operational metrics. `OPERATOR_ROLE_MAP` assigns it like any other
+  permission.
+- **Full document text (`GET /document`) and figure crops (`GET /v2/jobs/{id}/figures`) are not
+  part of this decision.** Reading a document's content in the dashboard is a second, stricter
+  permission (`knowledge:content`) and a separate change, because it turns the operator plane
+  into a reader of the corpus.
+- No write operation is proxied. Ingest, delete and job control stay with their existing
+  clients (ingest APIs, the Outpost, Extract's own UI).
 
-Search and Extract already render their own status UIs (Search's `/admin/stats`
-backs an admin view; Extract's job queue is visible in its deployment). The
-dashboard would link out — or frame — those surfaces instead of re-implementing
-them. The F2 services page (`SERVICE_LINKS`, `GET /monitoring/services`,
-`/services` in Control) is exactly this option in its weakest form: links, no
-embedding.
+### Identity and tenant separation
 
-- **Files touched.** None beyond `SERVICE_LINKS` entries; a stronger form
-  (iframe) touches Control's CSP (`src/lib/csp-policy.ts` — `frame-ancestors`
-  and `frame-src` today keep services out of frames deliberately) and Search's
-  and Extract's own auth flows, which are API-token based and have no operator
-  session to render an authenticated page with.
-- **Permissions.** Unchanged — the operator authenticates at the embedded
-  surface with that service's own credential.
-- **Tenant separation.** Not the dashboard's problem any more; each service
-  enforces its own. But that is also the weakness: an operator with the Search
-  API token sees **all** tenants, because Search tokens are per-deployment,
-  not per-operator. There is no per-operator tenancy to inherit.
-- **Cost.** Near zero for links; the iframe variant is more expensive than
-  option (a), not less, because it requires a session mechanism for Search and
-  Extract that does not exist.
+The Runtime calls Search and Extract with a transaction token (ADR 0035) for the target
+service's audience, carrying the operator's verified tenant and `purpose: "operator-read"`. The
+envelope field `purpose` exists already. The receiving service:
+
+- accepts the token on the read endpoints listed above, and only there;
+- refuses a token with `purpose: "operator-read"` on every other route;
+- applies its normal tenant and ACL scoping from the token, so an operator sees exactly one
+  tenant's corpus — never all tenants, as a deployment-wide `API_TOKEN` would.
+
+A read always targets exactly one tenant. A platform operator who may see several tenants picks
+one explicitly; the Runtime checks that permission and mints the token for that tenant. Search's
+tenant-less `operatorScope()` stays reachable only from trusted server-side code, as its own
+contract requires — never from a request, a proxied one included.
+
+### Audit
+
+Every proxied read records an audit entry (`knowledge.read`, operator, tenant, upstream path,
+result count) — the read of customer corpus metadata becomes traceable, which a direct
+browser-to-Search path could never be.
 
 ## Options considered and rejected
 
-- **Browser talks to Search/Extract directly.** Rejected: puts service
-  credentials in the dashboard, duplicates the authorization surface, and
-  breaks the BFF's default-deny posture. This is the rule the ADR exists to
-  protect.
-- **The Next server proxies to Search/Extract with service tokens from its own
-  environment.** Rejected: Control becomes a second backend with its own
-  secrets, outside the Runtime's audit trail. Every knowledge-base read would
-  bypass the Runtime's logging, posture checks, and production gate — the
-  audit story (Req 8, ADR 0026) would have a hole exactly where corpus data is
-  read.
-- **Replicate a metadata view into the Runtime's database.** Rejected: a second
-  copy of "what is in the knowledge base" that is always slightly stale, with
-  no invalidation story.
+- **(b) Embed or link the existing surfaces.** Links already exist (`SERVICE_LINKS`, the
+  `/services` page). Embedding would need a session mechanism Search and Extract do not have, and an operator
+  holding a Search `API_TOKEN` sees all tenants — there is no per-operator tenancy to inherit.
+  More expensive than (a), and weaker.
+- **Browser talks to Search/Extract directly.** Puts service credentials in the dashboard,
+  duplicates the authorization surface, breaks the BFF's default-deny posture.
+- **The Next server proxies with its own service tokens.** Control becomes a second backend with
+  its own secrets, outside the Runtime's audit trail, production gate and posture checks.
+- **Replicate a metadata view into the Runtime's database.** A second, always slightly stale copy
+  of the knowledge base with no invalidation story.
+
+## Implementation plan
+
+1. Search and Extract: accept transaction tokens with `purpose: "operator-read"` on the listed
+   read endpoints; refuse them everywhere else; tests for both directions and for tenant scoping.
+2. Runtime: `routes/knowledge.ts` (pattern of `routes/services.ts`), permission
+   `knowledge:read`, audit entries, upstream allowlist, OpenAPI and route-table regeneration.
+3. Control: page `(dashboard)/knowledge/`, nav entry, both i18n catalogues, BFF allowlist
+   prefixes, e2e with the mock backend, accessibility sweep.
+4. Docs: `docs/CAPABILITIES.md` (Operator interface) states the read-only boundary.
 
 ## Consequences
 
-- **If (a) is accepted:** the Runtime becomes (thinly) a gateway for operator
-  reads of two more services. That is a real widening of its role — it is
-  already the gateway for model traffic, tools, and monitoring; knowledge-base
-  reads are the same shape, but the ADR text in 0035 should get a pointer here
-  so the token-claim extension is traceable.
-- **If (b) is accepted:** F3 closes with the services page and a documentation
-  entry, and the dashboard stays honest about not covering the corpus. The
-  operator still cannot answer "how many documents does tenant X have" without
-  leaving the dashboard.
-- **Either way:** the read-only boundary stated above should be written into
-  `docs/CAPABILITIES.md` (Operator interface) so the next reviewer does not
-  re-open the write-path question by accident.
-- **Not decided here:** write operations (ingest, delete, collection drop),
-  per-document content preview under a stricter scope, and whether Search's
-  `/admin/stats` deserves its own tile on `/overview`.
+- The Runtime becomes, thinly, a gateway for operator reads of two more services — the same
+  shape as its existing role for model traffic, tools and monitoring. ADR 0035 gains a second
+  token purpose; this record is the reference for it.
+- Operators can answer "what does tenant X have indexed" without leaving the dashboard, scoped
+  to their tenant and audited.
+- Explicitly out of scope: write operations, document content (`knowledge:content`), and a
+  Search statistics tile on `/overview`.

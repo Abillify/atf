@@ -132,7 +132,10 @@ post_chat() { # <model/flow> <message> <headers out> <body out>
 	# The message is escaped by bun rather than written into the -d literal, so a
 	# quote or a newline in demo text cannot break the JSON body.
 	escaped="$(printf '%s' "$2" | bun -e 'process.stdout.write(JSON.stringify(await Bun.stdin.text()));')"
-	curl -sS --fail --max-time 120 -D "$3" -o "$4" \
+	# A run may sit in the approval gate for the whole window before it answers,
+	# so the request timeout has to outlast it - a fixed two minutes would cut
+	# the connection of step 2b on a stack that still runs the 600 s default.
+	curl -sS --fail --max-time "$((120 + approval_window / 1000))" -D "$3" -o "$4" \
 		-X POST "$runtime/v1/chat/completions" \
 		-H 'content-type: application/json' \
 		-d "{\"model\":\"$1\",\"messages\":[{\"role\":\"user\",\"content\":$escaped}]}"

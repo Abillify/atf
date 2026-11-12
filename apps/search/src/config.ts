@@ -901,6 +901,9 @@ export const SEARCH_SECRET_VARS = [
   "SPARSE_API_KEY",
   "TOKENIZE_API_KEY",
   "MONITOR_TOKEN",
+  "STATS_QUERY_PEPPER",
+  "POSTGRES_URL",
+  "RATE_LIMIT_REDIS_URL",
 ] as const;
 
 export function loadConfig(): Config {

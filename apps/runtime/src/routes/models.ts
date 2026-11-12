@@ -17,6 +17,7 @@
  * No `any` at module boundaries.
  */
 
+import { isProxyRegistry } from "../graph/flow-registry-proxy.js";
 import { Hono } from "hono";
 import type { FlowRegistry } from "../graph/flow-parser.js";
 import {
@@ -130,6 +131,26 @@ export function createModelsRouter(
     flow: ReturnType<FlowRegistry["get"]>,
   ): boolean => flow?.metadata?.hidden === true;
 
+  /**
+   * Trust-proxy entries (ADR 0038) with an exact `match` are real model names a
+   * client can pick; prefix entries (`claude-*`) are not listed — a pattern is
+   * not a model. A name a real flow already uses is listed once, as the flow.
+   * Access follows the pass-through flow the name runs.
+   */
+  const listProxyModels = (requestCtx: RequestContext): ModelObject[] => {
+    if (!isProxyRegistry(flowRegistry)) return [];
+    return flowRegistry
+      .proxyEntries()
+      .filter((entry) => !entry.match.endsWith("*"))
+      .flatMap((entry) => {
+        const flowId = flowRegistry.proxyFlowFor(entry.match);
+        const flow = flowId === undefined ? undefined : flowRegistry.get(flowId);
+        return flow !== undefined && canAccessFlow(flow, requestCtx)
+          ? [toModel(entry.match, `${entry.match} (via ATF)`)]
+          : [];
+      });
+  };
+
   /** Lists the caller's own assistants as selectable models. */
   const listAssistantModels = async (requestCtx: RequestContext): Promise<ModelObject[]> => {
     const store = deps.assistants;
@@ -161,11 +182,18 @@ export function createModelsRouter(
       .filter((flow) => canAccessFlow(flow, requestCtx))
       .map((flow) => toModel(flow.id, flow.name));
     const assistantModels = await listAssistantModels(requestCtx);
-    return ctx.json({ object: "list", data: [...flows, ...assistantModels] });
+    return ctx.json({
+      object: "list",
+      data: [...flows, ...listProxyModels(requestCtx), ...assistantModels],
+    });
   });
 
   router.get("/v1/models/:id", async (ctx) => {
     const id = ctx.req.param("id");
+    const proxied =
+      isProxyRegistry(flowRegistry) ? listProxyModels(requestContext(ctx)) : [];
+    const proxyMatch = proxied.find((model) => model.id === id);
+    if (proxyMatch !== undefined) return ctx.json(proxyMatch);
     const flow = flowRegistry.get(id);
     const requestCtx = requestContext(ctx);
     if (isHiddenFlow(flow) || flow === undefined || !canAccessFlow(flow, requestCtx)) {

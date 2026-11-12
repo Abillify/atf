@@ -648,6 +648,40 @@ Changes since 0.21.0 that need operator attention:
 3. Search: the IP rate limit (`RATE_LIMIT`, default 120 requests per minute) now also covers the read routes (`/documents`, `/document`, `/summaries`, `/folders`, `/collection-stats`), the collection admin routes, `/ui` and the browser login. A client that polls these routes from one IP above the limit gets 429; raise `RATE_LIMIT` (or call through the Gate) if that is expected traffic. The MCP endpoints stay unlimited here. Extract limits `POST /login` and the OIDC routes the same way.
 4. Gate: with `server.cors.origins: ["*"]` the CORS answer is a literal `*` without credentials. A browser client that needs cookies across origins must be listed by its origin.
 
+### 0.25 → next (unreleased)
+
+1. **Approval links ask twice.** `GET /monitoring/approvals/:id/decide` renders a confirmation
+   page; only the second, signed click decides (`APPROVAL_LINK_CONFIRM=false` restores one
+   click). The Control inbox is unaffected. The in-chat approval text is English by default;
+   `APPROVAL_MESSAGE_LOCALE=de` keeps German.
+2. **PII placeholders are typed and consistent.** The model now sees `[[PII:EMAIL:…]]` instead of
+   `[[PII:…]]`, and one placeholder per distinct value per execution. Both forms are restored in
+   responses. A prompt, guardrail rule or downstream parser that matched the old 16-hex form
+   literally needs updating, or set `PII_VAULT_TYPED_TOKENS=false` /
+   `PII_VAULT_CONSISTENT_TOKENS=false`.
+3. **Shared receipt transparency log.** With `DATABASE_URL`, the Runtime builds the receipt tree
+   from `receipt_log` under an advisory lock (ADR 0039), so every replica proves against the
+   same tree and the `REPLICAS > 1` warning disappears. Upgrade **all receipt-issuing replicas
+   together**: an old replica appends without the lock, and during a mixed rollout its rows can
+   commit out of order. Receipts and proofs issued before the switch stay valid with
+   `atf-verify`; heads sealed by the old per-process logs are kept in `receipt_tree_heads` but
+   no longer used for new proofs. Receipt issuance now fails when the database is unreachable
+   instead of continuing in memory.
+4. **Migration 53** adds `audit_forward_state` (SIEM forwarding position, operator role only).
+5. **Secrets from files.** Every secret, the database and Redis URLs included, can be given as
+   `<NAME>_FILE`. Setting both `<NAME>` and `<NAME>_FILE` stops the service — check `envFrom`
+   Secrets before mounting the same value as a file.
+6. **New, off by default:** `PROXY_MODELS` and `POST /v1/messages` (trust-proxy mode,
+   [TRUST-PROXY.md](TRUST-PROXY.md)), `PII_VAULT_DETOKENIZE_TOOLS`,
+   `PII_VAULT_SCOPE=messages+context`, `AUDIT_FORWARD_URL`, `SERVICE_LINKS`. With
+   `PII_VAULT_SCOPE=messages+context`, tool-detail frames and the debug trace show
+   placeholders for values inside tool results; citations streamed to the caller keep the real
+   text.
+7. **Gate:** imported MCP tools keep the downstream annotations, so a tool without
+   `readOnlyHint: true` is classified `write` as before but now also *advertises* the
+   downstream hints to clients. `mcpServers[].requiredScopes` and
+   `mcpServers[].server.allowPrivateAddress` are new.
+
 ### Not yet shared between replicas (roadmap)
 
 These are known single-process behaviours, not defects of a correct single-replica
@@ -656,7 +690,7 @@ deployment. With `REPLICAS > 1` they show up as warnings; plan around them.
 | Behaviour | What happens with several replicas | What to do now |
 | --- | --- | --- |
 | Runtime media store (`show_figure` links) | A link minted by one replica 404s on another | Pin figure traffic to one replica or route `/v1/media/:id` stickily |
-| Runtime receipts transparency log | Each replica keeps its own log | Run receipts on one replica, or accept per-replica logs |
+| Runtime receipts transparency log *(without `DATABASE_URL` only)* | Each replica keeps its own log | Configure `DATABASE_URL`; the log is then shared (ADR 0039) |
 | Gate pagination cursors | Signed with a per-process key unless `server.pagination.secret` is set | Set `server.pagination.secret` |
 | Gate approval / invocation stores | In memory without Redis | `MCPGATE_TRANSACTION_REDIS_URL` (already fatal in production for `> 1` replica) |
 

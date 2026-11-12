@@ -121,6 +121,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createModelsRouter` | — (full paths) | always | GET `/v1/models`<br/>GET `/v1/models/:id` |
 | `createMediaRouter` | — (full paths) | always | GET `/v1/media/:id` |
 | `createChatRouter` | — (full paths) | always | POST `/v1/chat/completions` |
+| `createMessagesRouter` | — (full paths) | always | POST `/v1/messages` |
 | `createResponsesRouter` | — (full paths) | always | POST `/v1/responses` |
 | `createJobsRouter` | — (full paths) | `jobStore is set` | GET `/v1/jobs/:id` |
 | `createReceiptsRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/v1/receipts`<br/>GET `/v1/receipts/:id`<br/>GET `/v1/receipts/:id/proof` |

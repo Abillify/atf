@@ -1748,7 +1748,9 @@ export const MIGRATIONS: readonly Migration[] = [
       // the batch with HTTP 2xx, so a crash between send and commit re-sends
       // at most one batch (at-least-once, never a gap). Unlike the audit
       // trail itself this table IS mutable by design — it is bookkeeping,
-      // not evidence — so the app roles get INSERT/UPDATE/SELECT here.
+      // not evidence. Only the operator role may write it: the forwarder runs
+      // on the operator plane, and a tenant-plane connection that could move
+      // the position forward could hide entries from the SIEM.
       `CREATE TABLE IF NOT EXISTS audit_forward_state (
          target     TEXT PRIMARY KEY,
          last_id    BIGINT NOT NULL DEFAULT 0,
@@ -1757,7 +1759,7 @@ export const MIGRATIONS: readonly Migration[] = [
       `DO $do$
        BEGIN
          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_app') THEN
-           EXECUTE 'GRANT INSERT, UPDATE, SELECT ON audit_forward_state TO aiperator_app';
+           EXECUTE 'REVOKE INSERT, UPDATE, DELETE ON audit_forward_state FROM aiperator_app';
          END IF;
          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
            EXECUTE 'GRANT INSERT, UPDATE, SELECT ON audit_forward_state TO aiperator_operator';

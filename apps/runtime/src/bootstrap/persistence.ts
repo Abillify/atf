@@ -411,6 +411,12 @@ export async function buildPersistence(
         config.piiVaultTypes.length > 0
           ? { piiTypes: config.piiVaultTypes as PiiType[] }
           : {}),
+        ...(config.piiVaultTypedTokens !== undefined
+          ? { typedTokens: config.piiVaultTypedTokens }
+          : {}),
+        ...(config.piiVaultConsistentTokens !== undefined
+          ? { consistentTokens: config.piiVaultConsistentTokens }
+          : {}),
       },
       logger,
     );

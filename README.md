@@ -51,7 +51,7 @@ toolkit, which means you build governance yourself. ATF is production plumbing f
 where neither is acceptable: run it on-premises or in your own cloud, connect it to systems you
 already have, and get cost, access, and quality measurable from the first request.
 
-Concretely, ATF is opinionated about four things most orchestrators leave to you:
+Concretely, ATF is opinionated about five things most orchestrators leave to you:
 
 **Tokenize detected personal data before provider calls.** When the PII vault is enabled and its
 detectors are configured for the deployment, it replaces detected values with meaningless
@@ -76,6 +76,13 @@ to start on configurations such as open CORS, unverified JWTs, or an unauthentic
 endpoint. Individual guardrails and policies remain explicit deployment choices; their defaults
 and prerequisites are documented in [Capabilities](docs/CAPABILITIES.md) and
 [Configuration](docs/CONFIGURATION.md).
+
+**Governs the AI clients you already have.** In trust-proxy mode a coding agent, desktop
+assistant or chat frontend changes only its base URL: model names listed in `PROXY_MODELS` run
+through the same controls as a flow — PII placeholders before the provider, guardrails,
+budgets, receipts — over the OpenAI Chat Completions API or the Anthropic Messages API
+(`/v1/messages`). Put the client's MCP servers behind a Gate and its tool calls are scoped,
+policy-checked and approved too. See [Trust-proxy mode](docs/TRUST-PROXY.md) (experimental).
 
 ### What ATF is not
 
@@ -292,8 +299,9 @@ setting that governs it.
   [migration guide](docs/document-intelligence-v2-migration.md).
 - **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
   Parameters are bound, never interpolated.
-- **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
-  per-user OIDC consent.
+- **Channels** — an OpenAI-compatible API, the Anthropic Messages API, webhooks, and a
+  Rocket.Chat integration with per-user OIDC consent; trust-proxy mode in front of existing
+  clients.
 - **Safety** — guardrails on input and output, egress DLP, tool *output* checked for injected
   instructions, scheduled red teaming, and plugins isolated in a worker without access to the
   process environment — opt-in (`PLUGINS_SANDBOX`), defence-in-depth rather than a hard

@@ -61,6 +61,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |
 | [BENCHMARKS.md](BENCHMARKS.md) | Measured retrieval, extraction and groundedness numbers, each with the raw report file committed under `benchmarks/` next to it |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
+| [TRUST-PROXY.md](TRUST-PROXY.md) | Putting ATF in front of existing AI clients: `PROXY_MODELS`, `/v1/messages`, the preset, the Gate as MCP front door |
 | [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |
 | [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md) | Moving a deployment onto the Document Intelligence v2 ingestion path |
 | [router-result-interpretation.md](router-result-interpretation.md) | Configuring Gate's optional second-pass result interpretation |
@@ -84,7 +85,7 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 40 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 48 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 

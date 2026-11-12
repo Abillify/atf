@@ -22,8 +22,11 @@
  *
  * A host listed in `EGRESS_ALLOW_PRIVATE_HOSTS` (exact match, split-DNS
  * exceptions) may resolve to RFC1918/ULA addresses — and, when `allowLoopback`
- * is set (development), to loopback. Link-local, CGNAT and cloud-metadata
- * ranges (`isAlwaysForbiddenAddress`) stay closed even for allow-listed hosts.
+ * is set (development), to loopback. An entry may also be a CIDR range
+ * (`10.64.0.0/14`), which opens every address inside it; the range is matched
+ * against the resolved address, never against a hostname. Link-local, CGNAT and
+ * cloud-metadata ranges (`isAlwaysForbiddenAddress`) stay closed even for
+ * allow-listed hosts and ranges.
  *
  * The transport mirrors `apps/gate/src/tools/outbound.ts` (node:http(s) with a
  * pinned `lookup` hook, `Readable.toWeb` streaming body, real `Response`),
@@ -45,15 +48,18 @@ import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
 import {
-  isAlwaysForbiddenAddress,
-  isForbiddenAddress as kitIsForbiddenAddress,
+	type CidrRange,
+	isAddressInCidr,
+	isAlwaysForbiddenAddress,
+	isForbiddenAddress as kitIsForbiddenAddress,
+	partitionAllowlistEntries,
 } from "@atf/security-kit";
 
 const METADATA_HOSTS = new Set([
-  "metadata.google.internal",
-  "metadata.google",
-  "instance-data.ec2.internal",
-  "metadata.azure.internal",
+	"metadata.google.internal",
+	"metadata.google",
+	"instance-data.ec2.internal",
+	"metadata.azure.internal",
 ]);
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -63,40 +69,43 @@ const MAX_REDIRECT_HOPS = 5;
 export const DEFAULT_EGRESS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 export interface RuntimeEgressOptions {
-  /**
-   * Exact hostnames (split-DNS exceptions) permitted to resolve to
-   * RFC1918/ULA — and, with `allowLoopback`, loopback — addresses.
-   */
-  allowedPrivateHosts?: readonly string[];
-  /** Optional destination allow-list; empty means "any public host". */
-  allowedHosts?: readonly string[];
-  /** Maximum response body size in bytes; `0` disables the limit. */
-  maxResponseBytes?: number;
-  /**
-   * Default request timeout in ms applied when the caller supplies no signal.
-   * `0` (default) disables it — long-lived streaming calls keep their own
-   * caller-provided signals.
-   */
-  timeoutMs?: number;
-  /**
-   * Allow allow-listed hosts to resolve to loopback (127.0.0.0/8, ::1).
-   * Enabled for non-production `APP_ENV` by the composition root.
-   */
-  allowLoopback?: boolean;
-  /** Default redirect policy when the caller does not set `init.redirect`. */
-  redirect?: "follow" | "manual" | "error";
+	/**
+	 * Exact hostnames (split-DNS exceptions) permitted to resolve to
+	 * RFC1918/ULA — and, with `allowLoopback`, loopback — addresses. An entry
+	 * written as a CIDR range (`10.64.0.0/14`, `fd00::/8`) instead permits any
+	 * address inside that range, matched on the resolved address rather than on
+	 * the hostname.
+	 */
+	allowedPrivateHosts?: readonly string[];
+	/** Optional destination allow-list; empty means "any public host". */
+	allowedHosts?: readonly string[];
+	/** Maximum response body size in bytes; `0` disables the limit. */
+	maxResponseBytes?: number;
+	/**
+	 * Default request timeout in ms applied when the caller supplies no signal.
+	 * `0` (default) disables it — long-lived streaming calls keep their own
+	 * caller-provided signals.
+	 */
+	timeoutMs?: number;
+	/**
+	 * Allow allow-listed hosts to resolve to loopback (127.0.0.0/8, ::1).
+	 * Enabled for non-production `APP_ENV` by the composition root.
+	 */
+	allowLoopback?: boolean;
+	/** Default redirect policy when the caller does not set `init.redirect`. */
+	redirect?: "follow" | "manual" | "error";
 }
 
 export interface RuntimeEgress {
-  /** Guarded `fetch` — drop-in replacement for the global. */
-  readonly fetch: typeof fetch;
-  /**
-   * Same guard as {@link fetch}, but every request opens a fresh connection
-   * (no socket reuse from a keep-alive pool).
-   */
-  readonly fetchWithoutKeepAlive: typeof fetch;
-  /** Synchronous URL validation (scheme/credentials/allow-list/metadata). */
-  readonly checkUrl: (urlString: string) => string | null;
+	/** Guarded `fetch` — drop-in replacement for the global. */
+	readonly fetch: typeof fetch;
+	/**
+	 * Same guard as {@link fetch}, but every request opens a fresh connection
+	 * (no socket reuse from a keep-alive pool).
+	 */
+	readonly fetchWithoutKeepAlive: typeof fetch;
+	/** Synchronous URL validation (scheme/credentials/allow-list/metadata). */
+	readonly checkUrl: (urlString: string) => string | null;
 }
 
 /**
@@ -104,278 +113,332 @@ export interface RuntimeEgress {
  * connect time inside the pinned `lookup` hook.
  */
 function checkUrl(
-  urlString: string,
-  allowedHosts: readonly string[],
+	urlString: string,
+	allowedHosts: readonly string[],
 ): string | null {
-  let url: URL;
-  try {
-    url = new URL(urlString);
-  } catch {
-    return `invalid outbound URL: ${urlString}`;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return `outbound protocol not allowed: ${url.protocol}`;
-  }
-  if (url.username || url.password) return "outbound URL credentials are not allowed";
+	let url: URL;
+	try {
+		url = new URL(urlString);
+	} catch {
+		return `invalid outbound URL: ${urlString}`;
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") {
+		return `outbound protocol not allowed: ${url.protocol}`;
+	}
+	if (url.username || url.password)
+		return "outbound URL credentials are not allowed";
 
-  const host = normalizeHost(url.hostname);
-  if (allowedHosts.length > 0) {
-    const allowed = allowedHosts.some((entry) => {
-      const candidate = entry.trim().toLowerCase().replace(/\.$/, "");
-      if (!candidate) return false;
-      return candidate.startsWith(".")
-        ? host === candidate.slice(1) || host.endsWith(candidate)
-        : host === candidate;
-    });
-    if (!allowed) return `outbound host not allowed: ${host}`;
-  }
-  return null;
+	const host = normalizeHost(url.hostname);
+	if (allowedHosts.length > 0) {
+		const allowed = allowedHosts.some((entry) => {
+			const candidate = entry.trim().toLowerCase().replace(/\.$/, "");
+			if (!candidate) return false;
+			return candidate.startsWith(".")
+				? host === candidate.slice(1) || host.endsWith(candidate)
+				: host === candidate;
+		});
+		if (!allowed) return `outbound host not allowed: ${host}`;
+	}
+	return null;
 }
 
 /** Create a guarded fetch with the given policy. Pure — no global state. */
 export function createRuntimeEgress(
-  options: RuntimeEgressOptions = {},
+	options: RuntimeEgressOptions = {},
 ): RuntimeEgress {
-  const allowedPrivateHosts = (options.allowedPrivateHosts ?? [])
-    .map((entry) => normalizeHost(entry.trim()))
-    .filter((entry) => entry.length > 0);
-  const allowedHosts = options.allowedHosts ?? [];
-  const maxBytes = options.maxResponseBytes ?? DEFAULT_EGRESS_MAX_RESPONSE_BYTES;
-  const timeoutMs = options.timeoutMs ?? 0;
-  const allowLoopback = options.allowLoopback ?? false;
-  const defaultRedirect = options.redirect ?? "follow";
+	const partition = partitionAllowlistEntries(
+		(options.allowedPrivateHosts ?? []).map((entry) => entry.trim()),
+	);
+	for (const invalid of partition.invalid) {
+		// Fail visibly, not silently: a malformed range means the operator's
+		// intended grant is absent, so calls to that target will be denied.
+		console.warn(
+			`[egress] ignoring malformed EGRESS_ALLOW_PRIVATE_HOSTS CIDR entry: ${invalid}`,
+		);
+	}
+	const allowedPrivateHosts = partition.hosts
+		.map((entry) => normalizeHost(entry))
+		.filter((entry) => entry.length > 0);
+	const allowedPrivateCidrs: readonly CidrRange[] = partition.cidrs;
+	const allowedHosts = options.allowedHosts ?? [];
+	const maxBytes =
+		options.maxResponseBytes ?? DEFAULT_EGRESS_MAX_RESPONSE_BYTES;
+	const timeoutMs = options.timeoutMs ?? 0;
+	const allowLoopback = options.allowLoopback ?? false;
+	const defaultRedirect = options.redirect ?? "follow";
 
-  const validate = (url: URL): string | null => {
-    const blocked = checkUrl(url.toString(), allowedHosts);
-    if (blocked) return blocked;
-    const host = normalizeHost(url.hostname);
-    if (
-      !isExactHostAllowed(host, allowedPrivateHosts) &&
-      (METADATA_HOSTS.has(host) || host === "localhost" || host.endsWith(".localhost"))
-    ) {
-      return `outbound host not allowed: ${host}`;
-    }
-    // IP literals must be checked eagerly: some runtimes (Bun) bypass the
-    // connect-time `lookup` hook for literal addresses, so the hook alone
-    // would not guard them.
-    if (isIP(host) && addressBlocked(host, privateAllowedFor(host), allowLoopback)) {
-      return `outbound address not allowed: ${host}`;
-    }
-    return null;
-  };
+	const validate = (url: URL): string | null => {
+		const blocked = checkUrl(url.toString(), allowedHosts);
+		if (blocked) return blocked;
+		const host = normalizeHost(url.hostname);
+		if (
+			!isExactHostAllowed(host, allowedPrivateHosts) &&
+			(METADATA_HOSTS.has(host) ||
+				host === "localhost" ||
+				host.endsWith(".localhost"))
+		) {
+			return `outbound host not allowed: ${host}`;
+		}
+		// IP literals must be checked eagerly: some runtimes (Bun) bypass the
+		// connect-time `lookup` hook for literal addresses, so the hook alone
+		// would not guard them.
+		if (
+			isIP(host) &&
+			addressBlocked(host, privateAllowedFor(host), allowLoopback)
+		) {
+			return `outbound address not allowed: ${host}`;
+		}
+		return null;
+	};
 
-  const privateAllowedFor = (host: string): boolean =>
-    isExactHostAllowed(host, allowedPrivateHosts);
+	// A literal-IP target is permitted by a CIDR entry that contains it; a named
+	// host only by its exact entry (its addresses are checked after resolution).
+	const privateAllowedFor = (host: string): boolean =>
+		isExactHostAllowed(host, allowedPrivateHosts) ||
+		(isIP(host) !== 0 &&
+			allowedPrivateCidrs.some((range) => isAddressInCidr(host, range)));
 
-  // Created once per egress instance on first use; only requests that opt out
-  // of keep-alive use them. Keep-alive requests pass no agent (global default).
-  let noKeepAliveAgents: { http: HttpAgent; https: HttpsAgent } | undefined;
-  const noKeepAliveAgent = (protocol: string): HttpAgent | HttpsAgent => {
-    noKeepAliveAgents ??= {
-      http: new HttpAgent({ keepAlive: false }),
-      https: new HttpsAgent({ keepAlive: false }),
-    };
-    return protocol === "https:" ? noKeepAliveAgents.https : noKeepAliveAgents.http;
-  };
+	/** Whether a resolved address falls inside a configured CIDR entry. */
+	const cidrAllowsAddress = (address: string): boolean =>
+		allowedPrivateCidrs.some((range) => isAddressInCidr(address, range));
 
-  const singleRequest = (
-    url: URL,
-    method: string,
-    headers: Headers,
-    body: Buffer | string | undefined,
-    signal: AbortSignal | undefined,
-    keepAlive: boolean,
-  ): Promise<Response> =>
-    new Promise<Response>((resolve, reject) => {
-      const host = normalizeHost(url.hostname);
-      const privateAllowed = privateAllowedFor(host);
-      const requestHeaders: Record<string, string> = {};
-      headers.forEach((value, key) => {
-        requestHeaders[key] = value;
-      });
-      // The body is always buffered here, so declare its length like `fetch`
-      // does. Without it node:http falls back to chunked transfer encoding,
-      // which servers that only honour Content-Length (Python's http.server,
-      // some local model gateways) read as an empty request body.
-      if (body !== undefined && requestHeaders["content-length"] === undefined) {
-        requestHeaders["content-length"] = String(Buffer.byteLength(body));
-      }
+	// Created once per egress instance on first use; only requests that opt out
+	// of keep-alive use them. Keep-alive requests pass no agent (global default).
+	let noKeepAliveAgents: { http: HttpAgent; https: HttpsAgent } | undefined;
+	const noKeepAliveAgent = (protocol: string): HttpAgent | HttpsAgent => {
+		noKeepAliveAgents ??= {
+			http: new HttpAgent({ keepAlive: false }),
+			https: new HttpsAgent({ keepAlive: false }),
+		};
+		return protocol === "https:"
+			? noKeepAliveAgents.https
+			: noKeepAliveAgents.http;
+	};
 
-      const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
-        url,
-        {
-          method,
-          headers: requestHeaders,
-          signal,
-          ...(keepAlive ? {} : { agent: noKeepAliveAgent(url.protocol) }),
-          lookup: async (
-            _hostname: string,
-            lookupOptions: { all?: boolean },
-            callback: (
-              err: Error | null,
-              address: string | { address: string; family: 4 | 6 }[],
-              family?: number,
-            ) => void,
-          ) => {
-            const returnAll = lookupOptions.all === true;
-            try {
-              if (isIP(host)) {
-                if (addressBlocked(host, privateAllowed, allowLoopback)) {
-                  throw new Error(`outbound address not allowed: ${host}`);
-                }
-                const selected = { address: host, family: isIP(host) as 4 | 6 };
-                if (returnAll) callback(null, [selected]);
-                else callback(null, selected.address, selected.family);
-                return;
-              }
-              const addresses = await dnsLookup(host, {
-                all: true,
-                verbatim: true,
-              });
-              if (addresses.length === 0) {
-                throw new Error(`outbound host did not resolve: ${host}`);
-              }
-              const forbidden = addresses.find(({ address }) =>
-                addressBlocked(address, privateAllowed, allowLoopback),
-              );
-              if (forbidden) {
-                throw new Error(`outbound address not allowed: ${forbidden.address}`);
-              }
-              if (returnAll) {
-                callback(
-                  null,
-                  addresses.map((entry) => ({
-                    address: entry.address,
-                    family: entry.family as 4 | 6,
-                  })),
-                );
-              } else {
-                // DNS-Pinning: the socket connects to exactly the address that
-                // passed the policy check above.
-                const selected = addresses[0];
-                callback(null, selected.address, selected.family);
-              }
-            } catch (cause) {
-              const error = cause instanceof Error ? cause : new Error(String(cause));
-              if (returnAll) callback(error, []);
-              else callback(error, "", 0);
-            }
-          },
-        },
-        (incoming) => {
-          const responseHeaders = new Headers();
-          for (const [key, value] of Object.entries(incoming.headers)) {
-            if (Array.isArray(value)) {
-              for (const item of value) responseHeaders.append(key, item);
-            } else if (value !== undefined) {
-              responseHeaders.set(key, value);
-            }
-          }
-          const status = incoming.statusCode ?? 500;
-          const bodyless =
-            REDIRECT_STATUSES.has(status) || [204, 205, 304].includes(status);
-          const responseBody = bodyless
-            ? null
-            : (Readable.toWeb(incoming) as unknown as ReadableStream);
-          if (bodyless) incoming.resume();
-          resolve(
-            new Response(responseBody, {
-              status,
-              statusText: incoming.statusMessage,
-              headers: responseHeaders,
-            }),
-          );
-        },
-      );
-      request.once("error", reject);
-      if (body !== undefined) request.write(body);
-      request.end();
-    });
+	const singleRequest = (
+		url: URL,
+		method: string,
+		headers: Headers,
+		body: Buffer | string | undefined,
+		signal: AbortSignal | undefined,
+		keepAlive: boolean,
+	): Promise<Response> =>
+		new Promise<Response>((resolve, reject) => {
+			const host = normalizeHost(url.hostname);
+			const privateAllowed = privateAllowedFor(host);
+			const requestHeaders: Record<string, string> = {};
+			headers.forEach((value, key) => {
+				requestHeaders[key] = value;
+			});
+			// The body is always buffered here, so declare its length like `fetch`
+			// does. Without it node:http falls back to chunked transfer encoding,
+			// which servers that only honour Content-Length (Python's http.server,
+			// some local model gateways) read as an empty request body.
+			if (
+				body !== undefined &&
+				requestHeaders["content-length"] === undefined
+			) {
+				requestHeaders["content-length"] = String(Buffer.byteLength(body));
+			}
 
-  const makeGuardedFetch = (keepAlive: boolean) => async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    let url = new URL(
-      typeof input === "string" || input instanceof URL
-        ? input.toString()
-        : input.url,
-    );
-    let method =
-      init?.method ?? (typeof input === "string" || input instanceof URL ? "GET" : input.method);
-    const headers = new Headers(
-      typeof input === "string" || input instanceof URL ? undefined : input.headers,
-    );
-    new Headers(init?.headers).forEach((value, key) => {
-      headers.set(key, value);
-    });
+			const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
+				url,
+				{
+					method,
+					headers: requestHeaders,
+					signal,
+					...(keepAlive ? {} : { agent: noKeepAliveAgent(url.protocol) }),
+					lookup: async (
+						_hostname: string,
+						lookupOptions: { all?: boolean },
+						callback: (
+							err: Error | null,
+							address: string | { address: string; family: 4 | 6 }[],
+							family?: number,
+						) => void,
+					) => {
+						const returnAll = lookupOptions.all === true;
+						try {
+							if (isIP(host)) {
+								if (addressBlocked(host, privateAllowed, allowLoopback)) {
+									throw new Error(`outbound address not allowed: ${host}`);
+								}
+								const selected = { address: host, family: isIP(host) as 4 | 6 };
+								if (returnAll) callback(null, [selected]);
+								else callback(null, selected.address, selected.family);
+								return;
+							}
+							const addresses = await dnsLookup(host, {
+								all: true,
+								verbatim: true,
+							});
+							if (addresses.length === 0) {
+								throw new Error(`outbound host did not resolve: ${host}`);
+							}
+							const forbidden = addresses.find(({ address }) =>
+								addressBlocked(
+									address,
+									privateAllowed || cidrAllowsAddress(address),
+									allowLoopback,
+								),
+							);
+							if (forbidden) {
+								throw new Error(
+									`outbound address not allowed: ${forbidden.address}`,
+								);
+							}
+							if (returnAll) {
+								callback(
+									null,
+									addresses.map((entry) => ({
+										address: entry.address,
+										family: entry.family as 4 | 6,
+									})),
+								);
+							} else {
+								// DNS-Pinning: the socket connects to exactly the address that
+								// passed the policy check above.
+								const selected = addresses[0];
+								callback(null, selected.address, selected.family);
+							}
+						} catch (cause) {
+							const error =
+								cause instanceof Error ? cause : new Error(String(cause));
+							if (returnAll) callback(error, []);
+							else callback(error, "", 0);
+						}
+					},
+				},
+				(incoming) => {
+					const responseHeaders = new Headers();
+					for (const [key, value] of Object.entries(incoming.headers)) {
+						if (Array.isArray(value)) {
+							for (const item of value) responseHeaders.append(key, item);
+						} else if (value !== undefined) {
+							responseHeaders.set(key, value);
+						}
+					}
+					const status = incoming.statusCode ?? 500;
+					const bodyless =
+						REDIRECT_STATUSES.has(status) || [204, 205, 304].includes(status);
+					const responseBody = bodyless
+						? null
+						: (Readable.toWeb(incoming) as unknown as ReadableStream);
+					if (bodyless) incoming.resume();
+					resolve(
+						new Response(responseBody, {
+							status,
+							statusText: incoming.statusMessage,
+							headers: responseHeaders,
+						}),
+					);
+				},
+			);
+			request.once("error", reject);
+			if (body !== undefined) request.write(body);
+			request.end();
+		});
 
-    // Policy first, body second: a request that is rejected must never consume
-    // (and thereby exhaust) a one-shot body such as a ReadableStream. The hop
-    // loop re-validates, which is cheap and keeps redirect handling intact.
-    const blockedBeforeBody = validate(url);
-    if (blockedBeforeBody) throw new Error(blockedBeforeBody);
+	const makeGuardedFetch =
+		(keepAlive: boolean) =>
+		async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+			let url = new URL(
+				typeof input === "string" || input instanceof URL
+					? input.toString()
+					: input.url,
+			);
+			let method =
+				init?.method ??
+				(typeof input === "string" || input instanceof URL
+					? "GET"
+					: input.method);
+			const headers = new Headers(
+				typeof input === "string" || input instanceof URL
+					? undefined
+					: input.headers,
+			);
+			new Headers(init?.headers).forEach((value, key) => {
+				headers.set(key, value);
+			});
 
-    // The body is normalised before the first hop (and therefore before any
-    // socket is opened), so a redirect re-sends the very same bytes.
-    const requestInput =
-      typeof input === "string" || input instanceof URL ? undefined : input;
-    const normalized = await normalizeRequestBody(
-      init?.body ?? requestInput?.body ?? null,
-      requestInput,
-    );
-    let body = normalized.bytes;
-    // A multipart body carries its boundary inside the content type, which the
-    // caller cannot know — `fetch` derives it from the FormData. Use the derived
-    // value only when the caller declared no content type of its own.
-    if (normalized.contentType !== undefined && !headers.has("content-type")) {
-      headers.set("content-type", normalized.contentType);
-    }
+			// Policy first, body second: a request that is rejected must never consume
+			// (and thereby exhaust) a one-shot body such as a ReadableStream. The hop
+			// loop re-validates, which is cheap and keeps redirect handling intact.
+			const blockedBeforeBody = validate(url);
+			if (blockedBeforeBody) throw new Error(blockedBeforeBody);
 
-    const redirectMode = init?.redirect ?? defaultRedirect;
-    const signal =
-      init?.signal ?? (timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+			// The body is normalised before the first hop (and therefore before any
+			// socket is opened), so a redirect re-sends the very same bytes.
+			const requestInput =
+				typeof input === "string" || input instanceof URL ? undefined : input;
+			const normalized = await normalizeRequestBody(
+				init?.body ?? requestInput?.body ?? null,
+				requestInput,
+			);
+			let body = normalized.bytes;
+			// A multipart body carries its boundary inside the content type, which the
+			// caller cannot know — `fetch` derives it from the FormData. Use the derived
+			// value only when the caller declared no content type of its own.
+			if (
+				normalized.contentType !== undefined &&
+				!headers.has("content-type")
+			) {
+				headers.set("content-type", normalized.contentType);
+			}
 
-    for (let hop = 0; ; hop += 1) {
-      const blocked = validate(url);
-      if (blocked) throw new Error(blocked);
-      const response = await singleRequest(url, method, headers, body, signal, keepAlive);
-      const location = response.headers.get("location");
-      if (!REDIRECT_STATUSES.has(response.status) || location === null) {
-        return limitResponseSize(response, maxBytes);
-      }
-      if (redirectMode === "error") {
-        void response.body?.cancel();
-        throw new Error("outbound redirects are disabled");
-      }
-      if (redirectMode === "manual") {
-        return limitResponseSize(response, maxBytes);
-      }
-      if (hop >= MAX_REDIRECT_HOPS) {
-        void response.body?.cancel();
-        throw new Error("outbound redirect limit exceeded");
-      }
-      void response.body?.cancel();
-      // Redirect-Revalidierung (Req 7.2): the next hop is validated — scheme,
-      // allow-list, metadata hosts and addresses — before the request is re-issued.
-      url = new URL(location, url);
-      if (
-        response.status === 303 ||
-        ((response.status === 301 || response.status === 302) && method === "POST")
-      ) {
-        method = "GET";
-        body = undefined;
-        headers.delete("content-length");
-        headers.delete("content-type");
-      }
-    }
-  };
+			const redirectMode = init?.redirect ?? defaultRedirect;
+			const signal =
+				init?.signal ??
+				(timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
 
-  return {
-    fetch: makeGuardedFetch(true) as typeof fetch,
-    fetchWithoutKeepAlive: makeGuardedFetch(false) as typeof fetch,
-    checkUrl: (urlString: string) => checkUrl(urlString, allowedHosts),
-  };
+			for (let hop = 0; ; hop += 1) {
+				const blocked = validate(url);
+				if (blocked) throw new Error(blocked);
+				const response = await singleRequest(
+					url,
+					method,
+					headers,
+					body,
+					signal,
+					keepAlive,
+				);
+				const location = response.headers.get("location");
+				if (!REDIRECT_STATUSES.has(response.status) || location === null) {
+					return limitResponseSize(response, maxBytes);
+				}
+				if (redirectMode === "error") {
+					void response.body?.cancel();
+					throw new Error("outbound redirects are disabled");
+				}
+				if (redirectMode === "manual") {
+					return limitResponseSize(response, maxBytes);
+				}
+				if (hop >= MAX_REDIRECT_HOPS) {
+					void response.body?.cancel();
+					throw new Error("outbound redirect limit exceeded");
+				}
+				void response.body?.cancel();
+				// Redirect-Revalidierung (Req 7.2): the next hop is validated — scheme,
+				// allow-list, metadata hosts and addresses — before the request is re-issued.
+				url = new URL(location, url);
+				if (
+					response.status === 303 ||
+					((response.status === 301 || response.status === 302) &&
+						method === "POST")
+				) {
+					method = "GET";
+					body = undefined;
+					headers.delete("content-length");
+					headers.delete("content-type");
+				}
+			}
+		};
+
+	return {
+		fetch: makeGuardedFetch(true) as typeof fetch,
+		fetchWithoutKeepAlive: makeGuardedFetch(false) as typeof fetch,
+		checkUrl: (urlString: string) => checkUrl(urlString, allowedHosts),
+	};
 }
 
 /**
@@ -396,100 +459,108 @@ export function createRuntimeEgress(
  * normalises once, before the first hop, so a redirect re-sends identical bytes.
  */
 async function normalizeRequestBody(
-  body: BodyInit | null | undefined,
-  requestInput?: Request,
+	body: BodyInit | null | undefined,
+	requestInput?: Request,
 ): Promise<NormalizedBody> {
-  if (body === undefined || body === null) {
-    // A Request input may still carry a body we have to drain before writing.
-    if (requestInput !== undefined && requestInput.body !== null) {
-      return { bytes: await bufferViaRequest(requestInput) };
-    }
-    return {};
-  }
-  if (typeof body === "string") return { bytes: body };
-  if (body instanceof URLSearchParams) return { bytes: body.toString() };
-  if (Buffer.isBuffer(body)) return { bytes: body };
-  if (body instanceof Uint8Array) return { bytes: Buffer.from(body) };
-  if (body instanceof ArrayBuffer) return { bytes: Buffer.from(body) };
-  // FormData, Blob, ReadableStream and any other web body shape: let the
-  // platform serialise it once, then take the bytes and its content type out.
-  if (
-    body instanceof FormData ||
-    body instanceof Blob ||
-    body instanceof ReadableStream
-  ) {
-    const request = new Request("http://127.0.0.1/", { method: "POST", body });
-    // Read the derived content type BEFORE consuming the body: a runtime drops
-    // the generated `multipart/form-data; boundary=…` header once the body has
-    // been read, and the boundary is exactly what the server needs.
-    const contentType = request.headers.get("content-type") ?? undefined;
-    return { bytes: await bufferViaRequest(request), contentType };
-  }
-  throw new Error("egress transport only accepts buffered request bodies");
+	if (body === undefined || body === null) {
+		// A Request input may still carry a body we have to drain before writing.
+		if (requestInput !== undefined && requestInput.body !== null) {
+			return { bytes: await bufferViaRequest(requestInput) };
+		}
+		return {};
+	}
+	if (typeof body === "string") return { bytes: body };
+	if (body instanceof URLSearchParams) return { bytes: body.toString() };
+	if (Buffer.isBuffer(body)) return { bytes: body };
+	if (body instanceof Uint8Array) return { bytes: Buffer.from(body) };
+	if (body instanceof ArrayBuffer) return { bytes: Buffer.from(body) };
+	// FormData, Blob, ReadableStream and any other web body shape: let the
+	// platform serialise it once, then take the bytes and its content type out.
+	if (
+		body instanceof FormData ||
+		body instanceof Blob ||
+		body instanceof ReadableStream
+	) {
+		const request = new Request("http://127.0.0.1/", { method: "POST", body });
+		// Read the derived content type BEFORE consuming the body: a runtime drops
+		// the generated `multipart/form-data; boundary=…` header once the body has
+		// been read, and the boundary is exactly what the server needs.
+		const contentType = request.headers.get("content-type") ?? undefined;
+		return { bytes: await bufferViaRequest(request), contentType };
+	}
+	throw new Error("egress transport only accepts buffered request bodies");
 }
 
 interface NormalizedBody {
-  /** The bytes to write, or `undefined` for a bodyless request. */
-  bytes?: Buffer | string;
-  /**
-   * Content type derived while serialising, used only when the caller declared
-   * none. `undefined` for bodies whose type the caller must supply (a string or
-   * `URLSearchParams` keeps `fetch` semantics: no content type is invented).
-   */
-  contentType?: string;
+	/** The bytes to write, or `undefined` for a bodyless request. */
+	bytes?: Buffer | string;
+	/**
+	 * Content type derived while serialising, used only when the caller declared
+	 * none. `undefined` for bodies whose type the caller must supply (a string or
+	 * `URLSearchParams` keeps `fetch` semantics: no content type is invented).
+	 */
+	contentType?: string;
 }
 
 /** Read a `Request` body to completion without opening a connection. */
 async function bufferViaRequest(request: Request): Promise<Buffer> {
-  return Buffer.from(await request.arrayBuffer());
+	return Buffer.from(await request.arrayBuffer());
 }
 
 /** Enforce the response size limit on the (streaming) body. */
 function limitResponseSize(response: Response, maxBytes: number): Response {
-  if (maxBytes <= 0 || response.body === null) return response;
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    void response.body.cancel();
-    throw new Error(
-      `outbound response exceeds the ${maxBytes} byte egress limit`,
-    );
-  }
-  const reader = response.body.getReader();
-  let total = 0;
-  const limited = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        controller.close();
-        return;
-      }
-      total += value.byteLength;
-      if (total > maxBytes) {
-        void reader.cancel();
-        controller.error(
-          new Error(`outbound response exceeds the ${maxBytes} byte egress limit`),
-        );
-        return;
-      }
-      controller.enqueue(value);
-    },
-    cancel(reason) {
-      void reader.cancel(reason);
-    },
-  });
-  return new Response(limited, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+	if (maxBytes <= 0 || response.body === null) return response;
+	const declared = Number(response.headers.get("content-length"));
+	if (Number.isFinite(declared) && declared > maxBytes) {
+		void response.body.cancel();
+		throw new Error(
+			`outbound response exceeds the ${maxBytes} byte egress limit`,
+		);
+	}
+	const reader = response.body.getReader();
+	let total = 0;
+	const limited = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			const { done, value } = await reader.read();
+			if (done) {
+				controller.close();
+				return;
+			}
+			total += value.byteLength;
+			if (total > maxBytes) {
+				void reader.cancel();
+				controller.error(
+					new Error(
+						`outbound response exceeds the ${maxBytes} byte egress limit`,
+					),
+				);
+				return;
+			}
+			controller.enqueue(value);
+		},
+		cancel(reason) {
+			void reader.cancel(reason);
+		},
+	});
+	return new Response(limited, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers,
+	});
 }
 
 function normalizeHost(host: string): string {
-  return host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+	return host
+		.toLowerCase()
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "");
 }
 
-function isExactHostAllowed(host: string, allowedHosts: readonly string[]): boolean {
-  return allowedHosts.some((entry) => entry === host);
+function isExactHostAllowed(
+	host: string,
+	allowedHosts: readonly string[],
+): boolean {
+	return allowedHosts.some((entry) => entry === host);
 }
 
 /**
@@ -500,16 +571,16 @@ function isExactHostAllowed(host: string, allowedHosts: readonly string[]): bool
  * (`isAlwaysForbiddenAddress`) stay closed even under the exception.
  */
 function addressBlocked(
-  address: string,
-  privateAllowed: boolean,
-  allowLoopback: boolean,
+	address: string,
+	privateAllowed: boolean,
+	allowLoopback: boolean,
 ): boolean {
-  if (!kitIsForbiddenAddress(address)) return false;
-  return !(
-    privateAllowed &&
-    isAllowedPrivateAddress(address, allowLoopback) &&
-    !isAlwaysForbiddenAddress(address)
-  );
+	if (!kitIsForbiddenAddress(address)) return false;
+	return !(
+		privateAllowed &&
+		isAllowedPrivateAddress(address, allowLoopback) &&
+		!isAlwaysForbiddenAddress(address)
+	);
 }
 
 /**
@@ -518,19 +589,30 @@ function addressBlocked(
  * gate's stricter rule: the runtime legitimately talks to local sidecars
  * (ollama, OTLP collectors) that operators explicitly allow-list.
  */
-function isAllowedPrivateAddress(address: string, allowLoopback: boolean): boolean {
-  const normalized = address.toLowerCase().split("%")[0];
-  if (normalized.startsWith("::ffff:")) {
-    return isAllowedPrivateAddress(normalized.slice(7), allowLoopback);
-  }
-  if (allowLoopback && (normalized === "::1" || normalized.startsWith("127."))) {
-    return true;
-  }
-  if (isIP(normalized) === 4) {
-    const [a, b] = normalized.split(".").map(Number);
-    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-  }
-  return isIP(normalized) === 6 && (normalized.startsWith("fc") || normalized.startsWith("fd"));
+function isAllowedPrivateAddress(
+	address: string,
+	allowLoopback: boolean,
+): boolean {
+	const normalized = address.toLowerCase().split("%")[0];
+	if (normalized.startsWith("::ffff:")) {
+		return isAllowedPrivateAddress(normalized.slice(7), allowLoopback);
+	}
+	if (
+		allowLoopback &&
+		(normalized === "::1" || normalized.startsWith("127."))
+	) {
+		return true;
+	}
+	if (isIP(normalized) === 4) {
+		const [a, b] = normalized.split(".").map(Number);
+		return (
+			a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+		);
+	}
+	return (
+		isIP(normalized) === 6 &&
+		(normalized.startsWith("fc") || normalized.startsWith("fd"))
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -541,16 +623,16 @@ let defaultEgress: RuntimeEgress | undefined;
 
 /** Install the process-wide Egress_Guard built from the loaded AppConfig. */
 export function initRuntimeEgress(
-  options: RuntimeEgressOptions = {},
+	options: RuntimeEgressOptions = {},
 ): RuntimeEgress {
-  defaultEgress = createRuntimeEgress(options);
-  return defaultEgress;
+	defaultEgress = createRuntimeEgress(options);
+	return defaultEgress;
 }
 
 /** Current default; a fail-closed guard (no private hosts) before init. */
 export function getRuntimeEgress(): RuntimeEgress {
-  defaultEgress ??= createRuntimeEgress({});
-  return defaultEgress;
+	defaultEgress ??= createRuntimeEgress({});
+	return defaultEgress;
 }
 
 /**
@@ -560,8 +642,8 @@ export function getRuntimeEgress(): RuntimeEgress {
  * `preconnect`); the guard itself only implements the callable part.
  */
 export const egressFetch: typeof fetch = ((
-  input: RequestInfo | URL,
-  init?: RequestInit,
+	input: RequestInfo | URL,
+	init?: RequestInit,
 ): Promise<Response> => getRuntimeEgress().fetch(input, init)) as typeof fetch;
 
 /**
@@ -569,7 +651,7 @@ export const egressFetch: typeof fetch = ((
  * request. Used for LLM provider requests when keep-alive is disabled.
  */
 export const egressFetchWithoutKeepAlive: typeof fetch = ((
-  input: RequestInfo | URL,
-  init?: RequestInit,
+	input: RequestInfo | URL,
+	init?: RequestInit,
 ): Promise<Response> =>
-  getRuntimeEgress().fetchWithoutKeepAlive(input, init)) as typeof fetch;
+	getRuntimeEgress().fetchWithoutKeepAlive(input, init)) as typeof fetch;

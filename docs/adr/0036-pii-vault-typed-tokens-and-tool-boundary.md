@@ -4,7 +4,9 @@ Date: 2026-11-10
 
 ## Status
 
-Proposed
+Accepted (2026-11-12). Steps 1–4 are implemented behind their flags: typed and consistent
+placeholders on by default, tool-boundary detokenization (`PII_VAULT_DETOKENIZE_TOOLS`) and the
+wider scope (`PII_VAULT_SCOPE=messages+context`) off by default.
 
 ## Context
 
@@ -17,7 +19,7 @@ Reading the code against the whole execution rather than the request path shows 
 ends, and the gap is not theoretical for a deployment that turns the vault on precisely because
 personal data must not reach a provider:
 
-- `wrapEngineWithPiiVault` tokenizes `ChatMessage` content before `executeFlow` and detokenizes
+- `withPiiVault` tokenizes `ChatMessage` content before `executeFlow` and detokenizes
   every `onChunk` delta and the final response. That is the entire integration
   (`apps/runtime/src/graph/pii-vault-engine.ts`).
 - A tool call is built from model output, so its arguments already carry placeholders when the
@@ -51,8 +53,7 @@ hard part of this proposal, not the vault call itself.
 ## Decision
 
 Proposed, in four independently shippable steps, each behind a flag that preserves today's
-behaviour as the default. B0 is this record; B1–B4 are the implementation tasks
-(`.kiro/specs/review-followup/tasks.md`, Phase B). None of it is implemented.
+behaviour as the default. All four steps are implemented.
 
 1. **Typed placeholders** — `[[PII:<TYPE>:<16 hex>]]`, with `TYPE` the uppercase `PiiType`.
    `TOKEN_PATTERN` accepts both formats so in-flight executions and stored answers keep
@@ -108,3 +109,39 @@ behaviour as the default. B0 is this record; B1–B4 are the implementation task
 - **Not decided here:** whether tool results are scanned for injection before or after
   detokenization in a combined step-3-plus-step-4 configuration. That combination is out of scope
   until both flags exist independently.
+
+## Implementation notes
+
+- Typed tags are derived from `PiiType` in upper snake case (`creditCard` → `CREDIT_CARD`),
+  at most 16 characters. The streaming window grew from 24 to 41 characters accordingly.
+- Steps 1 and 2 default to **on**, unlike step 3: they change only what the model sees, never
+  what leaves the Runtime, so the safer default for answer quality is to enable them.
+  `PII_VAULT_TYPED_TOKENS=false` / `PII_VAULT_CONSISTENT_TOKENS=false` restore the old shape.
+- Token ids are redrawn when they contain four or more consecutive digits. A digit run of seven
+  or more is a phone number to the regex detector, and a second detection pass over tokenized
+  text (tool output, trace redaction, the output guardrail) then cut a placeholder in half. The
+  cost is roughly two of the 64 random bits.
+- The consistent-token map is capped at 10 000 distinct values per execution; beyond that a
+  value still gets a placeholder, just not a reusable one.
+- The tool boundary is registered process-wide at bootstrap (`setPiiToolBoundary`, the same
+  pattern as `getTransactionOrchestrator`), because the vault wraps the engine from the outside
+  and the tool call sites have no reference to it. It runs after the effective-arguments trace
+  and before the evidence contract, the transaction token and `callTool`, so the hashes that bind
+  a call cover what is actually sent. The tool journal keeps the placeholder form.
+- Metric: `aiperator_pii_vault_tool_detokenized_total{tool}` counts calls whose arguments got
+  real values back.
+- Step 4 (`PII_VAULT_SCOPE=messages+context`) tokenizes at three points, each after the
+  injection scan, taint labels, citation registration and ref-handle masking have taken their
+  copy: the value the LLM tool loop returns to the model (`agent-tools.ts`), the result of a
+  `tool` node before it is stored and streamed (`handlers/tool.ts`), and the chunks a
+  `retrieval` node injects plus its stored tool result (`handlers/retrieval.ts`). The
+  groundedness gate scores the tokenized copy; with consistent placeholders the answer and its
+  sources carry the same token for the same value, so lexical support still matches.
+- Citations the `tool` node builds from a tokenized search result are restored before they are
+  streamed to the caller (`PiiContextScope.restoreValue`), so the sources a user sees carry the
+  real text. Tool-detail frames and the debug trace keep the placeholders.
+- A detector failure under `PII_DETECTOR_FAIL_MODE=closed` throws at these points like on the
+  message path: the tool call or retrieval fails instead of sending plaintext.
+- Not covered: the `retrieval` node's first `onToolResult` frame and its node-I/O summary (ids,
+  titles, scores — no chunk text in the summary, the chunk list in the tool frame) are emitted
+  before tokenization. They go to the operator plane, not to the provider.

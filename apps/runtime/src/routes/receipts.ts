@@ -75,6 +75,26 @@ export function createReceiptsRouter(deps: ReceiptsRouterDeps): Hono<AuthContext
     return { payload, coseBytes: entry.coseBytes };
   }
 
+  /**
+   * {@link resolveReceipt}, but when this replica has not seen the receipt it
+   * first catches up with the shared log (ADR 0039): a receipt issued on
+   * another replica is then readable and provable here too. Refresh errors
+   * fall through to "not found" rather than a 500 — the local answer is
+   * still correct for every receipt this replica knows.
+   */
+  async function resolveShared(
+    receiptId: string,
+  ): Promise<SignedDecisionReceipt | undefined> {
+    const local = resolveReceipt(receiptId);
+    if (local !== undefined || transparencyLog?.refresh === undefined) return local;
+    try {
+      await transparencyLog.refresh();
+    } catch {
+      return undefined;
+    }
+    return resolveReceipt(receiptId);
+  }
+
   // Collection view for the trace viewer (Req 15.7): every receipt issued for
   // one execution, parent receipt first. Tenant-scoped like the single-read.
   router.get("/v1/receipts", (ctx) => {
@@ -107,7 +127,7 @@ export function createReceiptsRouter(deps: ReceiptsRouterDeps): Hono<AuthContext
     return ctx.json({ execution_id: executionId, receipts });
   });
 
-  router.get("/v1/receipts/:id", (ctx) => {
+  router.get("/v1/receipts/:id", async (ctx) => {
     const tenant = principalTenant(ctx.get(AUTH_PRINCIPAL_KEY));
     if (tenant === undefined) {
       return ctx.json(
@@ -118,7 +138,7 @@ export function createReceiptsRouter(deps: ReceiptsRouterDeps): Hono<AuthContext
         401,
       );
     }
-    const receipt = resolveReceipt(ctx.req.param("id"));
+    const receipt = await resolveShared(ctx.req.param("id"));
     if (receipt === undefined || receipt.payload.tenant_id !== tenant) {
       return ctx.json(error("Receipt not found.", "not_found_error"), 404);
     }
@@ -143,7 +163,7 @@ export function createReceiptsRouter(deps: ReceiptsRouterDeps): Hono<AuthContext
         401,
       );
     }
-    const receipt = resolveReceipt(ctx.req.param("id"));
+    const receipt = await resolveShared(ctx.req.param("id"));
     if (receipt === undefined || receipt.payload.tenant_id !== tenant) {
       return ctx.json(error("Receipt not found.", "not_found_error"), 404);
     }
