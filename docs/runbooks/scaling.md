@@ -31,6 +31,12 @@ then require a shared Redis (see `global.redis`).
    least-connection balancing; sticky sessions are required only for `/sse`
    and `/monitor/stream` (per-process connection state). Run
    `RED_TEAM_SCHEDULE_FLOWS` on a single replica (the gate warns otherwise).
+   The decision-receipt transparency log is shared through `receipt_log` when
+   `DATABASE_URL` is set (ADR 0039): every replica appends under one advisory
+   lock and proves against the same tree, so receipts need no sticky routing.
+   Without a database it stays per process. With the shared log, receipt
+   issuance depends on the database being reachable — a database outage makes
+   receipted requests fail instead of silently issuing unanchored receipts.
 2. Scale Runtime on queue depth, not CPU: the Prometheus metric
    `aiperator_queue_depth` (`GET /metrics`) exposes pending executions; a good
    HPA target is "pending > 2× replicas sustained 2 min". CPU is misleading

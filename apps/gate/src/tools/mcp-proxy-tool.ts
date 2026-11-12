@@ -225,7 +225,14 @@ export class McpProxyToolExecutor implements ToolExecutor {
       token = server.token;
     }
 
-    const blocked = await validateOutboundUrl(server.url, this.allowedHosts);
+    const privateHosts = server.allowPrivateAddress
+      ? [new URL(server.url).hostname]
+      : [];
+    const blocked = await validateOutboundUrl(
+      server.url,
+      this.allowedHosts,
+      privateHosts,
+    );
     if (blocked) {
       logger.warn("mcp proxy blocked by outbound allow-list", {
         tool: this.cfg.name,
@@ -268,11 +275,12 @@ export class McpProxyToolExecutor implements ToolExecutor {
           input,
           { ...init, signal: effectiveSignal },
           this.allowedHosts,
+          { allowedPrivateHosts: privateHosts },
         );
       },
     });
     const client = new Client(
-      { name: "mcpgate-proxy", version: "0.25.6" },
+      { name: "mcpgate-proxy", version: "0.26.0" },
       { capabilities: {} },
     );
 

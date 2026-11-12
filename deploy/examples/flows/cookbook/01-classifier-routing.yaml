@@ -1,0 +1,94 @@
+id: cb-classifier-routing
+name: Cookbook — routing per classifier
+description: >-
+  Route a request to the right branch on a validated field instead of on prose. A
+  classifier produces a structured label, a router fans the graph out on it, and a
+  transform copies an identifier out of the message first so a branch condition can
+  use it. No tools, no retrieval, no external service.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+variables:
+  answer_style: "briefly, in two sentences"
+
+nodes:
+  # Deterministic pre-processing: a bounded regex copies a ticket number into
+  # state.classification. A miss writes the default, so the field always exists and a
+  # condition never reads undefined.
+  - id: extract_ref
+    type: transform
+    label: Extract ticket reference
+    config:
+      extract:
+        - { from: query, pattern: "#(\\d{2,8})", target: ticketId }
+      derive:
+        - from: ticketId
+          lookup:
+            "": { hasReference: "no" }
+          default: { hasReference: "yes" }
+
+  # The classifier's only job is to fill `classification` from a JSON Schema. Because the
+  # schema constrains the output, the edge conditions below compare against a value that is
+  # guaranteed to be one of four strings — that is what makes the routing testable.
+  - id: triage
+    type: classifier
+    label: Triage
+    systemPrompt: >-
+      Classify the request. Use "incident" for something that is broken, "question" for a
+      request for information, "action" for a change the caller wants made, and "other"
+      when none of them fits. Never invent a category.
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent: { type: string, enum: [incident, question, action, other] }
+        required: [intent]
+    config:
+      # A model that returns nothing parseable would fail the node. The fallback keeps the
+      # turn alive on the branch that asks a question instead of acting.
+      fallback: { intent: other }
+
+  # A router does no work of its own: its outgoing edges are the routing table. Writing the
+  # conditions on the edges (rather than in a prompt) keeps the decision visible in the graph.
+  - id: route
+    type: router
+    label: Route
+
+  - id: answer
+    type: llm
+    label: Answer question
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Answer the question {{vars.answer_style}}. Say when you do not know instead of
+      guessing.
+
+  - id: act
+    type: llm
+    label: Plan change
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Describe the change that is being asked for as a short numbered plan. Do not perform
+      it.
+
+  # The catch-all branch, reached by the negated condition on its edge — see the note at `edges`.
+  - id: clarify
+    type: llm
+    label: Clarify
+    llm: { shortcut: structured }
+    systemPrompt: Ask one short question that resolves what the caller wants.
+
+edges:
+  - { source: extract_ref, target: triage }
+  - { source: triage, target: route }
+  - { source: route, target: answer, conditions: "classification.intent == 'question'" }
+  - { source: route, target: act, conditions: "classification.intent == 'action'" }
+  # The catch-all branch. There is no `else` in the condition grammar: the conditional edges leaving
+  # a node are checked in file order and if NONE of them is true, the run ends at that node with no
+  # step executed. So the last edge has to be true for everything the earlier ones rejected —
+  # `== 'other'` here would silently drop every `incident`.
+  - { source: route, target: clarify, conditions: "classification.intent != 'question' && classification.intent != 'action'" }

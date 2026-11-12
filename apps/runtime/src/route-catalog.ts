@@ -88,6 +88,15 @@ function parseBootstrapMounts(file: string): Mount[] {
   const text = fs.readFileSync(file, "utf8");
   const lines = text.split("\n");
   const mounts: Mount[] = [];
+  // `const chatRouter = createChatRouter(...)` followed by
+  // `app.route("/", chatRouter)`: the mount names the variable, the routes
+  // belong to the factory it was built from.
+  const routerVariables = new Map<string, string>();
+  for (const m of text.matchAll(
+    /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(create[A-Za-z_$][\w$]*Router)\(/g,
+  )) {
+    routerVariables.set(m[1] as string, m[2] as string);
+  }
   const blockStack: Array<{ kind: "if" | "other"; cond: string | null; depth: number }> = [];
   let depth = 0;
 
@@ -101,7 +110,12 @@ function parseBootstrapMounts(file: string): Mount[] {
       const m = window.match(/app\.route\(\s*"([^"]*)",\s*([A-Za-z_$][\w$]*)/);
       if (m) {
         const cond = [...blockStack].reverse().find((b) => b.kind === "if")?.cond ?? null;
-        mounts.push({ mountPath: m[1]!, factory: m[2]!, condition: cond, file });
+        mounts.push({
+          mountPath: m[1] ?? "",
+          factory: routerVariables.get(m[2] ?? "") ?? m[2] ?? "",
+          condition: cond,
+          file,
+        });
       }
     }
     // Direct app-level route registration (e.g. app.get("/monitoring/auth/config")).

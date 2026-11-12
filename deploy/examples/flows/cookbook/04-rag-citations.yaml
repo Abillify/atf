@@ -1,0 +1,111 @@
+id: cb-rag-citations
+name: Cookbook — RAG with citations and a source check
+description: >-
+  Ground an answer in retrieved chunks, force inline citations, and let the runtime
+  verify them: out-of-range markers are rejected, the sources section is completed from
+  the sources actually registered in the execution. Retrieval is declared as a profile
+  plan, so the collections searched depend on the request rather than on code.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+variables:
+  # A bare number, not "6": a whole-value `{{vars.*}}` reference keeps the resolved type, and
+  # `limit` is a number. Quoting it here would put the string "6" into a numeric field.
+  default_limit: 6
+
+nodes:
+  # The classifier exists only to choose a retrieval profile. Its `classKey` field becomes
+  # `classLabel`, which the profile conditions below read.
+  - id: route_topic
+    type: classifier
+    label: Choose collection
+    classifierSchema:
+      classKey: topic
+      schema:
+        type: object
+        properties:
+          topic: { type: string, enum: [policy, product, general] }
+        required: [topic]
+    config:
+      # No parseable classification must not fail the turn: fall back to the profile that searches
+      # everything rather than to a narrow one that finds nothing.
+      fallback: { topic: general }
+
+  # A parallel node with `ragProfiles` is a context assembler: each source becomes a search call,
+  # the hits are fused, deduplicated per document, and injected as grounding context with markers.
+  # `select` is evaluated top-down, first match wins; `default` applies otherwise; `shared` sources
+  # run in every profile.
+  - id: gather
+    type: parallel
+    label: Gather sources
+    config:
+      ragProfiles:
+        default: general
+        select:
+          - when: "classification.topic == 'policy'"
+            use: policy
+          - when: "classification.topic == 'product'"
+            use: product
+        profiles:
+          policy:
+            - collection: policies
+              limit: 8
+              hybrid: true
+              minScore: 0.25
+              # Scope by metadata so a request only ever sees its own tenant's documents. `tags` may
+              # be a template, which is what makes the plan per-request rather than per-flow.
+              tags: ["{{context.clientId}}"]
+              rerank: true
+          product:
+            - collection: product-docs
+              limit: 6
+              hybrid: true
+              minScore: 0.2
+          general:
+            - collection: handbook
+              limit: "{{vars.default_limit}}"
+              # v2 retrieval options: how much surrounding text to pull in, and at what unit size.
+              expand: section
+              granularity: section
+        # Cross-profile source: legal text is relevant whatever the topic turned out to be.
+        shared:
+          - collection: legal
+            limit: 3
+            minScore: 0.3
+        # Fusion: the reranker orders the fused hits, `maxDocuments` caps how many documents survive.
+        rerank:
+          topN: 6
+        maxDocuments: 10
+      # A small model condenses each source to the parts relevant to the question before the
+      # responder sees it. Fail-open: when the compression call fails, the original chunks are used.
+      ragCompression:
+        enabled: true
+        llm: { shortcut: structured }
+        minChars: 600
+        maxTokens: 800
+
+  # The responder. Everything that makes the answer auditable sits in its config; the rules the
+  # model must follow live in the prompt file, because they are long-form prose and change on their
+  # own schedule.
+  - id: answer
+    type: llm
+    label: Answer with citations
+    llm: { shortcut: chat }
+    systemPrompt: "#[[file:prompts/cb-cited-answer.md]]"
+    config:
+      sourcesCheck:
+        # Append every inline-cited `[n]` the sources section lacks, built only from the sources
+        # registered in this execution — the runtime never invents a document.
+        completeSection: true
+        heading: "## Quellen"
+        # Retry the attempt when the answer cites outside the registered range `1..n`. This is the
+        # check that catches a model inventing `[12]` because the answer needed one more source.
+        rejectOutOfRangeMarkers: true
+
+edges:
+  - { source: route_topic, target: gather }
+  - { source: gather, target: answer }

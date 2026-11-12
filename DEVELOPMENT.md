@@ -59,6 +59,24 @@ bun run release:preflight -- --skip knip --skip gitleaks
 bun run release:preflight -- --container   # also the supply-chain inventory in linux/amd64
 ```
 
+For an ordinary contribution, the fast subset:
+
+```bash
+bun run preflight                      # == release:preflight -- --quick
+```
+
+`--quick` runs `verify:spdx`, `verify:version`, `config-reference:check`,
+`flow-reference:check`, `route-reference:check`, `check:links`, `lint:baseline`,
+`typecheck` and `test` — the gates that catch a stale generated file, a version
+or header drift, a dead link, lint growth, or a broken build of the sources —
+and skips the rest. What it omits is slow (`build`, `test:contracts`,
+`check:budgets:ci`), platform-specific (`supply-chain:check`), or a release-facing
+scan of the tree and history (`verify:public`, the secret scan) that CI repeats on
+every pull request. `--skip` works in both modes.
+The quick set is declared once, as `QUICK_GATES` in `scripts/release-preflight.ts`,
+and a test asserts its contents; CONTRIBUTING.md points at the command instead of
+repeating the list.
+
 The script runs the gates sequentially, stops at the first failure (exit 1), and prints a
 summary table of every step. It warns when the local Bun differs from the `packageManager`
 pin and measures the bundle budgets with the pinned version via `npx` in that case, so the

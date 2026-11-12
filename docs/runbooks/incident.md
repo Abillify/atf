@@ -57,6 +57,28 @@ but has no database. Preserve both early.
 | Outbound calls made | Runtime egress log (`security/egress.ts` records) |
 | MCP/tool activity | Gate monitor UI (`/monitor`), tool authorization policy decisions |
 | Tool calls through the Gate | Gate JSONL audit (per instance) |
+| Is the SIEM keeping up | `aiperator_audit_forward_lag` gauge; forwarding failures `aiperator_audit_forward_failures_total`; position in `audit_forward_state` |
+
+## SIEM forwarding stalled
+
+`AUDIT_FORWARD_URL` pushes the audit trail to an external SIEM. If
+`aiperator_audit_forward_lag` grows steadily:
+
+1. Check `aiperator_audit_forward_failures_total` labels: `status="..."` means
+   the target answered but rejected the batch (auth, size, schema);
+   `error="transport"` means it never answered — including the Egress_Guard
+   rejecting the URL (private address without `EGRESS_ALLOW_PRIVATE_HOSTS`,
+   DNS, TLS).
+2. The forwarder retries with exponential backoff (capped at 5 min) and the
+   position only advances after HTTP 2xx — nothing is lost while it lags, and
+   a restart resumes without a gap.
+3. If the token rotated, update `AUDIT_FORWARD_TOKEN` (or its `*_FILE`) and
+   restart; pending batches go out on the next cycle.
+4. To replay from an earlier point (e.g. the SIEM lost data despite 2xx
+   answers), stop the Runtime and set
+   `UPDATE audit_forward_state SET last_id = <id> WHERE target = '<url>';`
+   — delivery is at-least-once, so re-sent batches must be deduplicated by
+   `id` on the receiving side.
 
 ## Evidence signing key compromised
 

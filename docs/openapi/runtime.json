@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aiperator Trust Fabric Runtime",
-    "version": "0.25.6",
+    "version": "0.26.0",
     "description": "The ATF Runtime is the OpenAI-compatible inference and orchestration plane: chat/responses, assistants, flows, jobs, RAG, memory, optimizer, monitoring, admin and security APIs. The path inventory in this document is generated from the real router tree at request time; conditional groups carry an `x-enabled-when` extension. Endpoints are only mounted when their configuration condition holds."
   },
   "servers": [
@@ -553,6 +553,52 @@
         ],
         "summary": "OpenAI-compatible chat completions (AI_DISCLOSURE=header|field marks successful completions as AI-generated: X-AI-Generated: true, or metadata.ai_generated = true (string) in the JSON body; flows served as MCP tools carry _meta io.atf/ai-generated)",
         "operationId": "post__v1_chat_completions",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Anthropic Messages API (anthropic-version 2023-06-01) over the chat pipeline: flows and PROXY_MODELS pass-through models, JSON or SSE (message_start … message_stop). Authenticates with Authorization: Bearer or x-api-key. Unsupported fields (thinking, cache_control, top_k, metadata, server tools) are a 400 naming the field (ADR 0038)",
+        "operationId": "post__v1_messages",
         "requestBody": {
           "required": true,
           "content": {
@@ -10323,6 +10369,42 @@
         ],
         "summary": "Monitoring, audit and observability endpoint",
         "operationId": "get__monitoring_posture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/monitoring/services": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Configured service links and MCP server status",
+        "operationId": "get__monitoring_services",
         "responses": {
           "200": {
             "description": "Success",

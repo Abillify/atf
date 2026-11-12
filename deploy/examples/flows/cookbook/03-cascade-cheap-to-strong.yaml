@@ -1,0 +1,59 @@
+id: cb-cascade-cheap-to-strong
+name: Cookbook — cascade from a cheap to a strong model
+description: >-
+  Answer with the small local model and regenerate once with a stronger one only when
+  the answer's evidence is weak. The trigger is measurable (citation count, source-check
+  result, grounding score, cut-off answer), so the expensive model runs on need rather
+  than on schedule.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+budgets:
+  # Both attempts of a cascade count toward the flow's budgets, so a flow that cascades needs a
+  # ceiling that accounts for a possible second pass — otherwise the cascade is the thing that
+  # trips the budget.
+  maxTokens: 40000
+  maxWallMs: 120000
+
+nodes:
+  - id: retrieve
+    type: retrieval
+    label: Ground the answer
+    config: { collection: handbook, topK: 6, minScore: 0.3 }
+
+  - id: answer
+    type: llm
+    label: Answer (cheap first)
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Answer strictly from the injected source chunks and cite every statement inline with
+      the marker of the chunk it came from, for example [1]. If the chunks do not answer
+      the question, say so instead of filling the gap from memory.
+    config:
+      # `sourcesCheck` is what makes the cascade signal trustworthy: out-of-range markers are
+      # rejected here (and count as a failed check below) instead of reaching the client.
+      sourcesCheck:
+        completeSection: true
+        heading: "## Quellen"
+        rejectOutOfRangeMarkers: true
+      # The cascade regenerates the answer ONCE, from the same input, tool loop included, and the
+      # second answer replaces the first completely. ANY condition in `when` triggers it.
+      cascade:
+        escalateTo: { shortcut: chat }
+        when:
+          # Fewer than two distinct `[n]` markers → the answer is barely grounded.
+          minCitations: 2
+          # A `sourcesCheck` problem (for example an unregistered `[n]`) escalates.
+          sourcesCheckFailed: true
+          # The best grounding score of the run below this value escalates. Omit to skip the check
+          # entirely — there is no default, because many runs have no grounding score at all.
+          maxTopScore: 0.45
+          # An answer cut off at the output length limit escalates; with a small local model this
+          # is the most frequent reason.
+          finishReasonLength: true
+
+edges:
+  - { source: retrieve, target: answer }

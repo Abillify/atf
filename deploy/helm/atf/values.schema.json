@@ -231,7 +231,9 @@
         "tolerations": { "type": "array" },
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
-        "extraEnvFrom": { "$ref": "#/definitions/envFromList" }
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" }
       }
     },
     "runtime": {
@@ -255,6 +257,8 @@
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
         "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" },
         "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
         "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
         "flowsConfigMap": { "type": "string" },
@@ -289,6 +293,8 @@
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
         "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" },
         "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
         "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
         "configMap": { "type": "string" },
@@ -323,6 +329,8 @@
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
         "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" },
         "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
         "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
         "config": {
@@ -354,6 +362,8 @@
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
         "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" },
         "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
         "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
         "config": {
@@ -396,6 +406,8 @@
         "affinity": { "type": "object" },
         "extraEnv": { "$ref": "#/definitions/envList" },
         "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "extraVolumes": { "type": "string" },
+        "extraVolumeMounts": { "type": "string" },
         "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
         "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
         "config": {

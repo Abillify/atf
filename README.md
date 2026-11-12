@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/abillify/atf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/abillify/atf/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Elastic-2.0" src="https://img.shields.io/badge/license-Elastic--2.0-blue"></a>
-  <a href="CHANGELOG.md"><img alt="Release: 0.25.6" src="https://img.shields.io/badge/release-0.25.6-orange"></a>
+  <a href="CHANGELOG.md"><img alt="Release: 0.26.0" src="https://img.shields.io/badge/release-0.26.0-orange"></a>
   <img alt="Bun 1.4.4" src="https://img.shields.io/badge/bun-1.4.4-black">
   <img alt="Node 26.12.1" src="https://img.shields.io/badge/node-26.12.1-brightgreen">
   <img alt="TypeScript 7" src="https://img.shields.io/badge/typescript-7.0.2-3178c6">
@@ -33,7 +33,7 @@ deployable on its own. Five of them run as server services; the Extract Outpost 
 side — as a Docker daemon or a desktop app — and mirrors local folders and cloud storage into
 the platform.
 
-> **Project status:** ATF is at `0.25.6`: complete enough to evaluate the local service wiring
+> **Project status:** ATF is at `0.26.0`: complete enough to evaluate the local service wiring
 > end to end, but still pre-1.0. Governed capabilities require explicit configuration and
 > verification for each deployment. Contract packages already carry compatibility guarantees;
 > flow fields, environment variables, and HTTP routes may still change with documented
@@ -51,7 +51,7 @@ toolkit, which means you build governance yourself. ATF is production plumbing f
 where neither is acceptable: run it on-premises or in your own cloud, connect it to systems you
 already have, and get cost, access, and quality measurable from the first request.
 
-Concretely, ATF is opinionated about four things most orchestrators leave to you:
+Concretely, ATF is opinionated about five things most orchestrators leave to you:
 
 **Tokenize detected personal data before provider calls.** When the PII vault is enabled and its
 detectors are configured for the deployment, it replaces detected values with meaningless
@@ -76,6 +76,13 @@ to start on configurations such as open CORS, unverified JWTs, or an unauthentic
 endpoint. Individual guardrails and policies remain explicit deployment choices; their defaults
 and prerequisites are documented in [Capabilities](docs/CAPABILITIES.md) and
 [Configuration](docs/CONFIGURATION.md).
+
+**Governs the AI clients you already have.** In trust-proxy mode a coding agent, desktop
+assistant or chat frontend changes only its base URL: model names listed in `PROXY_MODELS` run
+through the same controls as a flow — PII placeholders before the provider, guardrails,
+budgets, receipts — over the OpenAI Chat Completions API or the Anthropic Messages API
+(`/v1/messages`). Put the client's MCP servers behind a Gate and its tool calls are scoped,
+policy-checked and approved too. See [Trust-proxy mode](docs/TRUST-PROXY.md) (experimental).
 
 ### What ATF is not
 
@@ -150,19 +157,58 @@ security posture, providers, budgets, and compliance evidence share one operator
 </p>
 <p align="center"><em>Control desktop navigation; this image is also maintained as a visual-regression snapshot.</em></p>
 
+The four images below are the governance screens of the same UI. Each one is a Playwright
+visual-regression baseline from [`apps/control/e2e/visual-governance.spec.ts`](apps/control/e2e/visual-governance.spec.ts),
+rendered against the e2e mock backend — every name, id, number and hostname in them is invented
+example data, never a production capture.
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-approvals-chromium-darwin.png" alt="Pending approvals panel showing two awaiting-approval tool calls, crm/send_email and crm/cancel_booking, each with its node id, tenant id, age, JSON arguments, and Approve and Deny buttons" width="576">
+      <br><strong>Approvals.</strong> A tool call that a flow marked as requiring sign-off parks here with its full arguments until an operator approves or denies it.
+    </td>
+    <td width="50%">
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-traces-chromium-darwin.png" alt="Execution Trace Viewer for execution exec-aabbccdd-1234 showing three steps retrieve, answer and crm/send_email with durations; the selected answer step shows model openai/gpt-4o-mini, latency 2720 ms, in-tokens 1840, out-tokens 214 and cost 0.0019 EUR" width="576">
+      <br><strong>Traces.</strong> Every execution replays step by step: per-step latency, the model that answered, token counts and the cost attributed to that single step.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-compliance-chromium-darwin.png" alt="Policy-as-Code Compliance page showing an active policy version 1.3.0 in fail-closed mode with data, model, approval, retention and audit rule counts, a dry-run evaluator, a replay simulator, and an audit report with violations, denials and approval counts" width="576">
+      <br><strong>Compliance.</strong> Declarative residency, model, approval and retention policies with a dry-run evaluator, a replay simulator, and a 24-hour audit report.
+    </td>
+    <td>
+      <img src="apps/control/e2e/visual-governance.spec.ts-snapshots/governance-cost-chromium-darwin.png" alt="Cost dashboard with estimated cost by model in EUR, tokens by model, response cache analytics at 67.4 percent hit rate, and per-tenant 24-hour spend against budget caps" width="576">
+      <br><strong>Cost.</strong> Spend and tokens by model, response-cache analytics, and per-tenant 24-hour spend measured against each tenant's budget cap.
+    </td>
+  </tr>
+</table>
+
 ## Quickstart
 
-Requirements: Docker with Compose v2, roughly 6 GB free memory and 10 GB disk for the build.
+Requirements: Docker with Compose v2. Pulling the released images needs roughly 4 GB of free disk; building them from this checkout instead needs about 6 GB free memory and 10 GB of disk.
 
 ```bash
 git clone https://github.com/abillify/atf.git && cd atf
-docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
+docker compose --env-file deploy/examples/.env.example \
+  -f deploy/examples/compose.yaml -f deploy/examples/compose.images.yaml up -d --wait
 ```
 
 This starts all five applications plus PostgreSQL/pgvector and a deterministic mock model, so
-it needs no API key. Once the health checks pass:
+it needs no API key. `ATF_VERSION` in [`deploy/examples/.env.example`](deploy/examples/.env.example)
+selects the release, and `bun run verify:version` keeps it at the version of the checkout you are
+reading, so the containers match the code. If the pull reports `denied` or `not found` — a private
+registry, or no image published for your architecture — drop the overlay and build instead:
 
-- Control — <http://localhost:3001>
+```bash
+docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
+```
+
+Once the health checks pass:
+
+- Control — <http://localhost:3001> (the published-image variant serves it through a small router,
+  because the released Control calls its own origin and so needs the UI and the Runtime on one)
 - Runtime readiness — <http://localhost:3000/health/ready>
 - Search health — <http://localhost:3002/health>
 - Gate readiness — <http://localhost:3003/readyz>
@@ -180,8 +226,16 @@ curl --fail-with-body http://localhost:3000/v1/chat/completions \
 > production template. Do not expose it. See
 > [deploy/examples/README.md](deploy/examples/README.md).
 
+`deploy/examples/tour.sh` then runs the three claims on this page against that stack in about five
+minutes — the prompt as the model received it, an approval that answers and one that stays silent,
+and a receipt verified offline and then tampered with. [deploy/examples/TOUR.md](deploy/examples/TOUR.md)
+explains what each step proves.
+
 Example flows in [`deploy/examples/flows/`](deploy/examples/flows/) go from a single node up to
 retrieval, tool use with an approval gate, and a routed multi-step graph.
+[`docs/tutorials/first-assistant.md`](docs/tutorials/first-assistant.md) walks one of them end to
+end on that stack: your own document retrieved into the prompt, a write held for a named approver,
+and the signed receipt for the run verified offline.
 
 ## Flows
 
@@ -245,10 +299,13 @@ setting that governs it.
   [migration guide](docs/document-intelligence-v2-migration.md).
 - **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
   Parameters are bound, never interpolated.
-- **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
-  per-user OIDC consent.
+- **Channels** — an OpenAI-compatible API, the Anthropic Messages API, webhooks, and a
+  Rocket.Chat integration with per-user OIDC consent; trust-proxy mode in front of existing
+  clients.
 - **Safety** — guardrails on input and output, egress DLP, tool *output* checked for injected
-  instructions, scheduled red teaming, sandboxed plugins.
+  instructions, scheduled red teaming, and plugins isolated in a worker without access to the
+  process environment — opt-in (`PLUGINS_SANDBOX`), defence-in-depth rather than a hard
+  security boundary; see [ADR 0006](docs/adr/0006-plugin-trust-boundary-and-isolation.md).
 - **Governance** — approvals that reject on timeout, an explicitly loaded
   `compliance-policy.yaml`, hash-chained audit records, signed evidence bundles, and a generated
   dossier when their required controls are configured.
@@ -324,6 +381,9 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production requirements and the supported boundary |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |
+| [ROADMAP.md](ROADMAP.md) | Where the project is going: now, next, later — without dates |
+| [SUPPORT.md](SUPPORT.md) | Where questions, bugs, security reports, and commercial requests go |
+| [GOVERNANCE.md](GOVERNANCE.md) | Who decides, how contracts and ADRs change, how to get involved |
 | [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
 | [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md) | Document Intelligence v2 upgrade, rollback, and corpus re-ingest |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
@@ -332,6 +392,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [docs/STABILITY.md](docs/STABILITY.md) | Stability contract: what semantic versioning covers from 1.0.0 |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | STRIDE threat model per service |
 | [docs/EU-AI-ACT.md](docs/EU-AI-ACT.md) | EU AI Act obligations mapped to ATF controls |
+| [docs/tutorials/first-assistant.md](docs/tutorials/first-assistant.md) | Build your first governed assistant on the quickstart stack, step by step |
 | [docs/runbooks/](docs/runbooks/) | Backup, key rotation, incidents, scaling, Redis outage, transaction-token rotation |
 
 ## Enterprise adoption and engineering

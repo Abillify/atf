@@ -1,0 +1,70 @@
+id: cb-model-pool-sticky
+name: Cookbook — fallback chain and sticky model pool
+description: >-
+  Three ways to give one node several models: a fail-over chain, a load-balanced pool
+  that keeps a conversation on one model, and a per-request choice made from observed
+  cost and quality. Every model comes from `model-shortcuts.yaml` in this directory, so
+  switching inference is a one-file change and no flow names a model id.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+nodes:
+  # A pool shortcut: the node gets an ordered chain of models. The first entry answers; when a
+  # model is unreachable, overloaded, or (for structured nodes) returns output that cannot be
+  # parsed, the next entry is tried. Nothing in the flow names a model.
+  - id: answer
+    type: llm
+    label: Answer (fallback chain)
+    llm:
+      shortcut: chat
+    systemPrompt: >-
+      Answer the question. If you are unsure, say so.
+
+  # Load balancing across two local models. `sticky: conversation` is the point: without it the
+  # second message of a thread lands on a different model, which changes tone, tool behaviour and
+  # — the expensive part — invalidates the provider's prompt cache for that conversation.
+  - id: summarise
+    type: llm
+    label: Summarise (sticky pool)
+    llm:
+      shortcut: balanced
+    config:
+      # A pool is also a per-request decision: `routing` picks among `candidates` by measured
+      # cost/quality instead of the pool's static order. `quality-aware` takes the cheapest model
+      # whose observed quality reaches the threshold; a model with fewer samples than
+      # `minQualitySamples` counts as unproven and stays eligible, so a new model still gets traffic.
+      routing:
+        strategy: quality-aware
+        minQualityScore: 0.8
+        candidates:
+          - { shortcut: structured }
+          - { shortcut: chat }
+
+  # `objective` generalises `routing` (and wins over it when both are set): candidates are walked
+  # cheapest-first and the first one that satisfies every objective is used. Use this when one
+  # budget line, not a blend, is the constraint.
+  - id: translate
+    type: llm
+    label: Translate (objective routing)
+    llm:
+      shortcut: structured
+      # The output budget belongs to the model's `parameters`, not to `config`: it is a generation
+      # setting of the call, while everything in `config` steers the node around the call.
+      parameters: { maxTokens: 512 }
+    config:
+      objective:
+        candidates:
+          - { shortcut: structured }
+          - { shortcut: chat }
+        objectives:
+          - { metric: quality, op: gte, value: 0.75 }
+          - { metric: cost, op: lte, value: 0.5 }
+        fallback: cheapest
+
+edges:
+  - { source: answer, target: summarise }
+  - { source: summarise, target: translate }

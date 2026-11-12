@@ -1,0 +1,80 @@
+# Model shortcuts for the cookbook recipes in this directory.
+#
+# Why the file lives here: the validator walks up from a flow file until it finds a
+# `model-shortcuts.yaml`, so this directory is its own flow root and every recipe resolves
+# `llm.shortcut` against it. That is also what keeps the recipes out of a running stack — the
+# loader only reads `FLOWS_DIR` itself, never a subdirectory, so nothing here is served by the
+# quickstart stack while CI still validates all of it (see README.md in the parent directory).
+#
+# `engines.<name>.provider` normally names an instance from the `PROVIDERS` registry. The recipes
+# use a protocol name instead (`openai`): the validator accepts a name or a built-in protocol, so
+# the cookbook validates with no registry at all, exactly like
+# `deploy/blueprints/research-assistant/`. A real deployment points these engines at its own
+# `PROVIDERS` entries so the pool switches over with one edit.
+
+engines:
+  # The small model on the operator's own inference (vLLM, llama.cpp, Ollama behind an
+  # OpenAI-compatible endpoint). Mark such instances `local: true` in `PROVIDERS` — data-residency
+  # checks read that flag, a protocol name here does not carry it.
+  local:
+    provider: openai
+  # A hosted endpoint, used only where a recipe deliberately escalates past the local model.
+  hosted:
+    provider: openai
+
+# One place per model for the tuning a small open-weights model needs. Every shortcut that
+# references a preset inherits it, so the tuning is not repeated in every flow — and a node's own
+# `llm.parameters` still win over it.
+modelPresets:
+  small-chat:
+    model: replace-me-small-instruct
+    charsPerToken: 3
+    parameters:
+      temperature: 0.2
+      maxTokens: 1024
+      contextLength: 8192
+      # Reasoning templates otherwise emit a thinking block instead of an answer, which reads as an
+      # empty response and breaks the structured nodes that parse the output.
+      chatTemplateKwargs: { enable_thinking: false }
+      # Small models loop on their own phrasing; a mild penalty is the cheapest counter-measure.
+      extraBody: { repeat_penalty: 1.05 }
+  strong-chat:
+    model: replace-me-strong-instruct
+    charsPerToken: 4
+    parameters:
+      temperature: 0.2
+      maxTokens: 2048
+
+shortcuts:
+  # Single model, no pool: the plain form every other shortcut copies.
+  structured:
+    engine: local
+    model: small-chat
+    parameters: { temperature: 0 }
+
+  # Fail-over chain: the first entry is the default, the rest are tried in order when one is down
+  # or refuses the request. The node's own parameters win over the pool's, the pool's over the
+  # preset's.
+  chat:
+    pool:
+      strategy: fallback
+      members:
+        - { engine: local, model: small-chat }
+        - { engine: local, model: strong-chat }
+        - { engine: hosted, model: strong-chat }
+
+  # Load balancing with a sticky choice: requests spread over the members, but one conversation
+  # stays on the same model so its prompt cache, tone and tool behaviour do not change mid-thread.
+  balanced:
+    pool:
+      strategy: round-robin
+      sticky: conversation
+      members:
+        - { engine: local, model: small-chat, weight: 3 }
+        - { engine: local, model: strong-chat, weight: 1 }
+
+pricing:
+  replace-me-small-instruct:
+    currency: EUR
+    promptPer1k: 0.0002
+    completionPer1k: 0.0006

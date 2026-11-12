@@ -28,6 +28,10 @@ export const BFF_ALLOWED_PREFIXES: readonly string[] = [
   "/autopilot/",
   "/eval/",
   "/flows",
+  // The overview tile reads readiness only. The bare `/health` liveness probe
+  // stays out of the allowlist — it is unauthenticated on the Runtime and has
+  // no dashboard consumer, so proxying it would only add an anonymous route.
+  "/health/ready",
   "/mcp/servers",
   // Covers GET /monitoring/flow-health (flow health page); only the OIDC
   // auth dance below is denied.

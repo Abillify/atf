@@ -13,11 +13,14 @@ import { uiEn } from "./ui.en";
 
 export const en = {
   ...uiEn,
+  "nav.group.overview": "Overview",
   "nav.group.research": "Research & Optimisation",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Configuration",
   "nav.group.budgeting": "Budgeting",
 
+  "nav.overview": "Overview",
+  "nav.overview.hint": "Status at a glance",
   "nav.studio": "Studio",
   "nav.studio.hint": "Build & test flows",
   "nav.memory": "Memory",
@@ -66,6 +69,8 @@ export const en = {
   "nav.citationImpact.hint": "Answers whose cited sources changed",
   "nav.mcp": "MCP",
   "nav.mcp.hint": "Connected MCP servers",
+  "nav.services": "Services",
+  "nav.services.hint": "Service interfaces and MCP status",
 
   "nav.cost": "Cost & Tokens",
   "nav.cost.hint": "Spend & token usage",

@@ -15,9 +15,14 @@
  *
  */
 
+import type { ProxyModelEntry } from "../graph/flow-registry-proxy.js";
 import { z } from "zod";
 import type { OperationalProfile } from "@atf/security-kit";
 import type { ProviderKeys } from "../graph/provider-key-pool.js";
+import {
+  DEFAULT_APPROVAL_MESSAGE_LOCALE,
+  type ApprovalMessageLocale,
+} from "../graph/approval-messages.js";
 import type {
   OperatorRole,
   OperatorTokenEntry,
@@ -200,6 +205,20 @@ export interface EmbeddingConfig {
 // AppConfig
 // ---------------------------------------------------------------------------
 
+/** Which kind of operator-facing surface a `SERVICE_LINKS` entry points at. */
+export type ServiceLinkKind = "search" | "extract" | "gate" | "other";
+
+/**
+ * One entry of `SERVICE_LINKS`: a link to an operator-facing service UI shown
+ * on the Control services page (`GET /monitoring/services`). Display data only
+ * — never carries credentials.
+ */
+export interface ServiceLinkConfig {
+  name: string;
+  kind: ServiceLinkKind;
+  url: string;
+}
+
 export interface AppConfig {
   /** The applied configuration preset name (see `src/config/profiles.ts`), if any. */
   profile?: string;
@@ -220,6 +239,12 @@ export interface AppConfig {
   appEnv?: OperationalProfile;
   monitoringTransport: "sse" | "websocket";
   mcpServers: McpServerConfig[];
+  /**
+   * Operator-facing service UIs from `SERVICE_LINKS`, shown on the Control
+   * services page together with the MCP server status. A loaded config always
+   * has this (empty when unset); optional so hand-built configs stay valid.
+   */
+  serviceLinks?: ServiceLinkConfig[];
   /** Controls whether breaking MCP schema drift is reported or rejected. */
   mcpSchemaCompatibilityMode?: "report" | "strict";
   /**
@@ -254,6 +279,17 @@ export interface AppConfig {
   auditAnchorIntervalMs?: number;
   /** Optional append-only JSONL file to persist anchors outside the audit DB. */
   auditAnchorFile?: string;
+  /**
+   * HTTPS webhook receiving audit entries as NDJSON batches via the
+   * Egress_Guard (`AUDIT_FORWARD_URL`, review follow-up G3). Unset = disabled.
+   */
+  auditForwardUrl?: string;
+  /** Bearer token for the SIEM webhook (`AUDIT_FORWARD_TOKEN`). */
+  auditForwardToken?: string;
+  /** Entries per forwarded batch (`AUDIT_FORWARD_BATCH_SIZE`, default 100). */
+  auditForwardBatchSize?: number;
+  /** Forwarding cycle interval in ms (`AUDIT_FORWARD_INTERVAL_MS`, default 15 s). */
+  auditForwardIntervalMs?: number;
   /**
    * Secret pepper (`AUDIT_PSEUDONYM_PEPPER`, ≥ 32 characters) used to derive
    * keyed pseudonyms of erasure subjects for audit entries. Without it the
@@ -396,6 +432,16 @@ export interface AppConfig {
   piiVaultEnabled?: boolean;
   piiVaultEncryptionKey?: string;
   piiVaultTypes?: string[];
+  /** Typed placeholders (`PII_VAULT_TYPED_TOKENS`, default true; ADR 0036). */
+  piiVaultTypedTokens?: boolean;
+  /** One placeholder per distinct value per execution (`PII_VAULT_CONSISTENT_TOKENS`, default true). */
+  piiVaultConsistentTokens?: boolean;
+  /** Trust-proxy model mapping (`PROXY_MODELS`, ADR 0038). Empty = off. */
+  proxyModels?: ProxyModelEntry[];
+  /** `PII_VAULT_SCOPE`: `messages` (default) or `messages+context` (ADR 0036, step 4). */
+  piiVaultScope?: "messages" | "messages+context";
+  /** Tool patterns whose arguments are detokenized before the call (`PII_VAULT_DETOKENIZE_TOOLS`). */
+  piiVaultDetokenizeTools?: string[];
   /** Comma-separated list of PII detector backends to enable: "regex", "ner", "remote". Default: "regex". */
   piiDetectors?: string[];
   /** BERT-NER model identifier (HuggingFace hub ID or local path). */
@@ -553,9 +599,21 @@ export interface AppConfig {
   approvalGateEnabled?: boolean;
   approvalRequireTools?: string[];
   approvalTimeoutMs?: number;
+  /**
+   * Two-step confirmation for in-chat approval links; default true when unset.
+   * See `APPROVAL_LINK_CONFIRM`.
+   */
+  approvalLinkConfirm?: boolean;
   approvalBaseUrl?: string;
   /** Explicit browser origins permitted to embed in-chat approval widgets. */
   approvalFrameAncestors?: string[];
+  /**
+   * Language of the human-in-the-loop approval text: the chat message and the
+   * in-chat widget, confirmation and result pages. Default `en`; `de` restores
+   * the German chat text. See `APPROVAL_MESSAGE_LOCALE` and
+   * `graph/approval-messages.ts`.
+   */
+  approvalMessageLocale?: ApprovalMessageLocale;
   mediaBaseUrl?: string;
   /**
    * Deployment gate for the `show_figure` tool: answers may embed document
@@ -831,6 +889,46 @@ export const TokenExchangeConfigSchema = z
     message: "tokenExchange requires either tokenEndpoint or issuer",
   });
 
+/**
+ * One `SERVICE_LINKS` entry. The URL scheme is validated here so a
+ * `javascript:` or `data:` URL fails at startup, never reaching a browser;
+ * the https-only-in-production rule lives in `load.ts`, because the effective
+ * operational profile is resolved there before this schema sees the env.
+ */
+export const ServiceLinkConfigSchema = z.object({
+  name: z.string().min(1),
+  kind: z.enum(["search", "extract", "gate", "other"]),
+  url: z
+    .string()
+    .min(1)
+    .superRefine((raw, ctx) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `url must be an absolute URL, got "${raw}"`,
+        });
+        return;
+      }
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `url scheme must be https: or http:, got "${parsed.protocol}"`,
+        });
+      }
+      // The list is served to every operator with `monitoring:read` and
+      // rendered as a link, so it must not be a place for credentials.
+      if (parsed.username !== "" || parsed.password !== "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "url must not contain credentials (user:password@host)",
+        });
+      }
+    }),
+});
+
 export const McpServerConfigSchema = z.object({
   name: z.string().min(1),
   url: z.string().min(1),
@@ -975,6 +1073,37 @@ export const EnvSchema = z.object({
       return result.data;
     }),
   /**
+   * Operator-facing service UIs, e.g.
+   * `[{"name":"Search","kind":"search","url":"https://search.example.com"}]`.
+   * Served (display-only) by `GET /monitoring/services`. `https:` is always
+   * required in production; plain `http:` is accepted in other profiles only
+   * (checked in `load.ts`, where the operational profile is known).
+   */
+  SERVICE_LINKS: z
+    .string()
+    .optional()
+    .transform((raw, ctx): ServiceLinkConfig[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SERVICE_LINKS must be a valid JSON array",
+        });
+        return z.NEVER;
+      }
+      const result = z.array(ServiceLinkConfigSchema).safeParse(parsed);
+      if (!result.success) {
+        result.error.issues.forEach((issue) => {
+          ctx.addIssue({ ...issue, path: ["SERVICE_LINKS", ...issue.path] });
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
+  /**
    * Named inference endpoints, e.g.
    * `[{"name":"gpuvllm","protocol":"openai","url":"http://10.0.0.2:8000/v1"}]`.
    * Any number of instances may share a protocol, which is what makes two vLLM
@@ -1078,6 +1207,25 @@ export const EnvSchema = z.object({
    */
   AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().min(60_000).optional(),
   AUDIT_ANCHOR_FILE: z.string().optional(),
+  /**
+   * HTTPS webhook that receives the audit trail as NDJSON batches through the
+   * Egress_Guard (review follow-up G3). Unset = forwarding disabled. The
+   * send position persists in `audit_forward_state`, so delivery is
+   * at-least-once with no gap across restarts; with several replicas exactly
+   * one sends (advisory lock `atf:audit_forward`).
+   */
+  AUDIT_FORWARD_URL: z.string().url().optional(),
+  /** SECRET. Bearer token sent as `Authorization: Bearer …` to the SIEM webhook. */
+  AUDIT_FORWARD_TOKEN: z.string().min(16).optional(),
+  /** Audit entries per forwarded batch (default 100). */
+  AUDIT_FORWARD_BATCH_SIZE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional(),
+  /** Interval between forwarding cycles (default 15 s). */
+  AUDIT_FORWARD_INTERVAL_MS: z.coerce.number().int().min(1_000).optional(),
   /** SECRET (≥ 32 characters). Pepper for the keyed HMAC-SHA256 pseudonyms of erasure subjects in audit entries. Unset = unkeyed SHA-256 pseudonyms. */
   AUDIT_PSEUDONYM_PEPPER: z.string().min(32).optional(),
   // Remote erasure targets for the DSAR orchestrator (Req 2.9): a JSON array
@@ -1558,6 +1706,54 @@ export const EnvSchema = z.object({
   PII_VAULT_ENCRYPTION_KEY: z.string().optional(),
   /** Comma-separated PiiType subset, e.g. "email,phone,iban". Empty = all types. */
   PII_VAULT_TYPES: z.string().optional(),
+  /**
+   * Typed placeholders (`[[PII:EMAIL:…]]` instead of `[[PII:…]]`), so the model
+   * knows what kind of value was replaced. Default true; both forms are always
+   * restored in the response (ADR 0036).
+   */
+  PII_VAULT_TYPED_TOKENS: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
+  /**
+   * One placeholder per distinct value within an execution, so two mentions of
+   * the same person or address read as one entity. Default true; false mints a
+   * placeholder per occurrence. Never shared across executions (ADR 0036).
+   */
+  PII_VAULT_CONSISTENT_TOKENS: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
+  /**
+   * Comma-separated tool patterns (`server/tool`, bare name, `server/*`, `*`)
+   * whose arguments get the real values back in place of vault placeholders
+   * immediately before the call. A listed tool, and whatever it talks to,
+   * receives personal data — list only tools inside your trust boundary.
+   * Default empty: tools receive placeholders (ADR 0036).
+   */
+  PII_VAULT_DETOKENIZE_TOOLS: z
+    .string()
+    .optional()
+    .transform((raw): string[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      return raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }),
+  /**
+   * What the vault tokenizes. `messages` (default): the inbound conversation.
+   * `messages+context`: additionally tool results and retrieved chunks before
+   * they enter the model context, so personal data from your own systems does
+   * not reach the provider either (ADR 0036, step 4).
+   */
+  PII_VAULT_SCOPE: z.enum(["messages", "messages+context"]).default("messages"),
   /** Comma-separated PII detector backends: "regex", "ner", "remote". Default: "regex". */
   PII_DETECTORS: z.string().optional(),
   /** BERT-NER model identifier (ONNX build; HuggingFace hub or local path). Default: Xenova/bert-base-multilingual-cased-ner-hrl */
@@ -1911,6 +2107,9 @@ export const EnvSchema = z.object({
   TOOL_EGRESS_MODE: z.enum(["redact", "block"]).default("redact"),
   // Egress_Guard (Req 7.1, 7.2): exact hostnames (split-DNS exceptions) that
   // may resolve to RFC1918/ULA — and in development, loopback — addresses.
+  // An entry may also be a CIDR range (e.g. `10.64.0.0/14`), which permits
+  // any address inside the range; ranges match the resolved address, never a
+  // hostname. Link-local/CGNAT/metadata stay forbidden in every form.
   EGRESS_ALLOW_PRIVATE_HOSTS: z
     .string()
     .optional()
@@ -2030,7 +2229,29 @@ export const EnvSchema = z.object({
     .min(1000)
     .max(3_600_000)
     .default(30_000),
+  /**
+   * Two-step confirmation for the in-chat approval links. Default true: the
+   * first `GET …/decide` only renders a confirmation page and a second, signed
+   * click resolves the approval, so a link preview, prefetcher or security
+   * scanner fetching the URL cannot approve anything. Set false to restore the
+   * one-click behaviour.
+   */
+  APPROVAL_LINK_CONFIRM: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
   APPROVAL_BASE_URL: z.string().url().optional(),
+  /**
+   * Language of the approval chat message and the in-chat approval widget, so
+   * both halves of one approval interaction read the same way. English by
+   * default; set `de` to keep the German message.
+   */
+  APPROVAL_MESSAGE_LOCALE: z
+    .enum(["en", "de"])
+    .default(DEFAULT_APPROVAL_MESSAGE_LOCALE),
   APPROVAL_FRAME_ANCESTORS: z
     .string()
     .optional()
@@ -2792,6 +3013,49 @@ export const EnvSchema = z.object({
             ...issue,
             path: ["CANARY_JUDGE_MODEL", ...issue.path],
           });
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
+  /**
+   * Trust-proxy mode (ADR 0038): JSON list of `{ "match", "provider", "model" }`.
+   * A request whose model is not a flow but matches `match` (exact, or a prefix
+   * ending in `*`) runs a built-in pass-through flow against `provider`/`model`
+   * under every engine control. Real flows always win. Empty = off.
+   * Example: `[{"match":"claude-*","provider":"anthropic-main","model":"claude-sonnet-4-5"}]`.
+   */
+  PROXY_MODELS: z
+    .string()
+    .optional()
+    .transform((raw, ctx): ProxyModelEntry[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "PROXY_MODELS must be a JSON array",
+        });
+        return z.NEVER;
+      }
+      const result = z
+        .array(
+          z
+            .object({
+              match: z.string().min(1).regex(/^[^*]*\*?$/, {
+                message: "match is an exact name or a prefix ending in a single *",
+              }),
+              provider: z.string().min(1),
+              model: z.string().min(1),
+            })
+            .strict(),
+        )
+        .safeParse(parsed);
+      if (!result.success) {
+        result.error.issues.forEach((issue) => {
+          ctx.addIssue({ ...issue, path: ["PROXY_MODELS", ...issue.path] });
         });
         return z.NEVER;
       }

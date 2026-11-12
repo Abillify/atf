@@ -13,7 +13,13 @@ interface RemoteTool {
   description?: string;
   inputSchema?: unknown;
   /** MCP tool annotations as the downstream server declared them. */
-  annotations?: { readOnlyHint?: unknown; destructiveHint?: unknown };
+  annotations?: {
+    title?: unknown;
+    readOnlyHint?: unknown;
+    destructiveHint?: unknown;
+    idempotentHint?: unknown;
+    openWorldHint?: unknown;
+  };
 }
 
 /**
@@ -109,8 +115,9 @@ async function listRemoteTools(
   testFetch?: typeof fetch,
 ): Promise<RemoteTool[]> {
   const { server } = imp;
+  const privateHosts = server.allowPrivateAddress ? [new URL(server.url).hostname] : [];
   if (!testFetch) {
-    const blocked = await validateOutboundUrl(server.url, allowedHosts);
+    const blocked = await validateOutboundUrl(server.url, allowedHosts, privateHosts);
     if (blocked) throw new Error(`mcpServers import '${server.url}' refused: ${blocked}`);
   }
   const controller = new AbortController();
@@ -124,9 +131,10 @@ async function listRemoteTools(
           input,
           { ...init, signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal },
           allowedHosts,
+          { allowedPrivateHosts: privateHosts },
         ),
   });
-  const client = new Client({ name: "mcpgate-import", version: "0.25.6" }, { capabilities: {} });
+  const client = new Client({ name: "mcpgate-import", version: "0.26.0" }, { capabilities: {} });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -179,8 +187,28 @@ export function defaultAccess(remote: Pick<RemoteTool, "annotations">): "read" |
     ? "read"
     : "write";
 }
+/**
+ * The downstream annotations, reduced to the hints the Gate advertises. They
+ * are passed on so the client in front of the Gate (e.g. the Runtime's taint
+ * rule, which spares read-only tools) sees the same classification the
+ * downstream server declared. Only boolean hints and a string title survive;
+ * anything else is dropped rather than forwarded unvalidated.
+ */
+function importedAnnotations(remote: RemoteTool): Record<string, unknown> | undefined {
+  const raw = remote.annotations as Record<string, unknown> | undefined;
+  if (raw === undefined || raw === null || typeof raw !== "object") return undefined;
+  const out: Record<string, unknown> = {};
+  if (typeof raw.title === "string") out.title = raw.title;
+  for (const key of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+    if (typeof raw[key] === "boolean") out[key] = raw[key];
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function buildTool(imp: McpServerImport, remote: RemoteTool, override: McpToolOverride | undefined): unknown {
   const expose = override?.expose !== undefined ? override.expose : imp.expose;
+  const annotations = importedAnnotations(remote);
+  const requiredScopes = override?.requiredScopes ?? imp.requiredScopes;
   return {
     name: imp.prefix + remote.name,
     description: override?.description ?? remote.description ?? "",
@@ -192,6 +220,8 @@ function buildTool(imp: McpServerImport, remote: RemoteTool, override: McpToolOv
     fixedParams: override?.replaceParams ?? {},
     ...(imp.cache ? { cache: imp.cache } : {}),
     inputSchema: buildInputSchema(remote.inputSchema, override),
+    ...(annotations !== undefined ? { annotations } : {}),
+    ...(requiredScopes.length > 0 ? { requiredScopes } : {}),
   };
 }
 

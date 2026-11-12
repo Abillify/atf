@@ -1021,20 +1021,6 @@
       "rule": "lint/style/noNonNullAssertion",
       "severity": "warning",
       "file": "apps/runtime/scripts/generate-route-reference.ts",
-      "hash": "20d381b8a0ac8121",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/runtime/scripts/generate-route-reference.ts",
-      "hash": "21e2a5629e621166",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/runtime/scripts/generate-route-reference.ts",
       "hash": "2a97b274bc21c374",
       "count": 1
     },
@@ -1113,13 +1099,6 @@
       "severity": "warning",
       "file": "apps/runtime/src/route-catalog.ts",
       "hash": "15a716df0e67c121",
-      "count": 2
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/runtime/src/route-catalog.ts",
-      "hash": "4eb8b0e29562b6c4",
       "count": 2
     },
     {

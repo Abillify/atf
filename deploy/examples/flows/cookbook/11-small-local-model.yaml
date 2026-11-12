@@ -1,0 +1,125 @@
+id: cb-small-local-model
+name: Cookbook — making a small local model behave
+description: >-
+  The switches that turn a 4B–9B self-hosted model from a demo into a usable assistant: a forced
+  tool call instead of a plausible invention, buffered preambles, a marker-delimited final
+  answer, a salvaged reasoning answer, a bounded context and a neutral fallback so a run never
+  ends blank. Each one exists because of a specific small-model failure, named in the comment.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+recovery:
+  retry: true
+
+nodes:
+  # Failure 1: the model answers from its weights instead of calling a tool, and the answer sounds
+  # right. `requireToolUse` is the contract that makes a text-only reply invalid rather than merely
+  # discouraged.
+  - id: look_up
+    type: llm
+    label: Look it up (must call a tool)
+    llm:
+      shortcut: structured
+      parameters:
+        # Low temperature and a bounded output budget: small models ramble, and an output budget
+        # larger than the window leaves nothing for the prompt.
+        temperature: 0.1
+        maxTokens: 800
+        # A small model that "thinks" out loud spends the budget on reasoning and returns nothing.
+        # With thinking off, the tokens go into the answer.
+        chatTemplateKwargs: { enable_thinking: false }
+    tools:
+      - gate/ticket_lookup
+    # What a tool call is worth here is stated in the prompt; `requireToolUse` below is what makes
+    # skipping it fail instead of merely discouraged.
+    systemPrompt: >-
+      Answer only from the tool result. Call the lookup tool first; if you have not called
+      a tool, you do not know the answer.
+    config:
+      # If the model keeps refusing, the node FAILS rather than emitting ungrounded prose — a loud
+      # failure is cheaper than a confident invention about someone's tickets.
+      requireToolUse: true
+      # Failure 2: "Sure, let me check that" streams to the user, then a tool call follows and the
+      # real answer arrives underneath it. Buffering hides the preamble unless no tool call ever
+      # comes, in which case the text is released rather than lost.
+      suppressToolPreamble: true
+      # Details of each tool call and result as separate stream parts: useful for a reviewer, noise
+      # for a chat window. Small models narrate more, so it is usually off here.
+      streamToolResultDetails: false
+      # Small models loop on the same call. The guard sees the repetition and stops it before the
+      # step budget is spent — see recipe 05 for the full set of loop limits. Tightened here
+      # because a small model repeats verbatim rather than paraphrasing.
+      maxToolSteps: 5
+      toolLoopGuard:
+        enabled: true
+        identicalWarnAt: 2
+        identicalBlockAt: 3
+
+  # Failure 3: the model writes a plan, then the answer, then a summary — and the plan is streamed
+  # as the reply. `finalAnswerContract` keeps only what sits between the two markers. It needs a
+  # tool-less node (the loop's own output is not a single final answer) and it cannot be combined
+  # with `outputSchema`.
+  - id: summarise
+    type: llm
+    label: Summarise the finding
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Reply in exactly this shape:
+      CONSIDERATIONS: <your working notes>
+      FINAL ANSWER: <the answer a colleague reads>
+      END OF ANSWER
+    config:
+      finalAnswerContract:
+        startMarker: "FINAL ANSWER:"
+        endMarker: "END OF ANSWER"
+        # Stream from the start marker: the reader waits through the model's private part and then
+        # sees the answer token by token instead of all at once. The markers themselves never reach
+        # the client.
+        streamAfterStartMarker: true
+      # Failure 4: a reasoning model puts the whole answer inside its reasoning block and the
+      # content channel stays empty. Salvage takes the reasoning text as the answer instead of
+      # reporting nothing.
+      reasoningSalvage: true
+      # Failure 5: every attempt returns an empty completion — an exhausted window, an immediate end
+      # token, a quantised model that misfires. Without a fallback the run "succeeds" with a blank
+      # message, which the user reads as an outage.
+      emptyResponseFallback: true
+      emptyResponseFallbackText: >-
+        Diese Anfrage konnte nicht beantwortet werden. Bitte formuliere sie kürzer oder
+        hänge die betroffene Stelle direkt an.
+      # A hard ceiling in characters, independent of the token budget: a model stuck in a repetition
+      # loop would otherwise generate until its own limit.
+      maxOutputChars: 8000
+      # Failure 6: the prompt ends on an assistant message — a continuation, or the tail of a
+      # compressed history. Local Qwen replies to that with an immediate end token, i.e. empty.
+      # Left off here: enabling it makes the node continue its own last message, which is a
+      # different feature and not a fix.
+      allowTrailingAssistantTurn: false
+      # Failure 7: the window fills with earlier turns and the model silently loses the question.
+      # Older turns are summarised above this share of `contextLength`; duplicate tool results are
+      # removed regardless of this switch.
+      historyCompression:
+        enabled: true
+        thresholdRatio: 0.7
+        # Summarising with the same small model keeps inference local; the trade is a lossier
+        # summary, which is why the ratio is set below the point where truncation would begin.
+        llm: { shortcut: structured }
+      # A synthesiser does not need the retrieved chunks a previous node already used; dropping them
+      # buys window space for the conversation.
+      dropRagContext: false
+
+edges:
+  - { source: look_up, target: summarise }
+
+# Pitfalls:
+#
+# - `requireToolUse` on a node whose tools turn out to be irrelevant makes the run fail rather than
+#   answer. Where relevance varies per message, use `requireToolUseWhenSelected` with
+#   `requireToolUseWhenSelectedMinScore`: the call is forced only when semantic tool selection found
+#   a plausibly relevant tool.
+# - `finalAnswerContract` markers must be strings the model writes verbatim. Ask for them in the
+#   system prompt exactly as declared, including the colon, or nothing matches and the whole answer
+#   is dropped.
+# - `emptyResponseFallback` hides a real problem. It belongs together with the trace: an answer that
+#   is frequently the fallback text is a window, quantisation, or template problem, not a copy problem.

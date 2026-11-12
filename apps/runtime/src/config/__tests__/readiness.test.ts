@@ -159,6 +159,11 @@ describe("checkProductionReadiness", () => {
     );
     expect(many.warnings.some((w) => w.includes("per-process media store"))).toBe(true);
     expect(many.warnings.some((w) => w.includes("transparency log numbers its leaves and builds its tree per process"))).toBe(true);
+    // With a database the log is shared through receipt_log (ADR 0039).
+    const shared = checkProductionReadiness(
+      productionConfig({ replicas: 3, decisionReceiptsEnabled: true, databaseUrl: "postgres://db/atf" }),
+    );
+    expect(shared.warnings.some((w) => w.includes("transparency log"))).toBe(false);
     const unrelated = checkProductionReadiness(productionConfig({ replicas: 3 }));
     expect(unrelated.warnings.some((w) => w.includes("per-process media store"))).toBe(false);
     expect(unrelated.warnings.some((w) => w.includes("transparency log"))).toBe(false);

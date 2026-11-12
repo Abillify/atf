@@ -10,9 +10,14 @@
 | [CONFIGURATION.md](CONFIGURATION.md) | You are configuring a deployment. Generated from the schemas |
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The variables a first production deployment needs per service |
 | [FLOWS.md](FLOWS.md) | You are writing or changing a flow. Generated from the flow schema and node type catalog |
+| [tutorials/first-assistant.md](tutorials/first-assistant.md) | You are building your first assistant end to end: your own document retrieved, a tool call held for approval, a signed receipt for the run |
+| [FLOW-COOKBOOK.md](FLOW-COOKBOOK.md) | You know the fields and want the patterns: which settings belong together and what each one prevents |
 | [../DEVELOPMENT.md](../DEVELOPMENT.md) | You are about to change code |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | You are deploying to production |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | You are opening a pull request |
+| [../SUPPORT.md](../SUPPORT.md) | You need help or want to know where a question belongs |
+| [../ROADMAP.md](../ROADMAP.md) | You want to know where the project is going |
+| [../GOVERNANCE.md](../GOVERNANCE.md) | You want to know who decides and how |
 | [../SECURITY.md](../SECURITY.md) | You found a vulnerability |
 | [../LICENSING.md](../LICENSING.md) | You need to know what you may do with ATF |
 
@@ -49,21 +54,26 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables per service. **Generated** — run `bun run config-reference` |
 | [CONFIGURATION-ESSENTIALS.md](CONFIGURATION-ESSENTIALS.md) | The short list per service for a first production deployment |
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
+| [FLOW-COOKBOOK.md](FLOW-COOKBOOK.md) | Twelve flow patterns, each a complete validated file under `deploy/examples/flows/cookbook/`, with the failure mode it prevents |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
 | [DEPRECATIONS.md](DEPRECATIONS.md) | Every deprecated option, field and header, with its replacement and removal version |
 | [STABILITY.md](STABILITY.md) | What is covered by semantic versioning from 1.0.0 and which features stay experimental |
 | [METRICS-AND-RETENTION.md](METRICS-AND-RETENTION.md) | Every exported metric with suggested alerts, and every retention location with its setting |
+| [BENCHMARKS.md](BENCHMARKS.md) | Measured retrieval, extraction and groundedness numbers, each with the raw report file committed under `benchmarks/` next to it |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
+| [TRUST-PROXY.md](TRUST-PROXY.md) | Putting ATF in front of existing AI clients: `PROXY_MODELS`, `/v1/messages`, the preset, the Gate as MCP front door |
 | [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |
 | [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md) | Moving a deployment onto the Document Intelligence v2 ingestion path |
 | [router-result-interpretation.md](router-result-interpretation.md) | Configuring Gate's optional second-pass result interpretation |
 | [MCP-2026-CONTEXT-LAYER.md](MCP-2026-CONTEXT-LAYER.md) | MCP context-layer design |
 | [../deploy/examples/flows/README.md](../deploy/examples/flows/README.md) | Example flows, ordered by what they add |
+| [tutorials/first-assistant.md](tutorials/first-assistant.md) | Step-by-step walkthrough of one flow end to end, with the commands and the output they produced |
 | [../licenses/README.md](../licenses/README.md) | Why some third-party license texts are vendored here |
 | [IMAGE-LICENSES.md](IMAGE-LICENSES.md) | Base images and OS-package licenses (poppler, LibreOffice) in the shipped container images, and the per-image license SBOMs |
 | [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | STRIDE threat model per service, including Outpost Desktop and the updater |
 | [EU-AI-ACT.md](EU-AI-ACT.md) | EU AI Act: roles, high-risk check, Art. 9–15/26/50 mapped to ATF controls, gaps |
+| [compliance/README.md](compliance/README.md) | Draft mappings of ATF controls onto ISO/IEC 42001, NIS2, DORA and BSI C5. Not legal advice; every clause reference is `TODO(human)` |
 | [DSFA-VORLAGE.md](DSFA-VORLAGE.md) | DPIA (German "DSFA") template, Art. 35 GDPR, with ATF-specific pre-fills |
 | [VVT-VORLAGE.md](VVT-VORLAGE.md) | Record of processing activities (RoPA, German "VVT") template, Art. 30 GDPR |
 | [runbooks/backup-restore.md](runbooks/backup-restore.md) | Backing up and restoring every store, in dependency order |
@@ -75,11 +85,11 @@ Shared implementation packages: [canonical JSON](../packages/canonical-json/READ
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 39 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 48 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
 The full index with statuses is [`adr/README.md`](adr/README.md).
 
-- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0035)
+- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0044)
 - [`adr/search/`](adr/search/) — Search decisions
 - [`adr/gate/`](adr/gate/) — Gate decisions
 
@@ -118,6 +128,10 @@ Repository paths inside migrated documents predate the monorepo layout:
 Historical Gate change record: [CHANGELOG-gate.md](CHANGELOG-gate.md). Current router
 result-interpretation configuration is in
 [router-result-interpretation.md](router-result-interpretation.md).
+
+Changelog entries older than `0.19.0` — every release from `0.1.0` to `0.18.1` —
+are in [changelog/0.x-archive.md](changelog/0.x-archive.md). Current entries are
+in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Generated documents
 

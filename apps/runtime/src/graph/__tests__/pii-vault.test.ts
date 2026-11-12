@@ -13,6 +13,8 @@ import {
   InMemoryPiiVaultStore,
   PostgresPiiVaultStore,
   createPiiVault,
+  vaultInsertBatchRows,
+  piiTypeTag,
 } from "../pii-vault.js";
 import type { PiiVault, PiiVaultConfig, PiiVaultStore } from "../pii-vault.js";
 import { SecretCipher } from "../secret-cipher.js";
@@ -201,6 +203,24 @@ function fakeDb(overrides: Partial<Database> = {}): Database {
   } as Database;
 }
 
+describe("vaultInsertBatchRows", () => {
+  it("batches at most 500 rows per statement", () => {
+    expect(vaultInsertBatchRows()).toBe(500);
+  });
+
+  it("shrinks below 500 when a row would carry many parameters", () => {
+    // 65 535 / 200 → 327 rows keeps the statement under the driver ceiling.
+    expect(vaultInsertBatchRows(200)).toBe(327);
+  });
+
+  it("never returns zero, even for an absurd parameter count", () => {
+    // A zero-size batch would loop forever in `put`.
+    expect(vaultInsertBatchRows(100_000)).toBe(1);
+    expect(vaultInsertBatchRows(0)).toBe(500);
+    expect(vaultInsertBatchRows(-1)).toBe(500);
+  });
+});
+
 describe("PostgresPiiVaultStore", () => {
   it("encrypts on put and decrypts on resolve via the DB path", async () => {
     const inserted: unknown[][] = [];
@@ -232,6 +252,114 @@ describe("PostgresPiiVaultStore", () => {
     await store.clear("exec-1");
     const resolved = await store.resolve("exec-1", "tok1");
     expect(resolved).toBe("secret@example.com");
+  });
+
+  it("writes 1 200 entries in three statements, not twelve hundred", async () => {
+    const statements: { text: string; params: unknown[] }[] = [];
+    const db = fakeDb({
+      query: (async (text: string, params?: readonly unknown[]) => {
+        if (/^INSERT/i.test(text.trim())) {
+          statements.push({ text, params: [...(params ?? [])] });
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    const entries = Array.from({ length: 1_200 }, (_unused, i) => ({
+      token: `tok${String(i).padStart(5, "0")}`,
+      type: "email" as const,
+      value: `user${String(i)}@example.com`,
+    }));
+    await store.put("exec-1", "tenant-a", entries);
+
+    expect(statements).toHaveLength(3);
+    const rowsPerStatement = statements.map((s) => s.params.length / 6);
+    expect(rowsPerStatement).toEqual([500, 500, 200]);
+    // Every statement stays under PostgreSQL's 65 535 parameter ceiling.
+    for (const s of statements) expect(s.params.length).toBeLessThan(65_535);
+    // ON CONFLICT is preserved so a duplicate token is still a no-op.
+    for (const s of statements) {
+      expect(s.text).toContain("ON CONFLICT (token) DO NOTHING");
+    }
+    // Placeholders restart at $1 in every statement (each is its own query) and
+    // run to 6 params × 200 rows.
+    const last = statements[2];
+    if (last === undefined) throw new Error("expected a third statement");
+    expect(last.text).toContain("($1, $2, $3, $4, $5, $6)");
+    expect(last.text).toContain("($1195, $1196, $1197, $1198, $1199, $1200)");
+    expect(last.text).not.toContain("$1201");
+  });
+
+  it("keeps the per-entry column order and AAD-bound ciphertext when batching", async () => {
+    const statements: { text: string; params: unknown[] }[] = [];
+    const db = fakeDb({
+      query: (async (text: string, params?: readonly unknown[]) => {
+        if (/^INSERT/i.test(text.trim())) {
+          statements.push({ text, params: [...(params ?? [])] });
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await store.put("exec-1", "tenant-a", [
+      { token: "tokA", type: "email", value: "a@example.com", detector: "regex" },
+      { token: "tokB", type: "iban", value: "DE89370400440532013000" },
+    ]);
+
+    const only = statements[0];
+    if (only === undefined) throw new Error("expected one statement");
+    // Row layout unchanged: token, execution_id, tenant_id, pii_type, value, detector.
+    expect(only.params.slice(0, 6)).toEqual([
+      "tokA",
+      "exec-1",
+      "tenant-a",
+      "email",
+      expect.stringMatching(/./),
+      "regex",
+    ]);
+    expect(only.params.slice(6, 10)).toEqual([
+      "tokB",
+      "exec-1",
+      "tenant-a",
+      "iban",
+    ]);
+    expect(only.params[11]).toBeNull(); // detector absent → NULL
+    const cipherA = only.params[4];
+    const cipherB = only.params[10];
+    if (typeof cipherA !== "string" || typeof cipherB !== "string") {
+      throw new Error("expected ciphertext in both rows");
+    }
+    expect(cipherA).not.toBe("a@example.com");
+    // The AAD still binds (executionId, token), so a row copied to another
+    // token cannot be decrypted with the second row's context.
+    expect(() => CIPHER.decrypt(cipherA, "pii-vault:exec-1:tokB")).toThrow();
+    expect(CIPHER.decrypt(cipherA, "pii-vault:exec-1:tokA")).toBe("a@example.com");
+    expect(CIPHER.decrypt(cipherB, "pii-vault:exec-1:tokB")).toBe("DE89370400440532013000");
+  });
+
+  it("stops issuing statements on the first failure and still mirrors every entry", async () => {
+    let inserts = 0;
+    const db = fakeDb({
+      query: (async (text: string) => {
+        if (/^INSERT/i.test(text.trim())) {
+          inserts++;
+          throw new Error("db down");
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    const entries = Array.from({ length: 1_200 }, (_unused, i) => ({
+      token: `tok${String(i).padStart(5, "0")}`,
+      type: "email" as const,
+      value: `user${String(i)}@example.com`,
+    }));
+    await store.put("exec-1", undefined, entries);
+    // One failing statement aborts the batch loop — no point retrying a down
+    // database 1 200 times on the request path — while the mirror keeps the
+    // execution resolvable exactly as before.
+    expect(inserts).toBe(1);
+    expect(await store.resolve("exec-1", "tok01199")).toBe("user1199@example.com");
   });
 
   it("resolve() serves from the in-memory mirror without a DB round-trip", async () => {
@@ -355,6 +483,151 @@ describe("PostgresPiiVaultStore", () => {
       store.purgeOlderThan(new Date(Date.now() + 1000).toISOString()),
     ).rejects.toThrow("db down");
     expect(await store.resolve("exec-1", "t1")).toBeUndefined();
+  });
+});
+
+describe("typed and consistent placeholders (ADR 0036)", () => {
+  /** Store that counts what it was asked to persist. */
+  function countingStore(): { store: PiiVaultStore; puts: number[] } {
+    const inner = new InMemoryPiiVaultStore();
+    const puts: number[] = [];
+    const store: PiiVaultStore = {
+      put: async (executionId, tenantId, entries) => {
+        puts.push(entries.length);
+        await inner.put(executionId, tenantId, entries);
+      },
+      resolve: (executionId, token) => inner.resolve(executionId, token),
+      clear: (executionId) => inner.clear(executionId),
+    };
+    return { store, puts };
+  }
+  const TYPED = /\[\[PII:([A-Z_]+):([a-f0-9]{16})\]\]/g;
+
+  it("tags a placeholder with the type of the value it stands for", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    const out = await vault.tokenize(
+      "exec-typed",
+      undefined,
+      "mail jane@example.com, pay DE89370400440532013000",
+    );
+    const tags = [...out.matchAll(TYPED)].map((m) => m[1]);
+    expect(tags).toEqual(["EMAIL", "IBAN"]);
+    expect(await vault.detokenize("exec-typed", out)).toBe(
+      "mail jane@example.com, pay DE89370400440532013000",
+    );
+  });
+
+  it("maps camelCase types to an upper snake tag", () => {
+    expect(piiTypeTag("creditCard")).toBe("CREDIT_CARD");
+    expect(piiTypeTag("deTaxId")).toBe("DE_TAX_ID");
+    expect(piiTypeTag("email")).toBe("EMAIL");
+  });
+
+  it("keeps the untyped form with typedTokens: false", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), {
+      enabled: true,
+      typedTokens: false,
+    });
+    const out = await vault.tokenize("exec-untyped", undefined, "to jane@example.com");
+    expect(out).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(await vault.detokenize("exec-untyped", out)).toBe("to jane@example.com");
+  });
+
+  it("resolves typed and untyped placeholders side by side, and ignores a wrong type tag", async () => {
+    const store = new InMemoryPiiVaultStore();
+    await store.put("exec-mixed", undefined, [
+      { token: "0123456789abcdef", type: "email", value: "old@example.com" },
+      { token: "fedcba9876543210", type: "iban", value: "DE89370400440532013000" },
+    ]);
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    // The model may quote either form, and may even garble the tag: only the
+    // 16-hex id selects the entry.
+    expect(
+      await vault.detokenize(
+        "exec-mixed",
+        "a [[PII:0123456789abcdef]] b [[PII:IBAN:fedcba9876543210]] c [[PII:PERSON:0123456789abcdef]]",
+      ),
+    ).toBe("a old@example.com b DE89370400440532013000 c old@example.com");
+  });
+
+  it("gives a repeated value one placeholder and one vault entry per execution", async () => {
+    const { store, puts } = countingStore();
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    const first = await vault.tokenize(
+      "exec-same",
+      "tenant-a",
+      "jane@example.com wrote; reply to jane@example.com",
+    );
+    const second = await vault.tokenize("exec-same", "tenant-a", "cc jane@example.com");
+    const ids = [...`${first} ${second}`.matchAll(TYPED)].map((m) => m[2]);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    // One mapping was written, in the first call; the second call wrote none.
+    expect(puts).toEqual([1]);
+    // The summary still counts every occurrence.
+    expect(vault.getActionSummary("exec-same")?.totalTokenized).toBe(3);
+  });
+
+  it("never reuses a placeholder across executions or after release", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    const idOf = (text: string): string | undefined => [...text.matchAll(TYPED)][0]?.[2];
+    const a = idOf(await vault.tokenize("exec-a", "t", "jane@example.com"));
+    const b = idOf(await vault.tokenize("exec-b", "t", "jane@example.com"));
+    expect(a).toBeDefined();
+    expect(a).not.toBe(b);
+    await vault.release("exec-a");
+    const again = idOf(await vault.tokenize("exec-a", "t", "jane@example.com"));
+    expect(again).not.toBe(a);
+  });
+
+  it("mints a token per occurrence with consistentTokens: false", async () => {
+    const { store, puts } = countingStore();
+    const vault = mustCreatePiiVault(store, { enabled: true, consistentTokens: false });
+    const out = await vault.tokenize(
+      "exec-distinct",
+      undefined,
+      "jane@example.com and jane@example.com",
+    );
+    const ids = [...out.matchAll(TYPED)].map((m) => m[2]);
+    expect(new Set(ids).size).toBe(2);
+    expect(puts).toEqual([2]);
+  });
+
+  it("restores a typed placeholder split at every position across two stream deltas", async () => {
+    const store = new InMemoryPiiVaultStore();
+    const vault = mustCreatePiiVault(store, { enabled: true });
+    const tokenized = await vault.tokenize(
+      "exec-stream",
+      undefined,
+      "card 4111 1111 1111 1111 please",
+    );
+    expect(tokenized).toMatch(/\[\[PII:CREDIT_CARD:[a-f0-9]{16}\]\]/);
+    const text = `before ${tokenized} and a long enough tail to push the buffer past its window`;
+    for (let cut = 1; cut < text.length; cut++) {
+      const stream = vault.createDetokenizeStream("exec-stream");
+      const emitted =
+        (await stream.push(text.slice(0, cut))) +
+        (await stream.push(text.slice(cut))) +
+        (await stream.flush());
+      expect(emitted).not.toContain("[[PII:");
+      expect(emitted).toContain("4111 1111 1111 1111");
+    }
+  });
+
+  it("does not re-detect its own placeholders as PII", async () => {
+    const vault = mustCreatePiiVault(new InMemoryPiiVaultStore(), { enabled: true });
+    // Token ids are random, so one draw proves little: a digit-heavy id used
+    // to be picked up as a phone number on a second pass.
+    for (let i = 0; i < 400; i++) {
+      const exec = `exec-idem-${i}`;
+      const once = await vault.tokenize(
+        exec,
+        undefined,
+        "jane@example.com, DE89370400440532013000",
+      );
+      expect(await vault.tokenize(exec, undefined, once)).toBe(once);
+      expect(once).not.toMatch(/[0-9]{4}/);
+    }
   });
 });
 
@@ -497,7 +770,7 @@ describe("PiiVault — per-flow detector resolver", () => {
       "helpdesk",
     );
     expect(tokenized).not.toContain("Anna Schmidt");
-    expect(tokenized).toMatch(/\[\[PII:[a-f0-9]{16}\]\]/);
+    expect(tokenized).toMatch(/\[\[PII:[A-Z_]+:[a-f0-9]{16}\]\]/);
     // Round-trips back to the real value on egress.
     expect(await vault.detokenize("exec-1", tokenized)).toContain(
       "Anna Schmidt",

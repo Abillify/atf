@@ -1,0 +1,96 @@
+id: cb-approval-write-tool
+name: Cookbook — human approval for a write tool
+description: >-
+  Split read and write across two nodes so a person sees the consequential call: the
+  model may look things up on its own, the write runs as a deterministic `tool` node
+  whose call pauses until a reviewer approves it. Shows what belongs in the flow and what
+  belongs in deployment configuration — and why the split is what makes the pause real.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+  - personal
+# A flow with a write must not retry the whole run from the start: a retry after the write
+# succeeded would file the ticket a second time. Recovery is left off deliberately.
+# recovery:
+#   retry: true
+
+variables:
+  ticket_prefix: "assistant:"
+
+nodes:
+  # Read path: the model chooses to call the lookup, sees the result, and answers. No approval is
+  # needed for a read, and holding it would only train reviewers to click through noise.
+  - id: look_up
+    type: llm
+    label: Look up the case
+    llm: { shortcut: chat }
+    tools:
+      - gate/ticket_lookup
+    systemPrompt: >-
+      Find out what is already known about the request. Never state that an action
+      succeeded unless a tool result confirms it.
+    config:
+      maxToolSteps: 4
+      # Contract, not hint: the tools in `sequence` must all have succeeded before the answer is
+      # accepted, and only when the message matches the pattern. An answer that skips the read is
+      # refused instead of streamed.
+      toolSequenceContract:
+        when: { pattern: "status|stand|offen", flags: i }
+        sequence: [gate/ticket_lookup]
+
+  # Write path: a `tool` node, so no model decides anything. `toolArgs` is the complete argument
+  # set here (on an `llm` node it would be merged over the model's), and the templates resolve when
+  # the node runs. Declaring the write as its own node is what makes it approvable: the platform
+  # consults the approval rule when it executes a tool the flow declares.
+  - id: file_ticket
+    type: tool
+    label: File the ticket (needs a person)
+    tools:
+      - gate/ticket_create
+    config:
+      toolArgs:
+        gate/ticket_create:
+          subject: "{{vars.ticket_prefix}} {{query}}"
+          description: "Filed by the assistant for {{context.userId}} on {{now.date}}."
+      # An approval is a human decision about a consequence, so the reviewer needs the reason.
+      # Without the evidence attached, the request is a bare parameter set and gets approved
+      # reflexively.
+      toolContext:
+        server: vectorsearch
+        tool: retrieve_evidence
+        pre:
+          match: ["gate/ticket_create"]
+          queryTemplate: "{{query}}"
+          required: true
+      # Belt and braces at flow level: this node may not call the write tool without a person, even
+      # where the deployment's global list is configured loosely. Patterns are allowed
+      # (`gate/*`), and the rule also covers an agent-harness delegation of the same node.
+      requiresApproval: [gate/ticket_create]
+      progress:
+        start: Preparing the ticket…
+        complete: Ticket handed to a reviewer.
+        error: The ticket could not be filed.
+
+edges:
+  - { source: look_up, target: file_ticket }
+
+# What makes the pause happen is deployment configuration, deliberately not part of the flow, so a
+# flow edit cannot remove a reviewer:
+#
+#   APPROVAL_GATE_ENABLED=true
+#   APPROVAL_REQUIRE_TOOLS=gate/ticket_create
+#   APPROVAL_TIMEOUT_MS=600000
+#
+# On timeout the call is REJECTED — silence never becomes an action. Pending requests appear in
+# Control's reviewer inbox and, for compatible frontends, inline in the chat. The same effect can be
+# declared centrally in `compliance-policy.yaml` under `approvalRules`, which then also covers webhook
+# triggers and replay rather than only chat.
+#
+# Pitfalls:
+#
+# - A tool the model picks inside an `llm` node's own loop is not held by APPROVAL_REQUIRE_TOOLS.
+#   That pause comes from the Gate tool's own approval rule or from an injection-taint finding. When
+#   a person has to see a write first, declare it as a `tool` node like the one above.
+# - Keep `EXECUTION_TIMEOUT_MS` larger than `APPROVAL_TIMEOUT_MS`, or the execution is killed while
+#   the request is still open and the reviewer approves a call nobody is waiting for any more.

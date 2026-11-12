@@ -121,6 +121,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createModelsRouter` | — (full paths) | always | GET `/v1/models`<br/>GET `/v1/models/:id` |
 | `createMediaRouter` | — (full paths) | always | GET `/v1/media/:id` |
 | `createChatRouter` | — (full paths) | always | POST `/v1/chat/completions` |
+| `createMessagesRouter` | — (full paths) | always | POST `/v1/messages` |
 | `createResponsesRouter` | — (full paths) | always | POST `/v1/responses` |
 | `createJobsRouter` | — (full paths) | `jobStore is set` | GET `/v1/jobs/:id` |
 | `createReceiptsRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/v1/receipts`<br/>GET `/v1/receipts/:id`<br/>GET `/v1/receipts/:id/proof` |
@@ -161,6 +162,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createRocketChatConnectRouter` | — (full paths) | `connectReady && delegation is set` | GET `/connect/rocketchat/:requestId{[0-9a-fA-F-]+}`<br/>GET `/connect/rocketchat/callback`<br/>POST `/connect/rocketchat/complete` |
 | `createSloRouter` | — (full paths) | always | GET `/monitoring/slo` |
 | `createPostureRouter` | — (full paths) | always | GET `/monitoring/posture` |
+| `createServicesRouter` | — (full paths) | always | GET `/monitoring/services` |
 | `createCitationImpactRouter` | — (full paths) | always | GET `/monitoring/citation-impact` |
 | `createFinopsRouter` | — (full paths) | always | GET `/admin/finops/forecast/:tenantId`<br/>GET `/admin/finops/co2` |
 | `createShadowRouter` | — (full paths) | always | GET `/monitoring/shadow`<br/>GET `/monitoring/shadow/comparisons`<br/>GET `/monitoring/shadow/:flowId` |
@@ -386,7 +388,12 @@ sequenceDiagram
 Stages are independently configured and many governance features are opt-in. The sequence above
 shows the ordering when those controls are enabled: policy admission precedes graph execution,
 PII tokenization precedes provider calls, and restoration follows output checks. A missing
-`compliance-policy.yaml` means "no policy" and allows execution. An invalid one never does: on
+`compliance-policy.yaml` means "no policy" and allows execution — the one loading failure that
+does not fail closed, and the reason `COMPLIANCE_POLICY_REQUIRED=true` exists: without a loaded
+policy the Runtime refuses to start in the production profile (warning elsewhere) and readiness
+reports `compliance_policy: missing`. Note that this is a startup and readiness gate, not a
+runtime interlock: deleting the file from a running instance disables the policy until readiness
+or a restart says so. An invalid file never does: on
 hot-reload the last valid policy stays in force, and at startup — with no valid policy yet —
 admission denies every run (503) until the file is fixed. `GET /admin/compliance-policy` reports
 the load error. The policy's `failClosed` field applies to evaluator exceptions only.
@@ -546,7 +553,8 @@ These are enforced in review and, where possible, in tests:
    application never imports another application's source.
 2. **Fail-closed boundaries are explicit.** Authentication, authorization, approvals, and
    configured policy checks deny on the failure modes documented for them. Exceptions are also
-   explicit: a missing compliance-policy file disables that policy, PII detector failures
+   explicit: a missing compliance-policy file disables that policy (`COMPLIANCE_POLICY_REQUIRED`
+   turns that into a startup failure in production, not a runtime block), PII detector failures
    default to open unless configured otherwise, and optional state can degrade to per-replica
    behavior. A path must not be called fail-closed without its configuration and fallback being
    stated.

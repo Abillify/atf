@@ -4,9 +4,10 @@
 /**
  * Configuration profiles / presets (`src/config/profiles.ts`)
  *
- * The platform exposes ~130 environment variables. Standing up a correct
- * regulated multi-tenant deployment means flipping a dozen of them on in
- * concert (guardrails, PII vault, retention, RLS, monitoring auth, …) — the
+ * The platform exposes a large and growing set of environment variables — see
+ * `docs/CONFIGURATION.md` for the generated list and current count. Standing up
+ * a correct regulated multi-tenant deployment means flipping a dozen of them on
+ * in concert (guardrails, PII vault, retention, RLS, monitoring auth, …) — the
  * single biggest source of misconfiguration risk.
  *
  * `ATF_PRESET` picks a curated bundle of *defaults* for those flags (`PROFILE`
@@ -113,6 +114,25 @@ export const PROFILES: Record<string, ProfileDefaults> = {
     BYOK_ENABLED: "true",
     TENANT_RLS_ENABLED: "true",
     TENANT_RLS_REQUIRED: "true",
+  },
+
+  /**
+   * Trust-proxy gateway in front of existing AI clients (ADR 0038): the
+   * controls that apply to pass-through traffic, without the production
+   * operational profile (set `ATF_PROFILE=production` for that). Guardrails
+   * flag rather than block, so a coding agent is not stopped by a heuristic;
+   * the flags land in the audit trail. Decision receipts need a signing key and
+   * stay explicit, like in every preset. `PROXY_MODELS` is still required.
+   */
+  "trust-proxy": {
+    PII_VAULT_ENABLED: "true",
+    INPUT_GUARDRAILS_ENABLED: "true",
+    INPUT_GUARDRAIL_MODE: "flag",
+    OUTPUT_GUARDRAILS_ENABLED: "true",
+    CLIENT_TOOLS_ENABLED: "true",
+    IDEMPOTENCY_ENABLED: "true",
+    RETENTION_ENABLED: "true",
+    AI_DISCLOSURE: "header",
   },
 
   /** Throughput/cost-optimised — caching levers only, no posture changes. */

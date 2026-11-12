@@ -12,23 +12,29 @@ cd apps/runtime
 bun run scripts/cli.ts validate ../../deploy/examples/flows/
 ```
 
-These six are ordered by what they add. Each is safe to run; none contains credentials or
+Eight flows, one directory, loadable as they are. This is the default `FLOWS_DIR`
+for the Runtime in `compose.yaml`, so a fresh quickstart has all eight without any
+further setup. They are ordered by what they add. Each is safe to run; none contains credentials or
 customer data.
 
 | Flow | Demonstrates | Requires beyond the quickstart |
 | --- | --- | --- |
 | [`quickstart.yaml`](quickstart.yaml) | The smallest useful flow: one `llm` node | Nothing |
 | [`02-routed-support.yaml`](02-routed-support.yaml) | Structured classification and deterministic conditional routing | Nothing |
-| [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Search reachable, and a `handbook` collection with documents |
-| [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Agentic tool use where the write path needs a human decision | Gate with `ticket_lookup` and `ticket_create` tools; `APPROVAL_GATE_ENABLED=true` |
-| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; Gate with `ticket_create` for actions |
+| [`03-grounded-retrieval.yaml`](03-grounded-retrieval.yaml) | Declarative retrieval with hybrid search, reranking, and citations | Nothing - the seed service loads `demo/handbook.md` into the `handbook` collection this flow reads |
+| [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Two tool paths: a lookup the model may take by itself, and a write declared as a `tool` node that waits for a person | Nothing - the quickstart starts Gate with `ticket_lookup` and `ticket_create` over a demo table and sets the approval rule |
+| [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | Nothing - the seeded `handbook` collection serves its question branch and its Gate provides `ticket_create` for actions |
 | [`06-request-pipeline.yaml`](06-request-pipeline.yaml) | A multi-stage graph: transform, classifier, router, parallel fan-out with a conditional child, and a second classifier on the change branch. The flow in the root README's Studio recording | Nothing; the quickstart mock returns no parseable triage, so runs take the classifier fallback to the clarification branch. A real model exercises every branch |
+| [`07-model-echo.yaml`](07-model-echo.yaml) | What a model is actually given once reversible tokenisation has run: the mock's `echo` model replies with the messages it received, so the placeholders are visible in the answer | Nothing - the quickstart's mock serves the `echo` model and `TOUR.md` step 1 walks through it |
+| [`08-first-assistant.yaml`](08-first-assistant.yaml) | The walkthrough flow of [docs/tutorials/first-assistant.md](../../../docs/tutorials/first-assistant.md): a `retrieval` node against the Runtime's own store, a conditional edge into a write tool, then the trace and signed receipt for that same run | The `compose.rag.yaml` overlay (it sets `RAG_ENABLED` and `EMBEDDING_MODEL`) plus one ingest call - `retrieval` reads the Runtime's in-memory store, which the quickstart keeps switched off because every flow above retrieves through Search |
 
-The quickstart stack starts Search and Gate but ingests no documents and declares no tools.
-Flows 3 through 5 therefore validate and load, but their retrieval or tool branches are not a
-successful governed demo until you add the stated collection or tools. Depending on the branch,
-execution can return no context, a tool-not-found result, or an execution error; use
-`quickstart.yaml`, `02-routed-support.yaml` and `06-request-pipeline.yaml` for infrastructure-free runs.
+The quickstart starts Search and Gate, and Gate arrives with the two tools above over a
+preloaded demo table - `04` runs against it as is. A `seed` service posts
+`demo/handbook.md` into Search's `handbook` collection while the stack starts, so `03` and the
+question branch of `05` retrieve and cite right away. What that proves is the retrieval and
+citation path, not relevance: the handbook is an invented document and the test embedding maps
+every text to the same vector, so scores say nothing - relevance needs a real embedding model.
+`quickstart.yaml`, `02-routed-support.yaml` and `06-request-pipeline.yaml` need neither.
 
 [`compliance-policy.example.yaml`](compliance-policy.example.yaml) is a synthetic policy starting
 point and is intentionally ignored by both the flow validator and policy loader. Review and adapt
@@ -39,7 +45,9 @@ than assuming the filename alone establishes a control.
 
 ## Things worth noticing
 
-**No `llm` block.** None of these flows pins a provider or model. They inherit `DEFAULT_LLM`, so
+**No `llm` block.** None of these flows pins a provider or model - `07-model-echo` is the single
+exception, and only because its purpose is to report on one specific model. The rest inherit
+`DEFAULT_LLM`, so
 the same file works against the mock model, a local server, and a hosted provider. Pin a model
 per node only when the node genuinely needs a different one — the router's job is normally to
 pick.
@@ -62,6 +70,10 @@ belongs in the flow. Omit it and no source is privileged.
 deployment configuration (`APPROVAL_REQUIRE_TOOLS`) or centrally in `compliance-policy.yaml`, not
 inside the flow. That is deliberate: a reviewer requirement that a flow author could delete by
 editing a flow file would not be a control. On timeout the action is rejected, never executed.
+The rule binds a tool the flow declares - a `tool` node, or an agent-harness delegation. A tool
+the model picks inside an `llm` node runs in the model's own loop, where a pause comes from an
+approval rule on the Gate tool or from an injection-taint finding instead; `04` shows both shapes
+side by side.
 
 **Data classes are declared.** `dataClasses` states what a flow processes, which is what data
 residency rules in `compliance-policy.yaml` match against. Classification is declarative rather
@@ -107,6 +119,21 @@ request are taken literally and never evaluated.
 The twelve built-in node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`,
 `memory`, `agent-harness`, `transform`, `trigger`, `assistant-context`, `assistant-learn`. Any
 other string resolves through the plugin node-handler registry.
+
+## One subdirectory: `cookbook/`
+
+[`cookbook/`](cookbook/) holds twelve single-pattern flows — the files behind
+[`docs/FLOW-COOKBOOK.md`](../../../docs/FLOW-COOKBOOK.md). They are **not** loaded by this
+stack: the flow collector scans `FLOWS_DIR` one level deep and does not recurse, so the
+directory is invisible to a running Runtime while CI validates all of it as its own flow root.
+Copying a recipe into production means copying the file up and giving it an `id` that does not
+collide (`cb-` prefixes keep that unlikely). Its `model-shortcuts.yaml` exists so the recipes
+resolve their shortcuts against themselves rather than against the file above.
+
+```bash
+cd apps/runtime
+bun run scripts/cli.ts validate ../../deploy/examples/flows/cookbook/ --require-version
+```
 
 Complete reference of every field, node type setting, placeholder, condition operator and
 calculation function: [`docs/FLOWS.md`](../../../docs/FLOWS.md) (generated from the engine's own

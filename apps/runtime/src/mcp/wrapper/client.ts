@@ -13,7 +13,6 @@
 import crypto from "node:crypto";
 import {
   diffToolSchemas,
-  type SchemaCompatibilityDiff,
   type ToolSchemas,
 } from "@atf/schema-compatibility";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -30,15 +29,10 @@ import type { McpServerConfig } from "../../config/index.js";
 import type { AgentExecutionContext } from "../../types/monitoring.js";
 import type {
   CapabilityDocument,
-  EnforcementMode,
   TransactionMeta,
 } from "../../transaction/types.js";
 import {
   bindEvidenceActionContract,
-  EVIDENCE_ACTION_CONTRACT_HASH_META_KEY,
-  EVIDENCE_ACTION_CONTRACT_META_KEY,
-  EVIDENCE_CONTRACT_HASH_META_KEY,
-  EVIDENCE_PACK_HASH_META_KEY,
   type EvidenceActionContractMeta,
 } from "../../transaction/evidence-contract.js";
 
@@ -64,317 +58,40 @@ import type {
   McpTaskHandle,
   McpTaskStatus,
 } from "./stateless-2026-client.js";
+import {
+  isAuthRejectedError,
+  isConnectionError,
+  isSessionExpiredError,
+} from "./client-errors.js";
+import type {
+  McpWrapperService,
+  SchemaCompatibilityMode,
+  SchemaCompatibilityReport,
+} from "./client-service.js";
+import {
+  buildTransactionMeta,
+  nfcNormalizeDeep,
+  parseApprovalInputRequests,
+  parseCapabilityDocument,
+  sha256,
+} from "./client-support.js";
+export type {
+  McpWrapperService,
+  SchemaCompatibilityMode,
+  SchemaCompatibilityReport,
+} from "./client-service.js";
+export {
+  isAuthRejectedError,
+  isConnectionError,
+  isSessionExpiredError,
+} from "./client-errors.js";
+export {
+  buildTransactionMeta,
+} from "./client-support.js";
 
 // ---------------------------------------------------------------------------
 // Transaction metadata propagation
 // ---------------------------------------------------------------------------
-
-/**
- * Hashes a caller bearer so it can key a cache entry without keeping the
- * credential itself in a long-lived map key.
- */
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function canonicalContractHash(value: string, label: string): string {
-  if (!/^[a-f0-9]{64}$/iu.test(value)) {
-    throw new Error(`${label} must be a SHA-256 hex digest`);
-  }
-  return value.toLowerCase();
-}
-
-/** Builds additive MCP metadata understood by v1 peers and ignored by legacy peers. */
-export function buildTransactionMeta(
-  invocationId: string,
-  transaction?: TransactionMeta,
-  evidenceContract?: EvidenceActionContractMeta,
-): Record<string, string | number> {
-  const preferredActionHash =
-    transaction?.actionContractHash === undefined
-      ? undefined
-      : canonicalContractHash(transaction.actionContractHash, "Action-contract hash");
-  const compatibilityActionHash =
-    transaction?.evidenceContractHash === undefined
-      ? undefined
-      : canonicalContractHash(transaction.evidenceContractHash, "Evidence-contract hash");
-  if (
-    preferredActionHash !== undefined &&
-    compatibilityActionHash !== undefined &&
-    preferredActionHash !== compatibilityActionHash
-  ) {
-    throw new Error("Action-contract hash aliases must be identical");
-  }
-  const suppliedActionHash = preferredActionHash ?? compatibilityActionHash;
-  const evidenceActionHash =
-    evidenceContract === undefined
-      ? undefined
-      : canonicalContractHash(evidenceContract.actionContractHash, "Evidence action-contract hash");
-  const evidenceCompatibilityHash =
-    evidenceContract === undefined
-      ? undefined
-      : canonicalContractHash(evidenceContract.evidenceContractHash, "Evidence contract hash");
-  if (
-    evidenceActionHash !== undefined &&
-    evidenceCompatibilityHash !== undefined &&
-    evidenceActionHash !== evidenceCompatibilityHash
-  ) {
-    throw new Error("Evidence action-contract hash aliases must be identical");
-  }
-  if (
-    suppliedActionHash !== undefined &&
-    evidenceActionHash !== undefined &&
-    suppliedActionHash !== evidenceActionHash
-  ) {
-    throw new Error("Evidence action contract does not match the transaction token");
-  }
-  const evidencePackHash =
-    evidenceContract === undefined
-      ? undefined
-      : canonicalContractHash(evidenceContract.evidencePackHash, "Evidence pack hash");
-  const trace = transaction?.trace;
-  return {
-    "transaction/invocationId": invocationId,
-    "transaction/idempotencyKey": invocationId,
-    // Compatibility aliases retained for existing peers during rolling upgrades.
-    "aiperator/invocationId": invocationId,
-    "aiperator/idempotencyKey": invocationId,
-    ...(transaction?.token !== undefined
-      ? {
-          "transaction/token": transaction.token,
-          // Compatibility during rolling upgrades of downstream peers.
-          "aiperator/transactionToken": transaction.token,
-        }
-      : {}),
-    ...(evidenceContract !== undefined
-      ? {
-          [EVIDENCE_ACTION_CONTRACT_META_KEY]: evidenceContract.serialized,
-          [EVIDENCE_ACTION_CONTRACT_HASH_META_KEY]: evidenceActionHash,
-          [EVIDENCE_CONTRACT_HASH_META_KEY]: evidenceActionHash,
-          [EVIDENCE_PACK_HASH_META_KEY]: evidencePackHash,
-        }
-      : {}),
-    ...(trace?.traceId !== undefined ? { "transaction/traceId": trace.traceId } : {}),
-    ...(trace?.spanId !== undefined ? { "transaction/spanId": trace.spanId } : {}),
-    ...(trace?.traceparent !== undefined ? { traceparent: trace.traceparent } : {}),
-    ...(trace?.deadlineAt !== undefined ? { "transaction/deadlineAt": trace.deadlineAt } : {}),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Public interface
-// ---------------------------------------------------------------------------
-
-export type SchemaCompatibilityMode = "report" | "strict";
-
-export interface SchemaCompatibilityReport {
-  serverName: string;
-  toolName: string;
-  mode: SchemaCompatibilityMode;
-  diff: SchemaCompatibilityDiff;
-}
-
-/**
- * Public contract for the MCP Wrapper service.
- */
-export interface McpWrapperService {
-  connect(config: McpServerConfig): Promise<void>;
-  /**
-   * Tears down the existing client for the server and establishes a fresh
-   * connection using the stored config. Called automatically on session expiry
-   * (HTTP 404) but may also be called explicitly.
-   */
-  reconnect(serverName: string): Promise<void>;
-  listTools(serverName: string, opts?: { authToken?: string }): Promise<string[]>;
-  listResources?(
-    serverName: string,
-    opts?: { authToken?: string },
-  ): Promise<{ resources: McpResourceDescriptor[] } & McpCacheMetadata>;
-  listResourceTemplates?(
-    serverName: string,
-    opts?: { authToken?: string },
-  ): Promise<{ resourceTemplates: McpResourceTemplateDescriptor[] } & McpCacheMetadata>;
-  readResource?(
-    serverName: string,
-    uri: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
-  ): Promise<{ contents: unknown[] } & McpCacheMetadata>;
-  listPrompts?(
-    serverName: string,
-    opts?: { authToken?: string },
-  ): Promise<{ prompts: McpPromptDescriptor[] } & McpCacheMetadata>;
-  getPrompt?(
-    serverName: string,
-    name: string,
-    args?: Record<string, unknown>,
-    opts?: { authToken?: string; signal?: AbortSignal },
-  ): Promise<{ description?: string; messages: unknown[] }>;
-  getTask?(
-    serverName: string,
-    taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
-  ): Promise<McpTaskStatus>;
-  updateTask?(
-    serverName: string,
-    taskId: string,
-    input: Record<string, unknown>,
-    opts?: { authToken?: string; signal?: AbortSignal },
-  ): Promise<McpTaskStatus>;
-  cancelTask?(
-    serverName: string,
-    taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
-  ): Promise<McpTaskStatus>;
-  /**
-   * Discovers v1 support without allocating a normal transaction invocation.
-   *
-   * `authToken` must be the caller bearer that the subsequent `callTool` will
-   * use. For a `forwardAuthToken` server the bootstrap session and the
-   * per-caller session are different MCP sessions with different identities, so
-   * discovering on the bootstrap session can report "no v1" for a peer that
-   * advertises it to the actual caller.
-   */
-  getTransactionCapabilities?(
-    serverName: string,
-    opts?: { authToken?: string },
-  ): Promise<CapabilityDocument | undefined>;
-  /**
-   * Returns the server-level MCP `instructions` captured at connect/reconnect
-   * (the `initialize` response's `instructions` field), or undefined when the
-   * server advertises none. Used to inject per-server guidance into an LLM
-   * node's prompt when that server's tools are selected.
-   */
-  getInstructions(serverName: string): string | undefined;
-  /**
-   * True when the bearer the server receives carries the caller's own IdP
-   * session (plain `forwardAuthToken`). False for `tokenExchange` servers:
-   * the exchanged token is minted by the IdP for another audience and does
-   * not carry the caller's `sid`, so a transaction envelope must not bind it.
-   */
-  forwardsCallerSession?(serverName: string): boolean;
-  /**
-   * Subject (`sub`) of the bearer this server receives for the given caller
-   * token, or undefined when the server receives the caller token unchanged.
-   * For `tokenExchange` servers this is the exchanged token's subject, which
-   * follows the target provider's subject mode and can differ from the
-   * caller's own `sub`. A transaction envelope must bind THIS subject.
-   * Throws when the exchange fails (fail-closed, like the call itself).
-   */
-  targetSubject?(serverName: string, subjectToken: string | undefined): Promise<string | undefined>;
-  getFilteredToolSchema(
-    serverName: string,
-    toolName: string,
-    opts?: { authToken?: string },
-  ): Promise<FilteredToolSchema>;
-  refreshSchemaIfChanged(
-    serverName: string,
-    toolName: string,
-    opts?: { authToken?: string },
-  ): Promise<boolean>;
-  /**
-   * Rebinds an evidence contract to the exact argument representation that
-   * will be sent after protected-parameter injection and NFC normalization.
-   */
-  prepareEvidenceActionContract?(
-    serverName: string,
-    toolName: string,
-    args: Record<string, unknown>,
-    ctx: AgentExecutionContext,
-    contract: EvidenceActionContractMeta,
-  ): Promise<{
-    preparedCallId: string;
-    args: Record<string, unknown>;
-    evidenceContract: EvidenceActionContractMeta;
-  }>;
-  /**
-   * Calls a tool on the given MCP server, injecting Protected Parameters from ctx.
-   */
-  callTool(
-    serverName: string,
-    toolName: string,
-    args: Record<string, unknown>,
-    ctx: AgentExecutionContext,
-    /**
-     * `signal` carries the flow's execution deadline so a tool call — and the
-     * retry loop around it — is cancelled with the run instead of outliving it.
-     */
-    opts?: {
-      signal?: AbortSignal;
-      invocationId?: string;
-      transaction?: TransactionMeta;
-      evidenceContract?: EvidenceActionContractMeta;
-      /** Internal, one-time handle for exact normalized/injected arguments. */
-      preparedEvidenceCallId?: string;
-    },
-  ): Promise<ToolResult>;
-}
-
-// ---------------------------------------------------------------------------
-// Session-expired detection
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true when the error signals that an MCP HTTP session has expired
- * (server responded with 404 — session not found / timed out).
- *
- * The MCP spec mandates that servers return 404 for requests that carry an
- * unknown or expired `mcp-session-id` header.
- */
-export function isSessionExpiredError(err: unknown): boolean {
-  if (err instanceof StreamableHTTPError && err.code === 404) {
-    return true;
-  }
-  // Some SDK versions wrap the error as a plain Error whose message contains the status.
-  if (err instanceof Error) {
-    return /\b404\b/.test(err.message) && /session/i.test(err.message);
-  }
-  return false;
-}
-
-/**
- * Returns true when the server rejected the request's bearer (HTTP 401). For a
- * token-exchange server this means the exchanged token was revoked or lapsed
- * early (e.g. clock skew); the session is rebuilt with a freshly exchanged
- * token. For other servers a 401 is not recoverable by reconnecting.
- */
-export function isAuthRejectedError(err: unknown): boolean {
-  if (err instanceof StreamableHTTPError && err.code === 401) return true;
-  // The native 2026 client reports failures as "... failed (HTTP 401): ...".
-  return err instanceof Error && /\(HTTP 401\)/.test(err.message);
-}
-
-/**
- * Returns true when the error signals a transport-level connection failure —
- * i.e. the MCP server process restarted or its network endpoint became
- * temporarily unreachable.
- *
- * Unlike session expiry (HTTP 404), these errors are thrown at the OS /
- * transport layer and are not specific to a session ID. They appear on all
- * three transports:
- *  - http/sse: ECONNREFUSED / ECONNRESET / ETIMEDOUT / socket hang-up when the
- *              remote process restarts or the network path drops.
- *  - stdio:    EPIPE / "write after end" / "process exited" when the child
- *              process terminates.
- *
- * On detecting any of these we tear down the dead client and open a fresh
- * connection — exactly the same recovery path as for session expiry.
- */
-export function isConnectionError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  return (
-    // Node.js / OS-level network codes (case-insensitive match on the code name)
-    /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EPIPE|ENETUNREACH|EHOSTUNREACH/i.test(msg) ||
-    // Human-readable variants produced by the MCP SDK and the Node http stack
-    /connection (closed|refused|reset|terminated|dropped|lost)/i.test(msg) ||
-    /transport (closed|error|disconnected|ended)/i.test(msg) ||
-    /socket (hang.?up|closed|error|end)/i.test(msg) ||
-    /write after end/i.test(msg) ||
-    // stdio transport: child process died
-    /process (exited|terminated|died|crashed)/i.test(msg) ||
-    /spawn.*ENOENT/i.test(msg)
-  );
-}
 
 /**
  * Factory that builds the underlying MCP SDK {@link Client}. Injectable so the
@@ -442,116 +159,6 @@ const DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS = 300_000;
 const MAX_PREPARED_EVIDENCE_CALL_TTL_MS = 2_147_483_647;
 const DEFAULT_MAX_PREPARED_EVIDENCE_CALLS = 1_000;
 const DEFAULT_MAX_PREPARED_EVIDENCE_CALLS_PER_CALLER = 32;
-
-/**
- * Recursively Unicode-normalizes every string in a tool-argument value to NFC
- * (canonical composition), the W3C-recommended interchange form.
- *
- * Why: a model copies path-like arguments (`reference`, `path_prefix`, …) from
- * text we injected — filenames that, on macOS-ingested stores, are keyed in NFD
- * (decomposed, e.g. "a" + U+0308 for "ä"). The model reliably emits the
- * visually identical *precomposed* NFC form (U+00E4), so a byte-exact server
- * lookup misses and returns "0 results / not found" (observed in trace
- * 7c8b7dc5: every `list_documents`/`get_document` into `…/Qualitätsmanagement/…`
- * failed while ASCII paths worked). Normalizing outgoing args to the canonical
- * NFC form here — the single chokepoint through which ALL MCP tool calls pass —
- * makes the wire form deterministic regardless of which normalization the model
- * happened to copy, so it matches an NFC-normalizing store (see the sibling
- * vectorsearch server fix). NFC is idempotent and meaning-preserving for text,
- * so this is a no-op for ASCII args and safe for every server.
- */
-function nfcNormalizeDeep(value: unknown): unknown {
-  if (typeof value === "string") return value.normalize("NFC");
-  if (Array.isArray(value)) return value.map(nfcNormalizeDeep);
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = nfcNormalizeDeep(v);
-    }
-    return out;
-  }
-  return value;
-}
-
-function parseCapabilityDocument(
-  serverName: string,
-  result: unknown,
-): CapabilityDocument | undefined {
-  const content =
-    result !== null && typeof result === "object" && "content" in result
-      ? (result as { content?: unknown }).content
-      : undefined;
-  const text = Array.isArray(content)
-    ? content.find(
-        (part): part is { text: string } =>
-          part !== null &&
-          typeof part === "object" &&
-          "text" in part &&
-          typeof part.text === "string",
-      )?.text
-    : undefined;
-  if (text === undefined) return undefined;
-
-  let raw: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
-    }
-    raw = parsed as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-  if (raw.protocol !== "v1" && raw.version !== "v1" && raw.schemaVersion !== "v1") {
-    return undefined;
-  }
-  const token =
-    raw.token !== null && typeof raw.token === "object"
-      ? (raw.token as Record<string, unknown>)
-      : {};
-  const algorithms = Array.isArray(raw.signingAlgorithms)
-    ? raw.signingAlgorithms.filter((value): value is string => typeof value === "string")
-    : typeof token.algorithm === "string"
-      ? [token.algorithm]
-      : [];
-  if (!algorithms.includes("HS256")) return undefined;
-  const enforcement: EnforcementMode =
-    raw.enforcement === "off" || raw.enforcement === "optional" || raw.enforcement === "required"
-      ? raw.enforcement
-      : "optional";
-  const audiences = Array.isArray(raw.audiences)
-    ? raw.audiences.filter((value): value is string => typeof value === "string")
-    : typeof raw.audience === "string"
-      ? [raw.audience]
-      : [serverName];
-  const features =
-    raw.features !== null && typeof raw.features === "object"
-      ? (raw.features as Record<string, unknown>)
-      : {};
-  return {
-    protocol: "v1",
-    issuer: typeof raw.issuer === "string" ? raw.issuer : serverName,
-    audiences: audiences.length > 0 ? audiences : [serverName],
-    enforcement,
-    signingAlgorithms: ["HS256"],
-    features: {
-      idempotency:
-        features.idempotency === true ||
-        (raw.idempotency !== null && typeof raw.idempotency === "object"),
-      budgets: features.budgets === true || Array.isArray(raw.budgets),
-      compensation: features.compensation === true,
-      evidenceLineage: features.evidenceLineage === true,
-    },
-    maxTokenTtlSeconds:
-      typeof raw.maxTokenTtlSeconds === "number" && raw.maxTokenTtlSeconds > 0
-        ? raw.maxTokenTtlSeconds
-        : 300,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
 
 interface TokenClientEntry {
   client: Client;
@@ -2923,43 +2530,4 @@ export function createMcpWrapper(options?: {
   logger?: Logger;
 }): McpWrapperService {
   return new McpWrapper(options);
-}
-
-/** Accepts only the MCP-2026 approval request shape; unknown input kinds stay opaque. */
-function parseApprovalInputRequests(value: unknown): McpApprovalInputRequest[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate): McpApprovalInputRequest[] => {
-    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return [];
-    const request = candidate as Record<string, unknown>;
-    if (
-      request.type !== "approval" ||
-      typeof request.requestState !== "string" ||
-      request.requestState === "" ||
-      typeof request.title !== "string" ||
-      typeof request.message !== "string"
-    )
-      return [];
-    const fields = Array.isArray(request.fields)
-      ? request.fields.flatMap((candidate): NonNullable<McpApprovalInputRequest["fields"]> => {
-          if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate))
-            return [];
-          const field = candidate as Record<string, unknown>;
-          return typeof field.name === "string" &&
-            typeof field.label === "string" &&
-            "value" in field
-            ? [{ name: field.name, label: field.label, value: field.value }]
-            : [];
-        })
-      : undefined;
-    return [
-      {
-        type: "approval",
-        requestState: request.requestState,
-        title: request.title,
-        message: request.message,
-        ...(fields !== undefined ? { fields } : {}),
-        ...(typeof request.expiresAt === "string" ? { expiresAt: request.expiresAt } : {}),
-      },
-    ];
-  });
 }

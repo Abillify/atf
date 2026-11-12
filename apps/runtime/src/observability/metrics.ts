@@ -141,6 +141,11 @@ export interface Metrics {
   setQueueDepth(n: number): void;
   /** Source of `aiperator_flow_load_failures`, read on every render. */
   setFlowLoadFailureProbe?(probe: () => number): void;
+  /**
+   * Source of `aiperator_audit_forward_lag`: audit_log entries beyond the
+   * SIEM forwarding position (review follow-up G3), read on every render.
+   */
+  setAuditForwardLagProbe?(probe: () => number): void;
   /** Prometheus text exposition format. */
   render(): string;
   /** Compact JSON summary for the dashboard. */
@@ -304,11 +309,27 @@ class MetricsRegistry implements Metrics {
   }
   private flowLoadFailureProbe: (() => number) | undefined;
 
+  /**
+   * Source of `aiperator_audit_forward_lag`: how many audit_log entries the
+   * SIEM forwarder has not delivered yet. Same read-on-render convention as
+   * the flow-load probe, so the gauge stays current between drain cycles.
+   */
+  setAuditForwardLagProbe(probe: () => number): void {
+    this.auditForwardLagProbe = probe;
+  }
+  private auditForwardLagProbe: (() => number) | undefined;
+
   // ----- rendering -------------------------------------------------------
 
   render(): string {
     if (this.flowLoadFailureProbe !== undefined) {
       this.setGauge("aiperator_flow_load_failures", this.flowLoadFailureProbe());
+    }
+    if (this.auditForwardLagProbe !== undefined) {
+      this.setGauge(
+        "aiperator_audit_forward_lag",
+        this.auditForwardLagProbe(),
+      );
     }
     const lines: string[] = [];
     const counterNames = new Set<string>();
@@ -527,6 +548,7 @@ class NoopMetrics implements Metrics {
   setActiveExecutions(): void {}
   setQueueDepth(): void {}
   setFlowLoadFailureProbe(): void {}
+  setAuditForwardLagProbe(): void {}
   render(): string {
     return "";
   }

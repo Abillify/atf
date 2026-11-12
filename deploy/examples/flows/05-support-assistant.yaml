@@ -1,7 +1,7 @@
 id: support-assistant
 name: Support Assistant
 metadata:
-  version: 1.2.0
+  version: 1.2.1
 dataClasses: [personal]
 
 nodes:
@@ -21,7 +21,12 @@ nodes:
 
   - id: act
     type: llm
-    tools: [gate:ticket_create]
+    # `<server>/<tool>`: the server comes from `mcp.yaml`, the tool from the Gate config. The
+    # model picks this call, so it runs in the model's own loop - what holds it is an approval
+    # rule on the Gate tool, not Runtime's APPROVAL_REQUIRE_TOOLS list (that one binds a tool the
+    # flow declares, see `04-tool-use-with-approval.yaml`). The quickstart Gate declares no such
+    # rule, so this call goes through and shows up in Gate's audit log instead of the inbox.
+    tools: [gate/ticket_create]
 
 edges:
   - { source: classify, target: answer, conditions: "classification.intent == 'question'" }

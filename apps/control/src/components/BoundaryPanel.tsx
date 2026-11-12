@@ -189,10 +189,12 @@ function messageText(content: RunTraceMessage["content"]): string {
 }
 
 const ROLE_BADGE: Record<string, string> = {
+  // `*-soft` (not a translucent `*-solid/15`) so the 10-11px label text keeps
+  // AA contrast against the badge fill in both themes.
   system: "bg-muted-foreground/15 text-muted-foreground",
-  user: "bg-info-solid/15 text-info",
-  assistant: "bg-info-solid/15 text-info",
-  tool: "bg-subflow-solid/15 text-subflow",
+  user: "bg-info-soft text-info",
+  assistant: "bg-info-soft text-info",
+  tool: "bg-subflow-soft text-subflow",
 };
 
 function RequestMessages({ messages }: { messages: RunTraceMessage[] }): React.JSX.Element {

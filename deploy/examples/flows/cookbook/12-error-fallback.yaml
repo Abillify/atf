@@ -1,0 +1,110 @@
+id: cb-error-fallback
+name: Cookbook — what happens when a node fails
+description: >-
+  Failure policy per step: enrichment that may be missing, a model call whose failure must
+  not lose the conversation, and a visible recovery branch chosen on the error state
+  instead of a silent one. Includes why the declared `fallback` strategy is harder to wire
+  than it looks.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+# Flow-level retry re-executes the failed step before any node policy applies. It suits a
+# transient gateway failure; it is wrong for anything with a side effect (recipe 09) and wrong for
+# deterministic errors, which fail identically on every attempt.
+recovery:
+  retry: true
+  maxAttempts: 2
+
+nodes:
+  - id: retrieve
+    type: retrieval
+    label: Retrieve context
+    config:
+      collection: handbook
+      topK: 5
+      # `continue`: the failure is recorded and the run carries on without this node's output.
+      # Correct for enrichment whose absence makes an answer worse but not wrong — the answering
+      # node simply gets no chunks. The default `fail-fast` would have failed the question instead.
+      errorStrategy: continue
+
+  - id: draft
+    type: llm
+    label: Draft the answer
+    llm: { shortcut: chat }
+    systemPrompt: >-
+      Answer the question from the provided context.
+    config:
+      # Also `continue`, and the reason is the router below: with `fail-fast` here the user gets a
+      # 500 and no message at all; with `continue` the run reaches the router, which can pick a
+      # branch that still says something useful. A recovered run is degraded, not successful — the
+      # recorded error stays in the run's errors and is visible in the trace either way.
+      #
+      # Both keys belong in `config`, which is where the engine reads them. Written at node level
+      # they are ignored in silence: the node then runs with the default `fail-fast`, and the
+      # recovery branch below stops being taken — the failure looks handled and is not.
+      errorStrategy: continue
+
+  # The recovery decision is a node, so it is visible in the graph and in the trace. Conditions read
+  # `hasErrors` / `errorCount` from the run state, which is how a branch can depend on a failure
+  # without any model having to notice one.
+  - id: check
+    type: router
+    label: Did anything fail?
+
+  - id: answer
+    type: llm
+    label: Answer
+    llm: { shortcut: chat }
+    systemPrompt: >-
+      Answer the user's question using the draft and the retrieved context.
+    config:
+      # A synthesiser does not need the chunks a previous node already used; dropping them buys
+      # window space for the draft.
+      dropRagContext: false
+      progress:
+        start: Writing the answer…
+        complete: Answer ready.
+        error: The answer could not be prepared.
+
+  - id: degraded
+    type: llm
+    label: Partial answer, honestly
+    llm: { shortcut: structured }
+    systemPrompt: >-
+      Part of this request could not be processed. Say what you can answer from what is
+      there, name plainly what is missing, and ask the one question that would let you finish.
+    config:
+      progress:
+        start: Something failed — preparing what we have…
+        complete: Partial answer sent.
+        error: The request could not be answered.
+
+edges:
+  - { source: retrieve, target: draft }
+  - { source: draft, target: check }
+  # Conditional edges leaving a node are checked in file order and the first true one wins, so the
+  # failure test comes first: a run with a recorded failure never reaches the normal branch.
+  - { source: check, target: degraded, conditions: "hasErrors == true" }
+  - { source: check, target: answer, conditions: "hasErrors != true" }
+
+# The third strategy, and why it is not used above (again under `config`, never at node level):
+#
+#   config:
+#     errorStrategy: fallback
+#     fallbackNodeId: degraded
+#
+# `fallback` executes the named node IN PLACE of the failing one — it does not reroute the graph
+# (that is what keeps the monitoring graph honest). Two consequences make it awkward to declare:
+#
+# - A node that only ever runs as a fallback has no incoming edge, and the validator requires every
+#   node to be reachable from the first node. A pure fallback node is therefore rejected as
+#   unreachable, while the engine would happily have run it.
+# - Wiring an edge to it satisfies the validator but changes the meaning: on failure the strategy
+#   runs the substitute once, and the recorded error then makes a `hasErrors == true` edge to the
+#   same node run it a second time. For a node with a side effect that is a duplicate action.
+#
+# So the pattern above uses `continue` plus a router, which produces the same visible outcome and
+# stays a single execution. If a substitute genuinely belongs in place — no side effect, and the
+# node it replaces is a pure computation — declare `fallback` and accept that the substitute is also
+# reachable in the graph. If the fallback node itself fails, the run fails with BOTH errors.

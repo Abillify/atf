@@ -33,6 +33,33 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for the day-to-day workflow and per-workspa
 
 ## Before you open a pull request
 
+Run the fast gates. One command, no need to remember the list:
+
+```bash
+bun run preflight
+```
+
+That is `scripts/release-preflight.ts --quick`: the SPDX headers, the product
+version, the three generated references, the Markdown links, the lint baseline,
+the typecheck and the test suite — the gates that catch what a pull request
+usually breaks. It stops at the first failure and prints a summary of every
+step. Add `-- --skip <name>` to omit one, e.g. `bun run preflight -- --skip
+knip`.
+
+Before a **release**, run the full list instead — it adds the build, the
+contract tests, the budget measurement, the public-tree and secret scans, and
+with `--container` the Linux supply-chain inventory:
+
+```bash
+bun run release:preflight
+```
+
+CI runs the full list on every pull request regardless, so `preflight` is a
+speed-up for the inner loop, not a way to skip a gate.
+
+<details>
+<summary>The individual gates, for reference</summary>
+
 Run the same gates CI runs (the full list with what each one checks is in
 [DEVELOPMENT.md](DEVELOPMENT.md#the-gates)):
 ```bash
@@ -58,6 +85,9 @@ bun run test:contracts
 bun run build
 bun run check:budgets:ci
 ```
+
+</details>
+
 CI additionally validates the example flows
 (`cd apps/runtime && bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version`), the Helm
 chart, the Outpost and its Rust crates, the Control end-to-end and accessibility tests, secret

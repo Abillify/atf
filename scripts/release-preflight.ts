@@ -12,11 +12,22 @@
  * This script runs the same gates in order, stops at the first failure with
  * exit 1, and prints a summary table of every step at the end.
  *
+ * Not every change is a release. For an ordinary contribution the slow gates
+ * — building every workspace, measuring bundle budgets, scanning history for
+ * secrets, generating a Linux inventory in a container — mostly re-check what
+ * the fast gates already cover. `--quick` runs the subset that catches the
+ * mistakes a pull request actually makes (stale generated docs, drift in the
+ * version or SPDX headers, broken links, lint growth, type or test failures)
+ * and nothing else; `bun run preflight` is that mode. A release still runs the
+ * full list.
+ *
  * Usage:
- *   bun run scripts/release-preflight.ts [--skip <name>]... [--container] [--workdir <path>]
+ *   bun run scripts/release-preflight.ts [--skip <name>]... [--quick] [--container] [--workdir <path>]
  *
  *   --skip <name>    omit a step (repeatable; the step name is the script
  *                    name, e.g. --skip knip --skip gitleaks)
+ *   --quick          run only the fast gates (QUICK_GATES below) and skip the
+ *                    secret scan and the container inventory check
  *   --container      also run the supply-chain inventory check in a
  *                    linux/amd64 Docker container (needs Docker and cargo
  *                    access; slow)
@@ -69,10 +80,41 @@ const CI_GATES: Step[] = [
 	{ name: "check:budgets:ci", cmd: ["bun", "run", "check:budgets:ci"], pinnedBun: true },
 ];
 
+/**
+ * The gates fast enough to run on every contribution, named here so the list
+ * is one fact rather than a list duplicated into CONTRIBUTING.md. Everything
+ * omitted is slow (build, budgets, contracts), platform-specific
+ * (supply-chain), or about published history rather than the working tree
+ * (the secret scan). Ordering is inherited from `CI_GATES` by `selectSteps`.
+ */
+export const QUICK_GATES: readonly string[] = [
+	"verify:spdx",
+	"verify:version",
+	"config-reference:check",
+	"flow-reference:check",
+	"route-reference:check",
+	"check:links",
+	"lint:baseline",
+	"typecheck",
+	"test",
+];
+
 export interface PreflightOptions {
 	skip: Set<string>;
 	container: boolean;
 	workdir: string | undefined;
+	quick: boolean;
+}
+
+/**
+ * The steps to run for an option set: the full CI list or its quick subset,
+ * minus anything `--skip` names. `--skip` is honoured in both modes, and a
+ * name that matches no step is ignored rather than fatal — the flag is
+ * already used that way in CI job definitions.
+ */
+export function selectSteps(options: { quick: boolean; skip: ReadonlySet<string> }): Step[] {
+	const source = options.quick ? CI_GATES.filter((s) => QUICK_GATES.includes(s.name)) : CI_GATES;
+	return source.filter((s) => !options.skip.has(s.name));
 }
 
 /** Parse the CLI arguments. Throws on an unknown flag or a missing value. */
@@ -80,10 +122,13 @@ export function parseArgs(argv: string[]): PreflightOptions {
 	const skip = new Set<string>();
 	let container = false;
 	let workdir: string | undefined;
+	let quick = false;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--container") {
 			container = true;
+		} else if (arg === "--quick") {
+			quick = true;
 		} else if (arg === "--skip") {
 			const name = argv[++i];
 			if (name === undefined || name.startsWith("--")) {
@@ -100,7 +145,7 @@ export function parseArgs(argv: string[]): PreflightOptions {
 			throw new Error(`unknown argument: ${arg}`);
 		}
 	}
-	return { skip, container, workdir };
+	return { skip, container, workdir, quick };
 }
 
 /**
@@ -238,10 +283,13 @@ function main(): number {
 
 	const tag = lastTag();
 
-	// 2. The CI gate list, in order.
+	// 2. The CI gate list, in order — the quick subset with --quick. A gate left
+	//    out is recorded rather than dropped, so the summary still reports the
+	//    whole list and says why a step is missing from it.
+	const steps = selectSteps({ quick: options.quick, skip: options.skip });
 	for (const step of CI_GATES) {
-		if (options.skip.has(step.name)) {
-			record(step.name, "skipped");
+		if (!steps.includes(step)) {
+			record(step.name, "skipped", options.skip.has(step.name) ? "--skip" : "--quick");
 			continue;
 		}
 		const cmd = [...step.cmd];
@@ -259,16 +307,20 @@ function main(): number {
 			for (const rest of CI_GATES) {
 				if (!results.some((r) => r.name === rest.name)) record(rest.name, "not run");
 			}
-			record("gitleaks", "not run");
-			record("supply-chain", "not run");
+			record("gitleaks", options.quick ? "skipped" : "not run", options.quick ? "--quick" : undefined);
+			record("supply-chain", options.quick ? "skipped" : "not run", options.quick ? "--quick" : undefined);
 			printSummary(results);
 			return 1;
 		}
 		record(step.name, "passed");
 	}
 
-	// 3. Secret scan over the commits since the last tag, as CI scopes it.
-	if (options.skip.has("gitleaks")) {
+	// 3. Secret scan over the commits since the last tag, as CI scopes it. The
+	//    quick mode omits it: it scans the commits since the last tag, which an
+	//    ordinary contribution has not published yet and CI scans anyway.
+	if (options.quick) {
+		record("gitleaks", "skipped", "--quick");
+	} else if (options.skip.has("gitleaks")) {
 		record("gitleaks", "skipped");
 	} else if (Bun.which("gitleaks") === null) {
 		console.log("gitleaks not installed — CI will scan the full history");
@@ -288,7 +340,9 @@ function main(): number {
 	}
 
 	// 4. Supply-chain inventory, linux/amd64 container only.
-	if (options.skip.has("supply-chain")) {
+	if (options.quick) {
+		record("supply-chain", "skipped", "--quick");
+	} else if (options.skip.has("supply-chain")) {
 		record("supply-chain", "skipped");
 	} else if (!options.container) {
 		console.log("supply-chain check skipped — pass --container to run it in linux/amd64");

@@ -269,9 +269,9 @@ export function checkProductionReadiness(
         `REPLICAS is ${config.replicas} and show_figure is enabled (EMBED_SEARCH_FIGURES, MEDIA_BASE_URL) — figures are held in a per-process media store, so a link opened on another replica is a 404. Route /v1/media/* to the replica that served the answer (sticky routing) or keep one replica for figure-embedding flows.`,
       );
     }
-    if (config.decisionReceiptsEnabled === true) {
+    if (config.decisionReceiptsEnabled === true && config.databaseUrl === undefined) {
       warnings.push(
-        `REPLICAS is ${config.replicas} and DECISION_RECEIPTS_ENABLED is set — the receipt transparency log numbers its leaves and builds its tree per process, so replicas produce diverging logs. Run receipt-issuing flows on one replica until the log is shared.`,
+        `REPLICAS is ${config.replicas} and DECISION_RECEIPTS_ENABLED is set — without DATABASE_URL the receipt transparency log numbers its leaves and builds its tree per process, so replicas produce diverging logs. Set DATABASE_URL to share the log through receipt_log (ADR 0039), or run receipt-issuing flows on one replica.`,
       );
     }
   }

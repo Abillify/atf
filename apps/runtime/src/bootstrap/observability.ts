@@ -42,6 +42,10 @@ import { createCostAnomalyDetector } from "../observability/cost-anomaly.js";
 import { createAuditLog, type AuditLog } from "../observability/audit-log.js";
 import { createAuditAnchorService } from "../observability/audit-anchor.js";
 import {
+  createAuditForwarder,
+  type AuditForwarder,
+} from "../observability/audit-forwarder.js";
+import {
   parseEvidenceSigningKey,
   type Ed25519EvidenceKey,
 } from "../observability/evidence-key.js";
@@ -90,6 +94,12 @@ export interface ObservabilityResult {
   auditAnchor:
     | import("../observability/audit-anchor.js").AuditAnchorService
     | undefined;
+  /**
+   * SIEM forwarder (`AUDIT_FORWARD_URL`, review follow-up G3) when
+   * configured; undefined when forwarding is disabled or the audit trail is
+   * not durable.
+   */
+  auditForwarder: AuditForwarder | undefined;
   /**
    * Parsed Ed25519 evidence key (`EVIDENCE_SIGNING_KEY`, ADR 0030) when
    * configured. Signs audit anchors, Evidence Bundles, and Erasure Receipts
@@ -297,6 +307,35 @@ export function buildObservability(
     });
   }
 
+  // ── Audit SIEM forwarding (review follow-up G3) ──────────────────────────
+  // Pushes the audit trail to an external webhook as NDJSON through the
+  // Egress_Guard. Needs the durable (Postgres) audit log: the send position
+  // lives in `audit_forward_state`, which an in-memory trail does not have.
+  const auditForwarder = createAuditForwarder(
+    database,
+    {
+      url: config.auditForwardUrl ?? "",
+      ...(config.auditForwardToken !== undefined
+        ? { token: config.auditForwardToken }
+        : {}),
+      ...(config.auditForwardBatchSize !== undefined
+        ? { batchSize: config.auditForwardBatchSize }
+        : {}),
+      ...(config.auditForwardIntervalMs !== undefined
+        ? { intervalMs: config.auditForwardIntervalMs }
+        : {}),
+      metrics,
+    },
+    logger,
+  );
+  if (auditForwarder !== undefined) {
+    auditForwarder.start();
+    logger.info("Audit SIEM forwarding enabled (NDJSON via Egress_Guard)", {
+      intervalMs: config.auditForwardIntervalMs ?? 15_000,
+      batchSize: config.auditForwardBatchSize ?? 100,
+    });
+  }
+
   // ── Retention service ─────────────────────────────────────────────────────
   let retentionService: RetentionService | undefined;
   if (config.retentionEnabled === true) {
@@ -396,6 +435,7 @@ export function buildObservability(
     auditLog,
     retentionService,
     auditAnchor,
+    auditForwarder,
     evidenceKey,
   };
 }

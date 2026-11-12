@@ -295,6 +295,15 @@ const RESERVED_BASES = new Set([
 ]);
 
 /**
+ * The base names (extension stripped) a flows directory reserves for non-flow
+ * config. Exported so anything walking a flows directory — tests, linters,
+ * editors — skips exactly what `start()` skips instead of re-deriving the list.
+ */
+export function isReservedFlowBase(base: string): boolean {
+  return RESERVED_BASES.has(base);
+}
+
+/**
  * True for documentation-template files whose base name ends in `.example`
  * (e.g. `canary.example.yaml`, `shadow.example.json`). These are config samples
  * — some are multi-document YAML, some are not flow definitions at all — so they

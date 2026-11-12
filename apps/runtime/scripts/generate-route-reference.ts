@@ -204,6 +204,14 @@ function parseBootstrapMounts(file: string): Mount[] {
   const text = readSource(file);
   const lines = text.split("\n");
   const mounts: Mount[] = [];
+  // `const chatRouter = createChatRouter(...)` + `app.route("/", chatRouter)`:
+  // the routes belong to the factory the variable was built from.
+  const routerVariables = new Map<string, string>();
+  for (const m of text.matchAll(
+    /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(create[A-Za-z_$][\w$]*Router)\(/g,
+  )) {
+    routerVariables.set(m[1] as string, m[2] as string);
+  }
   const blockStack: Array<{ kind: "if" | "other"; cond: string | null; depth: number }> = [];
   let depth = 0;
 
@@ -219,8 +227,8 @@ function parseBootstrapMounts(file: string): Mount[] {
       if (m) {
         const cond = [...blockStack].reverse().find((b) => b.kind === "if")?.cond ?? null;
         mounts.push({
-          mountPath: m[1]!,
-          factory: m[2]!,
+          mountPath: m[1] ?? "",
+          factory: routerVariables.get(m[2] ?? "") ?? m[2] ?? "",
           condition: cond,
           file: path.relative(root, file),
         });

@@ -658,6 +658,8 @@ function render(sections: Section[]): string {
 		"",
 		"> Secrets belong in a secret manager, never in a committed file or a ConfigMap. Variables whose names end in `_SECRET`, `_KEY`, `_TOKEN`, or `_PASSWORD` must be treated as such.",
 		"",
+		"> In Runtime, Gate, Search, Extract and Control, a secret can also be supplied through a file: set `<NAME>_FILE` to its path (a mounted secret) instead of `<NAME>`. This also covers the connection URLs that carry a password (`DATABASE_URL`, `REDIS_URL`, `POSTGRES_URL`, ...) and, in Gate, every environment reference in the YAML configuration (its `<VAR>_FILE` pointer is honoured the same way). Setting both is a startup error, one trailing line ending is stripped, and an unreadable or empty file fails startup rather than falling back. Path-valued variables that merely match the pattern (`TLS_KEY_FILE`, `SEARCH_CA_CERT_FILE`, `AUDIT_ANCHOR_FILE`, ...) are not secret pointers. See ADR 0040 and `docs/runbooks/key-rotation.md`.",
+		"",
 		"## Contents",
 		"",
 	];
@@ -716,7 +718,7 @@ function render(sections: Section[]): string {
     "",
     "## Profiles",
     "",
-    "`ATF_PRESET` applies a curated bundle of defaults before validation. Explicit variables always win over a preset. Available presets: `dev`, `secure`, `regulated`, `regulated-multitenant`, `performance`. See `apps/runtime/src/config/profiles.ts`. `PROFILE` is a deprecated alias of `ATF_PRESET` (same values); setting both to different values stops startup.",
+    "`ATF_PRESET` applies a curated bundle of defaults before validation. Explicit variables always win over a preset. Available presets: `dev`, `secure`, `regulated`, `regulated-multitenant`, `trust-proxy`, `performance`. See `apps/runtime/src/config/profiles.ts`. `PROFILE` is a deprecated alias of `ATF_PRESET` (same values); setting both to different values stops startup.",
     "",
     "A profile is a starting point, not a compliance statement. `regulated` sets stricter defaults; it does not make a deployment compliant on its own.",
     "",

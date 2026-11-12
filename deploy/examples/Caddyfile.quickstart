@@ -1,0 +1,59 @@
+# Same-origin router for the quickstart with published images
+# (`compose.images.yaml`). The published Control image resolves the Runtime
+# relatively on purpose (no baked-in `NEXT_PUBLIC_BACKEND_URL`), so every browser
+# request has to go through this shared origin. This is the same wiring a real
+# deployment puts in front of those two images - only without TLS and without
+# authentication, because the quickstart deliberately has neither.
+#
+# TLS is deliberately not configured. The listener is 8080 rather than 80 so the
+# quickstart publishes a high host port and never relies on the privileged bind;
+# the bind capability is only present because the Caddy binary needs it to start
+# at all (see `cap_add` in `compose.images.yaml`).
+:8080 {
+	# The monitoring event stream has to reach the browser frame by frame.
+	# Note that the response head is forwarded with the first frame the Runtime
+	# writes, so an idle stack shows its first bytes at the 30 s heartbeat.
+	handle /monitoring/events* {
+		reverse_proxy runtime:3000 {
+			flush_interval -1
+		}
+	}
+
+	# Namespaces the Control frontend does not serve at all.
+	handle /admin* {
+		reverse_proxy runtime:3000
+	}
+	handle /monitoring/* {
+		reverse_proxy runtime:3000
+	}
+	handle /v1/* {
+		reverse_proxy runtime:3000
+	}
+	handle /health* {
+		reverse_proxy runtime:3000
+	}
+	handle /metrics* {
+		reverse_proxy runtime:3000
+	}
+	handle /webhooks* {
+		reverse_proxy runtime:3000
+	}
+	handle /.well-known/* {
+		reverse_proxy runtime:3000
+	}
+
+	# These prefixes are Runtime APIs *and* Control pages. Browser navigation
+	# goes to the frontend, fetch/XHR goes to the Runtime.
+	@api_overlap {
+		not header Sec-Fetch-Mode navigate
+		path /flows* /autopilot* /eval* /optimizer* /security* /mcp* /triggers*
+	}
+	handle @api_overlap {
+		reverse_proxy runtime:3000
+	}
+
+	# Control (Next.js) and every other page navigation.
+	handle {
+		reverse_proxy control:3001
+	}
+}

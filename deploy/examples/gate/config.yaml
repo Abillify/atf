@@ -2,12 +2,74 @@ server:
   host: 0.0.0.0
   port: 3000
   name: atf-quickstart-gate
+# The quickstart has no identity provider, so the caller's identity comes from one
+# local static token - `flows/mcp.yaml` sends it as a bearer, and it resolves to the
+# username `anja.weiss`. A static token is a development mechanism on purpose: the
+# Gate's own production gate refuses `mode: static` outright, so a demo identity
+# cannot survive into a real deployment. Swap this block for `mode: oauth` and the
+# tools below keep working unchanged, because they read `:ctx.username` and never
+# take a user name from the model.
 auth:
-  mode: disabled
+  mode: static
+  static:
+    tokens:
+      - token: quickstart-local-token
+        subject: quickstart-demo
+        username: anja.weiss
 authorization:
   enabled: false
 tenantIsolation:
   enabled: false
 monitoring:
   enabled: true
-tools: []
+# The demo database is the one shipped by `demo/init.sql`, mounted into the same
+# Postgres the Search service uses. Separate schema, so the two never touch.
+databases:
+  demo:
+    client: pg
+    connection:
+      host: postgres
+      port: 5432
+      user: atf
+      password: atf-local-only
+      database: atf_search
+    pool:
+      min: 0
+      max: 2
+tools:
+  - name: ticket_lookup
+    type: database
+    database: demo
+    access: read
+    description: >-
+      Support tickets owned by the caller, newest first. The owner comes from the
+      verified identity of the caller, not from an argument, so this cannot be used
+      to read anyone else's tickets and there is nothing to pass.
+    rowLimit: 50
+    query: |
+      SELECT id, subject, status, created_at
+      FROM demo.tickets
+      WHERE owner = :ctx.username
+      ORDER BY created_at DESC
+
+  - name: ticket_create
+    type: database
+    database: demo
+    access: write
+    description: >-
+      Open a support ticket for the caller with the given subject. The ticket is
+      filed under the verified identity of the caller and the created row is
+      returned. An empty result means the ticket was NOT created.
+    rowLimit: 1
+    inputSchema:
+      type: object
+      properties:
+        subject:
+          type: string
+          description: Short one-line summary of the problem, e.g. "VPN drops at 18:00".
+      required:
+        - subject
+    query: |
+      INSERT INTO demo.tickets (owner, subject)
+      VALUES (:ctx.username, :param.subject)
+      RETURNING id, subject, status, created_at

@@ -39,7 +39,7 @@ export const ServerConfigSchema = z.object({
   host: z.string().default("0.0.0.0"),
   port: z.coerce.number().int().positive().default(3000),
   name: z.string().default("mcpgate"),
-  version: z.string().default("0.25.6"),
+  version: z.string().default("0.26.0"),
   ssePath: z.string().default("/sse"),
   messagePath: z.string().default("/messages"),
   mcpPath: z.string().default("/mcp"),
@@ -1063,6 +1063,14 @@ export const McpServerConnectionSchema = z.object({
    */
   tokenExchange: McpTokenExchangeConfigSchema.optional(),
   timeoutMs: z.coerce.number().int().positive().default(30_000),
+  /**
+   * Permit only this server's exact configured hostname to resolve to a
+   * private address (RFC 1918 / unique-local) — an MCP server inside your
+   * network, reached through split DNS. Loopback, link-local and metadata
+   * addresses stay refused. The token endpoint of `tokenExchange` is not
+   * covered and must stay public.
+   */
+  allowPrivateAddress: boolish.default(false),
 });
 
 export const McpProxyToolSchema = z.object({
@@ -1636,6 +1644,8 @@ export const McpToolOverrideSchema = z.object({
   access: z.enum(["read", "write"]).optional(),
   /** Remove these parameters from the advertised inputSchema. */
   removeOptions: z.array(z.string()).default([]),
+  /** Scopes a caller needs for this tool; replaces the import-level `requiredScopes`. */
+  requiredScopes: z.array(z.string()).optional(),
   /**
    * Fix these parameters to a constant value. They are removed from the
    * advertised inputSchema (callers can no longer set them) and merged into
@@ -1671,6 +1681,11 @@ export const McpServerImportSchema = z.object({
   expose: boolish.optional(),
   /** Result cache applied to every imported tool. */
   cache: CacheConfigSchema.optional(),
+  /**
+   * Scopes a caller needs for every imported tool, like `requiredScopes` on a
+   * hand-written `mcp` tool. A per-tool `overrides[].requiredScopes` replaces it.
+   */
+  requiredScopes: z.array(z.string()).default([]),
   /** Per-tool filtering / description / parameter overrides, keyed by downstream tool name. */
   overrides: z.array(McpToolOverrideSchema).default([]),
 });

@@ -30,9 +30,11 @@ still depends on the operator enabling and verifying it. See
 ## Orchestration and model access
 
 Runtime executes AI workflows defined as declarative graphs and exposes OpenAI-compatible
-endpoints for chat completions, Responses, model listing, and embeddings. Compatibility is
-limited to the documented routes and fields; clients that rely on other OpenAI API surfaces may
-need adaptation.
+endpoints for chat completions, Responses and model listing, plus the Anthropic Messages API
+(`POST /v1/messages`). Compatibility is limited to the
+documented routes and fields; clients that rely on other OpenAI API surfaces may need
+adaptation. Embeddings are not one of them: the Runtime computes embeddings internally for
+retrieval and caches (`EMBEDDING_MODEL`) but does not offer `POST /v1/embeddings`.
 
 - **Flows as files.** Workflows are YAML documents validated against
   `apps/runtime/schemas/flow.schema.json` and loaded from `FLOWS_DIR`. Changes are picked up
@@ -122,6 +124,14 @@ need adaptation.
   Reasoning output from thinking models is surfaced separately from the answer.
 - **Agentic tool use.** A flow step can let the model select and call tools over MCP, then
   incorporate the results. `MAX_TOOL_STEPS` bounds the loop.
+- **Trust-proxy mode (experimental).** `PROXY_MODELS` maps model names an existing client
+  sends (`claude-*`, `gpt-4.1`) to a provider instance and model. Such a request runs a
+  built-in pass-through flow (`__proxy__.<n>`) under every engine control — guardrails, the PII
+  vault, budgets, admission, receipts — and the client's own tools are passed through. Real flows
+  always win over a mapping. `POST /v1/messages` serves Anthropic-API clients (`x-api-key`
+  accepted there) over the same pipeline and refuses fields it cannot honour (`thinking`,
+  `cache_control`, …) with a 400. Preset `ATF_PRESET=trust-proxy`. See
+  [TRUST-PROXY.md](TRUST-PROXY.md).
 - **Flow as MCP server.** A flow can itself be exposed as an MCP tool, which lets one ATF
   deployment compose another.
 - **Triggers.** A flow can start from an HMAC-signed webhook or on a schedule, not only from
@@ -362,8 +372,13 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
 - **Continuous red teaming.** A scheduled attack suite probes configured flows, scores the
   results with a judge model, and tracks a security posture value over time
   (`RED_TEAM_ENABLED`, `RED_TEAM_INTERVAL_MS`).
-- **Plugin sandbox.** Third-party plugins run behind a trust boundary with an allowlist and
-  an execution timeout (`PLUGINS_SANDBOX`, `PLUGINS_ALLOWLIST`).
+- **Plugin isolation.** With `PLUGINS_SANDBOX=true`, a node-type plugin runs in its own Bun
+  Worker that inherits no `process.env` and receives a read-only snapshot of the state plus an
+  execution timeout. Which plugins load at all is a separate control — a name allowlist
+  (`PLUGINS_ALLOWLIST`) or a hash manifest (`plugins.manifest.json`), and in production a plugin
+  with neither is refused. The default sandbox is off, so in-process plugins keep full
+  privileges, and a Worker is a thread rather than a process or container: defence-in-depth, not
+  a hard security boundary (ADR 0006).
 - **Code sandbox.** Generated or tool-provided code executes in a resource-bounded container
   with network access off by default (`SANDBOX_ENABLED`, `SANDBOX_NETWORK_ENABLED`).
 
@@ -379,6 +394,15 @@ Consequential actions can require a human decision before they execute.
   arguments. Credentials are never included in that payload.
 - **Two decision surfaces.** An embedded approve/reject element in the chat response for
   compatible frontends, and a reviewer inbox in Control protected by RBAC.
+- **Two-step link confirmation.** Chat and mail clients fetch links on their own (link
+  previews, prefetchers, security scanners), so the in-chat approve/deny links never resolve
+  an approval in one step. The first click renders a confirmation page; only the second,
+  signed click (`confirm`, an HMAC bound to the approval id, the decision and 120 s of
+  validity) resolves it. The confirmation is signed with the link secret, or with a random
+  per-process key when none is configured, so it also holds on a deployment without capability
+  links; a confirmation issued by another replica is then refused and the reviewer opens the
+  approval again. Set `APPROVAL_LINK_CONFIRM=false` to restore the one-click links.
+  Control is unaffected: its inbox resolves through `POST /monitoring/approvals/:id`.
 - **Fail closed.** If nobody decides within `APPROVAL_TIMEOUT_MS` the request is rejected.
   Silence never results in an action.
 - **Cluster-wide visibility.** With Redis configured, pending approvals are visible across
@@ -422,16 +446,69 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   provider call. It is not a blanket guarantee for undetected types, detector failures, or
   unconfigured multimodal inputs.
 
+- **Typed, consistent placeholders.** A placeholder names the kind of value it replaces
+  (`[[PII:EMAIL:…]]`, `[[PII:IBAN:…]]`), and within one execution a repeated value keeps the
+  same placeholder, so the model can tell an address from a name and two mentions of one person
+  from two people (`PII_VAULT_TYPED_TOKENS`, `PII_VAULT_CONSISTENT_TOKENS`, both on by default;
+  [ADR 0036](adr/0036-pii-vault-typed-tokens-and-tool-boundary.md)). Reuse never crosses
+  executions or tenants. Both the typed and the older untyped form are restored in the response,
+  and only the 16-hex id selects the stored value — a garbled type tag cannot redirect it.
+- **Tool boundary.** Tools receive placeholders by default. For tools listed in
+  `PII_VAULT_DETOKENIZE_TOOLS` (same patterns as `APPROVAL_REQUIRE_TOOLS`) the real values are
+  put back into the arguments immediately before the call, after egress DLP, taint and approval
+  checks. Approval prompts, audit records, debug traces, the tool journal and receipts keep the
+  placeholder form. A listed tool and whatever it talks to receive personal data, so the list is
+  the security boundary; it is empty by default.
+- **Tool results and retrieved content.** With `PII_VAULT_SCOPE=messages+context` the vault also
+  tokenizes tool results (LLM tool loop and `tool` nodes) and the chunks a `retrieval` node
+  injects, after the injection scan and citation registration and before the text enters the
+  model context. Personal data from your own systems then reaches the provider as placeholders
+  too; the answer is restored as usual, and citations streamed to the caller keep the real
+  text. A detector failure under `PII_DETECTOR_FAIL_MODE=closed` fails the tool call or
+  retrieval rather than sending plaintext. Default `messages`.
+
+**Boundaries — what the vault covers today.** The vault is a decorator around the engine's
+model-facing I/O, and its reach is exactly that boundary
+([ADR 0007](adr/0007-reversible-pii-vault-decorator.md)). Stating it precisely matters, because
+the security value of the control depends on knowing which paths it does not cover:
+
+- **Tokenized: inbound message text.** `withPiiVault`
+  (`apps/runtime/src/graph/pii-vault-engine.ts`) tokenizes the content of every inbound
+  `ChatMessage` — string content and text content blocks — before delegating to
+  `executeFlow`, which is why no node handler or provider call needs its own vault integration.
+- **Tokenized: tool arguments, unless the tool is listed.** A tool call is built from the model's
+  output, which only contains placeholders, so arguments reach a tool tokenized — except for the
+  tools in `PII_VAULT_DETOKENIZE_TOOLS` (`apps/runtime/src/graph/pii-tool-boundary.ts`).
+- **Tool results and retrieved content: only with `PII_VAULT_SCOPE=messages+context`.** With the
+  default scope a tool's return value re-enters the model context as a `role: "tool"` message
+  without passing through the vault, and retrieval chunks reach the provider as stored. In that
+  case retrieval-side protection has to come from what is indexed and from the per-document ACL
+  (`allowed_users` / `allowed_groups` in Search).
+- **Mapping lifetime.** The token→value mapping lives only in the request-scoped store and is
+  cleared in the `finally` of every execution (`vault.release` → `store.clear`), together with
+  the in-process value→token map that makes placeholders consistent. What survives deliberately
+  is the action summary — counts of tokenized spans by type and detector, never values — kept in
+  a bounded 500-entry ring so the explainability card can report the run after it ended.
+- **Unresolvable placeholders are kept.** A placeholder the vault cannot resolve stays in the
+  output verbatim instead of being dropped, so a vault miss shows up as a visible token rather
+  than silently corrupting an answer.
+
 ## Compliance and evidence
 
 - **Policy as code, with an explicit activation boundary.** A valid
   `compliance-policy.yaml` in `FLOWS_DIR` can declare model allow/block rules, provider/data
-  rules, approval requirements, retention, and audit rules. A missing file means no policy.
-  An unreadable or schema-invalid file does not: a hot reload keeps the last valid policy, and
-  at startup with no valid policy chat and engine admission answer 503 until the file is fixed
-  (`GET /admin/compliance-policy` reports `loadError`, `stale` or `blocked`). There is no
-  mandatory-policy mode yet, so a deleted file still disables the policy; `failClosed`
-  controls exceptions during evaluation, not loading. Start from
+  rules, approval requirements, retention, and audit rules. An unreadable or schema-invalid file
+  never disables enforcement: a hot reload keeps the last valid policy, and at startup with no
+  valid policy chat and engine admission answer 503 until the file is fixed
+  (`GET /admin/compliance-policy` reports `loadError`, `stale` or `blocked`). A *missing* file
+  does mean no policy — that is the one loading failure which does not fail closed, and
+  `failClosed` covers exceptions during evaluation only.
+  `COMPLIANCE_POLICY_REQUIRED=true` is the mode for that case: without a loaded policy the
+  Runtime refuses to start in the production profile (a warning elsewhere), and readiness
+  reports `compliance_policy: missing` — `degraded`, which by itself keeps the replica in
+  rotation. It gates startup and readiness, not the running request path: delete the file from a
+  live instance and its watcher treats the removal as "policy disabled", so requests are admitted
+  again until readiness or a restart reports it. Start from
   [`deploy/examples/flows/compliance-policy.example.yaml`](../deploy/examples/flows/compliance-policy.example.yaml).
 - **Enforcement points and limits.** Model/data admission is applied by the centralized
   execution-admission path and chat preflight before graph execution; tool approval rules are
@@ -445,6 +522,14 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   of the control.
 - **Tamper-evident audit log.** Audit entries are hash-chained and periodically anchored, so
   later modification is detectable (`AUDIT_ANCHOR_SECRET`, `AUDIT_ANCHOR_INTERVAL_MS`).
+- **SIEM forwarding.** With `AUDIT_FORWARD_URL` (HTTPS webhook), a background
+  loop pushes the audit trail as NDJSON batches through the Egress_Guard
+  (`AUDIT_FORWARD_BATCH_SIZE`, `AUDIT_FORWARD_INTERVAL_MS`, `AUDIT_FORWARD_TOKEN`
+  as bearer). The send position persists in `audit_forward_state` and advances
+  only after HTTP 2xx, so delivery is at-least-once with no gap across restarts;
+  with several replicas exactly one sends (advisory lock). A target that cannot
+  be reached becomes lag (`aiperator_audit_forward_lag`), never silent loss.
+  Requires the durable (Postgres) audit log.
 - **Retention and erasure.** Configurable retention sweeps and targeted erasure support
   right-to-be-forgotten requests (`RETENTION_ENABLED`, `RETENTION_MAX_AGE_DAYS`). Targets:
   `replay_snapshots`, `pii_vault`, `conversation_checkpoints`, `assistant_data`,
@@ -459,7 +544,9 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Decision receipts.** With `DECISION_RECEIPTS_ENABLED` and `RECEIPT_SIGNING_KEY`, each chat
   completion and tool call yields a signed COSE_Sign1 receipt (`GET /v1/receipts/:id`), appended
   to a transparency log (`receipt_log`); the public key is served at
-  `/.well-known/atf-receipt-jwks.json`. Rotation notes: `runbooks/key-rotation.md`.
+  `/.well-known/atf-receipt-jwks.json`. With a database the log is shared by all replicas —
+  appended under an advisory lock, so every replica proves against the same tree (ADR 0039).
+  Rotation notes: `runbooks/key-rotation.md`.
 - **Flow identity in traces.** Debug traces carry `flow_version`, `flow_digest` (a hash of the
   executed flow with includes expanded) and `subflow_versions[]`; CI fails a flow change without
   a `metadata.version` bump (`check:flow-versions`).
@@ -675,9 +762,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 
 ## Channels
 
-The primary interface provides OpenAI-compatible chat, Responses, model-listing, and embedding
-endpoints. Clients using those documented surfaces can often connect without an adapter; this is
-not a claim of compatibility with the complete OpenAI API. Two additional inbound paths exist.
+The primary interface provides OpenAI-compatible chat, Responses and model-listing endpoints.
+Clients using those documented surfaces can often connect without an adapter; this is not a
+claim of compatibility with the complete OpenAI API — embeddings in particular are internal and
+not exposed as an endpoint. Two additional inbound paths exist.
 
 - **Webhooks.** A `trigger` node accepts a signed inbound call and starts a flow.
 - **Rocket.Chat.** A direct-message assistant, off by default (`ROCKETCHAT_ENABLED`).
