@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-12
+
 ### Security
 
 - **Runtime** (PII vault): a vault token id could contain a run of digits that
@@ -1766,7 +1768,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.25.6...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/Abillify/atf/compare/v0.25.6...v0.26.0
 [0.25.6]: https://github.com/Abillify/atf/compare/v0.25.5...v0.25.6
 [0.25.5]: https://github.com/Abillify/atf/compare/v0.25.4...v0.25.5
 [0.25.4]: https://github.com/Abillify/atf/compare/v0.25.2...v0.25.4
