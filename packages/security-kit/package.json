@@ -22,7 +22,7 @@
     },
     "dependencies": {
         "jose": "6.2.15",
-        "undici": "8.12.3"
+        "undici": "8.12.4"
     },
     "devDependencies": {
         "@types/bun": "1.4.4",
