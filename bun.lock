@@ -177,8 +177,8 @@
         "@atf/transaction-contract": "workspace:1.1.0",
         "@aws-sdk/client-bedrock-agent-runtime": "3.1164.0",
         "@huggingface/transformers": "4.3.2",
-        "@langchain/core": "1.3.5",
-        "@langchain/langgraph": "1.7.1",
+        "@langchain/core": "1.4.1",
+        "@langchain/langgraph": "1.7.4",
         "@langchain/langgraph-checkpoint": "1.2.2",
         "@modelcontextprotocol/sdk": "1.32.2",
         "ai": "7.0.164",
@@ -636,13 +636,13 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@langchain/core": ["@langchain/core@1.3.5", "", { "dependencies": { "@cfworker/json-schema": "^4.1.4", "@standard-schema/spec": "^1.1.0", "js-tiktoken": "^1.0.12", "langsmith": ">=0.11.0 <1.0.0", "mustache": "^4.2.0", "p-queue": "^6.6.2", "zod": "^3.25.76 || ^4" } }, "sha512-7mk6lrHhD9vGZ+HnUhbHJzWTuJVktV+XSgDFmDlFu6qOHuNao4iuu5wqOgFNyx3Khjv7PydgbWOwcYeRXZ/ygA=="],
+    "@langchain/core": ["@langchain/core@1.4.1", "", { "dependencies": { "@cfworker/json-schema": "^4.1.4", "@standard-schema/spec": "^1.1.0", "js-tiktoken": "^1.0.12", "langsmith": ">=0.11.0 <1.0.0", "mustache": "^4.2.0", "p-queue": "^6.6.2", "zod": "^4.6.6" } }, "sha512-dHY2boSPhbOrguEcFxhR+uPjI21pKiuLO19Q4Wa5wbAPPa9pGr6vaSXM9iDyRbZfI+coadeH6fMWTMdplgszJg=="],
 
-    "@langchain/langgraph": ["@langchain/langgraph@1.7.1", "", { "dependencies": { "@langchain/langgraph-checkpoint": "^1.2.2", "@langchain/langgraph-sdk": "~1.14.0", "@langchain/protocol": "^0.0.21", "@standard-schema/spec": "1.1.0" }, "peerDependencies": { "@langchain/core": "^1.3.4", "zod": "^3.25.32 || ^4.2.0" } }, "sha512-2ehh+TAaSWEKhtU2lM6qzpdWwBOxMk540NuAuFhvIYxwCXjU9cBeus3JqOv9yieoCjQu1sV802WsF6EoL3zfHw=="],
+    "@langchain/langgraph": ["@langchain/langgraph@1.7.4", "", { "dependencies": { "@langchain/langgraph-checkpoint": "^1.2.2", "@langchain/langgraph-sdk": "~1.16.0", "@langchain/protocol": "^0.0.21", "@standard-schema/spec": "1.1.0" }, "peerDependencies": { "@langchain/core": "^1.3.4", "zod": "^3.25.32 || ^4.2.0" } }, "sha512-4OOmXzMy7cCmFUpFFyMnlM0wunh3xBq5RETASXsUKM3yve4bJQxVZfR1l9NmIeDmbHYfPZIXQGtcE3I1jTHP6A=="],
 
     "@langchain/langgraph-checkpoint": ["@langchain/langgraph-checkpoint@1.2.2", "", { "peerDependencies": { "@langchain/core": "^1.1.48" } }, "sha512-KL3nzi7I61ll5nANCQe5RoJ5SqTFrE+si9IK6k7IIj9OrPkIKT/Dz0w8CyJF+K7OEuJfA33HvPrZqfzzW1DXDA=="],
 
-    "@langchain/langgraph-sdk": ["@langchain/langgraph-sdk@1.14.0", "", { "dependencies": { "@langchain/protocol": "^0.0.21", "@types/json-schema": "^7.0.15", "p-queue": "^9.0.1", "p-retry": "^7.1.1" }, "peerDependencies": { "@langchain/core": "^1.3.2", "react": "^18 || ^19", "react-dom": "^18 || ^19" }, "optionalPeers": ["react", "react-dom"] }, "sha512-kALAXngTeqqsE3jCPnWxMEDWQ+0xmUQ9iqojtKJE6niCedwzM7PUctepdK+T73iI1wpzJw7YvqqZlKzA6kFX9A=="],
+    "@langchain/langgraph-sdk": ["@langchain/langgraph-sdk@1.16.0", "", { "dependencies": { "@langchain/protocol": "^0.0.21", "@types/json-schema": "^7.0.15", "p-queue": "^9.0.1", "p-retry": "^7.1.1" }, "peerDependencies": { "@langchain/core": "^1.3.2", "react": "^18 || ^19", "react-dom": "^18 || ^19" }, "optionalPeers": ["react", "react-dom"] }, "sha512-E1NZJDHmHxKBqbxGGahNSlvpI8oUo7UKs+Ce4XhGz2tvXRAyQfZeQppVzFkeQsYpueXvFiyMYuyUXz9X98/4+A=="],
 
     "@langchain/protocol": ["@langchain/protocol@0.0.21", "", {}, "sha512-HJS8Cd5GJ437MIrCnbrPHx0FJcluyOk5HdZzD081ap4SBzfWpAj/6AtI7fqpNSMo6VZEoEdaN9fIts8R0XR1AQ=="],
 
