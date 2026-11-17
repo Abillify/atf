@@ -280,7 +280,7 @@ export class McpProxyToolExecutor implements ToolExecutor {
       },
     });
     const client = new Client(
-      { name: "mcpgate-proxy", version: "0.27.0" },
+      { name: "mcpgate-proxy", version: "0.27.1" },
       { capabilities: {} },
     );
 
