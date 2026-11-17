@@ -232,26 +232,26 @@ describeIfPg("document identity · real postgres", () => {
 
   describe("identify", () => {
     it("a concurrent ingest of the same file is a duplicate of the pending claim", async () => {
-      const first = await identify({ sourceId: "job-a1", reference: "dup/a.pdf", sourceSha256: sha("bytes-a") });
-      expect(first).toEqual({ decision: "new", canonicalReference: "dup/a.pdf" });
-      const second = await identify({ sourceId: "job-a2", reference: "other/a-copy.pdf", sourceSha256: sha("bytes-a") });
+      const first = await identify({ sourceId: "job-a1", reference: "/dup/a.pdf", sourceSha256: sha("bytes-a") });
+      expect(first).toEqual({ decision: "new", canonicalReference: "/dup/a.pdf" });
+      const second = await identify({ sourceId: "job-a2", reference: "/other/a-copy.pdf", sourceSha256: sha("bytes-a") });
       expect(second.decision).toBe("duplicate");
-      expect(second.duplicateOf).toMatchObject({ reference: "dup/a.pdf", sourceId: "job-a1", match: "sha256" });
+      expect(second.duplicateOf).toMatchObject({ reference: "/dup/a.pdf", sourceId: "job-a1", match: "sha256" });
       // Replays keep the decision.
-      const replay = await identify({ sourceId: "job-a2", reference: "other/a-copy.pdf", phase: "content", sourceSha256: sha("bytes-a") });
+      const replay = await identify({ sourceId: "job-a2", reference: "/other/a-copy.pdf", phase: "content", sourceSha256: sha("bytes-a") });
       expect(replay.decision).toBe("duplicate");
     });
 
     it("the same normalised text is a duplicate anywhere in the collection", async () => {
-      await identify({ sourceId: "job-t1", reference: "t/one.pdf", phase: "content", textHash: sha("text-t") });
-      const other = await identify({ sourceId: "job-t2", reference: "t/two.docx", phase: "content", textHash: sha("text-t") });
+      await identify({ sourceId: "job-t1", reference: "/t/one.pdf", phase: "content", textHash: sha("text-t") });
+      const other = await identify({ sourceId: "job-t2", reference: "/t/two.docx", phase: "content", textHash: sha("text-t") });
       expect(other.decision).toBe("duplicate");
       expect(other.duplicateOf?.match).toBe("text");
     });
 
     it("dedup=off registers without skipping", async () => {
-      await identify({ sourceId: "job-o1", reference: "o/x.pdf", sourceSha256: sha("bytes-o") });
-      const off = await identify({ sourceId: "job-o2", reference: "o/y.pdf", sourceSha256: sha("bytes-o"), dedup: "off" });
+      await identify({ sourceId: "job-o1", reference: "/o/x.pdf", sourceSha256: sha("bytes-o") });
+      const off = await identify({ sourceId: "job-o2", reference: "/o/y.pdf", sourceSha256: sha("bytes-o"), dedup: "off" });
       expect(off.decision).toBe("new");
     });
 
@@ -263,8 +263,8 @@ describeIfPg("document identity · real postgres", () => {
           collection,
           sourceId: "job-e1",
           phase: "source",
-          reference: "e/x.pdf",
-          documentKey: "e/x",
+          reference: "/e/x.pdf",
+          documentKey: "/e/x",
           sourceSha256: sha("bytes-e"),
           dedup: "auto",
           acl: { allowedUsers: [], allowedGroups: [] },
@@ -272,7 +272,7 @@ describeIfPg("document identity · real postgres", () => {
         { ...DEFAULT_IDENTITY_OPTIONS, claimTtlMs: 1 },
       );
       await new Promise((r) => setTimeout(r, 20));
-      const again = await identify({ sourceId: "job-e2", reference: "e/y.pdf", sourceSha256: sha("bytes-e") });
+      const again = await identify({ sourceId: "job-e2", reference: "/e/y.pdf", sourceSha256: sha("bytes-e") });
       expect(again.decision).toBe("new");
     });
 
@@ -281,30 +281,30 @@ describeIfPg("document identity · real postgres", () => {
       const nearly = signature.map((v, i) => (i < 2 ? v + 1000 : v)); // 62/64 ≈ 0.97
       const v1 = { label: "1.0", source: "page_label" as const };
       await identify({
-        sourceId: "job-h1", reference: "hb/handbuch.pdf", phase: "content",
+        sourceId: "job-h1", reference: "/hb/handbuch.pdf", phase: "content",
         minhash: signature, version: v1, textHash: sha("hb-pdf"),
       });
-      const committed = await ingest({ reference: "hb/handbuch.pdf", text: "Handbuch Version eins", sourceId: "job-h1", version: v1 });
+      const committed = await ingest({ reference: "/hb/handbuch.pdf", text: "Handbuch Version eins", sourceId: "job-h1", version: v1 });
       expect(committed.isLatest).toBe(true);
 
       const sameVersion = await identify({
-        sourceId: "job-h2", reference: "hb/handbuch.docx", phase: "content",
+        sourceId: "job-h2", reference: "/hb/handbuch.docx", phase: "content",
         minhash: nearly, version: v1, textHash: sha("hb-docx"),
       });
       expect(sameVersion.decision).toBe("duplicate");
-      expect(sameVersion.canonicalReference).toBe("hb/handbuch.pdf");
-      expect(sameVersion.duplicateOf).toMatchObject({ reference: "hb/handbuch.pdf", match: "similar" });
+      expect(sameVersion.canonicalReference).toBe("/hb/handbuch.pdf");
+      expect(sameVersion.duplicateOf).toMatchObject({ reference: "/hb/handbuch.pdf", match: "similar" });
 
       const newer = await identify({
-        sourceId: "job-h3", reference: "hb/handbuch.docx", phase: "content",
+        sourceId: "job-h3", reference: "/hb/handbuch.docx", phase: "content",
         minhash: nearly, version: { label: "1.1", source: "page_label" }, textHash: sha("hb-docx-11"),
       });
-      expect(newer).toEqual({ decision: "new_version", canonicalReference: "hb/handbuch.pdf" });
+      expect(newer).toEqual({ decision: "new_version", canonicalReference: "/hb/handbuch.pdf" });
 
       const sources = await listDocumentSources(pool, {
         tenantId: TENANT,
         collection,
-        reference: "hb/handbuch.pdf",
+        reference: "/hb/handbuch.pdf",
         scope,
       });
       expect(sources.map((s) => [s.sourceId, s.status])).toEqual([
@@ -315,22 +315,22 @@ describeIfPg("document identity · real postgres", () => {
     });
 
     it("a deleted document is not a duplicate target any more", async () => {
-      await identify({ sourceId: "job-d1", reference: "del/x.pdf", sourceSha256: sha("bytes-d") });
-      await ingest({ reference: "del/x.pdf", text: "Loeschkandidat", sourceId: "job-d1" });
-      const dup = await identify({ sourceId: "job-d2", reference: "del/x.pdf", sourceSha256: sha("bytes-d") });
+      await identify({ sourceId: "job-d1", reference: "/del/x.pdf", sourceSha256: sha("bytes-d") });
+      await ingest({ reference: "/del/x.pdf", text: "Loeschkandidat", sourceId: "job-d1" });
+      const dup = await identify({ sourceId: "job-d2", reference: "/del/x.pdf", sourceSha256: sha("bytes-d") });
       expect(dup.decision).toBe("duplicate");
-      const deleted = await pg.delete({}, collection, scope, "del/x.pdf");
+      const deleted = await pg.delete({}, collection, scope, "/del/x.pdf");
       expect(deleted).toMatchObject({ ok: true });
-      const again = await identify({ sourceId: "job-d3", reference: "del/x.pdf", sourceSha256: sha("bytes-d") });
-      expect(again).toEqual({ decision: "new", canonicalReference: "del/x.pdf" });
+      const again = await identify({ sourceId: "job-d3", reference: "/del/x.pdf", sourceSha256: sha("bytes-d") });
+      expect(again).toEqual({ decision: "new", canonicalReference: "/del/x.pdf" });
     });
   });
 
   describe("version order", () => {
     it("an older version committed later is indexed but not latest; a newer one switches", async () => {
-      const v2 = await ingest({ reference: "ver/doc.pdf", text: "zweitausgabe inhalt", version: { label: "2.0", source: "page_label" } });
+      const v2 = await ingest({ reference: "/ver/doc.pdf", text: "zweitausgabe inhalt", version: { label: "2.0", source: "page_label" } });
       expect(v2.isLatest).toBe(true);
-      const v1 = await ingest({ reference: "ver/doc.pdf", text: "erstausgabe inhalt", version: { label: "1.0", source: "page_label" } });
+      const v1 = await ingest({ reference: "/ver/doc.pdf", text: "erstausgabe inhalt", version: { label: "1.0", source: "page_label" } });
       expect(v1.committed).toBe(true);
       expect(v1.isLatest).toBe(false);
       expect(await searchTerm("zweitausgabe")).toHaveLength(1);
@@ -340,15 +340,15 @@ describeIfPg("document identity · real postgres", () => {
       const replay = await store.finalCommit({ tenantId: TENANT, collection, revisionId: v1.revisionId });
       expect(replay.ok && replay.result.isLatest).toBe(false);
 
-      const v3 = await ingest({ reference: "ver/doc.pdf", text: "drittausgabe inhalt", version: { label: "3.0", source: "page_label" } });
+      const v3 = await ingest({ reference: "/ver/doc.pdf", text: "drittausgabe inhalt", version: { label: "3.0", source: "page_label" } });
       expect(v3.isLatest).toBe(true);
       expect(await searchTerm("zweitausgabe")).toHaveLength(0);
       expect(await searchTerm("drittausgabe")).toHaveLength(1);
     });
 
     it("without comparable versions the last commit wins", async () => {
-      await ingest({ reference: "ver/free.pdf", text: "freiversion alpha", version: { label: "2.0", source: "page_label" } });
-      const later = await ingest({ reference: "ver/free.pdf", text: "freiversion beta", version: { date: "2020-01-01", source: "page_date" } });
+      await ingest({ reference: "/ver/free.pdf", text: "freiversion alpha", version: { label: "2.0", source: "page_label" } });
+      const later = await ingest({ reference: "/ver/free.pdf", text: "freiversion beta", version: { date: "2020-01-01", source: "page_date" } });
       expect(later.isLatest).toBe(true);
     });
   });
@@ -368,61 +368,61 @@ describeIfPg("document identity · real postgres", () => {
     it("threads independently ingested messages, in any order, and merges threads", async () => {
       // The reply arrives before its parent.
       await ingest({
-        reference: "mail/b.eml", text: "Antwort bravo",
+        reference: "/mail/b.eml", text: "Antwort bravo",
         email: mail("b@x", { inReplyTo: ["a@x"], references: ["a@x"], subject: "AW: Angebot", date: "2025-01-02T10:00:00Z" }),
       });
       await ingest({
-        reference: "mail/a.eml", text: "Frage alpha",
+        reference: "/mail/a.eml", text: "Frage alpha",
         email: mail("a@x", { subject: "Angebot", date: "2025-01-01T10:00:00Z" }),
       });
       // An unrelated message starts its own thread …
       await ingest({
-        reference: "mail/d.eml", text: "Separat delta",
+        reference: "/mail/d.eml", text: "Separat delta",
         email: mail("d@x", { subject: "Lieferung", date: "2025-01-03T10:00:00Z" }),
       });
       let groups = await resolveDocumentGroups(pool, {
-        tenantId: TENANT, collection, references: ["mail/a.eml", "mail/b.eml", "mail/d.eml"],
+        tenantId: TENANT, collection, references: ["/mail/a.eml", "/mail/b.eml", "/mail/d.eml"],
       });
-      expect(groups.get("mail/a.eml")?.id).toBe(groups.get("mail/b.eml")?.id);
-      expect(groups.get("mail/d.eml")?.id).not.toBe(groups.get("mail/a.eml")?.id);
+      expect(groups.get("/mail/a.eml")?.id).toBe(groups.get("/mail/b.eml")?.id);
+      expect(groups.get("/mail/d.eml")?.id).not.toBe(groups.get("/mail/a.eml")?.id);
 
       // … until a message references both: the threads merge.
       await ingest({
-        reference: "mail/e.eml", text: "Zusammen echo",
+        reference: "/mail/e.eml", text: "Zusammen echo",
         email: mail("e@x", { references: ["a@x", "d@x"], subject: "AW: Angebot", date: "2025-01-04T10:00:00Z" }),
       });
       groups = await resolveDocumentGroups(pool, {
-        tenantId: TENANT, collection, references: ["mail/a.eml", "mail/b.eml", "mail/d.eml", "mail/e.eml"],
+        tenantId: TENANT, collection, references: ["/mail/a.eml", "/mail/b.eml", "/mail/d.eml", "/mail/e.eml"],
       });
       const ids = new Set([...groups.values()].map((g) => g.id));
       expect(ids.size).toBe(1);
-      expect(groups.get("mail/a.eml")?.kind).toBe("email_thread");
+      expect(groups.get("/mail/a.eml")?.kind).toBe("email_thread");
     });
 
     it("joins a reply without threading headers by subject and participant", async () => {
       await ingest({
-        reference: "mail/f.eml", text: "Nachtrag foxtrot",
+        reference: "/mail/f.eml", text: "Nachtrag foxtrot",
         email: mail("f@x", { subject: "Re: Angebot", date: "2025-01-05T10:00:00Z" }),
       });
       const groups = await resolveDocumentGroups(pool, {
-        tenantId: TENANT, collection, references: ["mail/a.eml", "mail/f.eml"],
+        tenantId: TENANT, collection, references: ["/mail/a.eml", "/mail/f.eml"],
       });
-      expect(groups.get("mail/f.eml")?.id).toBe(groups.get("mail/a.eml")?.id);
+      expect(groups.get("/mail/f.eml")?.id).toBe(groups.get("/mail/a.eml")?.id);
     });
 
     it("an attachment inherits its e-mail's thread", async () => {
-      await ingest({ reference: "mail/a.eml/preisliste.pdf", text: "Preisliste golf", parentReference: "mail/a.eml" });
+      await ingest({ reference: "/mail/a.eml/preisliste.pdf", text: "Preisliste golf", parentReference: "/mail/a.eml" });
       const groups = await resolveDocumentGroups(pool, {
-        tenantId: TENANT, collection, references: ["mail/a.eml", "mail/a.eml/preisliste.pdf"],
+        tenantId: TENANT, collection, references: ["/mail/a.eml", "/mail/a.eml/preisliste.pdf"],
       });
-      expect(groups.get("mail/a.eml/preisliste.pdf")).toMatchObject({
-        id: groups.get("mail/a.eml")?.id,
+      expect(groups.get("/mail/a.eml/preisliste.pdf")).toMatchObject({
+        id: groups.get("/mail/a.eml")?.id,
         kind: "email_thread",
       });
     });
 
     it("expand=document returns the whole thread chronologically", async () => {
-      const res = await pg.expandUnit(collection, scope, "document", { baseRef: "mail/b.eml" });
+      const res = await pg.expandUnit(collection, scope, "document", { baseRef: "/mail/b.eml" });
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       const text = res.result.map((u) => u.content).join(" | ");
@@ -435,7 +435,7 @@ describeIfPg("document identity · real postgres", () => {
     });
 
     it("expand=document of a plain document is the document", async () => {
-      const res = await pg.expandUnit(collection, scope, "document", { baseRef: "ver/doc.pdf" });
+      const res = await pg.expandUnit(collection, scope, "document", { baseRef: "/ver/doc.pdf" });
       expect(res.ok && res.result.map((u) => u.content).join(" ")).toContain("drittausgabe");
     });
   });
@@ -461,12 +461,12 @@ describeIfPg("document identity · real postgres", () => {
         .send({
           sourceId: "http-1",
           phase: "source",
-          reference: "http/a.pdf",
-          documentKey: "http/a",
+          reference: "/http/a.pdf",
+          documentKey: "/http/a",
           sourceSha256: sha("http-bytes"),
         });
       expect(ok.status).toBe(200);
-      expect(ok.body).toEqual({ decision: "new", canonicalReference: "http/a.pdf" });
+      expect(ok.body).toEqual({ decision: "new", canonicalReference: "/http/a.pdf" });
 
       const bad = await request(app()).post("/v2/sources/identify").send({ sourceId: "x", phase: "later" });
       expect(bad.status).toBe(400);
@@ -477,13 +477,13 @@ describeIfPg("document identity · real postgres", () => {
     });
 
     it("lists a document's sources, duplicates included", async () => {
-      const res = await request(app()).get(`/v2/documents/${encodeURIComponent("hb/handbuch.pdf")}/sources`);
+      const res = await request(app()).get(`/v2/documents/${encodeURIComponent("/hb/handbuch.pdf")}/sources`);
       expect(res.status).toBe(200);
       expect(res.body.sources.map((s: { sourceId: string }) => s.sourceId)).toEqual(["job-h1", "job-h2", "job-h3"]);
       expect(res.body.sources[1]).toMatchObject({
         status: "duplicate",
-        requestedReference: "hb/handbuch.docx",
-        duplicateOf: { reference: "hb/handbuch.pdf", match: "similar" },
+        requestedReference: "/hb/handbuch.docx",
+        duplicateOf: { reference: "/hb/handbuch.pdf", match: "similar" },
       });
     });
   });
@@ -501,18 +501,18 @@ describeIfPg("document identity · real postgres", () => {
     const bob = { allowedUsers: ["bob"], allowedGroups: [] };
 
     it("units of a revision carry its row ACL", async () => {
-      await ingest({ reference: "acl/privat.pdf", text: "geheimwort kilo", acl: anna });
+      await ingest({ reference: "/acl/privat.pdf", text: "geheimwort kilo", acl: anna });
       expect(await searchTerm("geheimwort", userScope("anna"))).toHaveLength(1);
       expect(await searchTerm("geheimwort", userScope("bob"))).toHaveLength(0);
       expect(await searchTerm("geheimwort", userScope("carl", ["team"]))).toHaveLength(0);
-      const expanded = await pg.expandUnit(collection, userScope("bob"), "document", { baseRef: "acl/privat.pdf" });
+      const expanded = await pg.expandUnit(collection, userScope("bob"), "document", { baseRef: "/acl/privat.pdf" });
       expect(expanded.ok && expanded.result).toEqual([]);
     });
 
     it("a document ingested for the group finance is visible to its members only", async () => {
       // The list Outpost sets from a source ACL and Extract passes on unchanged.
       await ingest({
-        reference: "acl/finanzen.pdf",
+        reference: "/acl/finanzen.pdf",
         text: "quartalszahl november",
         acl: { allowedUsers: [], allowedGroups: ["finance"] },
       });
@@ -522,36 +522,36 @@ describeIfPg("document identity · real postgres", () => {
     });
 
     it("the same file under another ACL is neither a duplicate nor a version of it", async () => {
-      await identify({ sourceId: "acl-a1", reference: "acl/bericht.pdf", sourceSha256: sha("acl-bytes"), acl: anna });
-      await ingest({ reference: "acl/bericht.pdf", text: "bericht lima", sourceId: "acl-a1", acl: anna });
+      await identify({ sourceId: "acl-a1", reference: "/acl/bericht.pdf", sourceSha256: sha("acl-bytes"), acl: anna });
+      await ingest({ reference: "/acl/bericht.pdf", text: "bericht lima", sourceId: "acl-a1", acl: anna });
 
       const other = await identify({
-        sourceId: "acl-b1", reference: "acl/bericht.docx", sourceSha256: sha("acl-bytes"), acl: bob,
+        sourceId: "acl-b1", reference: "/acl/bericht.docx", sourceSha256: sha("acl-bytes"), acl: bob,
       });
-      expect(other).toEqual({ decision: "new", canonicalReference: "acl/bericht.docx" });
+      expect(other).toEqual({ decision: "new", canonicalReference: "/acl/bericht.docx" });
 
       const same = await identify({
-        sourceId: "acl-a2", reference: "acl/bericht.docx", sourceSha256: sha("acl-bytes"), acl: anna,
+        sourceId: "acl-a2", reference: "/acl/bericht.docx", sourceSha256: sha("acl-bytes"), acl: anna,
       });
       expect(same.decision).toBe("duplicate");
-      expect(same.canonicalReference).toBe("acl/bericht.pdf");
+      expect(same.canonicalReference).toBe("/acl/bericht.pdf");
     });
 
     it("a legacy document of another audience is not taken as the canonical reference", async () => {
-      await ingest({ reference: "acl/alt.pdf", text: "altbestand mike", acl: anna });
-      const res = await identify({ sourceId: "acl-b2", reference: "acl/alt.docx", acl: bob });
-      expect(res.canonicalReference).toBe("acl/alt.docx");
-      const own = await identify({ sourceId: "acl-a3", reference: "acl/alt.docx", acl: anna });
-      expect(own.canonicalReference).toBe("acl/alt.pdf");
+      await ingest({ reference: "/acl/alt.pdf", text: "altbestand mike", acl: anna });
+      const res = await identify({ sourceId: "acl-b2", reference: "/acl/alt.docx", acl: bob });
+      expect(res.canonicalReference).toBe("/acl/alt.docx");
+      const own = await identify({ sourceId: "acl-a3", reference: "/acl/alt.docx", acl: anna });
+      expect(own.canonicalReference).toBe("/acl/alt.pdf");
     });
 
     it("lists a document's sources only to readers of the document", async () => {
       const forAnna = await listDocumentSources(pool, {
-        tenantId: TENANT, collection, reference: "acl/bericht.pdf", scope: userScope("anna"),
+        tenantId: TENANT, collection, reference: "/acl/bericht.pdf", scope: userScope("anna"),
       });
       expect(forAnna.map((s) => s.sourceId)).toEqual(["acl-a1", "acl-a2"]);
       const forBob = await listDocumentSources(pool, {
-        tenantId: TENANT, collection, reference: "acl/bericht.pdf", scope: userScope("bob"),
+        tenantId: TENANT, collection, reference: "/acl/bericht.pdf", scope: userScope("bob"),
       });
       expect(forBob).toEqual([]);
     });

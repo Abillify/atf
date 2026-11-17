@@ -129,26 +129,26 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
     }
 
     // Two sections (outline).
-    await insertUnit({ unitId: "s1", baseRef: "docA", content: "1 Einleitung", unitType: "section", sectionId: "sec-1", sectionPath: ["1 Einleitung"], pageStart: 0, pageEnd: 0 });
-    await insertUnit({ unitId: "s2", baseRef: "docA", content: "2 Antragseingang", unitType: "section", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 0, pageEnd: 0 });
-    await insertUnit({ unitId: "s2a", baseRef: "docA", content: "2.1 Anmeldung", unitType: "section", sectionId: "sec-2a", sectionPath: ["2 Antragseingang", "2.1 Anmeldung"], pageStart: 0, pageEnd: 0 });
+    await insertUnit({ unitId: "s1", baseRef: "/docA", content: "1 Einleitung", unitType: "section", sectionId: "sec-1", sectionPath: ["1 Einleitung"], pageStart: 0, pageEnd: 0 });
+    await insertUnit({ unitId: "s2", baseRef: "/docA", content: "2 Antragseingang", unitType: "section", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 0, pageEnd: 0 });
+    await insertUnit({ unitId: "s2a", baseRef: "/docA", content: "2.1 Anmeldung", unitType: "section", sectionId: "sec-2a", sectionPath: ["2 Antragseingang", "2.1 Anmeldung"], pageStart: 0, pageEnd: 0 });
 
     // Reading-order chunks on pages 4 and 5 in section 2, prev/next linked.
-    await insertUnit({ unitId: "c1", baseRef: "docA", content: "## 2 Antragseingang\n\nErster Text", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, nextUnitId: "c2", figureRefs: ["fig-7"] });
-    await insertUnit({ unitId: "c2", baseRef: "docA", content: "Zweiter Text auf Seite 5", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 5, pageEnd: 5, prevUnitId: "c1", nextUnitId: "c3" });
-    await insertUnit({ unitId: "c3", baseRef: "docA", content: "Dritter Text auf Seite 6", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 6, pageEnd: 6, prevUnitId: "c2" });
+    await insertUnit({ unitId: "c1", baseRef: "/docA", content: "## 2 Antragseingang\n\nErster Text", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, nextUnitId: "c2", figureRefs: ["fig-7"] });
+    await insertUnit({ unitId: "c2", baseRef: "/docA", content: "Zweiter Text auf Seite 5", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 5, pageEnd: 5, prevUnitId: "c1", nextUnitId: "c3" });
+    await insertUnit({ unitId: "c3", baseRef: "/docA", content: "Dritter Text auf Seite 6", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 6, pageEnd: 6, prevUnitId: "c2" });
 
     // A table spanning pages 10-11.
-    await insertUnit({ unitId: "tbl-a", baseRef: "docA", content: "| A | B |\n|---|---|\n| 1 | 2 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 10, pageEnd: 10, tableId: "table-1" });
-    await insertUnit({ unitId: "tbl-b", baseRef: "docA", content: "| 3 | 4 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 11, pageEnd: 11, tableId: "table-1" });
+    await insertUnit({ unitId: "tbl-a", baseRef: "/docA", content: "| A | B |\n|---|---|\n| 1 | 2 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 10, pageEnd: 10, tableId: "table-1" });
+    await insertUnit({ unitId: "tbl-b", baseRef: "/docA", content: "| 3 | 4 |", unitType: "table", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 11, pageEnd: 11, tableId: "table-1" });
 
     // Figures: a visible ui_mask on page 4, a bpmn on page 60, and a restricted one.
-    await insertUnit({ unitId: "f1", baseRef: "docA", content: "Abbildung 7: Maske\ndesc", unitType: "figure", figureKind: "ui_mask", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, figureId: "fig-7", assetId: "asset-7" });
-    await insertUnit({ unitId: "f2", baseRef: "docA", content: "Abbildung 99: Prozess", unitType: "figure", figureKind: "bpmn", pageStart: 60, pageEnd: 60, figureId: "fig-99", assetId: "asset-99" });
-    await insertUnit({ unitId: "f3", baseRef: "docA", content: "Abbildung geheim", unitType: "figure", figureKind: "drawing", pageStart: 4, pageEnd: 4, figureId: "fig-secret", assetId: "asset-secret", allowedUsers: ["vip"] });
+    await insertUnit({ unitId: "f1", baseRef: "/docA", content: "Abbildung 7: Maske\ndesc", unitType: "figure", figureKind: "ui_mask", sectionPath: ["2 Antragseingang"], pageStart: 4, pageEnd: 4, figureId: "fig-7", assetId: "asset-7" });
+    await insertUnit({ unitId: "f2", baseRef: "/docA", content: "Abbildung 99: Prozess", unitType: "figure", figureKind: "bpmn", pageStart: 60, pageEnd: 60, figureId: "fig-99", assetId: "asset-99" });
+    await insertUnit({ unitId: "f3", baseRef: "/docA", content: "Abbildung geheim", unitType: "figure", figureKind: "drawing", pageStart: 4, pageEnd: 4, figureId: "fig-secret", assetId: "asset-secret", allowedUsers: ["vip"] });
 
     // identifiers: WE01A occurs on c1 (page 4) and a restricted unit r1 (vip-only).
-    await insertUnit({ unitId: "r1", baseRef: "docA", content: "WE-01/A steht hier geheim", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 7, pageEnd: 7, allowedUsers: ["vip"] });
+    await insertUnit({ unitId: "r1", baseRef: "/docA", content: "WE-01/A steht hier geheim", unitType: "chunk", sectionId: "sec-2", sectionPath: ["2 Antragseingang"], pageStart: 7, pageEnd: 7, allowedUsers: ["vip"] });
     const idClient = await pool.connect();
     try {
       await idClient.query(
@@ -170,20 +170,20 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
   });
 
   it("getOutline returns sections with ids + pages, depth-limited and paginated", async () => {
-    const all = await pg.getOutline(collection, serviceScope(), "docA");
+    const all = await pg.getOutline(collection, serviceScope(), "/docA");
     expect(all.ok).toBe(true);
     if (!all.ok) return;
     expect(all.result.total).toBe(3);
     // Depth 1 excludes the 2-level "2.1 Anmeldung".
-    const depth1 = await pg.getOutline(collection, serviceScope(), "docA", { depth: 1 });
+    const depth1 = await pg.getOutline(collection, serviceScope(), "/docA", { depth: 1 });
     expect(depth1.ok && depth1.result.entries.every((e) => e.depth <= 1)).toBe(true);
     // Pagination.
-    const page = await pg.getOutline(collection, serviceScope(), "docA", { limit: 2, offset: 0 });
+    const page = await pg.getOutline(collection, serviceScope(), "/docA", { limit: 2, offset: 0 });
     expect(page.ok && page.result.entries).toHaveLength(2);
   });
 
   it("getSectionUnits returns a section's units by id, in reading order", async () => {
-    const res = await pg.getSectionUnits(collection, serviceScope(), "docA", { sectionId: "sec-2" });
+    const res = await pg.getSectionUnits(collection, serviceScope(), "/docA", { sectionId: "sec-2" });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     const ids = res.result.map((u) => u.unit_id);
@@ -194,7 +194,7 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
   });
 
   it("getPageUnits returns the units overlapping a page range", async () => {
-    const res = await pg.getPageUnits(collection, serviceScope(), "docA", 4, 5);
+    const res = await pg.getPageUnits(collection, serviceScope(), "/docA", 4, 5);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     const ids = new Set(res.result.map((u) => u.unit_id));
@@ -213,11 +213,11 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
   });
 
   it("listFigureUnits lists figures of a range, filterable by kind, paginated", async () => {
-    const all = await pg.listFigureUnits(collection, serviceScope(), "docA");
+    const all = await pg.listFigureUnits(collection, serviceScope(), "/docA");
     expect(all.ok && all.result.total).toBe(3);
-    const masks = await pg.listFigureUnits(collection, serviceScope(), "docA", { kind: "ui_mask" });
+    const masks = await pg.listFigureUnits(collection, serviceScope(), "/docA", { kind: "ui_mask" });
     expect(masks.ok && masks.result.figures.every((f) => f.figure_kind === "ui_mask")).toBe(true);
-    const ranged = await pg.listFigureUnits(collection, serviceScope(), "docA", { fromPage: 1, toPage: 10 });
+    const ranged = await pg.listFigureUnits(collection, serviceScope(), "/docA", { fromPage: 1, toPage: 10 });
     expect(ranged.ok && ranged.result.figures.map((f) => f.figure_id).sort()).toEqual(["fig-7", "fig-secret"]);
   });
 
@@ -235,7 +235,7 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
     if (!res.ok || res.result === null) return;
     expect(res.result.unit_id).toBe("c1");
     expect(res.result.metadata.figure_refs).toEqual(["fig-7"]);
-    expect(res.result.metadata.base_ref).toBe("docA");
+    expect(res.result.metadata.base_ref).toBe("/docA");
   });
 
   it("findIdentifierOccurrences returns visible occurrences and hides restricted ones", async () => {
@@ -251,7 +251,7 @@ describeIfPg("v2 navigation reads · real postgres (task 3.9)", () => {
   });
 
   it("ACL: a restricted figure never leaks to a non-authorized user", async () => {
-    const user = await pg.listFigureUnits(collection, userScope("bob", ["staff"]), "docA");
+    const user = await pg.listFigureUnits(collection, userScope("bob", ["staff"]), "/docA");
     expect(user.ok).toBe(true);
     if (!user.ok) return;
     const ids = user.result.figures.map((f) => f.figure_id);

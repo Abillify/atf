@@ -217,10 +217,10 @@ function materialize(model: GenModel, iteration: number): ModelRow {
 		useCascade: model.useCascade,
 		docs: model.docs.map((d) => {
 			const stem = `${d.stem}-${iteration}`;
-			const ref = `${stem}.pdf`.normalize("NFC");
+			const ref = `/${stem}.pdf`.normalize("NFC");
 			const revisions = d.revisions.map((r) => `${stem}-${r}`);
 			const units: UnitRow[] = d.units.map((u, ui) => {
-				const reference = `${stem}${u.refSuffix}`;
+				const reference = `/${stem}${u.refSuffix}`;
 				return {
 					unitId: `${stem}-u${ui}`,
 					reference,

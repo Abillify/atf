@@ -155,7 +155,7 @@ describeIfPg("FTS contextual header · real postgres", () => {
   it("finds the chunk for a title-only term when the flag is on", async () => {
     const res = await lexical(pgOn, collectionOn);
     expect(res.ok, res.ok ? "" : JSON.stringify(res.error)).toBe(true);
-    if (res.ok) expect(res.result.map((r) => r.reference)).toContain("doc");
+    if (res.ok) expect(res.result.map((r) => r.reference)).toContain("/doc");
   });
 
   it("does not find the chunk for a title-only term when the flag is off", async () => {
@@ -182,6 +182,6 @@ describeIfPg("FTS contextual header · real postgres", () => {
       true,
     );
     expect(res.ok, res.ok ? "" : JSON.stringify(res.error)).toBe(true);
-    if (res.ok) expect(res.result.map((r) => r.reference)).toContain("doc");
+    if (res.ok) expect(res.result.map((r) => r.reference)).toContain("/doc");
   });
 });

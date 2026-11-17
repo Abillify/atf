@@ -92,7 +92,7 @@ describeIfPg("postgres-client · real pgvector", () => {
     it("stores a document and finds it by vector similarity", async () => {
       const up = await client.upsert(
         {
-          reference: `${collection}/doc-1`,
+          reference: `/${collection}/doc-1`,
           vector: vec(0),
           content: "Mietvertrag für die Wohnung in Berlin",
           tenantId: TEST_TENANT_ID,
@@ -112,7 +112,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       expect(found.ok).toBe(true);
       if (found.ok) {
         expect(found.result.length).toBeGreaterThan(0);
-        expect(found.result[0]?.reference).toBe(`${collection}/doc-1`);
+        expect(found.result[0]?.reference).toBe(`/${collection}/doc-1`);
         // Cosine similarity against itself must be ~1.
         expect(found.result[0]?.score).toBeGreaterThan(0.99);
       }
@@ -138,7 +138,7 @@ describeIfPg("postgres-client · real pgvector", () => {
     beforeAll(async () => {
       await client.upsert(
         {
-          reference: `${collection}/acl-user`,
+          reference: `/${collection}/acl-user`,
           vector: vec(1),
           content: "only alice may read this",
           tenantId: TEST_TENANT_ID,
@@ -149,7 +149,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       );
       await client.upsert(
         {
-          reference: `${collection}/acl-group`,
+          reference: `/${collection}/acl-group`,
           vector: vec(1),
           content: "only the legal group may read this",
           tenantId: TEST_TENANT_ID,
@@ -160,7 +160,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       );
       await client.upsert(
         {
-          reference: `${collection}/acl-public`,
+          reference: `/${collection}/acl-public`,
           vector: vec(1),
           content: "anyone may read this",
           tenantId: TEST_TENANT_ID,
@@ -178,9 +178,9 @@ describeIfPg("postgres-client · real pgvector", () => {
     it("returns everything for a service context (no identity)", async () => {
       const res = await client.search("read", vec(1), 20, collection, serviceScope);
       const found = refs(res);
-      expect(found).toContain(`${collection}/acl-user`);
-      expect(found).toContain(`${collection}/acl-group`);
-      expect(found).toContain(`${collection}/acl-public`);
+      expect(found).toContain(`/${collection}/acl-user`);
+      expect(found).toContain(`/${collection}/acl-group`);
+      expect(found).toContain(`/${collection}/acl-public`);
     });
 
     it("hides restricted rows from an unrelated user", async () => {
@@ -189,8 +189,8 @@ describeIfPg("postgres-client · real pgvector", () => {
         undefined, false,
       );
       const found = refs(res);
-      expect(found).not.toContain(`${collection}/acl-user`);
-      expect(found).not.toContain(`${collection}/acl-group`);
+      expect(found).not.toContain(`/${collection}/acl-user`);
+      expect(found).not.toContain(`/${collection}/acl-group`);
       // A row with an empty ACL is public only when the query does not filter on
       // access at all; with an identity asserted, the predicate is applied, so a
       // public row must still be reachable via its empty arrays.
@@ -202,7 +202,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         "read", vec(1), 20, collection, userScope("alice"),
         undefined, false,
       );
-      expect(refs(res)).toContain(`${collection}/acl-user`);
+      expect(refs(res)).toContain(`/${collection}/acl-user`);
     });
 
     it("shows a row via group membership", async () => {
@@ -210,7 +210,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         "read", vec(1), 20, collection, userScope("bob", ["legal"]),
         undefined, false,
       );
-      expect(refs(res)).toContain(`${collection}/acl-group`);
+      expect(refs(res)).toContain(`/${collection}/acl-group`);
     });
   });
 
@@ -238,7 +238,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         v[0] = 1 - i * 0.05;
         await client.upsert(
           {
-            reference: `${pageCollection}/p-${String(i).padStart(2, "0")}`,
+            reference: `/${pageCollection}/p-${String(i).padStart(2, "0")}`,
             vector: v,
             content: `page document ${i}`,
             tenantId: TEST_TENANT_ID,
@@ -302,7 +302,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       expect(new Set(seen).size).toBe(seen.length); // no duplicates
       expect(seen).toHaveLength(total); // nothing lost
       // Crucially, the MOST relevant document (also the oldest) is present.
-      expect(seen).toContain(`${pageCollection}/p-00`);
+      expect(seen).toContain(`/${pageCollection}/p-00`);
     });
 
     it("keeps cursor pages in the same order as one big page", async () => {
@@ -372,7 +372,7 @@ describeIfPg("postgres-client · real pgvector", () => {
     });
 
     it("replace mode keeps exactly one row per reference", async () => {
-      const ref = `${versioned}/v-doc`;
+      const ref = `/${versioned}/v-doc`;
       await client.upsert(
         { reference: ref, vector: vec(2), content: "first", tenantId: TEST_TENANT_ID,
           metadata: {} },
@@ -395,7 +395,7 @@ describeIfPg("postgres-client · real pgvector", () => {
     });
 
     it("only the latest version is returned unless all versions are requested", async () => {
-      const ref = `${versioned}/hist`;
+      const ref = `/${versioned}/hist`;
       await client.upsert(
         { reference: ref, version: "v1", vector: vec(3), content: "old", tenantId: TEST_TENANT_ID,
           metadata: {} },
@@ -442,7 +442,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       try {
         await client.upsert(
           {
-            reference: `${other}/isolated`,
+            reference: `/${other}/isolated`,
             vector: vec(0),
             content: "isolated document",
             tenantId: TEST_TENANT_ID,
@@ -454,7 +454,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         expect(res.ok).toBe(true);
         if (res.ok) {
           expect(res.result.map((r) => r.reference)).not.toContain(
-            `${other}/isolated`,
+            `/${other}/isolated`,
           );
         }
       } finally {
@@ -488,7 +488,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       expect(ensured.ok).toBe(true);
       const up = await client.upsert(
         {
-          reference: `${ftsCollection}/doc-de`,
+          reference: `/${ftsCollection}/doc-de`,
           vector: vec(0),
           // "Verträge" (plural) — a German stemmer folds it to the same lexeme
           // as the query "Vertrag" (singular); 'simple' does not.
@@ -535,7 +535,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       expect(found.ok).toBe(true);
       if (found.ok) {
         expect(found.result.map((r) => r.reference)).toContain(
-          `${ftsCollection}/doc-de`,
+          `/${ftsCollection}/doc-de`,
         );
       }
     });

@@ -96,7 +96,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     // Inserted deliberately OUT of reading order, the way parallel batches and
     // the trailing document.end batch land: summaries first, page 2 before
     // page 1, the figure and table before the text they sit between.
-    const spec = "Lastenheft/WE.docx";
+    const spec = "/Lastenheft/WE.docx";
     await insertUnit({ unitId: "doc", baseRef: spec, content: "Dokument-Summary: Antragseingang", unitType: "document", page: 1, blockIds: [spec], title: "Spezifikation Antragseingang" });
     await insertUnit({ unitId: "sec", baseRef: spec, content: "Abschnitts-Summary", unitType: "section", page: 1, blockIds: ["1 Einleitung"] });
     await insertUnit({ unitId: "pg1", baseRef: spec, content: "Seiten-Summary 1", unitType: "page", page: 1, blockIds: ["page:1"] });
@@ -127,8 +127,8 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     await insertUnit({ unitId: "p1a", baseRef: spec, content: "Erster Teil von Block 1.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0, title: "Spezifikation Antragseingang" });
 
     // A v2 document the document pass produced no summary for.
-    await insertUnit({ unitId: "n1", baseRef: "nosummary.pdf", content: "Nur Text.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0 });
-    await insertUnit({ unitId: "n2", baseRef: "nosummary.pdf", content: "Mehr Text.", unitType: "chunk", page: 1, blockIds: ["p1-b2"], ordinal: 0 });
+    await insertUnit({ unitId: "n1", baseRef: "/nosummary.pdf", content: "Nur Text.", unitType: "chunk", page: 1, blockIds: ["p1-b1"], ordinal: 0 });
+    await insertUnit({ unitId: "n2", baseRef: "/nosummary.pdf", content: "Mehr Text.", unitType: "chunk", page: 1, blockIds: ["p1-b2"], ordinal: 0 });
   });
 
   afterAll(async () => {
@@ -146,7 +146,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
   ].join("\n\n");
 
   it("get_document reads only the body units, in reading order, tables once", async () => {
-    const res = await pg.getDocument(collection, serviceScope(), "Lastenheft/WE.docx");
+    const res = await pg.getDocument(collection, serviceScope(), "/Lastenheft/WE.docx");
     expect(res.ok).toBe(true);
     if (!res.ok || res.result === null) throw new Error("no document");
     const doc = res.result;
@@ -158,7 +158,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
   });
 
   it("get_document evidence spans carry the unit and its page", async () => {
-    const res = await pg.getDocument(collection, serviceScope(), "Lastenheft/WE.docx");
+    const res = await pg.getDocument(collection, serviceScope(), "/Lastenheft/WE.docx");
     if (!res.ok || res.result === null) throw new Error("no document");
     const spans = res.result.evidence_spans ?? [];
     expect(spans.map((s) => s.unit_id)).toEqual(["p1a", "p1b", "fig", "tbl", "p2"]);
@@ -172,7 +172,7 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     const res = await pg.getDocumentsByPrefix(collection, serviceScope(), {});
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    const spec = res.result.documents.find((d) => d.reference === "Lastenheft/WE.docx");
+    const spec = res.result.documents.find((d) => d.reference === "/Lastenheft/WE.docx");
     expect(spec?.content).toBe(expectedBody);
   });
 
@@ -180,11 +180,11 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     const res = await pg.getSummaries(collection, serviceScope(), {});
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    const spec = res.result.summaries.find((s) => s.reference === "Lastenheft/WE.docx");
+    const spec = res.result.summaries.find((s) => s.reference === "/Lastenheft/WE.docx");
     expect(spec?.summary).toBe("Dokument-Summary: Antragseingang");
     expect(spec?.title).toBe("Spezifikation Antragseingang");
     expect(spec?.isSummary).toBe(true);
-    const single = await pg.getSummary(collection, serviceScope(), "Lastenheft/WE.docx");
+    const single = await pg.getSummary(collection, serviceScope(), "/Lastenheft/WE.docx");
     expect(single.ok && single.result?.summary).toBe("Dokument-Summary: Antragseingang");
   });
 
@@ -193,14 +193,14 @@ describeIfPg("v2 whole-document reads · real postgres", () => {
     expect(missing.ok).toBe(true);
     if (!missing.ok) return;
     // The spec has a document unit; the other document appears exactly once.
-    expect(missing.result).toEqual(["nosummary.pdf"]);
+    expect(missing.result).toEqual(["/nosummary.pdf"]);
 
-    const set = await pg.setDocumentSummary(collection, "nosummary.pdf", "Backfill-Summary", serviceScope());
+    const set = await pg.setDocumentSummary(collection, "/nosummary.pdf", "Backfill-Summary", serviceScope());
     expect(set.ok && set.result.updated).toBe(1);
 
     const summaries = await pg.getSummaries(collection, serviceScope(), {});
     if (!summaries.ok) throw new Error("summaries failed");
-    expect(summaries.result.summaries.find((s) => s.reference === "nosummary.pdf")?.summary).toBe("Backfill-Summary");
+    expect(summaries.result.summaries.find((s) => s.reference === "/nosummary.pdf")?.summary).toBe("Backfill-Summary");
     const after = await pg.listDocumentsMissingSummary(collection, serviceScope());
     expect(after.ok && after.result).toEqual([]);
   });
@@ -212,7 +212,7 @@ describeIfPg("v2 whole-document reads at a point in time (valid_at) · real post
   const collection = `docver_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const table = collectionTableName(collection);
   const tenant = `${TENANT}-ver`;
-  const ref = "Lastenheft/Versioniert.docx";
+  const ref = "/Lastenheft/Versioniert.docx";
   const scope = (): AccessScope => ({ ...serviceScope(), tenantId: tenant });
 
   async function unit(revision: string, unitId: string, type: string, page: number, block: string, content: string, created: string, latest: boolean): Promise<void> {

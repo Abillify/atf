@@ -70,8 +70,8 @@ describeIfPg("asset store · real postgres", () => {
   let revFs = "";
   const collection = `astest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   // A document readable by everyone (no row ACL) and one private to alice.
-  const publicRef = `${collection}/public-doc`;
-  const privateRef = `${collection}/alice-doc`;
+  const publicRef = `/${collection}/public-doc`;
+  const privateRef = `/${collection}/alice-doc`;
 
   beforeAll(async () => {
     pg = createPostgresClient({
@@ -408,7 +408,7 @@ describeIfPg("asset store · real postgres", () => {
 
   it("v2 unit rows grant the read via the document's current revision (Req 14.5)", async () => {
     const table = collectionTableName(collection);
-    const v2Ref = `${collection}/v2-doc`;
+    const v2Ref = `/${collection}/v2-doc`;
     const v2Rev = await newRevision(v2Ref);
     // A v2 unit row (no `chunk`) of v2Rev, restricted to alice, still hidden
     // from search because the pointer does not name v2Rev yet.

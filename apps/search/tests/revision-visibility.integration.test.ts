@@ -376,8 +376,8 @@ describeIfPg("revision visibility · real postgres (task 1.13)", () => {
     const upserted = await pg.upsert(
       {
         tenantId: TENANT,
-        reference: "legacy-doc",
-        baseRef: "legacy-doc",
+        reference: "/legacy-doc",
+        baseRef: "/legacy-doc",
         content: `Ein Dokument mit ${term} ohne Revision.`,
         vector: new Array<number>(VECTOR_SIZE).fill(0).map((_, i) => (i === 0 ? 1 : 0.01)),
         metadata: {},
@@ -388,7 +388,7 @@ describeIfPg("revision visibility · real postgres (task 1.13)", () => {
 
     const hits = await searchTerm(term);
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    const legacy = hits.find((h) => h.base_ref === "legacy-doc");
+    const legacy = hits.find((h) => h.base_ref === "/legacy-doc");
     expect(legacy).toBeDefined();
     // Legacy rows carry no revision state.
     expect(legacy?.revision_state).toBeUndefined();
@@ -557,7 +557,7 @@ describeIfPg("revision visibility · real postgres (task 1.13)", () => {
   });
 
   it("a v2 replace of a legacy (null-revision) document hides the legacy rows in the same switch", async () => {
-    const ref = "legacy-replaced";
+    const ref = "/legacy-replaced";
     const upserted = await pg.upsert(
       {
         tenantId: TENANT,
