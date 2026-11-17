@@ -102,7 +102,7 @@ describe("resolveSecret", () => {
     ).toThrow(SecretConfigError);
     expect(() =>
       resolveSecret({ TEST_SECRET_FILE: missing }, "TEST_SECRET"),
-    ).toThrow(new RegExp(missing.replace(/[/\-]/g, "\\$&")));
+    ).toThrow(new RegExp(missing.replace(/[$()*+.?[\\\]^{|}/]/g, "\\$&")));
   });
 
   test("throws when the file is empty", () => {
