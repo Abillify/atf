@@ -502,6 +502,19 @@ const NEWJOB_PANEL_HTML = `
         <textarea id="newjob-metadata" rows="3" placeholder='{"client": "acme"}'></textarea>
       </div>
 
+      <div class="section-label">Chunking</div>
+      <div class="row">
+        <div class="field field-narrow">
+          <label for="newjob-late-chunking-alpha">Late-Chunking-Alpha <span class="hint">(0–1, leer = aus)</span></label>
+          <input type="number" id="newjob-late-chunking-alpha" placeholder="z. B. 0.7" min="0" max="1" step="0.05" />
+        </div>
+        <div class="field field-narrow">
+          <label for="newjob-subdocument-max-chunks">Subdokument max. Chunks <span class="hint">(leer = nicht teilen)</span></label>
+          <input type="number" id="newjob-subdocument-max-chunks" placeholder="z. B. 40" min="1" step="1" />
+        </div>
+      </div>
+      <p class="panel-desc" style="margin-top:0.25rem">Alpha mischt jeden Chunk-Vektor mit dem Dokumentvektor (<code>alpha·Chunk + (1−alpha)·Dokument</code>); niedriger = mehr Dokumentkontext. Die Chunk-Obergrenze teilt ein sehr großes Dokument an Kapitelmitteln in eigenständige Subdokumente <code>Referenz/Kapitel</code>.</p>
+
       <div class="section-label">Zugriffssteuerung</div>
       <div class="row">
         <div class="field">
@@ -1812,6 +1825,17 @@ const JS = `
       if (budget !== undefined) {
         if (budget < 0) throw new Error("Token-Budget darf nicht negativ sein.");
         body.tokenBudget = budget;
+      }
+      var alphaRaw = $("newjob-late-chunking-alpha").value.trim();
+      if (alphaRaw !== "") {
+        var alpha = Number(alphaRaw);
+        if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) throw new Error("Late-Chunking-Alpha muss zwischen 0 und 1 liegen.");
+        body.lateChunkingAlpha = alpha;
+      }
+      var subdoc = readIntField("newjob-subdocument-max-chunks", "Subdokument max. Chunks");
+      if (subdoc !== undefined) {
+        if (subdoc < 1) throw new Error("Subdokument max. Chunks muss mindestens 1 sein.");
+        body.subdocumentMaxChunks = subdoc;
       }
       var modified = $("newjob-source-modified").value.trim() || ($("newjob-use-file-mtime").checked ? fileModifiedIso(file) : "");
       if (modified) body.sourceModifiedAt = modified;

@@ -132,6 +132,12 @@ export interface RevisionClient {
     acl?: { allowedUsers: readonly string[]; allowedGroups: readonly string[] } | undefined;
     visibility?: Visibility | undefined;
     collection?: string | undefined;
+    /**
+     * Late Chunking blend factor (contract 2.5), sent as
+     * `x-late-chunking-alpha` so Search persists it on the revision and
+     * blends every chunk vector of this revision with the document vector.
+     */
+    lateChunkingAlpha?: number | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<Revision>;
 
@@ -282,6 +288,8 @@ export function createRevisionClient(
       if (args.visibility !== undefined)
         headers["x-visibility"] = args.visibility;
       if (args.sourceId !== undefined) headers["x-source-id"] = args.sourceId;
+      if (args.lateChunkingAlpha !== undefined)
+        headers["x-late-chunking-alpha"] = String(args.lateChunkingAlpha);
       if (args.acl !== undefined) {
         if (args.acl.allowedUsers.length > 0) {
           headers["x-allowed-users"] = encodeHeaderValue(

@@ -170,6 +170,34 @@ export function readAttributeHeaders(req: Request): Record<string, unknown> {
   };
 }
 
+/**
+ * The chunking options a `/v1/ingest` caller passes as headers, mapped onto
+ * the job config (contract 2.5):
+ *
+ *   X-Late-Chunking-Alpha     0–1, blend chunk vectors with the document vector
+ *   X-Subdocument-Max-Chunks  split budget for chapter sub-documents
+ */
+export function readChunkingHeaders(req: Request): Record<string, number> {
+  const out: Record<string, number> = {};
+  const alpha = readHeader(req, "x-late-chunking-alpha")?.trim();
+  if (alpha !== undefined && alpha !== "") {
+    const parsed = Number(alpha);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      throw validationError("X-Late-Chunking-Alpha must be a number between 0 and 1");
+    }
+    out.lateChunkingAlpha = parsed;
+  }
+  const maxChunks = readHeader(req, "x-subdocument-max-chunks")?.trim();
+  if (maxChunks !== undefined && maxChunks !== "") {
+    const parsed = Number(maxChunks);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw validationError("X-Subdocument-Max-Chunks must be a positive integer");
+    }
+    out.subdocumentMaxChunks = parsed;
+  }
+  return out;
+}
+
 const COLLECTION_NAME = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -222,6 +250,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       setAclAppliedHeader(res, acl);
       const identityInputs = readIdentityHeaders(req);
       const attributes = readAttributeHeaders(req);
+      const chunking = readChunkingHeaders(req);
 
       // ── 1. store the source in the content-addressed store ────────────────
       // Idempotent by sha256, so a re-uploaded document dedupes for free and a
@@ -267,6 +296,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
             : {}),
           ...identityInputs,
           ...attributes,
+          ...chunking,
         },
         pipeline_hash: snapshot.pipelineHash,
         prompt_hash: snapshot.promptHash,
