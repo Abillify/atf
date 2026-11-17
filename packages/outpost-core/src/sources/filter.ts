@@ -34,7 +34,23 @@ export function normalizeMatchPath(path: string): string {
  * `+(*.tmp|*.log)`) and wildcard-free ones (`+(v1)`) are not affected and
  * stay valid.
  */
-const REPEATED_EXTGLOB_WITH_WILDCARD = /[+*?]\((?![^)]*\|)[^)]*[*?][^)]*\)/;
+function hasRepeatedExtglobWithWildcard(pattern: string): boolean {
+  for (let i = 0; i + 1 < pattern.length; i++) {
+    if (pattern[i] !== "(" || !"+*?".includes(pattern[i - 1] as string)) continue;
+    let depth = 1;
+    let hasBranchAtTopLevel = false;
+    let hasWildcard = false;
+    for (let j = i + 1; j < pattern.length && depth > 0; j++) {
+      const c = pattern[j] as string;
+      if (c === "(") depth++;
+      else if (c === ")") depth--;
+      else if (depth === 1 && c === "|") hasBranchAtTopLevel = true;
+      else if (c === "*" || c === "?") hasWildcard = true;
+    }
+    if (depth === 0 && !hasBranchAtTopLevel && hasWildcard) return true;
+  }
+  return false;
+}
 
 /** Thrown when a configured glob pattern is rejected as a ReDoS vector. */
 export class UnsafeGlobPatternError extends Error {
@@ -53,7 +69,7 @@ export class UnsafeGlobPatternError extends Error {
 function compile(patterns: readonly string[] | undefined): ((path: string) => boolean) | undefined {
   if (patterns === undefined || patterns.length === 0) return undefined;
   for (const pattern of patterns) {
-    if (REPEATED_EXTGLOB_WITH_WILDCARD.test(pattern)) {
+    if (hasRepeatedExtglobWithWildcard(pattern)) {
       throw new UnsafeGlobPatternError(pattern);
     }
   }
