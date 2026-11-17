@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-17
+
 ### Added
 
 - **Extract / Search** (Document Intelligence v2, Late Chunking): a v2 job can
@@ -54,6 +56,14 @@ releases:
   rooted form and fail loudly on a collision rather than dropping a row;
   `vs_document_sources.requested_reference` keeps the producer's spelling for
   provenance.
+
+### Changed
+
+- **Dependencies**: all open Dependabot updates applied — the ai-sdk and
+  langchain groups, AWS SDK 3.1169.0, redis 6.3.1, express-rate-limit 8.7.4,
+  undici 8.12.4, hono 4.13.16, next 16.4.6, control dev tooling, the
+  `node:26.13.1-alpine` base images, `tauri-plugin-notification` 2.8.1, and
+  `Azure/setup-helm` v5.1.0 in the release workflow.
 
 ## [0.26.0] - 2026-11-12
 
@@ -1805,7 +1815,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/Abillify/atf/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Abillify/atf/compare/v0.25.6...v0.26.0
 [0.25.6]: https://github.com/Abillify/atf/compare/v0.25.5...v0.25.6
 [0.25.5]: https://github.com/Abillify/atf/compare/v0.25.4...v0.25.5
