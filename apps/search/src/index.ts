@@ -395,6 +395,7 @@ export function createApp(
     getRequestId: () => requestIdStorage.getStore(),
     inputTokenCost: config.embedInputTokenCost,
     outputTokenCost: config.embedOutputTokenCost,
+    maxClientBatchSize: config.embedMaxClientBatchSize,
   });
   const fallbackEmbeddingClient =
     config.embedFallbackModel &&
@@ -411,6 +412,7 @@ export function createApp(
           getRequestId: () => requestIdStorage.getStore(),
           inputTokenCost: config.embedFallbackInputTokenCost,
           outputTokenCost: config.embedFallbackOutputTokenCost,
+          maxClientBatchSize: config.embedMaxClientBatchSize,
         })
       : null;
   const embeddingClient = fallbackEmbeddingClient
