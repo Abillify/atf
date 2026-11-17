@@ -881,6 +881,12 @@ export function createApp(
     ...(summaryClient ? { summaryClient } : {}),
     contextualChunkLlm: config.contextualChunkLlm,
     ftsContextualHeader: config.ftsContextualHeader === "on",
+    // Late Chunking (extract contract 2.5): deployment-level fallback for v2
+    // revisions that carry no blend factor of their own (the writer's
+    // x-late-chunking-alpha or document.begin's lateChunkingAlpha always win).
+    ...(config.lateChunkingAlpha !== null
+      ? { lateChunkingAlpha: config.lateChunkingAlpha }
+      : {}),
     // A document may arrive for a collection that does not exist yet; create
     // it with the same defaults the v1 ingest paths use.
     ensureCollection: (collection, vectorSize) =>

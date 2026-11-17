@@ -183,6 +183,12 @@ export function createRevisionHandlers(
           (res.locals as { collectionAcl?: CollectionAcl }).collectionAcl,
           { users: readList(req, "x-allowed-users"), groups: readList(req, "x-allowed-groups") },
         );
+        // Late Chunking (extract contract 2.5): blend factor for this
+        // revision's chunk vectors. Malformed or out-of-range is ignored —
+        // the writer's config is the authority, and a bad header must never
+        // reject an otherwise valid revision.
+        const alphaRaw = readHeader(req, "x-late-chunking-alpha")?.trim();
+        const alpha = alphaRaw !== undefined && alphaRaw !== "" ? Number(alphaRaw) : NaN;
         const result = await store.createRevision({
           ...scope,
           reference,
@@ -190,6 +196,9 @@ export function createRevisionHandlers(
           ...(sourceId ? { sourceId } : {}),
           acl,
           visibility,
+          ...(Number.isFinite(alpha) && alpha >= 0 && alpha <= 1
+            ? { lateChunkingAlpha: alpha }
+            : {}),
           ttlMs: revisionTtlMs,
         });
         if (!result.ok) {
