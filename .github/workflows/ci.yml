@@ -817,7 +817,7 @@ jobs:
             > /tmp/retrieval-smoke.json
           cat /tmp/retrieval-smoke.json
           grep -q '07:00 to 19:00' /tmp/retrieval-smoke.json
-          grep -q '"document_id":"handbook.md"' /tmp/retrieval-smoke.json
+          grep -q '"document_id":"/handbook.md"' /tmp/retrieval-smoke.json
 
       # The tour is documentation that executes, so it is gated like documentation that does not:
       # it fails when the vault, the approval rule or the receipts stop working, rather than in
