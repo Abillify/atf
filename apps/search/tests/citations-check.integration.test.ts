@@ -124,71 +124,71 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
     }
 
     // current.pdf — the cited v2 unit lives in the CURRENT revision.
-    await revision("cur-rev1", "cites/current.pdf", "superseded");
-    await revision("cur-rev2", "cites/current.pdf", "committed");
+    await revision("cur-rev1", "/cites/current.pdf", "superseded");
+    await revision("cur-rev2", "/cites/current.pdf", "committed");
     await pool.query(
       `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'cur-rev2')`,
-      [TENANT, collection, "cites/current.pdf"],
+      [TENANT, collection, "/cites/current.pdf"],
     );
-    await seedRow({ baseRef: "cites/current.pdf", revision: "cur-rev1", content: "Fassung eins.", created: REV1, latest: false, unitId: "cur-u-old" });
-    await seedRow({ baseRef: "cites/current.pdf", revision: "cur-rev2", content: "Fassung zwei.", created: REV2, latest: true, unitId: "cur-u-new" });
+    await seedRow({ baseRef: "/cites/current.pdf", revision: "cur-rev1", content: "Fassung eins.", created: REV1, latest: false, unitId: "cur-u-old" });
+    await seedRow({ baseRef: "/cites/current.pdf", revision: "cur-rev2", content: "Fassung zwei.", created: REV2, latest: true, unitId: "cur-u-new" });
 
     // carried.pdf — the cited chunk is in the superseded revision, but its
     // exact content was carried over into the current revision verbatim.
     const carried = "Dieser Absatz wurde wortgleich übernommen.";
-    await revision("car-rev1", "cites/carried.pdf", "superseded");
-    await revision("car-rev2", "cites/carried.pdf", "committed");
+    await revision("car-rev1", "/cites/carried.pdf", "superseded");
+    await revision("car-rev2", "/cites/carried.pdf", "committed");
     await pool.query(
       `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'car-rev2')`,
-      [TENANT, collection, "cites/carried.pdf"],
+      [TENANT, collection, "/cites/carried.pdf"],
     );
-    await seedRow({ baseRef: "cites/carried.pdf", revision: "car-rev1", content: carried, created: REV1, latest: false, unitId: "car-u-old" });
-    await seedRow({ baseRef: "cites/carried.pdf", revision: "car-rev2", content: carried, created: REV2, latest: true, unitId: "car-u-new" });
-    await seedRow({ baseRef: "cites/carried.pdf", revision: "car-rev2", content: "Ein neuer Absatz.", created: REV2, latest: true, unitId: "car-u-extra" });
+    await seedRow({ baseRef: "/cites/carried.pdf", revision: "car-rev1", content: carried, created: REV1, latest: false, unitId: "car-u-old" });
+    await seedRow({ baseRef: "/cites/carried.pdf", revision: "car-rev2", content: carried, created: REV2, latest: true, unitId: "car-u-new" });
+    await seedRow({ baseRef: "/cites/carried.pdf", revision: "car-rev2", content: "Ein neuer Absatz.", created: REV2, latest: true, unitId: "car-u-extra" });
 
     // changed.pdf — the cited chunk is in the superseded revision and its
     // content is gone from the current revision.
-    await revision("chg-rev1", "cites/changed.pdf", "superseded");
-    await revision("chg-rev2", "cites/changed.pdf", "committed");
+    await revision("chg-rev1", "/cites/changed.pdf", "superseded");
+    await revision("chg-rev2", "/cites/changed.pdf", "committed");
     await pool.query(
       `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'chg-rev2')`,
-      [TENANT, collection, "cites/changed.pdf"],
+      [TENANT, collection, "/cites/changed.pdf"],
     );
-    await seedRow({ baseRef: "cites/changed.pdf", revision: "chg-rev1", content: "Alter Prüfschritt.", created: REV1, latest: false, unitId: "chg-u-old" });
-    await seedRow({ baseRef: "cites/changed.pdf", revision: "chg-rev2", content: "Neuer Prüfschritt.", created: REV2, latest: true, unitId: "chg-u-new" });
+    await seedRow({ baseRef: "/cites/changed.pdf", revision: "chg-rev1", content: "Alter Prüfschritt.", created: REV1, latest: false, unitId: "chg-u-old" });
+    await seedRow({ baseRef: "/cites/changed.pdf", revision: "chg-rev2", content: "Neuer Prüfschritt.", created: REV2, latest: true, unitId: "chg-u-new" });
 
     // gone.pdf — its only revision was aborted, so nothing is visible today.
-    await revision("gone-rev", "cites/gone.pdf", "aborted");
-    await seedRow({ baseRef: "cites/gone.pdf", revision: "gone-rev", content: "Nie committet.", created: REV1, latest: false, unitId: "gone-u" });
+    await revision("gone-rev", "/cites/gone.pdf", "aborted");
+    await seedRow({ baseRef: "/cites/gone.pdf", revision: "gone-rev", content: "Nie committet.", created: REV1, latest: false, unitId: "gone-u" });
 
     // legacy.pdf — a v1 row: identity in the chunk jsonb, no revision at all.
-    await seedRow({ baseRef: "cites/legacy.pdf", revision: null, content: "Legacy-Absatz.", created: REV1, latest: true, chunkId: "legacy-c1" });
+    await seedRow({ baseRef: "/cites/legacy.pdf", revision: null, content: "Legacy-Absatz.", created: REV1, latest: true, chunkId: "legacy-c1" });
 
     // private.pdf — visible to "owner" only; a foreign viewer sees nothing.
-    await revision("priv-rev", "cites/private.pdf", "committed");
+    await revision("priv-rev", "/cites/private.pdf", "committed");
     await pool.query(
       `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'priv-rev')`,
-      [TENANT, collection, "cites/private.pdf"],
+      [TENANT, collection, "/cites/private.pdf"],
     );
-    await seedRow({ baseRef: "cites/private.pdf", revision: "priv-rev", content: "Nur für den Besitzer.", created: REV2, latest: true, unitId: "priv-u", allowedUsers: ["owner"] });
+    await seedRow({ baseRef: "/cites/private.pdf", revision: "priv-rev", content: "Nur für den Besitzer.", created: REV2, latest: true, unitId: "priv-u", allowedUsers: ["owner"] });
 
     // big.pdf — the current revision has more units than the navigation unit
     // cap; the comparison runs in the database, so the last unit counts too.
-    await revision("big-rev1", "cites/big.pdf", "superseded");
-    await revision("big-rev2", "cites/big.pdf", "committed");
+    await revision("big-rev1", "/cites/big.pdf", "superseded");
+    await revision("big-rev2", "/cites/big.pdf", "committed");
     await pool.query(
       `INSERT INTO vs_document_revisions (tenant_id, collection, reference, current_revision_id) VALUES ($1,$2,$3,'big-rev2')`,
-      [TENANT, collection, "cites/big.pdf"],
+      [TENANT, collection, "/cites/big.pdf"],
     );
-    await seedRow({ baseRef: "cites/big.pdf", revision: "big-rev1", content: "Alter Absatz im grossen Dokument.", created: REV1, latest: false, unitId: "big-u-old" });
+    await seedRow({ baseRef: "/cites/big.pdf", revision: "big-rev1", content: "Alter Absatz im grossen Dokument.", created: REV1, latest: false, unitId: "big-u-old" });
     // Same text as the LAST current unit, with different whitespace.
-    await seedRow({ baseRef: "cites/big.pdf", revision: "big-rev1", content: `Absatz \n ${NAV_MAX_UNITS + 1}`, created: REV1, latest: false, unitId: "big-u-carried" });
+    await seedRow({ baseRef: "/cites/big.pdf", revision: "big-rev1", content: `Absatz \n ${NAV_MAX_UNITS + 1}`, created: REV1, latest: false, unitId: "big-u-carried" });
     await pool.query(
       `INSERT INTO "${table}"
         (tenant_id, reference, base_ref, is_latest, content, vector, metadata,
          unit_id, revision_id, document_id, created, ts_search, allowed_users, allowed_groups)
-       SELECT $1, 'cites/big.pdf#' || n, 'cites/big.pdf', true, 'Absatz ' || n, $2::vector,
-              '{"unit_type":"chunk"}'::jsonb, 'big-u-' || n, 'big-rev2', 'cites/big.pdf',
+       SELECT $1, '/cites/big.pdf#' || n, '/cites/big.pdf', true, 'Absatz ' || n, $2::vector,
+              '{"unit_type":"chunk"}'::jsonb, 'big-u-' || n, 'big-rev2', '/cites/big.pdf',
               $3::timestamptz, to_tsvector('simple', 'Absatz ' || n), '{}', '{}'
          FROM generate_series(1, $4::int) AS n`,
       [TENANT, JSON.stringify(zeroVector), REV2, NAV_MAX_UNITS + 1],
@@ -205,19 +205,19 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
 
   it("classifies current, carried, changed, removed and unknown in input order", async () => {
     const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
-      { base_ref: "cites/current.pdf", chunk_id: "cur-u-new" },
-      { base_ref: "cites/carried.pdf", chunk_id: "car-u-old" },
-      { base_ref: "cites/changed.pdf", chunk_id: "chg-u-old" },
-      { base_ref: "cites/gone.pdf", chunk_id: "gone-u" },
-      { base_ref: "cites/current.pdf", chunk_id: "no-such-chunk" },
+      { base_ref: "/cites/current.pdf", chunk_id: "cur-u-new" },
+      { base_ref: "/cites/carried.pdf", chunk_id: "car-u-old" },
+      { base_ref: "/cites/changed.pdf", chunk_id: "chg-u-old" },
+      { base_ref: "/cites/gone.pdf", chunk_id: "gone-u" },
+      { base_ref: "/cites/current.pdf", chunk_id: "no-such-chunk" },
     ], NOW);
     expect(payload.checked_at).toBe("2026-01-15T00:00:00.000Z");
     expect(payload.results.map((r) => [r.base_ref, r.chunk_id, r.status])).toEqual([
-      ["cites/current.pdf", "cur-u-new", "current"],
-      ["cites/carried.pdf", "car-u-old", "carried"],
-      ["cites/changed.pdf", "chg-u-old", "changed"],
-      ["cites/gone.pdf", "gone-u", "removed"],
-      ["cites/current.pdf", "no-such-chunk", "unknown"],
+      ["/cites/current.pdf", "cur-u-new", "current"],
+      ["/cites/carried.pdf", "car-u-old", "carried"],
+      ["/cites/changed.pdf", "chg-u-old", "changed"],
+      ["/cites/gone.pdf", "gone-u", "removed"],
+      ["/cites/current.pdf", "no-such-chunk", "unknown"],
     ]);
     expect(payload.results[0].current_revision).toBe("cur-rev2");
     expect(payload.results[3].current_revision).toBeUndefined();
@@ -225,7 +225,7 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
 
   it("resolves a v1 chunk_id from the chunk jsonb of an unversioned document", async () => {
     const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
-      { base_ref: "cites/legacy.pdf", chunk_id: "legacy-c1" },
+      { base_ref: "/cites/legacy.pdf", chunk_id: "legacy-c1" },
     ], NOW);
     expect(payload.results[0].status).toBe("current");
     expect(payload.results[0].current_revision).toBeUndefined();
@@ -233,23 +233,23 @@ describeIfPg("citations_check · cited chunks vs the current revision · real po
 
   it("reports unknown for a chunk the caller's ACL hides", async () => {
     const payload = await buildCitationsCheck(pg, collection, viewerScope(), [
-      { base_ref: "cites/private.pdf", chunk_id: "priv-u" },
+      { base_ref: "/cites/private.pdf", chunk_id: "priv-u" },
     ], NOW);
     expect(payload.results[0].status).toBe("unknown");
   });
 
   it("keeps a document's chunks distinguishable in one batch", async () => {
     const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
-      { base_ref: "cites/carried.pdf", chunk_id: "car-u-new" },
-      { base_ref: "cites/carried.pdf", chunk_id: "car-u-old" },
-      { base_ref: "cites/changed.pdf", chunk_id: "chg-u-new" },
+      { base_ref: "/cites/carried.pdf", chunk_id: "car-u-new" },
+      { base_ref: "/cites/carried.pdf", chunk_id: "car-u-old" },
+      { base_ref: "/cites/changed.pdf", chunk_id: "chg-u-new" },
     ], NOW);
     expect(payload.results.map((r) => r.status)).toEqual(["current", "carried", "current"]);
   });
   it("compares documents beyond the unit cap in the database, whitespace-insensitively", { timeout: 60_000 }, async () => {
     const payload = await buildCitationsCheck(pg, collection, serviceScope(), [
-      { base_ref: "cites/big.pdf", chunk_id: "big-u-old" },
-      { base_ref: "cites/big.pdf", chunk_id: "big-u-carried" },
+      { base_ref: "/cites/big.pdf", chunk_id: "big-u-old" },
+      { base_ref: "/cites/big.pdf", chunk_id: "big-u-carried" },
     ], NOW);
     expect(payload.results.map((r) => r.status)).toEqual(["changed", "carried"]);
   });

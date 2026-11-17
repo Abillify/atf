@@ -38,6 +38,7 @@ import { rowAclForRevision, type AccessScope } from "../access-scope.js";
 import type { CollectionAcl } from "../collection-access.js";
 import type { RevisionScope, RevisionStore } from "../revision-store.js";
 import { readHeader } from "../header-utils.js";
+import { normalizeReference } from "../postgres-client.js";
 
 export interface RevisionHandlerOptions {
   /** TTL for a freshly-staged / heartbeated revision, in milliseconds. */
@@ -72,8 +73,15 @@ function resolveScope(
     readHeader(req, "x-collection") ??
     "documents";
   const rawRef = (req.params as RevisionParams).ref;
-  const reference = typeof rawRef === "string" ? decodeURIComponent(rawRef) : "";
-  if (reference === "") {
+  // Canonicalize the route reference (NFC + leading slash) at the v2 ingress so
+  // every value derived from it — vs_revisions.reference, the batch reference
+  // that becomes base_ref / document_id / reference, the revision pointer, and
+  // the source/group rows — is stored in the same form reads look it up in
+  // (see normalizeReference). Without this, a producer that omits the leading
+  // slash indexes a document the folder browser cannot list.
+  const reference =
+    typeof rawRef === "string" ? normalizeReference(decodeURIComponent(rawRef)) : "";
+  if (reference === "" || reference === "/") {
     res.status(400).json({ error: "A document reference is required" });
     return null;
   }
@@ -175,6 +183,12 @@ export function createRevisionHandlers(
           (res.locals as { collectionAcl?: CollectionAcl }).collectionAcl,
           { users: readList(req, "x-allowed-users"), groups: readList(req, "x-allowed-groups") },
         );
+        // Late Chunking (extract contract 2.5): blend factor for this
+        // revision's chunk vectors. Malformed or out-of-range is ignored —
+        // the writer's config is the authority, and a bad header must never
+        // reject an otherwise valid revision.
+        const alphaRaw = readHeader(req, "x-late-chunking-alpha")?.trim();
+        const alpha = alphaRaw !== undefined && alphaRaw !== "" ? Number(alphaRaw) : NaN;
         const result = await store.createRevision({
           ...scope,
           reference,
@@ -182,6 +196,9 @@ export function createRevisionHandlers(
           ...(sourceId ? { sourceId } : {}),
           acl,
           visibility,
+          ...(Number.isFinite(alpha) && alpha >= 0 && alpha <= 1
+            ? { lateChunkingAlpha: alpha }
+            : {}),
           ttlMs: revisionTtlMs,
         });
         if (!result.ok) {

@@ -130,24 +130,24 @@ describeIfPg("POST /v1/erasure (integration)", () => {
     // Document identified through the allowed_users ACL.
     await pool.query(
       `INSERT INTO "${TABLE}" (tenant_id, reference, base_ref, content, vector, allowed_users)
-       VALUES ($1,'acl-doc','acl-doc','inhalt',$2::vector,ARRAY[$3])`,
+       VALUES ($1,'/acl-doc','/acl-doc','inhalt',$2::vector,ARRAY[$3])`,
       [TENANT, VECTOR_LITERAL, SUBJECT_ID],
     );
     // Document identified through the metadata field, with a child unit.
     await pool.query(
       `INSERT INTO "${TABLE}" (tenant_id, reference, base_ref, content, vector, metadata)
-       VALUES ($1,'meta-doc','meta-doc','inhalt',$2::vector,jsonb_build_object('subject',$3::text))`,
+       VALUES ($1,'/meta-doc','/meta-doc','inhalt',$2::vector,jsonb_build_object('subject',$3::text))`,
       [TENANT, VECTOR_LITERAL, SUBJECT_ID],
     );
     await pool.query(
       `INSERT INTO "${TABLE}" (tenant_id, reference, base_ref, content, vector, chunk)
-       VALUES ($1,'meta-doc/anhang','meta-doc/anhang','kind',$2::vector,jsonb_build_object('parent_ref','meta-doc'))`,
+       VALUES ($1,'/meta-doc/anhang','/meta-doc/anhang','kind',$2::vector,jsonb_build_object('parent_ref','/meta-doc'))`,
       [TENANT, VECTOR_LITERAL],
     );
     // Unrelated documents of the same tenant and of another tenant.
     await pool.query(
       `INSERT INTO "${TABLE}" (tenant_id, reference, base_ref, content, vector)
-       VALUES ($1,'other-doc','other-doc','fremd',$2::vector)`,
+       VALUES ($1,'/other-doc','/other-doc','fremd',$2::vector)`,
       [TENANT, VECTOR_LITERAL],
     );
     await pool.query(
@@ -191,7 +191,7 @@ describeIfPg("POST /v1/erasure (integration)", () => {
       `SELECT reference FROM "${TABLE}" WHERE tenant_id = $1 ORDER BY reference`,
       [TENANT],
     );
-    expect(remaining.rows.map((r) => r.reference)).toEqual(["other-doc"]);
+    expect(remaining.rows.map((r) => r.reference)).toEqual(["/other-doc"]);
     // The foreign tenant's subject rows survive untouched.
     const foreign = await pool.query(
       `SELECT COUNT(*)::int AS n FROM "${TABLE}" WHERE tenant_id = $1`,
@@ -210,7 +210,7 @@ describeIfPg("POST /v1/erasure (integration)", () => {
       requestId: crypto.randomUUID(),
       tenantId: TENANT,
       scope: "reference" as const,
-      references: ["other-doc"],
+      references: ["/other-doc"],
       dryRun: false,
     };
     const first = await call(body);
@@ -250,7 +250,7 @@ describeIfPg("POST /v1/erasure (integration)", () => {
   it("dryRun counts without deleting", async () => {
     await pool.query(
       `INSERT INTO "${TABLE}" (tenant_id, reference, base_ref, content, vector, metadata)
-       VALUES ($1,'dry-doc','dry-doc','inhalt',$2::vector,jsonb_build_object('subject',$3::text))`,
+       VALUES ($1,'/dry-doc','/dry-doc','inhalt',$2::vector,jsonb_build_object('subject',$3::text))`,
       [TENANT, VECTOR_LITERAL, SUBJECT_ID],
     );
     const res = await call({
@@ -266,7 +266,7 @@ describeIfPg("POST /v1/erasure (integration)", () => {
       body.results.find((r) => r.store === "search.documents")?.erased,
     ).toBe(1);
     const still = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM "${TABLE}" WHERE tenant_id = $1 AND reference = 'dry-doc'`,
+      `SELECT COUNT(*)::int AS n FROM "${TABLE}" WHERE tenant_id = $1 AND reference = '/dry-doc'`,
       [TENANT],
     );
     expect(still.rows[0]?.n).toBe(1);

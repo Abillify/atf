@@ -219,6 +219,22 @@ export const jobRequestSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   link: z.string().min(1).max(2000).optional(),
   sourceLabel: z.string().min(1).max(500).optional(),
+  /**
+   * Late Chunking (contract 2.5): blend every chunk vector with the
+   * document-level vector as `normalize(alpha·chunk + (1−alpha)·document)`.
+   * `0` keeps the pure chunk vector, `1` the pure document vector; typical
+   * values 0.1–0.5. Absent = off (the v1 header X-Late-Chunking-Alpha maps
+   * onto this).
+   */
+  lateChunkingAlpha: z.number().min(0).max(1).optional(),
+  /**
+   * Sub-document split (contract 2.5): when the document is estimated to
+   * exceed this many Search chunks, Extract splits it at chapter boundaries
+   * into sub-documents addressed as `<reference>/<chapter>` (each an
+   * independent document in Search, like a subfolder). Absent = never split.
+   * The v1 header X-Chapter-Split-Max-Chunks maps onto this.
+   */
+  subdocumentMaxChunks: z.int().min(1).optional(),
 });
 
 // --- Source identification (Search, dedup + version chains) -----------------

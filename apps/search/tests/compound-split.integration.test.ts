@@ -172,7 +172,7 @@ describeIfPg("compound split · real postgres", () => {
     for (let attempt = 0; attempt < 40 && !found; attempt++) {
       const res = await lexical(pgOn, collectionOn, "Revisionsarbeitsplatz");
       expect(res.ok, res.ok ? "" : JSON.stringify(res.error)).toBe(true);
-      if (res.ok) found = res.result.map((r) => r.reference).includes("target");
+      if (res.ok) found = res.result.map((r) => r.reference).includes("/target");
       if (!found) await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(found).toBe(true);

@@ -23,7 +23,7 @@
   "dependencies": {
     "@atf/canonical-json": "workspace:1.0.1",
     "@atf/erasure-contract": "workspace:1.0.1",
-    "@atf/extract-contract": "workspace:2.4.1",
+    "@atf/extract-contract": "workspace:2.5.0",
     "@atf/observability": "workspace:1.0.0",
     "@atf/security-kit": "workspace:1.4.0",
     "bmp-js": "0.1.0",
@@ -35,7 +35,7 @@
     "pg": "8.23.1",
     "pino": "10.4.0",
     "pino-http": "11.0.0",
-    "redis": "6.3.0",
+    "redis": "6.3.1",
     "sharp": "0.35.5",
     "zod": "4.6.7"
   },

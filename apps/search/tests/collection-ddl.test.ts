@@ -87,8 +87,8 @@ describe("collection DDL", () => {
     expect(queries.join("\n")).toContain("vc_legacy_temporal_version_idx");
   });
 
-  it("bumps the current schema version to 14 for the ts_ident identifier vector", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(14);
+  it("bumps the current schema version to 15 for the rooted reference migration", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(15);
   });
 
   it("adds the ts_ident FTS vector and its GIN index in the schema-14 migration", async () => {
@@ -114,8 +114,8 @@ describe("collection DDL", () => {
     expect(step).toBeDefined();
   });
 
-  it("targets the highest global migration step, so a database at 8 still records 9", () => {
-    expect(GLOBAL_SCHEMA_VERSION).toBe(9);
+  it("targets the highest global migration step, so a database at 9 still records 10", () => {
+    expect(GLOBAL_SCHEMA_VERSION).toBe(10);
     expect(Math.max(...GLOBAL_MIGRATIONS.map((s) => s.toVersion))).toBe(
       GLOBAL_SCHEMA_VERSION,
     );

@@ -519,6 +519,21 @@ export const documentBeginRecordSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   link: z.string().min(1).max(2000).optional(),
   sourceLabel: z.string().min(1).max(500).optional(),
+  /**
+   * Late Chunking (contract 2.5): the blend factor for the document-context
+   * vector. The consumer blends every chunk vector `v` with the document
+   * vector `d` as `normalize(alpha·v + (1−alpha)·d)`. Absent = late chunking
+   * off for this document. Valid range `[0, 1]`.
+   */
+  lateChunkingAlpha: z.number().min(0).max(1).optional(),
+  /**
+   * The document's full text (headings, paragraphs, lists, table headers),
+   * sent alongside {@link lateChunkingAlpha} so the consumer can embed the
+   * document-level vector once per revision. Producers cap its length; a
+   * consumer truncates to the embedding model's input limit. Only meaningful
+   * together with {@link lateChunkingAlpha}.
+   */
+  documentText: z.string().max(8_000_000).optional(),
 });
 
 export type DocumentBeginRecord = z.infer<typeof documentBeginRecordSchema>;

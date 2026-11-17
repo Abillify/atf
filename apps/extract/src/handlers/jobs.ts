@@ -175,6 +175,15 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
         ...(body.link !== undefined ? { link: body.link } : {}),
         ...(body.sourceLabel !== undefined ? { sourceLabel: body.sourceLabel } : {}),
+        // Chunking options (contract 2.5): the Late Chunking blend factor and
+        // the sub-document split budget. Read back by the emitter via
+        // `chunkingOptionsOf`.
+        ...(body.lateChunkingAlpha !== undefined
+          ? { lateChunkingAlpha: body.lateChunkingAlpha }
+          : {}),
+        ...(body.subdocumentMaxChunks !== undefined
+          ? { subdocumentMaxChunks: body.subdocumentMaxChunks }
+          : {}),
         // The document's readers, narrowed to the caller exactly like
         // /v1/ingest; the emitter opens the Search revision with it.
         acl: { allowedUsers: acl.allowedUsers, allowedGroups: acl.allowedGroups },

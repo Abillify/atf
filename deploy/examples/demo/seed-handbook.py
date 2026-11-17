@@ -26,8 +26,9 @@ HANDBOOK = "/handbook/handbook.md"
 # The collection flow 03 (`flows/03-grounded-retrieval.yaml`) reads from.
 COLLECTION = "handbook"
 # Stable document identity: the seed replaces its own document on every run
-# rather than appending one.
-REFERENCE = "handbook.md"
+# rather than appending one. Search stores references rooted, so the canonical
+# form of this reference is `/handbook.md`.
+REFERENCE = "/handbook.md"
 TITLE = "Northwind Cartography - Field Service Handbook"
 
 

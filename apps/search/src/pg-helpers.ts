@@ -360,18 +360,31 @@ export function escapeLikeLiteral(s: string): string {
 }
 
 /**
- * Canonicalize a reference/path to Unicode NFC (composed) form.
+ * Canonicalize a document reference to its stored key form: Unicode NFC
+ * (composed) and rooted with a single leading slash.
  *
- * Document keys ingested from a macOS filesystem arrive NFD-decomposed (e.g.
- * "ä" as "a" + U+0308), while callers — especially LLMs copying a path out of
- * injected text — emit the visually identical precomposed NFC form (U+00E4). A
- * byte-exact `reference =`/`base_ref LIKE` comparison then misses. Normalizing
- * both the stored keys (ingest + one-time migration) and the incoming
- * reference/prefix args to NFC makes the comparison deterministic. NFC is
- * idempotent and meaning-preserving, so this is a no-op for ASCII paths.
+ * NFC: document keys ingested from a macOS filesystem arrive NFD-decomposed
+ * (e.g. "ä" as "a" + U+0308), while callers — especially LLMs copying a path
+ * out of injected text — emit the visually identical precomposed NFC form
+ * (U+00E4). A byte-exact `reference =`/`base_ref LIKE` comparison then misses.
+ *
+ * Leading slash: references are absolute-style paths, and the folder browser
+ * lists a folder's direct children with `base_ref LIKE prefix || '/%'` (root
+ * prefix ""), so a stored key without a leading slash is invisible to the root
+ * listing while `/folders` still counts it. Producers are inconsistent here —
+ * the v1 API and some clients send `docs/a.pdf`, others `/docs/a.pdf` — so the
+ * canonical stored form is rooted, and every read argument is canonicalized the
+ * same way. `"/"` alone is the root and stays `"/"`.
+ *
+ * Both transforms are idempotent and meaning-preserving, so this is a no-op for
+ * an already-rooted ASCII path. Ingest applies it on write and reads apply it
+ * to their args; a one-time migration (collection v15 / global v10) rewrites
+ * rows written before this canonicalization.
  */
 export function normalizeReference(reference: string): string {
-  return reference.normalize("NFC");
+  const nfc = reference.normalize("NFC");
+  if (nfc === "" || nfc.startsWith("/")) return nfc;
+  return "/" + nfc;
 }
 
 /**

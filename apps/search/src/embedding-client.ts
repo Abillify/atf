@@ -40,6 +40,15 @@ export interface EmbeddingClientConfig {
   apiKey?: string | null;
   inputTokenCost?: number;
   outputTokenCost?: number;
+  /**
+   * Maximum number of inputs sent in a single HTTP request. When set to a
+   * positive value, {@link EmbeddingClient.embedBatch} splits larger requests
+   * into sequential chunks of at most this size and concatenates the returned
+   * vectors (order preserved). Some embedding servers rate-limit (HTTP 429)
+   * requests above a per-request input cap; chunking keeps every request under
+   * that cap. 0 or undefined disables client-side chunking (single request).
+   */
+  maxClientBatchSize?: number;
 }
 
 export interface EmbeddingResult {
@@ -282,6 +291,7 @@ export function createEmbeddingClient(
     apiKey,
     inputTokenCost = 0,
     outputTokenCost = 0,
+    maxClientBatchSize = 0,
   } = config;
   // embedUrl is used as-is — no path suffix is appended automatically.
   const url = embedUrl;
@@ -609,13 +619,43 @@ export function createEmbeddingClient(
 
     async embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingBatchResponse> {
       if (texts.length === 0) return { ok: true, result: { vectors: [] } };
-      return retryWithBackoff(
-        () => callEmbeddings(texts, signal),
-        (result) => !signal?.aborted && isRetryable(result),
-        3,
-        100,
-        signal ? undefined : circuitBreaker,
-      );
+      // Send one request per chunk. When a per-request input cap is configured
+      // and exceeded, split into sequential chunks so each request stays under
+      // the cap (servers commonly answer oversized requests with HTTP 429).
+      const send = (chunk: string[]): Promise<EmbeddingBatchResponse> =>
+        retryWithBackoff(
+          () => callEmbeddings(chunk, signal),
+          (result) => !signal?.aborted && isRetryable(result),
+          3,
+          100,
+          signal ? undefined : circuitBreaker,
+        );
+      const chunkSize = maxClientBatchSize > 0 ? maxClientBatchSize : texts.length;
+      if (texts.length <= chunkSize) return send(texts);
+
+      const vectors: number[][] = [];
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let cost = 0;
+      let sawUsage = false;
+      for (let start = 0; start < texts.length; start += chunkSize) {
+        const res = await send(texts.slice(start, start + chunkSize));
+        if (!res.ok) return res;
+        vectors.push(...res.result.vectors);
+        if (res.result.usage) {
+          sawUsage = true;
+          inputTokens += res.result.usage.inputTokens;
+          outputTokens += res.result.usage.outputTokens;
+          cost += res.result.usage.cost;
+        }
+      }
+      return {
+        ok: true,
+        result: {
+          vectors,
+          ...(sawUsage ? { usage: { inputTokens, outputTokens, cost } } : {}),
+        },
+      };
     },
   };
 }

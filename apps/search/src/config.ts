@@ -736,6 +736,13 @@ export interface Config {
   // ─── Token cost configuration (price per million tokens) ───────────────────
   embedInputTokenCost: number;
   embedOutputTokenCost: number;
+  /**
+   * Maximum inputs per embedding HTTP request (ATF_EMBED_MAX_CLIENT_BATCH_SIZE,
+   * default 0 = no client-side chunking). Embedding servers commonly answer
+   * oversized requests with HTTP 429; a positive value splits large batches
+   * into sequential chunks so each request stays under the server's cap.
+   */
+  embedMaxClientBatchSize: number;
   embedFallbackInputTokenCost: number;
   embedFallbackOutputTokenCost: number;
   sparseInputTokenCost: number;
@@ -1793,6 +1800,10 @@ export function loadConfig(): Config {
   const embedInputTokenCost =
     parseFloatEnv("EMBED_INPUT_TOKEN_COST", 0.02) ?? 0.02;
   const embedOutputTokenCost = parseFloatEnv("EMBED_OUTPUT_TOKEN_COST", 0) ?? 0;
+  const embedMaxClientBatchSize = parseNonNegIntEnv(
+    "ATF_EMBED_MAX_CLIENT_BATCH_SIZE",
+    0,
+  );
   const embedFallbackInputTokenCost =
     parseFloatEnv("EMBED_FALLBACK_INPUT_TOKEN_COST", 0) ?? 0;
   const embedFallbackOutputTokenCost =
@@ -1976,6 +1987,7 @@ export function loadConfig(): Config {
     mcpServiceVersion,
     embedInputTokenCost,
     embedOutputTokenCost,
+    embedMaxClientBatchSize,
     embedFallbackInputTokenCost,
     embedFallbackOutputTokenCost,
     sparseInputTokenCost,

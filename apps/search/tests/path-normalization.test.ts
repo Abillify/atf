@@ -32,6 +32,30 @@ describe("normalizeReference (NFC canonicalization)", () => {
     const ref = "/ExampleRecords/Records Part 1/doc.pdf";
     expect(normalizeReference(ref)).toBe(ref);
   });
+
+  it("roots a reference that lacks the leading slash", () => {
+    // Producers are inconsistent: some send "docs/a.pdf", others "/docs/a.pdf".
+    // The stored key is always rooted so the folder browser's direct-child
+    // listing (base_ref LIKE '/%') finds it.
+    expect(normalizeReference("docs/a.pdf")).toBe("/docs/a.pdf");
+    expect(normalizeReference("a.pdf")).toBe("/a.pdf");
+    // Rooted and unrooted spellings of one document collapse to one key.
+    expect(normalizeReference("docs/a.pdf")).toBe(normalizeReference("/docs/a.pdf"));
+  });
+
+  it("roots and NFC-composes in one step", () => {
+    expect(normalizeReference(`a/${NFD_UMLAUT}/x.pdf`)).toBe(`/a/${NFC_UMLAUT}/x.pdf`);
+  });
+
+  it("is idempotent for unrooted input", () => {
+    const once = normalizeReference("docs/a.pdf");
+    expect(normalizeReference(once)).toBe(once);
+  });
+
+  it("keeps the root marker and the empty string unchanged", () => {
+    expect(normalizeReference("/")).toBe("/");
+    expect(normalizeReference("")).toBe("");
+  });
 });
 
 describe("normalizePathPrefix (NFC + shape)", () => {

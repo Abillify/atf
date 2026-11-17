@@ -76,6 +76,7 @@ import {
   shouldReembed,
   type StoredUnitFacts,
 } from "./reembed-decision.js";
+import { blendVectors } from "./vector-utils.js";
 import {
   applyContextualHeaders,
   DEFAULT_CONTEXT_HEADER_MAX_FRACTION,
@@ -190,6 +191,14 @@ export interface BatchWorkerOptions {
   /** pgvector column type for the vector cast: "vector" or "halfvec". Default: "vector". */
   vecType?: "vector" | "halfvec";
   /**
+   * Deployment-level Late Chunking default (extract contract 2.5, the
+   * `LATE_CHUNKING_ALPHA` setting). A revision's own `late_chunking_alpha`
+   * (set by the writer via `x-late-chunking-alpha`) or the blend factor on
+   * its `document.begin` record always wins; this is the fallback for a
+   * revision that carries neither. Undefined = off.
+   */
+  lateChunkingAlpha?: number | undefined;
+  /**
    * Create a collection that does not exist yet, with the embedding's vector
    * size and the same defaults the v1 ingest paths use
    * (`PostgresClient.ensureCollection`). The revision API accepts a document
@@ -229,6 +238,11 @@ interface ClaimedBatchRow {
   payload: Buffer | null;
   page_start: number | null;
   page_end: number | null;
+  /**
+   * Late Chunking blend factor the revision was created with
+   * (`x-late-chunking-alpha`), null when the writer set none.
+   */
+  late_chunking_alpha: number | null;
   /** Token of THIS worker's claim; every later write is fenced on it. */
   lease_token: string;
 }
@@ -308,6 +322,7 @@ export function createBatchWorker(
     batch: ClaimedBatchRow,
     units: IndexUnit[],
     tableExists = true,
+    blend?: { alpha: number; documentVector: number[] },
   ): Promise<number[][]> {
     // A collection that does not exist yet has no stored vectors to reuse.
     const stored = tableExists
@@ -349,7 +364,14 @@ export function createBatchWorker(
     for (let j = 0; j < toEmbedIndex.length; j++) {
       const idx = toEmbedIndex[j];
       const vec = freshVectors[j];
-      if (idx !== undefined && vec) reused[idx] = vec;
+      if (idx === undefined || !vec) continue;
+      // Late Chunking: blend ONLY the freshly embedded vectors. A reused
+      // vector was blended when it was written, so blending it again would
+      // drift the document context in with every reprocessing.
+      reused[idx] =
+        blend !== undefined && vec.length === blend.documentVector.length
+          ? blendVectors(vec, blend.documentVector, blend.alpha)
+          : vec;
     }
 
     // Every slot is now filled: a reused vector, or a freshly embedded one. A
@@ -359,6 +381,54 @@ export function createBatchWorker(
       if (v) return v;
       throw new EmbeddingFailure(`no vector resolved for unit ${units[i]?.unitId ?? i}`);
     });
+  }
+
+  /**
+   * Late Chunking (extract contract 2.5): the revision's document-level vector.
+   *
+   * The batch carrying `document.begin` (always the first) supplies the full
+   * document text; it is embedded once and persisted on the revision
+   * (`vs_revisions.document_vector`) so every later batch of the revision blends
+   * without a second embed call. A revision whose document vector was already
+   * stored reuses it — inside the processing transaction, so a rolled-back batch
+   * rolls back its vector write too and a retry re-embeds cleanly. Undefined when
+   * neither is available (a revision without documentText, or one predating the
+   * column): the caller then embeds without blending.
+   */
+  async function resolveDocumentVector(
+    client: PoolClient,
+    batch: ClaimedBatchRow,
+    beginDocumentText: string | undefined,
+  ): Promise<number[] | undefined> {
+    const res = await client.query<{ document_vector: string | null }>(
+      `SELECT document_vector FROM vs_revisions
+        WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
+      [batch.tenant_id, batch.collection, batch.revision_id],
+    );
+    const stored = res.rows[0]?.document_vector;
+    if (stored !== null && stored !== undefined) {
+      const parsed = parseStoredVector(stored);
+      if (parsed) return parsed;
+      logger?.warn(
+        { revisionId: batch.revision_id },
+        "revision document_vector is unreadable; re-embedding from document.begin when available",
+      );
+    }
+    if (beginDocumentText === undefined) return undefined;
+    const embedded = await embeddingClient.embedBatch([beginDocumentText]);
+    if (!embedded.ok) {
+      throw new EmbeddingFailure(`${embedded.error.code}: ${embedded.error.message}`);
+    }
+    const vector = embedded.result.vectors[0];
+    if (!vector) {
+      throw new EmbeddingFailure("embedding provider returned no vector for the document text");
+    }
+    await client.query(
+      `UPDATE vs_revisions SET document_vector = $4, modified = NOW()
+        WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
+      [batch.tenant_id, batch.collection, batch.revision_id, JSON.stringify(vector)],
+    );
+    return vector;
   }
 
   async function processClaimed(
@@ -373,6 +443,8 @@ export function createBatchWorker(
     let documentEnd: DocumentEndRecord | undefined;
     let documentTitle: string | undefined;
     let provenance: ExtractProvenance | undefined;
+    let beginDocumentText: string | undefined;
+    let beginAlpha: number | undefined;
     try {
       const records = decodeRecords((batch.payload ?? Buffer.alloc(0)).toString("utf-8"));
       pages = records.filter(isPage);
@@ -389,6 +461,14 @@ export function createBatchWorker(
       // Extract provenance (Requirement 18.2): taken from this batch's
       // document.begin when present, else from the revision row below.
       if (begin) provenance = extractProvenanceOf(begin);
+      // Late Chunking (contract 2.5): the full document text rides on the
+      // batch carrying document.begin — the FIRST batch, claimed before the
+      // rest — so embedding it here makes the document vector available for
+      // every batch of the revision.
+      if (begin?.documentText !== undefined && begin.documentText !== "") {
+        beginDocumentText = begin.documentText;
+      }
+      if (begin?.lateChunkingAlpha !== undefined) beginAlpha = begin.lateChunkingAlpha;
     } catch (cause) {
       logger?.warn(
         { revisionId: batch.revision_id, seq: batch.seq, cause: String(cause) },
@@ -458,9 +538,36 @@ export function createBatchWorker(
     // one whose path or content changed, is embedded. A failure here throws and
     // the caller rolls back + defers, so no unit is ever committed for a failed
     // batch.
+    // Late Chunking (extract contract 2.5): the blend factor for this
+    // revision. The revision column (writer's x-late-chunking-alpha) wins,
+    // then the document.begin record, then the deployment default. `alpha` is
+    // the CHUNK's weight: `normalize(alpha·chunk + (1−alpha)·document)`, so
+    // alpha = 1 is the pure chunk vector and needs no blending.
+    const alpha =
+      batch.late_chunking_alpha ?? beginAlpha ?? options.lateChunkingAlpha ?? undefined;
+    let documentVector: number[] | undefined;
+    if (alpha !== undefined && alpha < 1) {
+      documentVector = await resolveDocumentVector(client, batch, beginDocumentText);
+      if (documentVector === undefined && beginDocumentText === undefined) {
+        logger?.debug(
+          { revisionId: batch.revision_id, seq: batch.seq },
+          "late chunking requested but no document vector is available yet; units embed without blending",
+        );
+      }
+    }
+
     const tableExists =
       (await client.query<{ t: string | null }>(`SELECT to_regclass($1) AS t`, [`"${table}"`])).rows[0]?.t != null;
-    const vectors = await resolveVectors(client, table, batch, units, tableExists);
+    const vectors = await resolveVectors(
+      client,
+      table,
+      batch,
+      units,
+      tableExists,
+      alpha !== undefined && alpha < 1 && documentVector !== undefined
+        ? { alpha, documentVector }
+        : undefined,
+    );
     if (!tableExists) {
       // First batch for a new collection: create it now that the vector size
       // is known, before anything is written into it.
@@ -574,7 +681,7 @@ export function createBatchWorker(
     try {
       const claim = await client.query<Omit<ClaimedBatchRow, "lease_token">>(
         `SELECT b.tenant_id, b.collection, b.revision_id, b.seq, r.reference,
-                b.payload, b.page_start, b.page_end
+                b.payload, b.page_start, b.page_end, r.late_chunking_alpha
            FROM ${BATCHES} b
            JOIN vs_revisions r
              ON r.tenant_id = b.tenant_id

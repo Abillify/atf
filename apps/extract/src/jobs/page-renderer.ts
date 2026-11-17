@@ -146,7 +146,7 @@ const defaultPdfOps: PdfOps = {
 };
 
 /** The plain text of a native page record (headings, paragraphs, list items, cells). */
-function pageRecordText(record: PageRecord): string {
+export function pageRecordText(record: PageRecord): string {
   const parts: string[] = [];
   for (const block of record.blocks) {
     if (block.type === "list") parts.push(block.items.join("\n"));

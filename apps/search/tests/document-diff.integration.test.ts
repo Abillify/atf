@@ -39,7 +39,7 @@ function serviceScope(): AccessScope {
   };
 }
 
-const BASE_REF = "richtlinie/Richtlinie-2.pdf";
+const BASE_REF = "/richtlinie/Richtlinie-2.pdf";
 
 // A long reworded unit exercises the 300-char head excerpt on both sides.
 const LONG_FILLER = "Vorwort und Begriffe. ".repeat(30);

@@ -94,8 +94,17 @@ import type { LeaseGuard } from "./lease.js";
 import type { RevisionClient, AssetBody } from "../revision-client.js";
 import { RevisionPermanentError } from "../revision-client.js";
 import { mapOrdered } from "../queue.js";
-import { documentAttributesOf, emailOf, identityOf, ingestOptionsOf, jobAcl } from "./identity.js";
+import {
+  chunkingOptionsOf,
+  documentAttributesOf,
+  emailOf,
+  identityOf,
+  ingestOptionsOf,
+  jobAcl,
+} from "./identity.js";
 import { firstPageOf, lastPageOf } from "./page-window.js";
+import { pageRecordText } from "./page-renderer.js";
+import { planSubdocSplit, subdocSplitPlanOf, SUBDOC_SPLIT_KEY } from "./subdoc-split.js";
 
 /** Tunables for the emitter, from `config.emitter` plus pipeline identity. */
 
@@ -221,15 +230,52 @@ interface Batch {
 interface EmitPlan {
   /** Pages per batch for this job (frozen). */
   n: number;
+  /** The reference this stream indexes — the job's own, or a sub-document's. */
+  reference: string;
   /** First and last page of the stream, in source page numbers. */
   firstPage: number;
   lastPage: number;
   /** Per-run progress: segments already committed, and segments tried in this pass. */
   committedSegments: Set<number>;
+  /**
+   * Late Chunking (contract 2.5): the document's full plain text, assembled
+   * windowed from the staged page records before the first send. Present only
+   * when the job requests late chunking; goes on `document.begin` so Search
+   * can embed the document-level vector once per revision.
+   */
+  documentText?: string;
+  /** True when this stream is one sub-document of a split parent document. */
+  subdocument?: boolean;
+  /**
+   * Assets whose page could not be resolved are uploaded by the LAST stream
+   * only, so exactly one revision ends up holding them.
+   */
+  includeUnknownAssets?: boolean;
+}
+
+/**
+ * One revision stream of an emit run: a reference (the job's own document, or
+ * one sub-document of a split) with the page range it indexes and the
+ * Idempotency-Key that opens its revision.
+ */
+interface EmitStream {
+  reference: string;
+  firstPage: number;
+  lastPage: number;
+  idempotencyKey: string;
+  subdocument?: boolean;
+  includeUnknownAssets?: boolean;
 }
 
 /** Job-config key under which the batch size is frozen. */
 const BATCH_PAGES_KEY = "emitBatchPages";
+
+/**
+ * Upper bound on the assembled document text (characters). A generous cap —
+ * the batch body limit is far above it — so one oversized document can never
+ * bloat the first batch past what Search accepts.
+ */
+const DOCUMENT_TEXT_MAX_CHARS = 4_000_000;
 
 /** Raised by `sendBatch` when Search answers 409 for a batch PUT. */
 class BatchConflictError extends Error {
@@ -267,18 +313,79 @@ export function createEmitter(deps: EmitterDeps): Emitter {
   }
 
   async function emit(job: JobRow, lease: LeaseGuard, assets: AssetLoader): Promise<EmitOutcome> {
-    const reference = job.reference;
-    const collection = job.collection ?? undefined;
-    const fence = lease.fence;
     const n = await batchPagesOf(job, lease);
+    const jobConfig = job.config as Record<string, unknown>;
+    const firstPage = firstPageOf(jobConfig);
+    const lastPage =
+      lastPageOf(jobConfig, job.page_count) ?? maxPage(await store.listEmitBatchMeta(job.id));
+    const base = { n, firstPage, lastPage };
+    const assetPages = await indexAssetPages(job.id, {
+      ...base,
+      reference: job.reference,
+      committedSegments: new Set<number>(),
+    });
+    // Contract 2.5: the sub-document split plan (frozen on the job config),
+    // or a single stream over the whole page range when no split applies.
+    const streams = await planStreams(job, lease, base);
+    const lateChunking = chunkingOptionsOf(jobConfig).lateChunkingAlpha !== undefined;
+
+    let firstRevisionId = "";
+    for (const [i, stream] of streams.entries()) {
+      const plan: EmitPlan = {
+        ...base,
+        reference: stream.reference,
+        firstPage: stream.firstPage,
+        lastPage: stream.lastPage,
+        committedSegments: new Set<number>(),
+        ...(streams.length > 1 ? { subdocument: true } : {}),
+        includeUnknownAssets: stream.includeUnknownAssets === true,
+      };
+      // Late Chunking (contract 2.5): assemble the (sub-)document text before
+      // the first batch is sent — document.begin rides on that batch.
+      // Windowed like indexAssetPages, so memory stays flat for a 10 000-page job.
+      if (lateChunking) {
+        plan.documentText = await collectDocumentText(job.id, plan);
+      }
+      const outcome = await emitStream(job, stream, plan, assetPages, lease, assets);
+      if (outcome.status !== "committed") return outcome;
+      if (i === 0) {
+        firstRevisionId = outcome.revisionId;
+        if (job.revision_id !== outcome.revisionId) {
+          await store.setJobRevision(job.id, outcome.revisionId, lease.fence);
+        }
+      } else {
+        logger.info(
+          { jobId: job.id, reference: stream.reference, revisionId: outcome.revisionId },
+          "Sub-document revision committed",
+        );
+      }
+    }
+    return { status: "committed", revisionId: firstRevisionId };
+  }
+
+  /**
+   * Open (or idempotently re-open) the stream's revision and run one
+   * reconcile → send → commit cycle against it.
+   */
+  async function emitStream(
+    job: JobRow,
+    stream: EmitStream,
+    plan: EmitPlan,
+    assetPages: Map<string, number>,
+    lease: LeaseGuard,
+    assets: AssetLoader,
+  ): Promise<EmitOutcome> {
+    const reference = stream.reference;
+    const collection = job.collection ?? undefined;
     // ── 1. open (or idempotently re-open) the revision ────────────────────
     let revisionId: string;
     try {
       const identity = identityOf(job.config as Record<string, unknown>);
       const acl = jobAcl(job);
+      const chunking = chunkingOptionsOf(job.config as Record<string, unknown>);
       const revision = await revisions.createRevision({
         reference,
-        idempotencyKey: revisionIdempotencyKey(job),
+        idempotencyKey: stream.idempotencyKey,
         // The source claim Search registered for this job: the final switch
         // marks it indexed. Absent when the source was never identified.
         ...(identity?.registered === true ? { sourceId: job.id } : {}),
@@ -286,25 +393,17 @@ export function createEmitter(deps: EmitterDeps): Emitter {
         ...(acl !== undefined ? { acl } : {}),
         visibility: job.visibility,
         collection,
+        // Late Chunking (contract 2.5): Search persists this on the revision
+        // and blends every chunk vector of the revision with the document
+        // vector carried on document.begin.
+        ...(chunking.lateChunkingAlpha !== undefined
+          ? { lateChunkingAlpha: chunking.lateChunkingAlpha }
+          : {}),
       });
       revisionId = revision.revisionId;
     } catch (err) {
       return transientOrThrow(err, null);
     }
-    if (job.revision_id !== revisionId) {
-      await store.setJobRevision(job.id, revisionId, fence);
-    }
-
-    const jobConfig = job.config as Record<string, unknown>;
-    const firstPage = firstPageOf(jobConfig);
-    const plan: EmitPlan = {
-      n,
-      firstPage,
-      lastPage: lastPageOf(jobConfig, job.page_count) ?? maxPage(await store.listEmitBatchMeta(job.id)),
-      committedSegments: new Set<number>(),
-    };
-    const assetPages = await indexAssetPages(job.id, plan);
-    const pageCount = plan.lastPage;
 
     try {
       // ── 2. reconcile, 3. send (+ segment commits), 4. upload, 4b. document.end ─
@@ -330,7 +429,10 @@ export function createEmitter(deps: EmitterDeps): Emitter {
         );
         await syncOnce(job, revisionId, collection, assetPages, plan, lease, assets);
       }
-      logger.info({ jobId: job.id, revisionId, firstPage, pageCount }, "Revision committed");
+      logger.info(
+        { jobId: job.id, revisionId, reference, firstPage: plan.firstPage, pageCount: plan.lastPage },
+        "Revision committed",
+      );
       return { status: "committed", revisionId };
     } catch (err) {
       if (err instanceof BatchConflictError) {
@@ -339,6 +441,72 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       }
       return transientOrThrow(err, revisionId);
     }
+  }
+
+  /**
+   * The revision streams of this emit: one over the whole page range, or one
+   * per sub-document when the split is active. The plan is derived from the
+   * finished docpass outline and the per-page text sizes and FROZEN into the
+   * job config before the first revision opens (same contract as
+   * `emitBatchPages`): a resume or a new emit generation re-derives exactly
+   * the same sub-documents, and a changed `subdocumentMaxChunks` never
+   * re-maps an in-flight job.
+   */
+  async function planStreams(
+    job: JobRow,
+    lease: LeaseGuard,
+    base: { n: number; firstPage: number; lastPage: number },
+  ): Promise<EmitStream[]> {
+    const cfg = job.config as Record<string, unknown>;
+    const maxChunks = chunkingOptionsOf(cfg).subdocumentMaxChunks;
+    let plan = subdocSplitPlanOf(cfg);
+    if (maxChunks === undefined) {
+      // Budget removed after a freeze (e.g. config edit): honour the whole
+      // document rather than a split nobody asked for anymore.
+      return [wholeDocumentStream(job, base)];
+    }
+    if (plan === null || plan.maxChunks !== maxChunks) {
+      const outline = await documentOutline(job, base.lastPage);
+      const charsPerPage = await charsPerPageMap(job.id, base);
+      plan = planSubdocSplit({
+        outline,
+        firstPage: base.firstPage,
+        lastPage: base.lastPage,
+        maxChunks,
+        charsPerPage,
+      });
+      if (plan !== null) {
+        await store.patchJobConfig(job.id, { [SUBDOC_SPLIT_KEY]: plan }, lease.fence);
+        logger.info(
+          { jobId: job.id, subdocuments: plan.subdocuments.length, maxChunks },
+          "Sub-document split planned",
+        );
+      }
+    }
+    if (plan === null) return [wholeDocumentStream(job, base)];
+    const keyBase = revisionIdempotencyKey(job);
+    return plan.subdocuments.map((sub, idx) => ({
+      reference: `${job.reference}/${sub.suffix}`,
+      firstPage: sub.firstPage,
+      lastPage: sub.lastPage,
+      idempotencyKey: `${keyBase}:s${idx}`,
+      subdocument: true,
+      // Assets whose page could not be resolved go to the last stream, so
+      // exactly one revision holds them.
+      includeUnknownAssets: idx === plan.subdocuments.length - 1,
+    }));
+  }
+
+  function wholeDocumentStream(
+    job: JobRow,
+    base: { n: number; firstPage: number; lastPage: number },
+  ): EmitStream {
+    return {
+      reference: job.reference,
+      firstPage: base.firstPage,
+      lastPage: base.lastPage,
+      idempotencyKey: revisionIdempotencyKey(job),
+    };
   }
 
   /** One reconcile → send → upload → document.end pass. */
@@ -353,7 +521,11 @@ export function createEmitter(deps: EmitterDeps): Emitter {
   ): Promise<void> {
     await reconcile(job, revisionId, collection, assetPages, plan, lease);
     // Re-read the (now reconciled) metadata so the send phase sees fresh statuses.
-    const meta = await store.listEmitBatchMeta(job.id);
+    // A split emit sends only this stream's pages; every page belongs to
+    // exactly one stream, so the shared outbox statuses stay consistent.
+    const meta = (await store.listEmitBatchMeta(job.id)).filter(
+      (r) => r.page_from >= plan.firstPage && r.page_from <= plan.lastPage,
+    );
     let pending = meta.filter((r) => r.status !== "acked").length;
     setBacklog(pending);
     const batches = groupIntoBatches(meta, plan.n);
@@ -369,7 +541,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       // pages are searchable while later batches are still being sent.
       await commitReadySegments(job, revisionId, collection, plan, batch.pageTo, tried, assetPages, lease, assets);
     }
-    await uploadAssets(job, revisionId, collection, lease, assets);
+    await uploadAssets(job, revisionId, collection, lease, assets, plan, assetPages);
     // The document.end record (outline, identifiers, refs, the summary
     // hierarchy) is streamed as a dedicated trailing batch just past the page
     // batches. Idempotent on its Content-Digest, so a resend is a no-op.
@@ -391,12 +563,15 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     lease: LeaseGuard,
   ): Promise<void> {
     const fence = lease.fence;
-    const state = await revisions.getState({ reference: job.reference, revisionId, collection });
+    const state = await revisions.getState({ reference: plan.reference, revisionId, collection });
     for (const segment of state.committedSegments) plan.committedSegments.add(segment);
 
     const acceptedBatches = new Set(state.acceptedBatches);
     const pageAccepted = (page: number): boolean => acceptedBatches.has(Math.floor((page - 1) / plan.n));
     for (const row of await store.listEmitBatchMeta(job.id)) {
+      // A split emit reconciles ONLY this stream's pages: another stream's
+      // rows are acked by that stream's revision, never reset here.
+      if (row.page_from < plan.firstPage || row.page_from > plan.lastPage) continue;
       const accepted = pageAccepted(row.page_from);
       if (row.status !== "acked" && accepted) {
         await store.setEmitStatus(job.id, row.seq, "acked", fence);
@@ -412,6 +587,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     const missing = new Set(state.missingAssets);
     for (const row of await store.allAssets(job.id)) {
       const page = row.page ?? assetPages.get(row.asset_id);
+      if (page !== undefined && page !== null && (page < plan.firstPage || page > plan.lastPage)) continue;
       const accepted = page !== undefined && page !== null && pageAccepted(page);
       if (row.status !== "acked" && accepted && !missing.has(row.asset_id)) {
         await store.setAssetStatus(job.id, row.asset_id, "acked", fence);
@@ -484,7 +660,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     let ack: Awaited<ReturnType<RevisionClient["putBatch"]>>;
     try {
       ack = await revisions.putBatch({
-        reference: job.reference,
+        reference: plan.reference,
         revisionId,
         seq: batch.seq,
         body,
@@ -522,13 +698,23 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     collection: string | undefined,
     lease: LeaseGuard,
     assets: AssetLoader,
-    only?: { upToPage: number; assetPages: Map<string, number> },
+    plan: EmitPlan,
+    assetPages: Map<string, number>,
+    only?: { upToPage: number },
   ): Promise<void> {
     const fence = lease.fence;
     const rows = (await store.allAssets(job.id)).filter((r) => {
       if (r.status === "acked") return false;
+      // A split emit uploads only the assets of this stream's pages. An asset
+      // whose page could not be resolved belongs to the stream flagged
+      // includeUnknownAssets (the last one), so exactly one revision holds it.
+      const page = r.page ?? assetPages.get(r.asset_id);
+      if (page !== undefined && page !== null) {
+        if (Number(page) < plan.firstPage || Number(page) > plan.lastPage) return false;
+      } else if (plan.includeUnknownAssets !== true) {
+        return false;
+      }
       if (only === undefined) return true;
-      const page = r.page ?? only.assetPages.get(r.asset_id);
       // An asset whose page is unknown waits for the final upload.
       return page !== undefined && page !== null && Number(page) <= only.upToPage;
     });
@@ -543,7 +729,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       if (row.status === "pending") {
         await store.setAssetStatus(job.id, row.asset_id, "sent", fence);
       }
-      await revisions.putAsset({ asset: body, reference: job.reference, revisionId, collection });
+      await revisions.putAsset({ asset: body, reference: plan.reference, revisionId, collection });
       await store.setAssetStatus(job.id, row.asset_id, "acked", fence);
       return null;
     });
@@ -583,7 +769,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       if (plan.committedSegments.has(segment) || tried.has(segment)) continue;
       tried.add(segment);
       const segmentEnd = plan.firstPage + (segment + 1) * S - 1;
-      await uploadAssets(job, revisionId, collection, lease, assets, { upToPage: segmentEnd, assetPages });
+      await uploadAssets(job, revisionId, collection, lease, assets, plan, assetPages, { upToPage: segmentEnd });
       if (await commitOneSegment(job, revisionId, collection, plan, segment)) {
         logger.debug({ jobId: job.id, revisionId, segment, upToPage: segmentEnd }, "Segment committed (progressive)");
       }
@@ -597,7 +783,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     plan: EmitPlan,
     segment: number,
   ): Promise<boolean> {
-    const result = await revisions.commitSegment({ reference: job.reference, revisionId, segment, collection });
+    const result = await revisions.commitSegment({ reference: plan.reference, revisionId, segment, collection });
     if (!result.committed) {
       logger.warn(
         { jobId: job.id, revisionId, segment, missing: result.missingRanges.length },
@@ -650,7 +836,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     let ack: Awaited<ReturnType<RevisionClient["putBatch"]>>;
     try {
       ack = await revisions.putBatch({
-        reference: job.reference,
+        reference: plan.reference,
         revisionId,
         seq,
         body,
@@ -679,35 +865,27 @@ export function createEmitter(deps: EmitterDeps): Emitter {
    */
   async function buildDocumentEnd(job: JobRow, plan: EmitPlan): Promise<DocumentEndRecord> {
     const pageCount = plan.lastPage;
-    const persisted = await store.latestDocpassState(job.id);
-    let outline: OutlineNode[] = [];
-    let identifiers: IdentifierEntry[] = [];
-    let refs: Ref[] = [];
-    let summaries: SummaryNode[] = [];
-    if (persisted !== null) {
-      const pass = createDocumentPass(parseDocpassState(persisted.state));
-      // The optional finalize pass corrects the
-      // outline metadata once the whole document is known — deterministic and
-      // model-free.
-      if (config.finalizePass) {
-        const finalized = pass.finalizeOutline(pageCount);
-        outline = finalized.outline;
-        if (finalized.changes.length > 0) {
-          logger.debug(
-            { jobId: job.id, changed: finalized.changes.length },
-            "finalize pass corrected outline section paths",
-          );
-        }
-      } else {
-        outline = pass.outline(pageCount);
-      }
-      identifiers = pass.identifiers();
-      refs = pass.documentRefs();
-      summaries = pass.summaries();
+    let { outline, identifiers, refs, summaries } = await readDocumentGraph(job, pageCount);
+    if (plan.subdocument === true) {
+      // A sub-document's graph covers its own page range: nodes outside it
+      // belong to a sibling revision.
+      outline = filterOutlineToRange(outline, plan.firstPage, plan.lastPage);
+      summaries = summaries.filter(
+        (s) =>
+          (s.pageStart === undefined || s.pageStart <= plan.lastPage) &&
+          (s.pageEnd === undefined || s.pageEnd >= plan.firstPage),
+      );
+      identifiers = identifiers
+        .map((entry) => ({
+          ...entry,
+          occurrences: entry.occurrences.filter((o) => o.page >= plan.firstPage && o.page <= plan.lastPage),
+        }))
+        .filter((entry) => entry.occurrences.length > 0);
+      refs = [];
     }
     return {
       type: "document.end",
-      reference: job.reference,
+      reference: plan.reference,
       pageCount,
       ...(plan.firstPage > 1 ? { firstPage: plan.firstPage } : {}),
       outline,
@@ -716,6 +894,54 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       refs,
       warnings: [],
     };
+  }
+
+  /**
+   * The finished document graph (outline, identifiers, refs, summaries) from
+   * the last persisted document-pass state. The optional finalize pass
+   * corrects the outline metadata once the whole document is known —
+   * deterministic and model-free.
+   */
+  async function readDocumentGraph(
+    job: JobRow,
+    pageCount: number,
+  ): Promise<{ outline: OutlineNode[]; identifiers: IdentifierEntry[]; refs: Ref[]; summaries: SummaryNode[] }> {
+    const persisted = await store.latestDocpassState(job.id);
+    if (persisted === null) return { outline: [], identifiers: [], refs: [], summaries: [] };
+    const pass = createDocumentPass(parseDocpassState(persisted.state));
+    return {
+      outline: config.finalizePass ? pass.finalizeOutline(pageCount).outline : pass.outline(pageCount),
+      identifiers: pass.identifiers(),
+      refs: pass.documentRefs(),
+      summaries: pass.summaries(),
+    };
+  }
+
+  /**
+   * The outline used to plan a sub-document split: the finished graph of the
+   * WHOLE document (not a stream range), so chapter boundaries are complete.
+   */
+  async function documentOutline(job: JobRow, lastPage: number): Promise<OutlineNode[]> {
+    return (await readDocumentGraph(job, lastPage)).outline;
+  }
+
+  /**
+   * Plain-text characters per page, read one batch window at a time. Drives
+   * the split's chunk estimate; pages without a staged record count as empty.
+   */
+  async function charsPerPageMap(
+    jobId: string,
+    base: { n: number; firstPage: number; lastPage: number },
+  ): Promise<Map<number, number>> {
+    const sizes = new Map<number, number>();
+    for (let from = base.firstPage; from <= base.lastPage; from += base.n) {
+      for (const row of await store.emitBatchesInRange(jobId, from, from + base.n - 1)) {
+        const record = pageRecordOf(row);
+        if (record === null) continue;
+        sizes.set(record.page, pageRecordText(record).length);
+      }
+    }
+    return sizes;
   }
 
   /** Build the document.begin record from the job's config snapshot. */
@@ -730,7 +956,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     return {
       type: "document.begin",
       contract: config.contract,
-      reference: job.reference,
+      reference: plan.reference,
       ...(title !== undefined ? { title } : {}),
       // Contract 2.1: the version orders the document's revisions in Search,
       // the e-mail headers thread it, the parent groups an attachment.
@@ -762,7 +988,43 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       // Contract 2.4: a `pages` window starts after page 1; `pageCount` above
       // is then the stream's last page.
       ...(plan.firstPage > 1 ? { firstPage: plan.firstPage } : {}),
+      // Contract 2.5: Late Chunking. The blend factor rides on the record so
+      // a consumer without the revision header still sees it; the assembled
+      // full text is the source of Search's document-level vector.
+      ...(chunkingOptionsOf(cfg).lateChunkingAlpha !== undefined
+        ? { lateChunkingAlpha: chunkingOptionsOf(cfg).lateChunkingAlpha }
+        : {}),
+      ...(plan.documentText !== undefined && plan.documentText !== ""
+        ? { documentText: plan.documentText }
+        : {}),
     };
+  }
+
+  /**
+   * Assemble the document's full plain text from the staged page records,
+   * one batch window at a time (mirroring {@link indexAssetPages}) so memory
+   * stays flat. Capped at {@link DOCUMENT_TEXT_MAX_CHARS}.
+   */
+  async function collectDocumentText(jobId: string, plan: EmitPlan): Promise<string> {
+    const parts: string[] = [];
+    let total = 0;
+    for (let from = plan.firstPage; from <= plan.lastPage; from += plan.n) {
+      for (const row of await store.emitBatchesInRange(jobId, from, from + plan.n - 1)) {
+        const record = pageRecordOf(row);
+        // The window may overrun the stream's last page (a sub-document's
+        // text must not pick up a sibling's pages).
+        if (record === null || record.page < plan.firstPage || record.page > plan.lastPage) continue;
+        const text = pageRecordText(record);
+        if (text === "") continue;
+        if (total + text.length > DOCUMENT_TEXT_MAX_CHARS) {
+          parts.push(text.slice(0, DOCUMENT_TEXT_MAX_CHARS - total));
+          return parts.join("\n");
+        }
+        parts.push(text);
+        total += text.length;
+      }
+    }
+    return parts.join("\n");
   }
 
   /**
@@ -802,6 +1064,20 @@ export function createEmitter(deps: EmitterDeps): Emitter {
 function pageRecordOf(row: EmitOutboxRow): PageRecord | null {
   const payload = row.payload as { record?: PageRecord } | null;
   return payload?.record ?? null;
+}
+
+/**
+ * Keep the outline nodes overlapping `[from, to]`, clamped to it. A node
+ * without a recorded end page extends to the range end.
+ */
+function filterOutlineToRange(outline: OutlineNode[], from: number, to: number): OutlineNode[] {
+  return outline
+    .filter((n) => n.pageStart <= to && (n.pageEnd ?? to) >= from)
+    .map((n) => ({
+      ...n,
+      pageStart: Math.max(n.pageStart, from),
+      ...(n.pageEnd !== undefined ? { pageEnd: Math.min(n.pageEnd, to) } : {}),
+    }));
 }
 
 /** The highest page number staged, for the page count when none is recorded. */

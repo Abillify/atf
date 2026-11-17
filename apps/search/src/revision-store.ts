@@ -135,6 +135,12 @@ export interface CreateRevisionInput extends RevisionScope {
    */
   acl?: RowAcl | undefined;
   visibility?: Visibility;
+  /**
+   * Late Chunking blend factor (extract contract 2.5) from
+   * `x-late-chunking-alpha`. Persisted on the revision; the batch worker
+   * blends every chunk vector of this revision with the document vector.
+   */
+  lateChunkingAlpha?: number | undefined;
   /** TTL in milliseconds for the uncommitted revision. */
   ttlMs: number;
 }
@@ -459,8 +465,9 @@ export function createRevisionStore(pool: Pool): RevisionStore {
         const inserted = await client.query<RevisionRowRaw>(
           `INSERT INTO ${REVISIONS}
              (tenant_id, collection, revision_id, reference, status, visibility,
-              idempotency_key, ttl_expires_at, source_id, allowed_users, allowed_groups)
-           VALUES ($1, $2, $3, $4, 'staging', $5, $6, $7, $8, $9, $10)
+              idempotency_key, ttl_expires_at, source_id, allowed_users, allowed_groups,
+              late_chunking_alpha)
+           VALUES ($1, $2, $3, $4, 'staging', $5, $6, $7, $8, $9, $10, $11)
            ON CONFLICT (tenant_id, collection, idempotency_key)
              WHERE idempotency_key IS NOT NULL
              DO NOTHING
@@ -469,6 +476,7 @@ export function createRevisionStore(pool: Pool): RevisionStore {
             tenantId, collection, revisionId, reference, visibility, idempotencyKey ?? null,
             ttlExpiresAt, input.sourceId ?? null,
             input.acl?.allowedUsers ?? [], input.acl?.allowedGroups ?? [],
+            input.lateChunkingAlpha ?? null,
           ],
         );
         if (inserted.rows[0]) return { revision: toRevision(inserted.rows[0]), created: true };

@@ -565,7 +565,7 @@ export async function saveCollectionMeta(
 
 // ─── Collection table DDL ─────────────────────────────────────────────────────
 
-export const CURRENT_SCHEMA_VERSION = 14;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 /**
  * Add the v2 index-unit columns and their indexes to a per-collection table.

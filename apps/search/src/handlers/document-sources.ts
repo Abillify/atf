@@ -23,6 +23,7 @@ import { identifyRequestSchema } from "@atf/extract-contract";
 import { rowAclForRevision, type AccessScope } from "../access-scope.js";
 import type { CollectionAcl } from "../collection-access.js";
 import { readHeader } from "../header-utils.js";
+import { normalizeReference } from "../postgres-client.js";
 import {
   identifySource,
   listDocumentSources,
@@ -86,8 +87,14 @@ export function createDocumentSourceHandlers(
             acl,
             sourceId: body.sourceId,
             phase: body.phase,
-            reference: body.reference,
-            documentKey: body.documentKey,
+            // Canonicalize both the reference and the document key (NFC +
+            // leading slash) so they match the canonical form the revision
+            // pointer / sources rows are stored in (see resolveScope /
+            // normalizeReference). canonicalReferenceFor compares
+            // documentKeyOf(stored reference) against this key, so both sides
+            // must carry the same root slash.
+            reference: normalizeReference(body.reference),
+            documentKey: normalizeReference(body.documentKey),
             filename: body.filename,
             mimeType: body.mimeType,
             sourceSha256: body.sourceSha256,
@@ -121,8 +128,11 @@ export function createDocumentSourceHandlers(
         const scope = tenantAndCollection(req, res);
         if (!scope) return;
         const raw = (req.params as { ref?: string }).ref;
-        const reference = typeof raw === "string" ? decodeURIComponent(raw) : "";
-        if (reference === "") {
+        // Canonicalize like the identify ingress so the lookup matches the
+        // canonical reference the source rows are stored under.
+        const reference =
+          typeof raw === "string" ? normalizeReference(decodeURIComponent(raw)) : "";
+        if (reference === "" || reference === "/") {
           res.status(400).json({ error: "A document reference is required" });
           return;
         }

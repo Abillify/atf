@@ -147,8 +147,8 @@ describe("firstPage on the stream records", () => {
     expect(documentBeginRecordSchema.safeParse({ ...begin, firstPage: 0 }).success).toBe(false);
   });
 
-  test("a 2.3 producer is still compatible with a 2.4 consumer", () => {
+  test("a 2.3 producer is still compatible with a 2.5 consumer", () => {
     expect(isCompatibleContract("atf-extract/2.3.0")).toBe(true);
-    expect(EXTRACT_CONTRACT_VERSION).toBe("2.4.0");
+    expect(EXTRACT_CONTRACT_VERSION).toBe("2.5.0");
   });
 });

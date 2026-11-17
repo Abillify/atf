@@ -93,6 +93,32 @@ export function ingestOptionsOf(config: Record<string, unknown>): JobIngestOptio
   };
 }
 
+/**
+ * The caller's chunking options (contract 2.5), read from the job config.
+ *
+ *   config.lateChunkingAlpha    0–1, blends every chunk vector with the
+ *                               document vector at emit (Late Chunking)
+ *   config.subdocumentMaxChunks split budget: when the document is estimated
+ *                               to exceed this many Search chunks, the emitter
+ *                               splits it at chapter boundaries into
+ *                               sub-documents `<reference>/<chapter>`
+ */
+export interface JobChunkingOptions {
+  lateChunkingAlpha?: number;
+  subdocumentMaxChunks?: number;
+}
+
+export function chunkingOptionsOf(config: Record<string, unknown>): JobChunkingOptions {
+  const alpha = config.lateChunkingAlpha;
+  const maxChunks = config.subdocumentMaxChunks;
+  return {
+    ...(typeof alpha === "number" && alpha >= 0 && alpha <= 1 ? { lateChunkingAlpha: alpha } : {}),
+    ...(typeof maxChunks === "number" && Number.isInteger(maxChunks) && maxChunks >= 1
+      ? { subdocumentMaxChunks: maxChunks }
+      : {}),
+  };
+}
+
 /** The caller's document attributes (contract 2.2), read from the job config. */
 export interface DocumentAttributes {
   tags?: string[];

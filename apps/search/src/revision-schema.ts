@@ -350,7 +350,13 @@ async function ensureRevisionTablesLocked(client: PoolClient): Promise<void> {
       ADD COLUMN IF NOT EXISTS source_id           TEXT,
       ADD COLUMN IF NOT EXISTS document_info       JSONB,
       ADD COLUMN IF NOT EXISTS allowed_users       TEXT[],
-      ADD COLUMN IF NOT EXISTS allowed_groups      TEXT[]
+      ADD COLUMN IF NOT EXISTS allowed_groups      TEXT[],
+      -- Late Chunking (extract contract 2.5): the blend factor the writer set
+      -- via x-late-chunking-alpha, and the document-level embedding the batch
+      -- worker derives from document.begin's documentText once per revision
+      -- (JSON array of floats; TEXT keeps it vecType-agnostic).
+      ADD COLUMN IF NOT EXISTS late_chunking_alpha REAL,
+      ADD COLUMN IF NOT EXISTS document_vector     TEXT
   `);
   // The worker / finalize sweep looks up revisions with an unfinished commit.
   await client.query(`
