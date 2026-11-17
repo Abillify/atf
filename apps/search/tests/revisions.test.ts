@@ -140,7 +140,8 @@ describe("v2 revision routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.revisionId).toBe("rev-1");
     expect(store.createRevision).toHaveBeenCalledWith(
-      expect.objectContaining({ reference: "akte/2026/doc.pdf", idempotencyKey: "job-42", tenantId: "t-1", collection: "documents" }),
+      // The ingress canonicalizes the route reference (NFC + leading slash).
+      expect.objectContaining({ reference: "/akte/2026/doc.pdf", idempotencyKey: "job-42", tenantId: "t-1", collection: "documents" }),
     );
   });
 
@@ -338,12 +339,12 @@ describe("v2 revision routes", () => {
     const app = makeApp(store);
     await request(app).get(`/v2/documents/${REF}/revisions/rev-1`);
     expect(store.getRevisionState).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: "t-1", reference: "akte/2026/doc.pdf" }),
+      expect.objectContaining({ tenantId: "t-1", reference: "/akte/2026/doc.pdf" }),
       "rev-1",
     );
     await request(app).post(`/v2/documents/${REF}/revisions/rev-1/commit`);
     expect(store.finalCommit).toHaveBeenCalledWith(
-      expect.objectContaining({ reference: "akte/2026/doc.pdf", revisionId: "rev-1" }),
+      expect.objectContaining({ reference: "/akte/2026/doc.pdf", revisionId: "rev-1" }),
     );
   });
 

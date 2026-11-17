@@ -139,7 +139,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 9;
+export const GLOBAL_SCHEMA_VERSION = 10;
 
 interface MigrationStep {
   toVersion: number;
@@ -297,6 +297,44 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
       await client.query(`
         DELETE FROM vs_search_stats WHERE query_hash IS NULL
       `);
+    },
+  },
+  {
+    toVersion: 10,
+    description:
+      "Root document references in the v2 system tables with a leading slash (paired with collection migration v15)",
+    up: async (client) => {
+      // normalizeReference now stores every reference rooted with a leading
+      // slash, and the v2 ingress canonicalizes the route reference so all
+      // derived keys inherit it. The version gate joins the collection table's
+      // document_id against vs_document_revisions.reference, and identity /
+      // assets match on these columns too — so the system tables must be
+      // rewritten to the same rooted form as collection migration v15. One
+      // without the other would 404 every v2 document.
+      //
+      // vs_document_revisions and vs_document_groups key on (tenant, collection,
+      // reference); a rewrite that collides a document indexed both as "x" and
+      // "/x" fails the migration loudly rather than dropping a row (same policy
+      // as v15). vs_document_sources.requested_reference is left as written: it
+      // records the producer's original spelling for provenance and is never
+      // used for a lookup. Idempotent: rooted values are untouched.
+      const root = (table: string, column: string): Promise<unknown> =>
+        client.query(
+          `UPDATE ${table}
+              SET ${column} = '/' || ${column}
+            WHERE ${column} IS NOT NULL
+              AND ${column} <> '' AND ${column} NOT LIKE '/%'`,
+        );
+
+      await root("vs_revisions", "reference");
+      await root("vs_document_revisions", "reference");
+      await root("vs_document_sources", "reference");
+      await root("vs_document_sources", "document_key");
+      await root("vs_document_groups", "reference");
+      await root("vs_document_groups", "parent_reference");
+      await root("vs_mail_messages", "reference");
+      await root("vs_assets", "document_reference");
+      await root("vs_document_assets", "document_reference");
     },
   },
 
@@ -511,6 +549,44 @@ export const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
       // as no-ops), so new and migrated tables stay identical. Nullable/additive:
       // legacy and schema-13 rows migrate forward untouched and search unchanged.
       await ensureUnitColumns(client, table);
+    },
+  },
+  {
+    toVersion: 15,
+    description:
+      "Root reference/base_ref/document_id with a leading slash (fix documents invisible to the folder browser)",
+    up: async (client, table) => {
+      // Producers are inconsistent about the leading slash: a document indexed
+      // as "docs/a.pdf" is counted by /folders but invisible to the browser's
+      // direct-child listing, which matches `base_ref LIKE '/%'`. Ingest now
+      // stores the rooted canonical form (normalizeReference), so rows written
+      // before this must be rewritten to the same key — otherwise the rooted
+      // read arguments would stop matching them. Paired with global migration
+      // v10, which rewrites the system tables the version gate joins on
+      // (vs_document_revisions.reference = document_id); one without the other
+      // would 404 every v2 document.
+      //
+      // As with the NFC step (v6), the UNIQUE(tenant_id, reference) index could
+      // reject a rewrite that collides two distinct rows onto one key — i.e. a
+      // document indexed both as "x" and "/x". That is exactly the duplicate
+      // state worth surfacing, so it fails the migration loudly rather than
+      // silently dropping a row. Idempotent: rooted rows are untouched.
+      await client.query(`
+        UPDATE "${table}"
+           SET reference = '/' || reference
+         WHERE reference <> '' AND reference NOT LIKE '/%'
+      `);
+      await client.query(`
+        UPDATE "${table}"
+           SET base_ref = '/' || base_ref
+         WHERE base_ref <> '' AND base_ref NOT LIKE '/%'
+      `);
+      await client.query(`
+        UPDATE "${table}"
+           SET document_id = '/' || document_id
+         WHERE document_id IS NOT NULL
+           AND document_id <> '' AND document_id NOT LIKE '/%'
+      `);
     },
   },
 ];
