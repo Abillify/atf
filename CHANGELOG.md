@@ -18,6 +18,43 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Extract / Search** (Document Intelligence v2, Late Chunking): a v2 job can
+  carry `lateChunkingAlpha` (request body or `X-Late-Chunking-Alpha` on
+  `POST /v2/ingest`). The emitter then sends the document's full text in
+  `document.begin.documentText`, Search embeds it once per revision, caches the
+  vector on the revision, and blends every freshly embedded chunk vector as
+  `alpha * chunk + (1 - alpha) * document` before it is stored. Precedence is
+  the revision's own header, then the job's `document.begin`, then the
+  deployment-wide `LATE_CHUNKING_ALPHA`. The extract contract is 2.5.0.
+- **Extract** (Document Intelligence v2, sub-document split): `subdocumentMaxChunks`
+  (request body or `X-Subdocument-Max-Chunks`) splits a very large document into
+  independent sub-documents before emission — one Search revision per chapter
+  group, each with its own reference `<parent>/<chapter-slug>` and idempotency
+  key, so `group by document` groups chapters instead of the whole file. The
+  split is planned from the docpass outline (dynamic chapter budgets, hard page
+  boundaries for oversized chapters, `teil-N` fallback without an outline),
+  frozen into the job once derived, and reused by every later attempt. The
+  parent reference itself is not indexed when a split is active.
+- **Search** (embeddings): `MAX_CLIENT_BATCH_SIZE` caps how many inputs a single
+  embedding request carries, independently of the provider's own limit, so a
+  large document batch is split into several client requests instead of one
+  oversized call.
+
+### Fixed
+
+- **Search** (references): a document indexed without a leading slash
+  (`docs/a.pdf`) was counted by `/folders` but missing from the folder listing,
+  because the listing matches `base_ref LIKE prefix || '/%'` while producers are
+  inconsistent about the leading slash. A reference is now canonicalised to NFC
+  with a rooted leading slash on every write — including the v2 revision path,
+  which did not canonicalise at all — and every read argument the same way.
+  Collection migration v15 and global migration v10 rewrite existing rows to the
+  rooted form and fail loudly on a collision rather than dropping a row;
+  `vs_document_sources.requested_reference` keeps the producer's spelling for
+  provenance.
+
 ## [0.26.0] - 2026-11-12
 
 ### Security
