@@ -54,6 +54,17 @@ releases:
   rooted form and fail loudly on a collision rather than dropping a row;
   `vs_document_sources.requested_reference` keeps the producer's spelling for
   provenance.
+- **Outpost** (glob filter, CVE-2026-112366): a configured include/exclude
+  pattern of the form `+(*)` or `+(*a)` — a repeated extglob whose single
+  branch contains a wildcard — made picomatch compile an exponentially
+  backtracking regex, so a short crafted path could block the sync loop
+  (ReDoS). Picomatch 4.0.7 is the latest release and has no fix yet, so the
+  filter now rejects such patterns up front with `UnsafeGlobPatternError`
+  before picomatch sees them; multi-branch extglobs (`+(a|b)`, `+(*.tmp|*.log)`)
+  and wildcard-free ones are unaffected and stay valid.
+- **Extract** (image): the Debian bookworm-slim runtime digest was refreshed,
+  picking up apt 2.6.2 with the fix for CVE-2026-109518 (remote code
+  execution in apt via hard link reuse during package download retries).
 
 ## [0.26.0] - 2026-11-12
 

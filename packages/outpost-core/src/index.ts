@@ -258,7 +258,11 @@ export {
   type SourceFetch,
   type SourceItem,
 } from "./sources/types.js";
-export { isIncluded, normalizeMatchPath } from "./sources/filter.js";
+export {
+  isIncluded,
+  normalizeMatchPath,
+  UnsafeGlobPatternError,
+} from "./sources/filter.js";
 export {
   guardPath,
   isInsideRoot,
