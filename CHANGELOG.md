@@ -18,6 +18,23 @@ releases:
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-11-17
+
+### Fixed
+
+- **Outpost** (glob filter, CVE-2026-112366): a configured include/exclude
+  pattern of the form `+(*)` or `+(*a)` — a repeated extglob whose single
+  branch contains a wildcard — made picomatch compile an exponentially
+  backtracking regex, so a short crafted path could block the sync loop
+  (ReDoS). Picomatch 4.0.7 is the latest release and has no fix yet, so the
+  filter now rejects such patterns up front with `UnsafeGlobPatternError`
+  before picomatch sees them; multi-branch extglobs (`+(a|b)`, `+(*.tmp|*.log)`)
+  and wildcard-free ones are unaffected and stay valid. The guard itself is a
+  linear bracket-depth scan, so it adds no backtracking of its own.
+- **Extract** (image): the Debian bookworm-slim runtime digest was refreshed,
+  picking up apt 2.6.2 with the fix for CVE-2026-109518 (remote code
+  execution in apt via hard link reuse during package download retries).
+
 ## [0.27.0] - 2026-11-17
 
 ### Added
@@ -56,17 +73,6 @@ releases:
   rooted form and fail loudly on a collision rather than dropping a row;
   `vs_document_sources.requested_reference` keeps the producer's spelling for
   provenance.
-- **Outpost** (glob filter, CVE-2026-112366): a configured include/exclude
-  pattern of the form `+(*)` or `+(*a)` — a repeated extglob whose single
-  branch contains a wildcard — made picomatch compile an exponentially
-  backtracking regex, so a short crafted path could block the sync loop
-  (ReDoS). Picomatch 4.0.7 is the latest release and has no fix yet, so the
-  filter now rejects such patterns up front with `UnsafeGlobPatternError`
-  before picomatch sees them; multi-branch extglobs (`+(a|b)`, `+(*.tmp|*.log)`)
-  and wildcard-free ones are unaffected and stay valid.
-- **Extract** (image): the Debian bookworm-slim runtime digest was refreshed,
-  picking up apt 2.6.2 with the fix for CVE-2026-109518 (remote code
-  execution in apt via hard link reuse during package download retries).
 
 ### Changed
 
@@ -1826,7 +1832,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/Abillify/atf/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/Abillify/atf/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Abillify/atf/compare/v0.25.6...v0.26.0
 [0.25.6]: https://github.com/Abillify/atf/compare/v0.25.5...v0.25.6
