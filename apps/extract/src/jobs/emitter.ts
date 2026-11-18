@@ -68,8 +68,10 @@
 
 import type { Logger } from "pino";
 import {
+  buildAssetId,
   encodeRecords,
   sha256Hex,
+  tileLocalId,
   type DocumentBeginRecord,
   type DocumentEndRecord,
   type ExtractRecord,
@@ -251,6 +253,14 @@ interface EmitPlan {
    * only, so exactly one revision ends up holding them.
    */
   includeUnknownAssets?: boolean;
+  /**
+   * Sub-document split only: maps each staged asset id (derived from the
+   * JOB's reference, `sha256(job.reference \n localId)`) to its reference-
+   * independent local id, so uploads and reconciliation can re-derive the id
+   * this stream's revision validates against (`sha256(plan.reference \n
+   * localId)`). Absent when the stream indexes the job's own document.
+   */
+  assetLocalIds?: Map<string, string>;
 }
 
 /**
@@ -328,6 +338,13 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     // or a single stream over the whole page range when no split applies.
     const streams = await planStreams(job, lease, base);
     const lateChunking = chunkingOptionsOf(jobConfig).lateChunkingAlpha !== undefined;
+    // A sub-document's revision validates every asset against ITS reference,
+    // while the outbox holds the ids derived from the job's reference. Index
+    // the local ids of ALL staged pages once — the same map serves every
+    // stream (a stream re-derives the id from its own reference), including
+    // assets whose page is unknown and go to the last stream.
+    const assetLocalIds =
+      streams.length > 1 ? await indexAssetLocalIds(job.id, { ...base, reference: job.reference, committedSegments: new Set<number>() }) : undefined;
 
     let firstRevisionId = "";
     for (const [i, stream] of streams.entries()) {
@@ -340,6 +357,13 @@ export function createEmitter(deps: EmitterDeps): Emitter {
         ...(streams.length > 1 ? { subdocument: true } : {}),
         includeUnknownAssets: stream.includeUnknownAssets === true,
       };
+      // A sub-document's revision validates every asset against ITS reference,
+      // while the outbox holds the ids derived from the job's reference. The
+      // upload and reconciliation phases re-derive them from this index (the
+      // batches are rewritten from the page records' own local ids).
+      if (assetLocalIds !== undefined) {
+        plan.assetLocalIds = assetLocalIds;
+      }
       // Late Chunking (contract 2.5): assemble the (sub-)document text before
       // the first batch is sent — document.begin rides on that batch.
       // Windowed like indexAssetPages, so memory stays flat for a 10 000-page job.
@@ -584,7 +608,18 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     // by ACCEPTED batches. So "present" means the asset's page was accepted AND
     // the asset is not in the missing list. An asset whose batch the server has
     // not yet accepted is not confirmable and stays for the upload phase.
-    const missing = new Set(state.missingAssets);
+    // A sub-document stream reports the ids derived from ITS reference; map
+    // them back to the staged (job-reference) ids this ledger is keyed by.
+    const missing = new Set<string>();
+    if (plan.assetLocalIds === undefined) {
+      for (const id of state.missingAssets) missing.add(id);
+    } else {
+      const stagedByStreamId = new Map<string, string>();
+      for (const [stagedId, localId] of plan.assetLocalIds) {
+        stagedByStreamId.set(buildAssetId(plan.reference, localId), stagedId);
+      }
+      for (const id of state.missingAssets) missing.add(stagedByStreamId.get(id) ?? id);
+    }
     for (const row of await store.allAssets(job.id)) {
       const page = row.page ?? assetPages.get(row.asset_id);
       if (page !== undefined && page !== null && (page < plan.firstPage || page > plan.lastPage)) continue;
@@ -643,7 +678,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     if (withBegin) records.push(buildDocumentBegin(job, plan));
     for (const row of rows) {
       const record = pageRecordOf(row);
-      if (record !== null) records.push(record);
+      if (record !== null) records.push(remapRecordAssetIds(record, plan.reference));
     }
     const body = new TextEncoder().encode(encodeRecords(records));
     const contentDigest = contentDigestHeader(body);
@@ -729,7 +764,13 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       if (row.status === "pending") {
         await store.setAssetStatus(job.id, row.asset_id, "sent", fence);
       }
-      await revisions.putAsset({ asset: body, reference: plan.reference, revisionId, collection });
+      // A sub-document revision stores the asset under the id derived from ITS
+      // reference — the bytes and checksum are unchanged, only the id moves.
+      const asset =
+        plan.assetLocalIds === undefined
+          ? body
+          : { ...body, assetId: streamAssetId(row, plan, body) };
+      await revisions.putAsset({ asset, reference: plan.reference, revisionId, collection });
       await store.setAssetStatus(job.id, row.asset_id, "acked", fence);
       return null;
     });
@@ -1055,6 +1096,38 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     return index;
   }
 
+  /**
+   * Map each staged asset id to its reference-independent local id, read one
+   * batch window at a time from the stream's page records. A sub-document
+   * stream needs this to re-derive the ids its revision validates against:
+   * the asset outbox (and the loader bodies built from it) carry the ids
+   * derived from the JOB's reference, the server reports missing assets under
+   * the STREAM's.
+   */
+  async function indexAssetLocalIds(jobId: string, plan: EmitPlan): Promise<Map<string, string>> {
+    const index = new Map<string, string>();
+    for (let from = plan.firstPage; from <= plan.lastPage; from += plan.n) {
+      for (const row of await store.emitBatchesInRange(jobId, from, from + plan.n - 1)) {
+        const record = pageRecordOf(row);
+        if (record === null) continue;
+        for (const asset of record.assets) index.set(asset.assetId, asset.localId);
+      }
+    }
+    return index;
+  }
+
+  /**
+   * The id the stream's revision knows this asset under: re-derived from the
+   * local id when the staged id was built for a different (parent) reference.
+   * An asset whose local id cannot be resolved keeps its staged id — the same
+   * behaviour as before the remap existed.
+   */
+  function streamAssetId(row: AssetOutboxRow, plan: EmitPlan, body?: AssetBody): string {
+    if (plan.assetLocalIds === undefined) return row.asset_id;
+    const localId = body?.localId ?? plan.assetLocalIds.get(row.asset_id);
+    return localId === undefined ? row.asset_id : buildAssetId(plan.reference, localId);
+  }
+
   return { emit };
 }
 
@@ -1064,6 +1137,53 @@ export function createEmitter(deps: EmitterDeps): Emitter {
 function pageRecordOf(row: EmitOutboxRow): PageRecord | null {
   const payload = row.payload as { record?: PageRecord } | null;
   return payload?.record ?? null;
+}
+
+/**
+ * Rewrite a page record's asset ids for a sub-document stream.
+ *
+ * Every asset id in a staged record is `sha256(job.reference \n localId)`;
+ * Search re-derives it from the reference of the revision the batch is PUT to
+ * (`validateRecord(..., { reference })`), so a sub-document batch carrying the
+ * parent's ids is refused with `422 BATCH_VALIDATION_FAILED`. The local ids are
+ * reference-independent — `p12-f3`, `page:p37`, `tile:p37-f1-r2c3` — so the ids
+ * are simply re-derived against the stream's reference. Nothing else in the
+ * record changes, which keeps the page's text, blocks and digests stable.
+ *
+ * Returns the record unchanged when no id needs rewriting, so the common
+ * (unsplit) path allocates nothing.
+ */
+function remapRecordAssetIds(record: PageRecord, reference: string): PageRecord {
+  let changed = false;
+  const assets = record.assets.map((asset) => {
+    const expected = buildAssetId(reference, asset.localId);
+    if (asset.assetId === expected) return asset;
+    changed = true;
+    return { ...asset, assetId: expected };
+  });
+  const blocks = record.blocks.map((block) => {
+    if (block.type !== "figure") return block;
+    let blockChanged = false;
+    let assetId = block.assetId;
+    if (assetId !== undefined) {
+      const expected = buildAssetId(reference, block.figureId);
+      if (assetId !== expected) {
+        assetId = expected;
+        blockChanged = true;
+      }
+    }
+    const tiles = block.tiles?.map((tile) => {
+      const expected = buildAssetId(reference, tileLocalId(tile.tileId));
+      if (tile.assetId === expected) return tile;
+      blockChanged = true;
+      return { ...tile, assetId: expected };
+    });
+    if (!blockChanged) return block;
+    changed = true;
+    return { ...block, assetId, ...(tiles !== undefined ? { tiles } : {}) };
+  });
+  if (!changed) return record;
+  return { ...record, assets, blocks };
 }
 
 /**

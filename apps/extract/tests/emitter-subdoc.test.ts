@@ -15,7 +15,14 @@
 
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildAssetId, pageLocalId, type OutlineNode, type PageRecord } from "@atf/extract-contract";
+import {
+  buildAssetId,
+  figureLocalId,
+  pageLocalId,
+  validateRecord,
+  type OutlineNode,
+  type PageRecord,
+} from "@atf/extract-contract";
 import type { BatchAck, CommitResult, Revision, RevisionState } from "@atf/extract-contract/v2";
 import { createFakeJobStore, type FakeJobStore } from "./job-store-fake.js";
 import { testLogger } from "./helpers.js";
@@ -164,11 +171,21 @@ function fakeAssetLoader(): AssetLoader {
   };
 }
 
-/** Seed an emitting job with `pageCount` pages of `charsPerPage` plain text. */
+/**
+ * Seed an emitting job with `pageCount` pages of `charsPerPage` plain text.
+ * With `figures: true` every page also carries a figure block plus its crop
+ * asset (and a page-image asset), all with ids derived from {@link REFERENCE}
+ * — the shape a real staging pass produces for a split parent document.
+ */
 async function seedJob(
   store: FakeJobStore,
   pageCount: number,
-  options: { config?: Record<string, unknown>; charsPerPage?: number; outline?: OutlineNode[] } = {},
+  options: {
+    config?: Record<string, unknown>;
+    charsPerPage?: number;
+    outline?: OutlineNode[];
+    figures?: boolean;
+  } = {},
 ): Promise<JobRow> {
   const id = randomUUID();
   const chars = options.charsPerPage ?? 4_000;
@@ -184,14 +201,44 @@ async function seedJob(
   await store.setJobPageCount(id, pageCount);
   await store.setJobStatus(id, "emitting");
   for (let page = 1; page <= pageCount; page++) {
+    const figureId = `p${page}-f1`;
+    const figureAssetId = buildAssetId(REFERENCE, figureLocalId(figureId));
+    const pageAssetId = buildAssetId(REFERENCE, pageLocalId(page));
     const record: PageRecord = {
       type: "page",
       page,
       size: { wPt: 100, hPt: 140 },
       class: "text",
-      blocks: [{ id: `p${page}-b0`, page, type: "paragraph", source: "text-layer", text: "x".repeat(chars) }],
+      blocks: [
+        { id: `p${page}-b0`, page, type: "paragraph", source: "text-layer", text: "x".repeat(chars) },
+        ...(options.figures === true
+          ? [
+              {
+                id: `p${page}-fb0`,
+                page,
+                type: "figure" as const,
+                figureId,
+                kind: "diagram" as const,
+                description: "Ein Diagramm.",
+                bbox: [0.1, 0.1, 0.9, 0.9] as [number, number, number, number],
+                assetId: figureAssetId,
+              },
+            ]
+          : []),
+      ],
       assets: [
-        { assetId: buildAssetId(REFERENCE, pageLocalId(page)), kind: "page", localId: pageLocalId(page), page },
+        { assetId: pageAssetId, kind: "page", localId: pageLocalId(page), page },
+        ...(options.figures === true
+          ? [
+              {
+                assetId: figureAssetId,
+                kind: "figure" as const,
+                localId: figureLocalId(figureId),
+                page,
+                bbox: [0.1, 0.1, 0.9, 0.9] as [number, number, number, number],
+              },
+            ]
+          : []),
       ],
       warnings: [],
     };
@@ -205,12 +252,22 @@ async function seedJob(
     });
     await store.stageAsset({
       job_id: id,
-      asset_id: buildAssetId(REFERENCE, pageLocalId(page)),
+      asset_id: pageAssetId,
       variant: "page",
       mime_type: "image/png",
       checksum: "0".repeat(64),
       page,
     });
+    if (options.figures === true) {
+      await store.stageAsset({
+        job_id: id,
+        asset_id: figureAssetId,
+        variant: "figure",
+        mime_type: "image/png",
+        checksum: "0".repeat(64),
+        page,
+      });
+    }
   }
   if (options.outline !== undefined) {
     await store.saveDocpassState(id, pageCount, {
@@ -376,6 +433,74 @@ describe("emitter · sub-document split (contract 2.5)", () => {
     expect(outcome).toEqual({ status: "committed", revisionId: `rev-${REFERENCE}/Kapitel A` });
     const fresh = store.peek(job.id);
     expect(fresh?.revision_id).toBe(`rev-${REFERENCE}/Kapitel A`);
+  });
+
+  it("re-derives every asset id against the sub-document's reference (422 regression)", async () => {
+    // Staging derives asset ids from the JOB's reference; Search validates
+    // them against the revision's reference. A sub-document batch that still
+    // carried the parent's ids was refused with 422 BATCH_VALIDATION_FAILED.
+    const store = createFakeJobStore();
+    const job = await seedJob(store, 6, {
+      config: { subdocumentMaxChunks: 8 },
+      outline: OUTLINE,
+      figures: true,
+    });
+    const search = createFakeSearch();
+    const outcome = await makeEmitter(store, search).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(outcome.status).toBe("committed");
+
+    const subRefs = [`${REFERENCE}/Kapitel A`, `${REFERENCE}/Kapitel B`];
+    expect(search.revisionCalls.map((c) => c.reference)).toEqual(subRefs);
+
+    for (const [key, body] of search.bodies) {
+      const reference = key.split(":")[0] ?? "";
+      if (!subRefs.includes(reference)) continue;
+      for (const record of body) {
+        const result = validateRecord(record, { reference });
+        if (!result.ok) {
+          throw new Error(`${key}: record failed Search's batch validation: ${JSON.stringify(result.issues)}`);
+        }
+      }
+    }
+
+    // Every page record's assets and figure blocks carry the sub-document's ids.
+    for (const subRef of subRefs) {
+      const pages = [...search.bodies.entries()]
+        .filter(([k]) => k.startsWith(`${subRef}:`))
+        .flatMap(([, body]) => body.filter((r) => r.type === "page"));
+      expect(pages.length).toBe(3);
+      for (const page of pages) {
+        const p = page as unknown as PageRecord;
+        for (const asset of p.assets) {
+          expect(asset.assetId).toBe(buildAssetId(subRef, asset.localId));
+        }
+        for (const block of p.blocks) {
+          if (block.type === "figure" && block.assetId !== undefined) {
+            expect(block.assetId).toBe(buildAssetId(subRef, block.figureId));
+          }
+        }
+      }
+    }
+
+    // The uploads go to the sub-document's revision under the re-derived ids.
+    for (const subRef of subRefs) {
+      const uploaded = search.assetPuts.get(subRef) ?? [];
+      expect(uploaded).toHaveLength(6); // 3 pages × (page image + figure crop)
+      // Every uploaded id is derivable from this sub-document's reference.
+      const pages = [...search.bodies.entries()]
+        .filter(([k]) => k.startsWith(`${subRef}:`))
+        .flatMap(([, body]) => body.filter((r) => r.type === "page"))
+        .map((r) => (r as unknown as PageRecord).page);
+      const expected = new Set<string>();
+      for (const p of pages) {
+        expected.add(buildAssetId(subRef, pageLocalId(p)));
+        expected.add(buildAssetId(subRef, figureLocalId(`p${p}-f1`)));
+      }
+      expect(new Set(uploaded)).toEqual(expected);
+    }
+    // The parent reference itself receives nothing.
+    expect(search.assetPuts.get(REFERENCE)).toBeUndefined();
+    expect(search.batchPuts.get(REFERENCE)).toBeUndefined();
   });
 });
 
