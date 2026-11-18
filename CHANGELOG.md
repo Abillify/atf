@@ -61,6 +61,22 @@ releases:
   request is sent. Free-text headers now use the `base64:` encoding convention
   that `readHeader` decodes transparently, matching the existing `X-Metadata`
   handling.
+- **Extract** (concurrent page renders): a job could fail permanently with
+  `putAsset(...) failed with HTTP 400: {"error":"vipspng: libpng read error
+  ...","code":"ASSET_NOT_DECODABLE"}`. Upload lanes run concurrently, and a
+  page asset plus a figure/tile crop of the same page both render that page;
+  on a cold miss each lane spawned its own `pdftoppm -singlefile` with the
+  same deterministic output name, so two processes wrote one file while the
+  other read it back — a truncated PNG whose header still passed `imageSize`
+  but failed Search's full decode. `renderPdfPage` now deduplicates in-flight
+  renders per page (failures are retried, not cached), and every `renderPage`
+  call writes to a per-call unique path, making a file-level collision
+  structurally impossible.
+- **Extract** (web UI, Neuer-Job queue): sources were uploaded strictly
+  sequentially — document 2 only started after document 1's job finished. The
+  new-job flow is now split into a concurrent prepare phase (form validation
+  plus resumable upload / URL pull) and the sequential job-creation step, and
+  sources added while the queue is running are prepared immediately.
 
 ## [0.27.1] - 2026-11-17
 
