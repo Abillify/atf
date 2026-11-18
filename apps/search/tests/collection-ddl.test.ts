@@ -114,8 +114,8 @@ describe("collection DDL", () => {
     expect(step).toBeDefined();
   });
 
-  it("targets the highest global migration step, so a database at 9 still records 10", () => {
-    expect(GLOBAL_SCHEMA_VERSION).toBe(10);
+  it("targets the highest global migration step, so a database at 10 still records 11", () => {
+    expect(GLOBAL_SCHEMA_VERSION).toBe(11);
     expect(Math.max(...GLOBAL_MIGRATIONS.map((s) => s.toVersion))).toBe(
       GLOBAL_SCHEMA_VERSION,
     );

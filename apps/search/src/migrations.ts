@@ -139,7 +139,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 10;
+export const GLOBAL_SCHEMA_VERSION = 11;
 
 interface MigrationStep {
   toVersion: number;
@@ -335,6 +335,24 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
       await root("vs_mail_messages", "reference");
       await root("vs_assets", "document_reference");
       await root("vs_document_assets", "document_reference");
+    },
+  },
+  {
+    toVersion: 11,
+    description:
+      "Reconcile v2 system tables for Late Chunking (vs_revisions.late_chunking_alpha / document_vector, extract contract 2.5)",
+    up: async (client) => {
+      // Late Chunking (0.27.0) added vs_revisions.late_chunking_alpha and
+      // vs_revisions.document_vector via the lazy ensure DDL. Deployments that
+      // ran global migrations v5-v8 BEFORE those columns existed are stuck: the
+      // ensureRevisionSchema steps are already recorded as applied and never
+      // re-run, and the runtime currency check (revisionSchemaIsCurrent) does
+      // not list the new columns, so the lazy path skips the DDL too. Every v2
+      // ingest then fails createRevision with
+      // `column "late_chunking_alpha" ... does not exist`. Re-run the full
+      // idempotent ensure here so existing deployments pick the columns up at
+      // startup. Additive (ADD COLUMN IF NOT EXISTS); a no-op on fresh deploys.
+      await ensureRevisionSchema(client);
     },
   },
 

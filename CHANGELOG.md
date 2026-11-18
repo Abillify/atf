@@ -18,6 +18,21 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search** (Late Chunking migration gap): existing deployments that ran the
+  v2 system-table migrations (global v5–v8) before 0.27.0 never picked up the
+  `vs_revisions.late_chunking_alpha` / `vs_revisions.document_vector` columns.
+  Those steps are recorded as applied and never re-run, and the runtime currency
+  check (`revisionSchemaIsCurrent`) did not list the new columns, so the lazy
+  ensure path skipped the DDL too. Every v2 ingest then failed `createRevision`
+  with `column "late_chunking_alpha" ... does not exist`, leaving the document
+  stuck in Extract's writing state and never visible in Search. A new global
+  migration (v11) re-runs the idempotent `ensureRevisionSchema` at startup, and
+  both columns are added to `REQUIRED_REVISION_COLUMNS` so the lazy path
+  reconciles them as well. Additive (`ADD COLUMN IF NOT EXISTS`); a no-op on
+  fresh deployments.
+
 ## [0.27.1] - 2026-11-17
 
 ### Fixed

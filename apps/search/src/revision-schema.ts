@@ -247,6 +247,13 @@ const REQUIRED_REVISION_COLUMNS = [
   // The row ACL the batch worker writes onto every unit of the revision.
   "allowed_users",
   "allowed_groups",
+  // Late Chunking (extract contract 2.5): the blend factor and the derived
+  // document-level embedding. Without these in the currency check, a
+  // deployment that ran the v5-v8 ensure steps before 0.27.0 holds the schema
+  // for current and never adds them, so createRevision fails on the missing
+  // column. Listed here so the lazy ensure path reconciles them too.
+  "late_chunking_alpha",
+  "document_vector",
 ];
 const REQUIRED_BATCH_COLUMNS = ["asset_ids", "lease_token", "attempts"];
 
