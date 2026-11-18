@@ -1170,8 +1170,10 @@ const JS = `
 
   // ── Queue: shared engine for the convert, ingest and new-job tabs ─────────────
   // Each entry is one source: a dropped file or, in the new-job tab, a source
-  // URL or a stored sha256. The backend takes one source per request, so the
-  // browser walks the queue sequentially: one in flight, the rest pending.
+  // URL or a stored sha256. Processing is sequential — one source in flight,
+  // the rest pending — but a tab may supply prepareOne, which runs for every
+  // pending source concurrently before processing starts (the new-job tab uses
+  // it so all uploads move at once while the first job is still running).
   function createQueue(opts) {
     var items = [];          // { kind, file, value, name, status, markdown, el, refs:{...} }
     var running = false;
@@ -1396,7 +1398,7 @@ const JS = `
       var it = {
         kind: entry.kind, file: entry.file || null, value: entry.value || "", filename: entry.filename || "",
         name: entry.name, title: entry.title || entry.name, dedupKey: key,
-        status: "pending", markdown: "", el: null, refs: {}
+        status: "pending", markdown: "", el: null, refs: {}, prepPromise: null, prep: null
       };
       items.push(it);
       render(it);
@@ -1404,8 +1406,11 @@ const JS = `
     function afterAdd() {
       updateControls();
       updateProgress();
+      // While the queue runs, a freshly added source must still start its
+      // preparation (upload) immediately, not wait for the queue to drain.
+      if (running) { ensurePrepared(); return; }
       var auto = opts.autoStartId ? $(opts.autoStartId) : null;
-      if (auto && auto.checked && !running) runAll();
+      if (auto && auto.checked) runAll();
     }
     function addFiles(fileList) {
       Array.prototype.forEach.call(fileList, function (f) {
@@ -1418,8 +1423,30 @@ const JS = `
       afterAdd();
     }
 
+    var api = { setStatus: setStatus, setBar: setBar, setMsg: setMsg, setStats: setStats, setStages: setStages, setJobLink: setJobLink, setFigures: setFigures, addLog: addLog, setOutput: setOutput };
+
+    // Preparation phase: when the tab supplies prepareOne, start it for every
+    // pending source that has none yet. All preparations run concurrently —
+    // several uploads move at once — and each outcome is stashed on the item
+    // for processOne to pick up when its turn in the queue arrives.
+    function ensurePrepared() {
+      if (!opts.prepareOne) return;
+      items.forEach(function (it) {
+        if (it.status !== "pending" || it.prepPromise) return;
+        it.prep = null;
+        it.prepPromise = (async function () {
+          try {
+            it.prep = { ok: true, value: await opts.prepareOne(it, api) };
+          } catch (err) {
+            it.prep = { ok: false, error: err };
+          }
+        })();
+      });
+    }
+
     async function runAll() {
       if (running) return;
+      ensurePrepared();
       running = true;
       updateControls();
       for (var i = 0; i < items.length; i++) {
@@ -1427,7 +1454,7 @@ const JS = `
         if (it.status !== "pending") continue;
         it.el.classList.add("open");
         try {
-          await opts.processOne(it, { setStatus: setStatus, setBar: setBar, setMsg: setMsg, setStats: setStats, setStages: setStages, setJobLink: setJobLink, setFigures: setFigures, addLog: addLog, setOutput: setOutput });
+          await opts.processOne(it, api);
         } catch (err) {
           setStatus(it, "err", "Fehler");
           setMsg(it, String(err && err.message ? err.message : err), true);
@@ -1858,8 +1885,13 @@ const JS = `
       dropzoneId: "newjob-dropzone",
       fileInputId: "newjob-file-input",
       autoStartId: "newjob-auto-start",
-      processOne: async function (it, api) {
-        api.setStatus(it, "running", "läuft");
+      // Prepare runs for every pending source at once, before and alongside
+      // processing: the form is validated and the source is brought into the
+      // store (chunked upload or server-side URL pull) so that no upload waits
+      // for another document's job to finish. The result is picked up by
+      // processOne when the item's turn in the (sequential) job-creation queue
+      // arrives.
+      prepareOne: async function (it, api) {
         // Validate the form before a single byte moves.
         var metadata = readMetadataField();
         var sourceName = it.kind === "file" ? it.file.name : it.kind === "url" ? urlFilename(it.value) : (it.filename || "");
@@ -1869,11 +1901,13 @@ const JS = `
 
         var sha;
         if (it.kind === "file") {
+          api.setStatus(it, "running", "Upload");
           api.setMsg(it, "Upload wird vorbereitet …");
           var stored = await uploadResumable(it.file, reference, it, api);
           sha = stored.sha256;
           api.addLog(it, "Quelle gespeichert: sha256 " + sha + (stored.deduped ? " (war bereits vorhanden)" : ""));
         } else if (it.kind === "url") {
+          api.setStatus(it, "running", "Quelle wird geladen");
           var pulled = await pullSourceUrl(it.value, reference, it, api);
           sha = pulled.sha256;
           // The server names the pull from the final URL or its Content-Type,
@@ -1884,6 +1918,20 @@ const JS = `
         } else {
           sha = it.value;
         }
+        return { sha: sha, filename: filename, metadata: metadata };
+      },
+      processOne: async function (it, api) {
+        // Wait for this source's preparation (upload/pull), which started in
+        // parallel with every other pending source when the queue began.
+        var prep = it.prep;
+        if (!prep && it.prepPromise) await it.prepPromise;
+        prep = it.prep;
+        if (prep && !prep.ok) throw prep.error;
+        api.setStatus(it, "running", "läuft");
+        var sha = prep ? prep.sha : it.value;
+        var filename = prep ? prep.filename : (it.kind === "file" ? it.file.name : it.kind === "url" ? urlFilename(it.value) : (it.filename || ""));
+        var metadata = prep ? prep.metadata : readMetadataField();
+        var reference = $("newjob-reference").value.trim() || (it.kind === "file" ? it.file.name : filename) || it.value;
         var request = buildJobRequest(reference, sha, filename, it.file, metadata);
 
         api.setMsg(it, "Job wird angelegt …");
