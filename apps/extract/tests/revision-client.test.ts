@@ -178,6 +178,42 @@ describe("revision-client · request framing", () => {
     expect(headers["x-figure-id"]).toBe("p368-f1");
     expect(headers["x-page"]).toBe("368");
     expect(headers["x-bbox"]).toBe("0.1,0.2,0.3,0.4");
+    expect(headers["x-document-reference"]).toBe("doc/a.pdf");
+  });
+
+  it("base64-encodes a non-ASCII asset reference in x-document-reference", async () => {
+    // A sub-document stream's reference embeds its chapter title ("Prozess‑
+    // abwicklung"), which Bun/undici rejects raw ("Header
+    // 'x-document-reference' has invalid value"). It must travel base64 so
+    // Search's readHeader decodes it back.
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response(null, { status: 201 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createRevisionClient(CONFIG, testLogger);
+
+    const reference = "specification.docx/2 Grundlagen und Begriffe";
+    await client.putAsset({
+      asset: {
+        assetId: "e".repeat(64),
+        buffer: new Uint8Array([1]),
+        mimeType: "image/png",
+        checksum: "f".repeat(64),
+        kind: "page",
+      },
+      // "ü" via a chapter title, mirroring slugifyChapterTitle output.
+      reference: `${reference}ü`,
+      revisionId: "rev-1",
+    });
+
+    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1]
+      .headers as Record<string, string>;
+    const sent = headers["x-document-reference"] ?? "";
+    // eslint-disable-next-line no-control-regex
+    expect(/^[\x20-\x7E]*$/.test(sent)).toBe(true);
+    expect(sent).toBe(
+      `base64:${Buffer.from(`${reference}ü`, "utf-8").toString("base64")}`,
+    );
   });
 
   it("omits the placement headers when an asset carries no metadata", async () => {
