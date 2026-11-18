@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Extract** (sub-document split): a split job failed with
+  `422 BATCH_VALIDATION_FAILED` on its first batch as soon as the document
+  had any assets. Staging derives every asset id from the job's reference
+  (`sha256(reference \n localId)`), while the emitter opens each
+  sub-document's revision under `reference/<chapter>` and Search re-derives
+  the id from the revision's own reference — so every `assets[*].assetId`
+  (and figure-block/tile id) mismatched. The emitter now re-derives the ids
+  against the stream's reference when it encodes a batch, uploads an asset,
+  and reconciles the server's `missingAssets` list; unsplit emits are
+  byte-identical to before.
+
 ## [0.27.1] - 2026-11-17
 
 ### Fixed
