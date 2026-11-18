@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-18
+
 ### Fixed
 
 - **Extract** (sub-document split): a split job failed with
@@ -30,6 +32,15 @@ releases:
   against the stream's reference when it encodes a batch, uploads an asset,
   and reconciles the server's `missingAssets` list; unsplit emits are
   byte-identical to before.
+- **Extract** (sub-document asset upload): `putAsset` wrote the document
+  reference into the `x-document-reference` header verbatim. A sub-document
+  stream's reference embeds its chapter title, which is routinely non-ASCII
+  (umlauts, an en dash); Bun rejects such a header
+  (`Header 'x-document-reference' has invalid value`), so every asset upload
+  for a sub-document failed as a transient error and the emit never committed.
+  The header now uses the `base64:` encoding convention that Search's
+  `readHeader` decodes transparently, matching `x-figure-id` and the v1
+  ingest headers.
 - **Search** (Late Chunking migration gap): existing deployments that ran the
   v2 system-table migrations (global v5–v8) before 0.27.0 never picked up the
   `vs_revisions.late_chunking_alpha` / `vs_revisions.document_vector` columns.
@@ -42,6 +53,14 @@ releases:
   both columns are added to `REQUIRED_REVISION_COLUMNS` so the lazy path
   reconciles them as well. Additive (`ADD COLUMN IF NOT EXISTS`); a no-op on
   fresh deployments.
+- **Search** (dev console): opening a document whose reference contains
+  non-ASCII characters (umlauts, an en dash) failed in the browser test page
+  with `Network error: ... String contains non ISO-8859-1 code point` — the
+  page wrote references, collections, titles, filters, tags and path prefixes
+  raw into `fetch` headers, which the browser rejects client-side before the
+  request is sent. Free-text headers now use the `base64:` encoding convention
+  that `readHeader` decodes transparently, matching the existing `X-Metadata`
+  handling.
 
 ## [0.27.1] - 2026-11-17
 
@@ -1857,7 +1876,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.2...HEAD
+[0.27.2]: https://github.com/Abillify/atf/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/Abillify/atf/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/Abillify/atf/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Abillify/atf/compare/v0.25.6...v0.26.0

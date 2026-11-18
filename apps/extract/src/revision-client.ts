@@ -370,7 +370,12 @@ export function createRevisionClient(
       const headers: Record<string, string> = {
         ...baseHeaders(collection),
         "content-type": asset.mimeType,
-        "x-document-reference": args.reference,
+        // A sub-document stream's reference carries its chapter title, which
+        // is routinely non-ASCII (umlauts, ß). Raw, Bun/undici rejects the
+        // header ("Header 'x-document-reference' has invalid value");
+        // encodeHeaderValue applies the base64 convention Search's readHeader
+        // decodes transparently.
+        "x-document-reference": encodeHeaderValue(args.reference),
         "x-revision-id": args.revisionId,
         "x-asset-kind": asset.kind,
         "x-checksum": asset.checksum,

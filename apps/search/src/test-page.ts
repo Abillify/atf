@@ -1079,6 +1079,16 @@ setupVersionToggle('batch-version-mode',  'batch-version-field');
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function hasNonAscii(str) { return /[^\\x00-\\x7F]/.test(str); }
 
+// Header values must be ISO-8859-1 — the browser's fetch rejects anything else
+// with "String contains non ISO-8859-1 code point" before the request leaves
+// the page. References, titles and filters routinely carry umlauts or en
+// dashes (e.g. sub-document references), so any non-ASCII value travels with
+// the base64: prefix that the server's readHeader decodes transparently.
+function hdr(v) {
+  const s = String(v);
+  return hasNonAscii(s) ? 'base64:' + btoa(unescape(encodeURIComponent(s))) : s;
+}
+
 function buildMetadataHeaders(metadataJson) {
   if (!metadataJson || metadataJson.trim() === '') return {};
   if (hasNonAscii(metadataJson)) {
@@ -1110,17 +1120,17 @@ function checked(id) { return document.getElementById(id).checked; }
 
 function buildIngestHeaders(opts) {
   const h = { 'Content-Type': 'text/plain' };
-  if (opts.reference)     h['X-Reference']      = opts.reference;
-  if (opts.collection)    h['X-Collection']      = opts.collection;
+  if (opts.reference)     h['X-Reference']      = hdr(opts.reference);
+  if (opts.collection)    h['X-Collection']      = hdr(opts.collection);
   if (opts.versionMode)   h['X-Version-Mode']    = opts.versionMode;
-  if (opts.versionMode === 'version' && opts.version) h['X-Version'] = opts.version;
-  if (opts.title)         h['X-Title']           = opts.title;
-  if (opts.source)        h['X-Source']          = opts.source;
-  if (opts.link)          h['X-Link']            = opts.link;
-  if (opts.tags)          h['X-Tags']            = opts.tags;
+  if (opts.versionMode === 'version' && opts.version) h['X-Version'] = hdr(opts.version);
+  if (opts.title)         h['X-Title']           = hdr(opts.title);
+  if (opts.source)        h['X-Source']          = hdr(opts.source);
+  if (opts.link)          h['X-Link']            = hdr(opts.link);
+  if (opts.tags)          h['X-Tags']            = hdr(opts.tags);
   if (opts.ftsLanguage)   h['X-FTS-Language']    = opts.ftsLanguage;
-  if (opts.allowedUsers)  h['X-Allowed-Users']   = opts.allowedUsers;
-  if (opts.allowedGroups) h['X-Allowed-Groups']  = opts.allowedGroups;
+  if (opts.allowedUsers)  h['X-Allowed-Users']   = hdr(opts.allowedUsers);
+  if (opts.allowedGroups) h['X-Allowed-Groups']  = hdr(opts.allowedGroups);
   if (opts.chunkSize)     h['X-Chunk-Size']      = opts.chunkSize;
   if (opts.chunkOverlap !== undefined && opts.chunkOverlap !== '') h['X-Chunk-Overlap'] = opts.chunkOverlap;
   if (opts.contextPrefixSize !== undefined && opts.contextPrefixSize !== '') h['X-Context-Prefix-Size'] = opts.contextPrefixSize;
@@ -1431,9 +1441,9 @@ function openDocModal(reference, collection, matchedChunkId) {
     'X-Max-Results': '200',
     'X-Search-Mode': 'fts',
     'X-Include-All-Versions': '0',
-    'X-Base-Ref': reference,
+    'X-Base-Ref': hdr(reference),
   };
-  if (collection) headers['X-Collection'] = collection;
+  if (collection) headers['X-Collection'] = hdr(collection);
 
   // Send a wildcard-ish body; the base_ref filter on the server ensures we get all chunks
   uiFetch('/search', { method: 'POST', headers: headers, body: reference })
@@ -1661,18 +1671,18 @@ function renderDocModal(container, reference, chunks, matchedChunkId) {
         const offset = val('search-offset');
         if (offset) headers['X-Offset'] = offset;
       }
-      if (collection)                     headers['X-Collection']            = collection;
+      if (collection)                     headers['X-Collection']            = hdr(collection);
       if (checked('search-rerank'))           headers['X-Rerank']                = '1';
       if (checked('search-hyde'))             headers['X-Hyde']                  = '1';
       if (checked('search-all-versions'))     headers['X-Include-All-Versions']  = '1';
       if (checked('search-group-by-document')) headers['X-Group-By-Document']    = '1';
       if (checked('search-include-vector'))   headers['X-Include-Query-Vector']  = '1';
       const pathPrefix = val('search-path-prefix');
-      if (pathPrefix)                     headers['X-Path-Prefix']           = pathPrefix;
+      if (pathPrefix)                     headers['X-Path-Prefix']           = hdr(pathPrefix);
       const filter = val('search-filter');
-      if (filter)                         headers['X-Filter']                = filter;
+      if (filter)                         headers['X-Filter']                = hdr(filter);
       const tags = val('search-tags');
-      if (tags)                           headers['X-Tags']                  = tags;
+      if (tags)                           headers['X-Tags']                  = hdr(tags);
 
       const response = await uiFetch('/search', { method: 'POST', headers, body: query });
       const data = await response.json();
@@ -1725,8 +1735,8 @@ document.getElementById('delete-form').addEventListener('submit', async (e) => {
   const collection = val('delete-collection');
   try {
     const headers = { ...buildMetadataHeaders(val('delete-metadata')) };
-    if (reference)  headers['X-Reference']  = reference;
-    if (collection) headers['X-Collection'] = collection;
+    if (reference)  headers['X-Reference']  = hdr(reference);
+    if (collection) headers['X-Collection'] = hdr(collection);
     const response = await uiFetch('/delete', { method: 'DELETE', headers });
     const json = await response.json();
     showResult('delete-result', json, !response.ok);
