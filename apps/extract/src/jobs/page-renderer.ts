@@ -1039,7 +1039,32 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       }
     }
 
-    async function renderPdfPage(
+    /**
+     * Cold renders in flight by page. Two consumers of one page — the page
+     * asset's upload lane and a figure/tile crop of the same page — must share
+     * ONE pdftoppm process: without this they both fall through to
+     * `pdfOps.renderPage` concurrently, and even with distinct output files a
+     * duplicate render of a big sheet is pure waste. A second request awaits
+     * the first promise and receives the same (read-only) image.
+     */
+    const coldRenders = new Map<number, Promise<PdfRender>>();
+
+    function renderPdfPage(
+      page: number,
+      signal: AbortSignal | undefined,
+    ): Promise<PdfRender> {
+      if (pageSource.kind !== "pdf")
+        return Promise.reject(new Error("renderPdfPage on a non-PDF source"));
+      const inFlight = coldRenders.get(page);
+      if (inFlight !== undefined) return inFlight;
+      const run = renderPdfPageUncached(page, signal).finally(() => {
+        if (coldRenders.get(page) === run) coldRenders.delete(page);
+      });
+      coldRenders.set(page, run);
+      return run;
+    }
+
+    async function renderPdfPageUncached(
       page: number,
       signal: AbortSignal | undefined,
     ): Promise<PdfRender> {

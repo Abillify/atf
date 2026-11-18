@@ -211,6 +211,54 @@ describe("PreparedSource.prefetch — one pdfinfo and one pdftoppm per window", 
     }
   });
 
+  it("concurrent cold renders of one page share a single pdftoppm call", async () => {
+    // Two upload lanes rendering the same cold page (the page asset and a
+    // figure/tile crop of it) must not run two pdftoppm processes for it:
+    // concurrently writing (and reading back) one output file is how a
+    // truncated PNG reached Search as ASSET_NOT_DECODABLE.
+    const calls = freshCalls();
+    const ops = stubOps(calls);
+    const render = ops.renderPage;
+    ops.renderPage = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return render(...args);
+    };
+    const prepared = await prepare(ops);
+    try {
+      const [a, b] = await Promise.all([prepared.render(7), prepared.render(7)]);
+      expect(calls.renderPage).toEqual([[7, 200]]);
+      expect(a.image.buffer).toBe(b.image.buffer);
+    } finally {
+      await prepared.close();
+    }
+  });
+
+  it("a failed cold render is not kept: the next render tries again", async () => {
+    const calls = freshCalls();
+    const ops = stubOps(calls);
+    const render = ops.renderPage;
+    let failures = 1;
+    ops.renderPage = async (...args) => {
+      if (failures-- > 0) {
+        calls.renderPage.push([args[1], args[2]]);
+        throw new Error("pdftoppm failed");
+      }
+      return render(...args);
+    };
+    const prepared = await prepare(ops);
+    try {
+      await expect(prepared.render(3)).rejects.toThrow("pdftoppm failed");
+      const rendered = await prepared.render(3);
+      expect(rendered.image.width).toBe(1);
+      expect(calls.renderPage).toEqual([
+        [3, 200],
+        [3, 200],
+      ]);
+    } finally {
+      await prepared.close();
+    }
+  });
+
   it("ignores pages outside the document", async () => {
     const calls = freshCalls();
     const prepared = await prepare(stubOps(calls, { pageCount: 6 }));

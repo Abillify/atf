@@ -30,6 +30,7 @@
  * extraction.
  */
 
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { conversionFailed } from "../errors.js";
@@ -480,13 +481,16 @@ export interface RenderedPage {
   dpi: number;
 }
 
+/** Monotonic counter backing the per-call output-prefix suffix. */
+let callCounter = 0;
+
 /**
  * Rasterise one page to PNG.
  *
- * `-singlefile` makes the output name deterministic (`<prefix>.png`). Without
- * it, pdftoppm zero-pads the page number to the width of the total page count,
- * so the filename depends on how long the document is — a detail that has broken
- * every implementation that tried to guess it.
+ * `-singlefile` gives the output a deterministic name (`<prefix>.png`), which
+ * the caller reads back from the promise. The prefix additionally carries a
+ * per-call suffix so two concurrent renders of the same page can never write
+ * (or read half-written) the same file.
  *
  * PNG rather than JPEG: the input is text and line art, where JPEG ringing
  * around glyph edges measurably costs transcription accuracy, and the image is
@@ -505,7 +509,14 @@ export async function renderPage(
   // The region is part of the name, so two crops of one page never share a file.
   const regionTag =
     region === undefined ? "" : `-${region.left}x${region.top}-${region.width}x${region.height}`;
-  const prefix = join(workDir, `page-${page}-${dpi}${regionTag}`);
+  // A per-call suffix on top: `-singlefile` makes the name deterministic, which
+  // is exactly why two concurrent renders of the same page (two upload lanes,
+  // a page view and a crop) would write the same file while the other reads it
+  // — a truncated PNG. The suffix is irrelevant to the caller (the path is
+  // returned via the promise, never guessed), so every call owns its output.
+  callCounter = (callCounter + 1) % 0xffff_ffff;
+  const unique = `${process.pid}-${callCounter}-${randomBytes(4).toString("hex")}`;
+  const prefix = join(workDir, `page-${page}-${dpi}${regionTag}-${unique}`);
   await run(
     binary(tools, "pdftoppm"),
     [
