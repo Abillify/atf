@@ -453,7 +453,7 @@ describe("emitter · sub-document split (contract 2.5)", () => {
     expect(search.revisionCalls.map((c) => c.reference)).toEqual(subRefs);
 
     for (const [key, body] of search.bodies) {
-      const reference = key.split(":")[0];
+      const reference = key.split(":")[0] ?? "";
       if (!subRefs.includes(reference)) continue;
       for (const record of body) {
         const result = validateRecord(record, { reference });
