@@ -17,8 +17,8 @@
  * for LEXICON_FAILURE_COOLDOWN_MS before it is retried.
  */
 
-import type pino from "pino";
 import type { Pool } from "pg";
+import type pino from "pino";
 
 /** How long a built lexicon stays valid. */
 export const LEXICON_TTL_MS = 3_600_000;
@@ -39,6 +39,12 @@ export interface FtsLexiconCache {
    * background — the caller proceeds without splitting.
    */
   get(table: string): Set<string> | undefined;
+  /**
+   * Drop any cached (and in-flight) lexicon for `table`. Called after a
+   * collection rename so the new `vc_*` table name doesn't serve a stale
+   * entry — or the old name a surviving one — until the TTL expires.
+   */
+  invalidate(table: string): void;
 }
 
 interface LexiconEntry {
@@ -91,7 +97,10 @@ export function createFtsLexiconCache(
       if (!inFlight.has(table)) {
         const build = loadLexicon(pool, table)
           .then((words) => {
-            entries.set(table, { words, expiresAt: Date.now() + LEXICON_TTL_MS });
+            entries.set(table, {
+              words,
+              expiresAt: Date.now() + LEXICON_TTL_MS,
+            });
           })
           .catch((err: unknown) => {
             failures.set(table, {
@@ -103,11 +112,19 @@ export function createFtsLexiconCache(
             );
           })
           .finally(() => {
-            inFlight.delete(table);
+            // Only clear the marker if it still points at this build —
+            // an invalidate()+get() may have started a newer one.
+            if (inFlight.get(table) === build) inFlight.delete(table);
           });
         inFlight.set(table, build);
       }
       return undefined;
+    },
+
+    invalidate(table: string): void {
+      entries.delete(table);
+      failures.delete(table);
+      inFlight.delete(table);
     },
   };
 }

@@ -542,7 +542,8 @@ export interface PostgresError {
     | "POSTGRES_SQL_ERROR"
     | "POSTGRES_INVALID_RESPONSE"
     | "INVALID_COLLECTION_NAME"
-    | "COLLECTION_NOT_FOUND";
+    | "COLLECTION_NOT_FOUND"
+    | "COLLECTION_EXISTS";
   message: string;
   cause?: unknown;
 }
@@ -1359,15 +1360,28 @@ export interface PostgresClient {
     scope: AccessScope,
   ): Promise<PostgresResponse<{ updated: number }>>;
 
+  /**
+   * Delete a collection.
+   * Drops the underlying table and removes every collection-scoped row in a
+   * single transaction: vs_collection_config, vs_document_assets, and all
+   * rows of the vs_* tables that carry a `collection` column (revisions,
+   * ingest batches, segments, document revisions, assets, document sources,
+   * mail messages, document groups, identifiers, ingest/search stats).
+   */
   deleteCollection(
     collection: string,
   ): Promise<PostgresResponse<{ dropped: boolean }>>;
 
   /**
    * Rename a collection.
-   * Renames the underlying table and updates vs_collection_config in a single
-   * transaction. Returns COLLECTION_NOT_FOUND (404) when the source does not
-   * exist, INVALID_COLLECTION_NAME (400) when either name is invalid.
+   * Renames the underlying table and updates every collection-scoped row in
+   * a single transaction: vs_collection_config, vs_document_assets, and the
+   * `collection` column of all vs_* tables that carry one (revisions, ingest
+   * batches, segments, document revisions, assets, document sources, mail
+   * messages, document groups, identifiers, ingest/search stats).
+   * Returns COLLECTION_NOT_FOUND (404) when the source does not exist,
+   * INVALID_COLLECTION_NAME (400) when either name is invalid, and
+   * COLLECTION_EXISTS (409) when the target name is already taken.
    */
   renameCollection(
     oldName: string,

@@ -381,7 +381,9 @@ export function createRenameCollectionHandler(
             ? 400
             : result.error.code === "COLLECTION_NOT_FOUND"
               ? 404
-              : 502;
+              : result.error.code === "COLLECTION_EXISTS"
+                ? 409
+                : 502;
         log.warn({ error: result.error }, "Failed to rename collection");
         res.status(status).json({ error: result.error.message });
         return;
