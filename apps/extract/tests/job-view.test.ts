@@ -148,4 +148,27 @@ describe("toJobView", () => {
     expect(view.progress).toBeUndefined();
     expect(view.etaSeconds).toBeUndefined();
   });
+
+  it("derives the finished stage from the completed status", () => {
+    // A running job: pages emitted are not finished until Search accepts the
+    // final commit.
+    const running = toJobView(jobRow({ status: "processing", page_count: 4 }), [
+      stage(1, "emitted", "done", new Date()),
+      stage(2, "emitted", "done", new Date()),
+    ]);
+    expect(running.progress?.finished).toEqual({ done: 0, total: 4, failed: 0 });
+    // A completed job: the final commit was accepted, every page is finished.
+    const done = toJobView(jobRow({ status: "completed", page_count: 4 }), [
+      stage(1, "emitted", "done", new Date()),
+    ]);
+    expect(done.progress?.finished).toEqual({ done: 4, total: 4, failed: 0 });
+  });
+
+  it("counts the analyzed checkpoint in the progress", () => {
+    const view = toJobView(jobRow({ page_count: 3 }), [
+      stage(1, "analyzed", "done", new Date()),
+      stage(2, "analyzed", "done", new Date()),
+    ]);
+    expect(view.progress?.analyzed).toEqual({ done: 2, total: 3, failed: 0 });
+  });
 });

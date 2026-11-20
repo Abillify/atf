@@ -39,6 +39,38 @@ export const PAGE_STAGES = [
 const CURSOR_STAGE = "emitted" as const;
 
 /**
+ * The stage the operator console shows next to `emitted`: a page is *finished*
+ * once Search has accepted the final commit of the revision the page was
+ * emitted into — i.e. the document is live, not merely handed to the emitter.
+ *
+ * It is derived rather than checkpointed: the final commit is a document-level
+ * event, and `completed` is exactly the status the runner reaches when that
+ * commit is accepted (an incomplete or transient commit leaves the job in
+ * `emitting`/`paused`). So every emitted page of a completed job is finished at
+ * once, and none is before that.
+ */
+export const FINISHED_STAGE = "finished";
+
+/**
+ * Add the derived {@link FINISHED_STAGE} entry to a folded progress map.
+ * A job without a known page count reports 0/0 — the count is unknown, not zero
+ * pages finished.
+ */
+export function withFinishedStage(
+  progress: StageProgress,
+  status: Job["status"],
+  pageCount: number | null,
+): StageProgress {
+  const total = pageCount ?? 0;
+  progress[FINISHED_STAGE] = {
+    done: status === "completed" ? total : 0,
+    total,
+    failed: 0,
+  };
+  return progress;
+}
+
+/**
  * Fold a set of stage rows into per-stage progress counts. `total` is the job's
  * page count when known (so a stage with no rows yet reads 0/N rather than
  * 0/0), and `done`/`failed` are tallied from the rows.
@@ -178,7 +210,7 @@ export function toJobView(
   if (row.pause_reason !== null) job.pauseReason = row.pause_reason;
   if (row.page_count !== null) job.pageCount = row.page_count;
   if (progress !== undefined) {
-    job.progress = progress;
+    job.progress = withFinishedStage(progress, row.status, row.page_count);
     // Measure the rate from when the first stage checkpoint appeared, so
     // queue-wait before processing does not inflate the estimate.
     const processingStartMs = earliestStageMs(stages ?? []);
@@ -228,7 +260,11 @@ export function toJobViewWithCounts(
   now: number = Date.now(),
 ): Job {
   const job = toJobView(row);
-  const progress = computeProgressFromCounts(counts, row.page_count);
+  const progress = withFinishedStage(
+    computeProgressFromCounts(counts, row.page_count),
+    row.status,
+    row.page_count,
+  );
   job.progress = progress;
   let firstMs: number | null = null;
   for (const group of counts) {
