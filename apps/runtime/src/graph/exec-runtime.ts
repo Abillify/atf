@@ -320,6 +320,18 @@ export interface ExecRuntime {
     toolCallId: string,
     errorMessage: string,
     execTimeSec: number,
+    /**
+     * Structural failure class (see `toolFailureClass`): error name, HTTP
+     * status, upper-case peer error code. Operator-only — the free-text
+     * message stays anonymized, but without this field an input rejection
+     * (e.g. an invalid tool argument) is indistinguishable from a transport
+     * failure in the monitoring history.
+     */
+    failure?: {
+      error_name?: string;
+      http_status?: number;
+      error_code?: string;
+    },
   ) => void | Promise<void>;
   onNodeStart: (
     nodeId: string,

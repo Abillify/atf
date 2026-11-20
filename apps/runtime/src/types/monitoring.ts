@@ -21,6 +21,17 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
+ * Structural, non-free-text classification of a tool failure (see
+ * `toolFailureClass` in graph/handlers/tool.ts). Safe to persist and display:
+ * nothing from the original error message survives into this shape.
+ */
+export interface ToolFailureClass {
+  error_name?: string;
+  http_status?: number;
+  error_code?: string;
+}
+
+/**
  * Synthetic node id marking the true end of a flow execution. Emitted by the
  * graph engine exactly once per run — on the success path after the trace is
  * sealed, and on the error path before the exception propagates — carrying the
@@ -74,6 +85,15 @@ export interface NodeExecutionEvent {
   latency_ms: number | null;
   /** Human-readable error description — only present when status is "error" */
   error_message?: string;
+  /**
+   * Structural, anonymized class of the failure — only present when status is
+   * "error" and the failing call reported one. The message above is a fixed
+   * fallback on purpose (untrusted provider output); this field carries what
+   * CAN be reported safely: the error name, an HTTP status, and an upper-case
+   * peer error code. It is what lets an operator tell an input rejection from
+   * a transport failure in the monitoring history.
+   */
+  error_class?: ToolFailureClass;
   /**
    * Discriminates a synthetic node from a real flow-graph node. Absent (the
    * common case) means a node declared in the flow definition. `"tool"` marks a
