@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-20
+
 ### Added
 
 - **Extract** (console): a table block now carries the page region its rows
@@ -30,6 +32,40 @@ releases:
   resume or reparse stamps it without re-running the analysis, and the console
   gallery renders the crop like it already does for figures. `PIPELINE_REVISION`
   is 2.2.0.
+- **Extract** (console): dropping files into *Erweitertes Indexieren* starts
+  every upload immediately as a live card inside the drop zone (resumable,
+  checksummed chunks); *Job anlegen* activates once all uploads settled,
+  creates one job per source and clears the tray for the next batch. The
+  figures gallery now also shows tables — cropped when a bounding box was
+  located, structured cell grid otherwise — behind one shared lightbox, and
+  the jobs view gains the derived *finished* stage (Search accepted the
+  final commit) as its headline stage.
+- **Monitoring**: failed tool nodes report an optional structural
+  `error_class` (error name, HTTP status, upper-case JSON-RPC/peer error
+  code) on `NodeExecutionEvent`. Tool failures stay anonymized to the fixed
+  message — only machine-readable markers survive, never free text — so an
+  input rejection and a transport failure are now distinguishable in
+  monitoring without leaking peer detail.
+
+### Fixed
+
+- **MCP**: a tool call rejected by a peer's input schema (JSON-RPC
+  `-32602`) or aimed at an unknown tool (`-32601`) fails identically on
+  every attempt, but the retry loop replayed it up to `maxAttempts` times
+  with the inter-attempt delay on top. Such deterministic input-validation
+  failures are no longer retried, and the model receives the peer's
+  validation message — what it needs to correct the argument — instead of
+  the wrapped retry-exhaustion envelope. Transient failures keep the
+  previous retry behaviour.
+- **Search**: `renameCollection` and `deleteCollection` only touched
+  `vc_<name>`, `vs_collection_config`, and `vs_document_assets`, leaving
+  rows in the eleven collection-scoped `vs_*` tables pointing at the old or
+  deleted name. Both operations now resolve which scoped tables exist and
+  update or delete their `collection` column inside the existing
+  transaction; a rename to a taken target name is rejected with
+  `409 COLLECTION_EXISTS` before anything is touched. The FTS lexicon cache
+  gains `invalidate()` and the stats buffer gains rename/drop handling, so
+  neither serves nor flushes a stale collection name.
 
 ## [0.27.2] - 2026-11-18
 
@@ -1905,7 +1941,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.27.2...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/Abillify/atf/compare/v0.27.2...v0.28.0
 [0.27.2]: https://github.com/Abillify/atf/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/Abillify/atf/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/Abillify/atf/compare/v0.26.0...v0.27.0
