@@ -465,8 +465,15 @@ export class Stateless2026Client {
     }
     if (!response.ok || payload.error) {
       const message = payload.error?.message ?? response.statusText;
+      // Keep the JSON-RPC code in the message: the retry gate in `withRetry`
+      // classifies a deterministic input rejection (-32602) as non-retryable,
+      // and a plain Error cannot carry the code any other way.
+      const code =
+        typeof payload.error?.code === "number"
+          ? ` (JSON-RPC ${payload.error.code})`
+          : "";
       throw new Error(
-        `MCP 2026 ${method} failed (HTTP ${response.status}): ${message}`,
+        `MCP 2026 ${method} failed (HTTP ${response.status})${code}: ${message}`,
       );
     }
     if (!payload.result || typeof payload.result !== "object")

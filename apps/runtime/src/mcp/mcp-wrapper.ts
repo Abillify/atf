@@ -45,6 +45,7 @@ export type { FilteredToolSchema } from "./wrapper/schema.js";
 
 export {
   withRetry,
+  isNonRetryableToolCallError,
   injectProtectedParams,
   stripProtectedParams,
   resolveInjectedParams,
