@@ -325,7 +325,12 @@ export function withCoverageEvidenceRuntime(
       forget(toolCallId);
       await runtime.onToolResult(toolCallId, content, execTimeSec, options);
     },
-    onToolError: async (toolCallId, errorMessage, execTimeSec) => {
+    onToolError: async (
+      toolCallId,
+      errorMessage,
+      execTimeSec,
+      failure,
+    ) => {
       const call = fromExecution.get(toolCallId) ?? fromModel.get(toolCallId);
       if (call?.kind === "search") {
         searchParseStatuses.push("tool-error");
@@ -334,7 +339,12 @@ export function withCoverageEvidenceRuntime(
         });
       }
       forget(toolCallId);
-      await runtime.onToolError?.(toolCallId, errorMessage, execTimeSec);
+      await runtime.onToolError?.(
+        toolCallId,
+        errorMessage,
+        execTimeSec,
+        failure,
+      );
     },
   };
 }

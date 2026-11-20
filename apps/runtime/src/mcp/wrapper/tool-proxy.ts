@@ -114,6 +114,42 @@ async function abortableDelay(
   });
 }
 
+/**
+ * JSON-RPC codes that mark a tool call as rejected on its INPUT rather than on
+ * a transient transport/provider condition. Replaying such a call with the same
+ * arguments fails identically, so retrying only spends the attempt budget and
+ * the inter-attempt delay (measured at ~2 s per rejected search call in
+ * production traces) before the model is handed the same error back.
+ *
+ * -32602 Invalid params (JSON-RPC spec), -32601 Method not found / unknown
+ * tool, and the MCP 2026 stateless adapter's -32602 for a schema-validation
+ * rejection.
+ */
+const NON_RETRYABLE_JSONRPC_CODES = new Set([-32602, -32601]);
+
+/**
+ * Structural check for a deterministic input-validation failure. Matches the
+ * `code` of an McpError-shaped error, the `MCP error -32602: Input validation
+ * error: …` text an MCP SDK client surfaces for a rejected tool schema, and
+ * the `MCP 2026 tools/call failed (HTTP 400): …` envelope of the stateless
+ * adapter. Nothing is read out of the message; this only answers "retry or
+ * not".
+ */
+export function isNonRetryableToolCallError(error: unknown): boolean {
+  const record =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown; message?: unknown })
+      : undefined;
+  if (
+    typeof record?.code === "number" &&
+    NON_RETRYABLE_JSONRPC_CODES.has(record.code)
+  ) {
+    return true;
+  }
+  const message = typeof record?.message === "string" ? record.message : "";
+  return /(?:^|\D)-3260[12]\b/u.test(message);
+}
+
 export async function withRetry<T>(
   fn: (signal?: AbortSignal) => Promise<T>,
   options: {
@@ -121,6 +157,13 @@ export async function withRetry<T>(
     timeoutMs?: number;
     delayMs?: number;
     serverName?: string;
+    /**
+     * Decides after a failed attempt whether another one can plausibly succeed.
+     * Returning false ends the loop immediately, so a deterministic rejection
+     * (invalid tool arguments) is reported to the caller without burning the
+     * remaining attempts and delays. Defaults to retrying every failure.
+     */
+    isRetryable?: (error: Error) => boolean;
     /**
      * Runs after a failed attempt and before the retry delay. Used by transport
      * clients to replace a connection whose request timed out or disconnected.
@@ -175,6 +218,11 @@ export async function withRetry<T>(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (isAborted(signal)) throw abortError(serverName, attempt);
+      // A deterministic rejection (invalid tool arguments, unknown tool) fails
+      // identically on every attempt, so report the peer's own error right away
+      // instead of wrapping it in the "failed after N attempts" envelope below.
+      // The message is what the model needs in order to fix the argument.
+      if (options.isRetryable?.(lastError) === false) throw lastError;
 
       if (attempt < maxAttempts && !isAborted(signal)) {
         await options.onAttemptFailure?.(lastError, attempt, signal);

@@ -39,7 +39,12 @@ import {
 import { SchemaCache, DEFAULT_PROTECTED_PARAMS, listAllTools } from "./schema.js";
 import type { FilteredToolSchema, ToolAnnotations } from "./schema.js";
 import { computeSchemaChecksum } from "./schema.js";
-import { withRetry, resolveInjectedParams, stripProtectedParams } from "./tool-proxy.js";
+import {
+  isNonRetryableToolCallError,
+  resolveInjectedParams,
+  stripProtectedParams,
+  withRetry,
+} from "./tool-proxy.js";
 import type { McpApprovalInputRequest, McpApprovalResolution, ToolResult } from "./tool-proxy.js";
 import { MCP_2026_PROTOCOL_VERSION, Stateless2026Client } from "./stateless-2026-client.js";
 import type { Logger } from "../../observability/logger.js";
@@ -1814,6 +1819,10 @@ export class McpWrapper implements McpWrapperService {
         // Per-server override: embedding-backed searches (hybrid + HyDE + rerank)
         // legitimately exceed the 5 s wrapper default under concurrent load.
         timeoutMs: config.requestTimeoutMs ?? this.retryTimeoutMs,
+        // A rejected tool schema (JSON-RPC -32602) is deterministic: the same
+        // arguments fail the same way, so the retries and their 1 s delays only
+        // delayed the model's correction (~2 s per bad call in production traces).
+        isRetryable: (error) => !isNonRetryableToolCallError(error),
         onAttemptFailure: async (error, attempt, signal) => {
           attemptFailures.push({ attempt, message: error.message });
           const timedOut = /^Attempt \d+ timed out after \d+ms$/u.test(

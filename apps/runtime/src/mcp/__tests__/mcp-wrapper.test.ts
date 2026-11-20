@@ -23,6 +23,7 @@ import {
   resolveInjectedParams,
   computeSchemaChecksum,
   withRetry,
+  isNonRetryableToolCallError,
 } from "../mcp-wrapper.js";
 import type { RequestContext } from "../../types/monitoring.js";
 
@@ -859,6 +860,113 @@ describe("Unit: withRetry", () => {
     );
     expect(result).toBe("success");
     expect(attempts).toBe(2);
+  });
+
+  test("isRetryable=false stops after the first attempt and reports the raw error", async () => {
+    let attempts = 0;
+    let failures = 0;
+    let error: Error | undefined;
+    const started = Date.now();
+    try {
+      await withRetry(
+        async () => {
+          attempts++;
+          throw new Error(
+            "MCP 2026 tools/call failed (HTTP 400) (JSON-RPC -32602): Invalid arguments",
+          );
+        },
+        {
+          serverName: "vectorsearch",
+          maxAttempts: 3,
+          timeoutMs: 100,
+          delayMs: 500,
+          isRetryable: (e) => !isNonRetryableToolCallError(e),
+          onAttemptFailure: () => {
+            failures++;
+          },
+        },
+      );
+    } catch (e) {
+      error = e as Error;
+    }
+    // One attempt only, no retry delay, and the peer's own message reaches the
+    // model (not the wrapped "failed after 3 attempts" envelope).
+    expect(attempts).toBe(1);
+    expect(failures).toBe(0);
+    expect(Date.now() - started).toBeLessThan(400);
+    expect(error?.message).toContain("-32602");
+    expect(error?.message).not.toContain("failed after");
+  });
+
+  test("isRetryable=true keeps retrying ordinary failures", async () => {
+    let attempts = 0;
+    let error: Error | undefined;
+    try {
+      await withRetry(
+        async () => {
+          attempts++;
+          throw new Error("Attempt 1 timed out after 100ms");
+        },
+        {
+          serverName: "server",
+          maxAttempts: 2,
+          timeoutMs: 100,
+          delayMs: 0,
+          isRetryable: (e) => !isNonRetryableToolCallError(e),
+        },
+      );
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(attempts).toBe(2);
+    expect(error?.message).toContain("failed after 2 attempts");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests — isNonRetryableToolCallError
+// ---------------------------------------------------------------------------
+
+describe("Unit: isNonRetryableToolCallError", () => {
+  test("matches an McpError-shaped error by numeric code", () => {
+    expect(isNonRetryableToolCallError({ code: -32602 })).toBe(true);
+    expect(isNonRetryableToolCallError({ code: -32601 })).toBe(true);
+  });
+
+  test("matches the MCP SDK schema-rejection message", () => {
+    expect(
+      isNonRetryableToolCallError(
+        new Error(
+          'MCP error -32602: Input validation error: Invalid arguments for tool search: Invalid option: expected one of "chunk"|"section"|"page"|"document" at granularity',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("matches the stateless 2026 HTTP envelope with embedded JSON-RPC code", () => {
+    expect(
+      isNonRetryableToolCallError(
+        new Error(
+          "MCP 2026 tools/call failed (HTTP 400) (JSON-RPC -32602): Invalid params",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not match transient failures", () => {
+    expect(
+      isNonRetryableToolCallError(new Error("Attempt 1 timed out after 5000ms")),
+    ).toBe(false);
+    expect(
+      isNonRetryableToolCallError(
+        new Error("MCP 2026 tools/call failed (HTTP 503): upstream unavailable"),
+      ),
+    ).toBe(false);
+    // -32603 (internal error) stays retryable — it may be a transient peer fault.
+    expect(isNonRetryableToolCallError({ code: -32603 })).toBe(false);
+    expect(isNonRetryableToolCallError(new Error("fetch failed"))).toBe(false);
+    expect(isNonRetryableToolCallError(undefined)).toBe(false);
+    expect(isNonRetryableToolCallError("MCP error -32602")).toBe(false);
   });
 });
 

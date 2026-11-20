@@ -314,6 +314,47 @@ export function toolErrorExcerpt(output: unknown, maxChars = 300): string | unde
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
+/**
+ * Structural failure class of an MCP error RESULT (as opposed to a thrown
+ * error, see `toolFailureClass` in handlers/tool.ts). Reads only the fixed
+ * machine-readable markers an MCP peer puts into its error text — the JSON-RPC
+ * code (`MCP error -32602: …`, `(JSON-RPC -32020)`) and an HTTP status
+ * (`(HTTP 400)`) — and maps the code to a stable upper-case name. The free
+ * text itself (which may quote schema values or endpoints) never survives.
+ */
+const JSONRPC_CODE_NAMES: Readonly<Record<string, string>> = {
+  "-32600": "INVALID_REQUEST",
+  "-32601": "METHOD_NOT_FOUND",
+  "-32602": "INVALID_PARAMS",
+  "-32603": "INTERNAL_ERROR",
+  "-32020": "HEADER_MISMATCH",
+  "-32022": "UNSUPPORTED_PROTOCOL_VERSION",
+};
+
+export function toolFailureClassFromContent(output: unknown): {
+  error_name?: string;
+  http_status?: number;
+  error_code?: string;
+} | undefined {
+  const text = toolErrorExcerpt(output, 600);
+  if (text === undefined) return undefined;
+  const codeMatch = /(?:MCP error|JSON-RPC)\s+(-32\d{3})\b/u.exec(text);
+  const httpMatch = /\(HTTP (\d{3})\)/u.exec(text);
+  const errorCode =
+    codeMatch?.[1] !== undefined
+      ? JSONRPC_CODE_NAMES[codeMatch[1]]
+      : undefined;
+  if (errorCode === undefined && httpMatch?.[1] === undefined) {
+    return undefined;
+  }
+  return {
+    ...(httpMatch?.[1] !== undefined
+      ? { http_status: Number(httpMatch[1]) }
+      : {}),
+    ...(errorCode !== undefined ? { error_code: errorCode } : {}),
+  };
+}
+
 export function sanitizeToolCallModelMessages(
   messages: ModelMessage[],
   effectiveArgsByCallId?: ReadonlyMap<string, Record<string, unknown>>,

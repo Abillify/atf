@@ -28,6 +28,7 @@ import {
   applyAnthropicPromptCache,
   applyBedrockPromptCache,
   coreMessagesToText,
+  toolFailureClassFromContent,
 } from "../message-mapping.js";
 import type { ChatMessage } from "../../types/openai.js";
 
@@ -490,5 +491,52 @@ describe("stripRenderedArtifacts · nested markup", () => {
     const out = stripRenderedArtifacts("ok <ifr<iframe src=x></iframe>ame src=y></iframe> end");
     expect(out).not.toMatch(/<iframe/i);
     expect(out).toContain("ok");
+  });
+});
+
+describe("toolFailureClassFromContent", () => {
+  test("maps an MCP schema rejection to INVALID_PARAMS", () => {
+    expect(
+      toolFailureClassFromContent({
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: 'MCP error -32602: Input validation error: Invalid arguments for tool search: Invalid option: expected one of "chunk"|"section"|"page"|"document" at granularity',
+          },
+        ],
+      }),
+    ).toEqual({ error_code: "INVALID_PARAMS" });
+  });
+
+  test("extracts the HTTP status from the stateless 2026 envelope", () => {
+    expect(
+      toolFailureClassFromContent(
+        "MCP 2026 tools/call failed (HTTP 400) (JSON-RPC -32602): Invalid params",
+      ),
+    ).toEqual({ http_status: 400, error_code: "INVALID_PARAMS" });
+    expect(
+      toolFailureClassFromContent(
+        "MCP 2026 tools/call failed (HTTP 503): upstream unavailable",
+      ),
+    ).toEqual({ http_status: 503 });
+  });
+
+  test("returns undefined without a machine-readable marker", () => {
+    expect(
+      toolFailureClassFromContent({
+        isError: true,
+        content: [{ type: "text", text: "upstream exploded" }],
+      }),
+    ).toBeUndefined();
+    expect(toolFailureClassFromContent(undefined)).toBeUndefined();
+  });
+
+  test("never leaks the free-text message into the class", () => {
+    const cls = toolFailureClassFromContent(
+      'MCP error -32602: Input validation error for tool search at granularity "table" against https://internal.example/mcp',
+    );
+    expect(JSON.stringify(cls)).not.toContain("internal.example");
+    expect(JSON.stringify(cls)).not.toContain("granularity");
   });
 });

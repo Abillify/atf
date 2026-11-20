@@ -36,6 +36,7 @@ import {
   parseVectorSearchSummaryMeta,
 } from "../reranker.js";
 import { buildGroundingSections } from "../rag-grounding.js";
+import { toolFailureClassFromContent } from "../message-mapping.js";
 import { approvalRequestedBy } from "../approval-gate.js";
 import { getPiiContextScope, getPiiToolBoundary } from "../pii-tool-boundary.js";
 import { policyRequiresToolApproval } from "../../compliance/policy-evaluator.js";
@@ -509,7 +510,12 @@ export function createToolNodeHandler(
               type: "tool_error",
               details: { node_id: node.id, tool: toolRef },
             });
-            await runtime.onToolError?.(toolCallId, errorMessage, execTimeSec);
+            await runtime.onToolError?.(
+              toolCallId,
+              errorMessage,
+              execTimeSec,
+              toolFailureClassFromContent(result.content),
+            );
             break;
           }
 
@@ -595,7 +601,7 @@ export function createToolNodeHandler(
           });
           // Close the synthetic tool node as errored (the throw skipped
           // onToolResult, which would otherwise emit its terminal event).
-          await runtime.onToolError?.(toolCallId, errMsg, 0);
+          await runtime.onToolError?.(toolCallId, errMsg, 0, failure);
         }
 
         page++;

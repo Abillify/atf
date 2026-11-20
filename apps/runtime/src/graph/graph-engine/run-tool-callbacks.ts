@@ -10,13 +10,20 @@
 
 import crypto from "node:crypto";
 import type { AppConfig } from "../../config/index.js";
-import type { RequestContext } from "../../types/monitoring.js";
+import type {
+  RequestContext,
+  ToolFailureClass,
+} from "../../types/monitoring.js";
 import type { ChatCompletionChunk } from "../../types/openai.js";
 import type { DebugToolCall } from "../../types/debug-trace.js";
 import type { MonitoringServiceInterface } from "../../monitoring/monitoring-service.js";
 import type { ExecutionEventMeta } from "../../monitoring/execution-store.js";
 import type { DebugTraceStore } from "../../monitoring/debug-trace-store.js";
-import { isToolErrorOutput, sanitizeToolResultOutput } from "../message-mapping.js";
+import {
+  isToolErrorOutput,
+  sanitizeToolResultOutput,
+  toolFailureClassFromContent,
+} from "../message-mapping.js";
 import { nodeStateKey } from "./node-instance.js";
 import { parseVectorSearchResults } from "../reranker.js";
 import type { HashRefHandleRegistry } from "../ref-handles.js";
@@ -191,6 +198,7 @@ export function createToolCallbacks(deps: {
       toolCallId: string,
       execTimeSec: number,
       errorMessage?: string,
+      failure?: ToolFailureClass,
     ): void => {
       if (!monitoring) return;
       const info = toolNodes.get(toolCallId);
@@ -229,6 +237,12 @@ export function createToolCallbacks(deps: {
           latency_ms: Math.round(execTimeSec * 1000),
           ...(errorMessage !== undefined
             ? { error_message: errorMessage }
+            : {}),
+          // Structural class of the failure (name/HTTP status/peer code). The
+          // message above is anonymized on purpose, so without this an input
+          // rejection and a transport failure look identical in the history.
+          ...(errorMessage !== undefined && failure !== undefined
+            ? { error_class: failure }
             : {}),
           sequence: info.sequence,
           ...(toolModelKey !== undefined ? { model: toolModelKey } : {}),
@@ -477,6 +491,7 @@ export function createToolCallbacks(deps: {
       toolCallId: string,
       _errorMessage: string,
       execTimeSec: number,
+      failure?: ToolFailureClass,
     ): void => {
       const safeMessage = "Tool execution failed.";
       const visibleContent = {
@@ -511,7 +526,7 @@ export function createToolCallbacks(deps: {
       }
       toolCallOwnerNodeIds.delete(toolCallId);
       _pendingToolCallIds.delete(toolCallId);
-      emitToolNodeEnd(toolCallId, execTimeSec, safeMessage);
+      emitToolNodeEnd(toolCallId, execTimeSec, safeMessage, failure);
     };
 
     const onToolResult = async (
@@ -532,6 +547,13 @@ export function createToolCallbacks(deps: {
       const errorMessage = isToolErrorOutput(content)
         ? "Tool execution failed."
         : undefined;
+      // Same reasoning as in `onToolError`: the message is a fixed fallback, so
+      // the structural class (JSON-RPC code / HTTP status) is the only way an
+      // operator can tell an input rejection from a transport failure.
+      const failureClass =
+        errorMessage !== undefined
+          ? toolFailureClassFromContent(content)
+          : undefined;
       // Error envelopes are untrusted provider/tool output. Preserve successful
       // results, but expose only a stable error object to monitoring, debug
       // traces, and client reasoning streams.
@@ -553,7 +575,7 @@ export function createToolCallbacks(deps: {
       if (resultDisplay !== undefined) {
         toolNodeResults.set(toolCallId, truncateToolIo(resultDisplay));
       }
-      emitToolNodeEnd(toolCallId, execTimeSec, errorMessage);
+      emitToolNodeEnd(toolCallId, execTimeSec, errorMessage, failureClass);
       const activeNodeId =
         toolCallOwnerNodeIds.get(toolCallId) ?? st.lastActiveNodeId;
       if (activeNodeId !== undefined) {
