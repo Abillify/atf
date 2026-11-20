@@ -11,12 +11,59 @@
 
 import type { AccessScope } from "./access-scope.js";
 import type { CollectionAcl } from "./collection-access.js";
-import { AppError, COLLECTION_TABLE_PREFIX, collectionTableName, ensureCollectionConfigTable, ftsSearchRecomputeSql, loadCollectionMeta, validateFtsLanguage } from "./collection-ddl.js";
-import { SqlParams, buildAccessSql } from "./query-builder.js";
-import { escapeLikeLiteral, normalizePathPrefix } from "./pg-helpers.js";
-import type { CollectionInfo, CollectionOverview, CollectionStats, IngestStats, PostgresResponse, SearchStats } from "./pg-types.js";
-
+import {
+  AppError,
+  COLLECTION_TABLE_PREFIX,
+  collectionTableName,
+  ensureCollectionConfigTable,
+  ftsSearchRecomputeSql,
+  loadCollectionMeta,
+  validateFtsLanguage,
+} from "./collection-ddl.js";
 import type { PgFactoryCtx } from "./pg-factory-ctx.js";
+import { escapeLikeLiteral, normalizePathPrefix } from "./pg-helpers.js";
+import type {
+  CollectionInfo,
+  CollectionOverview,
+  CollectionStats,
+  IngestStats,
+  PostgresResponse,
+  SearchStats,
+} from "./pg-types.js";
+import { buildAccessSql, SqlParams } from "./query-builder.js";
+import {
+  VS_ASSETS_TABLE,
+  VS_DOCUMENT_GROUPS_TABLE,
+  VS_DOCUMENT_REVISIONS_TABLE,
+  VS_DOCUMENT_SOURCES_TABLE,
+  VS_INGEST_BATCHES_TABLE,
+  VS_MAIL_MESSAGES_TABLE,
+  VS_REVISIONS_TABLE,
+  VS_SEGMENTS_TABLE,
+} from "./revision-schema.js";
+
+/**
+ * Collection-scoped `vs_*` tables whose rows carry the collection NAME in a
+ * `collection` column and must be rewritten on rename (and deleted on
+ * collection drop) — see {@link renameCollection} / deleteCollection.
+ * `vs_collection_config` (stores the `vc_*` table name) and
+ * `vs_document_assets` are handled separately inside both operations; tables
+ * without a collection column need no action. Entries are compile-time
+ * constants — never user input — so interpolating the names into SQL is safe.
+ */
+const COLLECTION_SCOPED_TABLES: ReadonlyArray<string> = [
+  VS_REVISIONS_TABLE,
+  VS_INGEST_BATCHES_TABLE,
+  VS_SEGMENTS_TABLE,
+  VS_DOCUMENT_REVISIONS_TABLE,
+  VS_ASSETS_TABLE,
+  VS_DOCUMENT_SOURCES_TABLE,
+  VS_MAIL_MESSAGES_TABLE,
+  VS_DOCUMENT_GROUPS_TABLE,
+  "vs_identifiers",
+  "vs_ingest_stats",
+  "vs_search_stats",
+];
 
 export function createCollectionsMethods(ctx: PgFactoryCtx) {
   const {
@@ -598,6 +645,21 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
         };
       }
       return withClient(async (client) => {
+        // Resolve which collection-scoped vs_* tables actually exist in this
+        // database (the revision tables arrive via migrations, vs_identifiers
+        // is created lazily) so the delete neither fails on a missing table
+        // nor silently leaves rows behind.
+        const existingTables = new Set<string>();
+        {
+          const regRes = await client.query<{ name: string; present: boolean }>(
+            `SELECT t.name, to_regclass(t.name) IS NOT NULL AS present
+             FROM (SELECT unnest($1::text[]) AS name) t`,
+            [[...COLLECTION_SCOPED_TABLES]],
+          );
+          for (const row of regRes.rows) {
+            if (row.present) existingTables.add(row.name);
+          }
+        }
         await client.query("BEGIN");
         try {
           await client.query(`DROP TABLE IF EXISTS "${table}"`);
@@ -609,6 +671,15 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
             `DELETE FROM vs_document_assets WHERE collection = $1`,
             [collection],
           );
+          // Remove the collection's rows from every other collection-scoped
+          // vs_* table so no orphaned rows keep pointing at the dropped
+          // collection. Tables that don't exist in this DB are skipped.
+          for (const t of COLLECTION_SCOPED_TABLES) {
+            if (!existingTables.has(t)) continue;
+            await client.query(`DELETE FROM ${t} WHERE collection = $1`, [
+              collection,
+            ]);
+          }
           await client.query("COMMIT");
         } catch (error) {
           await client.query("ROLLBACK").catch(() => {});
@@ -616,6 +687,12 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
         }
         ensuredCollections.delete(table);
         ensureCollectionLocks.delete(table);
+        // Drop any lexicon cached under the deleted table name.
+        ctx.ftsLexiconCache.invalidate(table);
+        // Drop not-yet-flushed stat rows so the periodic flush can't
+        // re-insert the deleted collection into vs_ingest_stats /
+        // vs_search_stats.
+        ctx.statsBuffer.dropCollection(collection);
         return { dropped: true };
       });
     },
@@ -667,6 +744,56 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
           );
         }
 
+        // Resolve which collection-scoped vs_* tables actually exist in this
+        // database (the revision tables arrive via migrations, vs_identifiers
+        // is created lazily) so the rename neither fails on a missing table
+        // nor silently skips an existing one.
+        const existingTables = new Set<string>();
+        {
+          const names = [...COLLECTION_SCOPED_TABLES];
+          const regRes = await client.query<{ name: string; present: boolean }>(
+            `SELECT t.name, to_regclass(t.name) IS NOT NULL AS present
+             FROM (SELECT unnest($1::text[]) AS name) t`,
+            [names],
+          );
+          for (const row of regRes.rows) {
+            if (row.present) existingTables.add(row.name);
+          }
+        }
+
+        // A rename into an already-taken name would collide with the target
+        // collection's rows (several tables carry `collection` in their
+        // primary key) — reject up front instead of failing mid-transaction.
+        {
+          const configTaken = await client.query<{ exists: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1 FROM vs_collection_config WHERE collection_table = $1
+             ) AS exists`,
+            [newTable],
+          );
+          let rowsTaken = false;
+          if (!configTaken.rows[0]?.exists) {
+            const probes = COLLECTION_SCOPED_TABLES.filter((t) =>
+              existingTables.has(t),
+            ).map((t) => {
+              return `SELECT EXISTS (SELECT 1 FROM ${t} WHERE collection = $1)`;
+            });
+            if (probes.length > 0) {
+              const probe = await client.query<{ taken: boolean }>(
+                `SELECT bool_or(t) AS taken FROM (${probes.join(" UNION ALL ")}) x(t)`,
+                [newName],
+              );
+              rowsTaken = probe.rows[0]?.taken === true;
+            }
+          }
+          if (configTaken.rows[0]?.exists || rowsTaken) {
+            throw new AppError(
+              "COLLECTION_EXISTS",
+              `Collection "${newName}" already exists`,
+            );
+          }
+        }
+
         await client.query("BEGIN");
         try {
           // Rename the table
@@ -701,6 +828,16 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
             `UPDATE vs_document_assets SET collection = $1, modified = NOW() WHERE collection = $2`,
             [newName, oldName],
           );
+          // Rewrite the collection name in every other collection-scoped
+          // vs_* table so no rows keep pointing at the old name. Tables
+          // that don't exist in this database yet are skipped.
+          for (const t of COLLECTION_SCOPED_TABLES) {
+            if (!existingTables.has(t)) continue;
+            await client.query(
+              `UPDATE ${t} SET collection = $1 WHERE collection = $2`,
+              [newName, oldName],
+            );
+          }
           await client.query("COMMIT");
         } catch (err) {
           await client.query("ROLLBACK").catch(() => {});
@@ -712,6 +849,13 @@ export function createCollectionsMethods(ctx: PgFactoryCtx) {
         ensuredCollections.delete(oldTable);
         ensureCollectionLocks.delete(oldTable);
         if (meta) ensuredCollections.set(newTable, meta);
+        // Drop any lexicon cached under either table name so compound-split
+        // doesn't serve the old entry (or miss the new one) until the TTL.
+        ctx.ftsLexiconCache.invalidate(oldTable);
+        ctx.ftsLexiconCache.invalidate(newTable);
+        // Rewrite not-yet-flushed stat rows so the periodic flush can't write
+        // the old collection name into vs_ingest_stats / vs_search_stats.
+        ctx.statsBuffer.renameCollection(oldName, newName);
       });
     },
 

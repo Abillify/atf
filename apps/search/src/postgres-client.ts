@@ -204,6 +204,16 @@ export function createPostgresClient(
           },
         };
       }
+      if (cause instanceof AppError && cause.code === "COLLECTION_EXISTS") {
+        return {
+          ok: false,
+          error: {
+            code: "COLLECTION_EXISTS",
+            message: cause.message,
+            cause,
+          },
+        };
+      }
       if (
         cause instanceof AppError &&
         cause.code === "EMBEDDING_PROVENANCE_MISMATCH"

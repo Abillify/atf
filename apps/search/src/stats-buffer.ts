@@ -72,6 +72,18 @@ export interface StatsCounters {
 export interface StatsBuffer {
   recordIngest(stat: PendingIngestStat): void;
   recordSearch(stat: PendingSearchStat): void;
+  /**
+   * Rewrite pending (not-yet-flushed) rows so a collection rename doesn't
+   * leak the old name into vs_ingest_stats / vs_search_stats when the
+   * periodic flush runs after the rename committed.
+   */
+  renameCollection(oldName: string, newName: string): void;
+  /**
+   * Drop pending (not-yet-flushed) rows for a collection so deleting it
+   * doesn't re-insert the collection into vs_ingest_stats / vs_search_stats
+   * when the periodic flush runs after the delete committed.
+   */
+  dropCollection(collection: string): void;
   flush(): Promise<void>;
   getCounters(): StatsCounters;
   /** Flush pending rows and stop the periodic timer. */
@@ -244,6 +256,28 @@ export function createStatsBuffer(
       searchTotal++;
       if (searchBuffer.length >= STATS_FLUSH_BATCH_SIZE) {
         flush().catch((err) => logger.warn({ err }, "Batch stats flush error"));
+      }
+    },
+
+    renameCollection(oldName: string, newName: string): void {
+      for (const stat of ingestBuffer) {
+        if (stat.collection === oldName) stat.collection = newName;
+      }
+      for (const stat of searchBuffer) {
+        if (stat.collection === oldName) stat.collection = newName;
+      }
+    },
+
+    dropCollection(collection: string): void {
+      for (let i = ingestBuffer.length - 1; i >= 0; i--) {
+        if (ingestBuffer[i].collection === collection) {
+          ingestBuffer.splice(i, 1);
+        }
+      }
+      for (let i = searchBuffer.length - 1; i >= 0; i--) {
+        if (searchBuffer[i].collection === collection) {
+          searchBuffer.splice(i, 1);
+        }
       }
     },
 

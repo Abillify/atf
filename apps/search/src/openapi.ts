@@ -1955,6 +1955,10 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["Admin"],
           operationId: "deleteCollection",
           summary: "Drop a collection and all its data",
+          description:
+            "Drops the collection table and removes all associated rows — " +
+            "the collection config row and every row of the collection-scoped " +
+            "metadata tables — in a single transaction.",
           parameters: [
             {
               name: "name",
@@ -1987,9 +1991,11 @@ export function buildOpenApiSpec(serverUrl: string) {
           operationId: "renameCollection",
           summary: "Rename a collection",
           description:
-            "Renames the collection table and updates all associated indexes " +
-            "and the collection config row in a single transaction. " +
-            "Returns 404 when the source collection does not exist.",
+            "Renames the collection table and updates all associated indexes, " +
+            "the collection config row, and the collection column of every " +
+            "collection-scoped metadata table in a single transaction. " +
+            "Returns 404 when the source collection does not exist and 409 " +
+            "when the target name is already taken.",
           parameters: [
             {
               name: "name",
@@ -2036,6 +2042,7 @@ export function buildOpenApiSpec(serverUrl: string) {
             "400": { description: "Invalid name or same name supplied" },
             "401": { description: "Unauthorized" },
             "404": { description: "Source collection not found" },
+            "409": { description: "Target collection name already taken" },
             "502": { description: "Database error" },
           },
         },

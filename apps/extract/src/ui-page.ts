@@ -30,10 +30,13 @@
  *    headers (collection, tags, chunking, access control) exposed. On a
  *    Document Intelligence v2 deployment that route is a job wrapper: a large
  *    document answers 202 with a job id, which the page then follows.
- *  - **Neuer Job** (v2 only) — the full `POST /v2/jobs` surface: the source is
- *    uploaded in resumable, checksummed chunks via `/ui/uploads` (or pulled from
- *    a `source_url`, or named by an already stored sha256), then a job is
- *    created with every job option and followed stage by stage.
+ *  - **Neuer Job** (v2 only) — the full `POST /v2/jobs` surface: dropping a
+ *    file starts its upload immediately, shown as a card inside the drop zone
+ *    with a live progress bar (resumable, checksummed chunks via
+ *    `/ui/uploads`; a `source_url` is pulled right away, an already stored
+ *    sha256 is ready without a transfer). Once every upload has settled,
+ *    "Job anlegen" creates a job per source and removes it from the page, so
+ *    the next batch can be dropped while processing runs on the server.
  *  - **Jobs** (v2 only) — the job overview with per-stage progress, identity
  *    (version, duplicate, revision), the operator actions including reparse and
  *    resume-with-policy, and an on-demand page preview via `/ui/render`.
@@ -137,12 +140,12 @@ export function getUiPageHtml(options: UiPageOptions): string {
       <button class="tab-btn active" role="tab" data-tab="convert" aria-selected="true"><span class="tab-icon">⚙️</span> Konvertieren</button>
       ${
         ingestEnabled
-          ? `<button class="tab-btn" role="tab" data-tab="ingest" aria-selected="false" aria-controls="panel-ingest" id="tab-ingest"><span class="tab-icon">📥</span> Indexieren</button>`
+          ? `<button class="tab-btn" role="tab" data-tab="ingest" aria-selected="false" aria-controls="panel-ingest" id="tab-ingest"><span class="tab-icon">📥</span> Einfaches Indexieren</button>`
           : ""
       }
       ${
         jobsEnabled
-          ? `<button class="tab-btn" role="tab" data-tab="newjob" aria-selected="false" aria-controls="panel-newjob" id="tab-newjob"><span class="tab-icon">🧩</span> Neuer Job</button>
+          ? `<button class="tab-btn" role="tab" data-tab="newjob" aria-selected="false" aria-controls="panel-newjob" id="tab-newjob"><span class="tab-icon">🧩</span> Erweitertes Indexieren</button>
       <button class="tab-btn" role="tab" data-tab="jobs" aria-selected="false" aria-controls="panel-jobs" id="tab-jobs"><span class="tab-icon">📋</span> Jobs</button>`
           : ""
       }
@@ -212,7 +215,7 @@ function ingestPanelHtml(v2: boolean): string {
   return `
     <!-- ── Ingest panel ─────────────────────────────────────────────────── -->
     <div class="tab-panel" id="panel-ingest" role="tabpanel">
-      <p class="panel-title">Konvertieren und indexieren</p>
+      <p class="panel-title">Einfaches Indexieren</p>
       <p class="panel-desc">Dateien konvertieren und direkt in eine Search-Collection schreiben. Der Dateiname (ohne Endung) wird zur Referenz, sofern nichts anderes angegeben ist.</p>
 
       <div class="dropzone" id="ingest-dropzone" tabindex="0" role="button" aria-label="Dateien hier ablegen oder klicken zum Auswählen">
@@ -399,13 +402,14 @@ ${
 const NEWJOB_PANEL_HTML = `
     <!-- ── New v2 job panel ─────────────────────────────────────────────── -->
     <div class="tab-panel" id="panel-newjob" role="tabpanel" aria-labelledby="tab-newjob">
-      <p class="panel-title">Neuer Verarbeitungs-Job (Document Intelligence v2)</p>
-      <p class="panel-desc">Quelle ablegen, per URL holen lassen oder über ihren sha256 wählen, dann einen Job mit allen Optionen anlegen (POST /v2/jobs). Dateien werden in prüfsummengesicherten Teilen hochgeladen und setzen nach einem Abbruch an der bestätigten Stelle fort.</p>
+      <p class="panel-title">Erweitertes Indexieren (Document Intelligence v2)</p>
+      <p class="panel-desc">Dateien ablegen — der Upload startet sofort und bleibt hier in der Ablage sichtbar. Wenn alle Uploads fertig sind, wird „Job anlegen“ aktiv; der Klick legt für jede Quelle einen Job mit allen Optionen an (POST /v2/jobs) und räumt die Ablage für die nächste Charge. Dateien werden in prüfsummengesicherten Teilen hochgeladen und setzen nach einem Abbruch an der bestätigten Stelle fort.</p>
 
       <div class="dropzone" id="newjob-dropzone" tabindex="0" role="button" aria-label="Dateien hier ablegen oder klicken zum Auswählen">
         <div class="dropzone-icon">📂</div>
-        <div class="dropzone-text"><strong>Dateien hier ablegen</strong> oder klicken zum Auswählen</div>
+        <div class="dropzone-text"><strong>Dateien hier ablegen</strong> — der Upload startet sofort</div>
         <div class="dropzone-text" id="newjob-formats-hint" style="margin-top:0.25rem;font-size:0.75rem"></div>
+        <div class="dz-files" id="newjob-dropzone-files" aria-label="Quellen"></div>
       </div>
       <input type="file" id="newjob-file-input" multiple style="display:none" />
 
@@ -551,17 +555,11 @@ const NEWJOB_PANEL_HTML = `
           <input type="text" id="newjob-callback-url" placeholder="https://…/hook" />
         </div>
       </div>
-      <div class="row" style="gap:1.25rem;align-items:center;">
-        <label class="checkbox-label"><input type="checkbox" id="newjob-follow" checked /> Jobs verfolgen <span class="hint">(Fortschritt je Stufe bis zum Abschluss)</span></label>
-        <label class="checkbox-label"><input type="checkbox" id="newjob-auto-start" /> Automatisch starten <span class="hint">(nach dem Ablegen)</span></label>
-      </div>
-
-      <div class="convert-queue" id="newjob-queue"></div>
-
-      <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-top:1.25rem;">
-        <button type="button" class="btn btn-primary" id="newjob-start-btn" disabled>🧩 Jobs anlegen</button>
+      <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-top:1.5rem;">
+        <button type="button" class="btn btn-primary" id="newjob-create-btn" disabled>🧩 Job anlegen</button>
         <button type="button" class="btn btn-secondary" id="newjob-clear-btn">✕ Leeren</button>
         <span class="batch-progress" id="newjob-progress"></span>
+        <span id="newjob-jobs-link"></span>
       </div>
     </div>`;
 
@@ -674,6 +672,22 @@ input[type="number"] { max-width: 160px; }
 .dropzone-text strong { color: #94a3b8; }
 .batch-progress { font-size: 0.8rem; color: #64748b; }
 
+/* ── Drop zone with live upload cards (new-job tab) ───────────────────────── */
+.dropzone.has-files { padding: 1rem; text-align: left; }
+.dropzone.has-files .dropzone-icon { display: none; }
+.dropzone.has-files .dropzone-text { margin-bottom: 0.75rem; }
+.dz-files { display: flex; flex-direction: column; gap: 0.5rem; }
+.dz-files:empty { display: none; }
+.dz-file { background: #141824; border: 1px solid #2d3748; border-radius: 8px; padding: 0.55rem 0.75rem; cursor: default; }
+.dz-file-head { display: flex; align-items: center; gap: 0.6rem; }
+.dz-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 0.78rem; color: #e2e8f0; }
+.dz-file-size { color: #475569; font-size: 0.7rem; white-space: nowrap; }
+.dz-file-track { height: 6px; background: #1e293b; border-radius: 999px; overflow: hidden; margin-top: 0.5rem; }
+.dz-file-bar { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 0.15s ease; }
+.dz-file-bar.ok { background: linear-gradient(90deg, #10b981, #059669); }
+.dz-file-msg { margin-top: 0.3rem; font-size: 0.7rem; color: #64748b; font-family: "JetBrains Mono","Fira Code",monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dz-file-msg.err { color: #fca5a5; }
+
 /* ── Convert / ingest queue ────────────────────────────────────────────────── */
 .convert-queue { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1.25rem; }
 .cq-item { border: 1px solid #2d3748; border-radius: 10px; overflow: hidden; background: #141824; }
@@ -742,11 +756,12 @@ input[type="number"] { max-width: 160px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .jobs-list { display: flex; flex-direction: column; gap: 0.6rem; }
 .job-item { border: 1px solid #2d3748; border-radius: 10px; overflow: hidden; background: #141824; }
-.job-head { display: grid; grid-template-columns: 1.4rem minmax(0,2fr) auto minmax(120px,1fr) auto auto auto; gap: 0.75rem; align-items: center; padding: 0.7rem 1rem; cursor: pointer; user-select: none; }
+.job-head { display: grid; grid-template-columns: 1.4rem minmax(0,2fr) 8.5rem 160px 6rem 5.5rem 7.5rem 5rem; gap: 0.75rem; align-items: center; padding: 0.7rem 1rem; cursor: pointer; user-select: none; }
+.job-head > span { min-width: 0; }
 .job-chevron { color: #475569; font-size: 0.72rem; transition: transform 0.2s; }
 .job-item.open .job-chevron { transform: rotate(90deg); }
 .job-ref { color: #e2e8f0; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.job-status { font-size: 0.72rem; padding: 0.15rem 0.55rem; border-radius: 999px; white-space: nowrap; font-weight: 600; justify-self: start; }
+.job-status { font-size: 0.72rem; padding: 0.15rem 0.55rem; border-radius: 999px; white-space: nowrap; font-weight: 600; justify-self: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; text-align: center; }
 .job-status.queued    { background: rgba(245,158,11,0.1);  color: #fcd34d; border: 1px solid rgba(245,158,11,0.25); }
 .job-status.preparing,
 .job-status.processing,
@@ -759,7 +774,8 @@ input[type="number"] { max-width: 160px; }
 .job-mini-progress { display: block; height: 8px; background: #1e293b; border-radius: 999px; overflow: hidden; min-width: 80px; }
 .job-mini-bar { display: block; height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); }
 .job-mini-bar.done { background: linear-gradient(90deg, #10b981, #059669); }
-.job-cost { font-size: 0.72rem; color: #94a3b8; font-family: "JetBrains Mono","Fira Code",monospace; white-space: nowrap; text-align: right; }
+.job-cost { font-size: 0.72rem; color: #94a3b8; font-family: "JetBrains Mono","Fira Code",monospace; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.job-tokens { font-size: 0.72rem; color: #94a3b8; font-family: "JetBrains Mono","Fira Code",monospace; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .job-pages { font-size: 0.7rem; color: #94a3b8; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
 .job-stage-now { font-size: 0.68rem; color: #64748b; white-space: nowrap; }
 .job-mini-progress.indeterminate .job-mini-bar { width: 30% !important; animation: jobsindet 1.4s ease-in-out infinite; }
@@ -782,7 +798,7 @@ input[type="number"] { max-width: 160px; }
 .jobs-pager button[disabled] { opacity: 0.4; cursor: not-allowed; }
 .jobs-pager button[aria-current="page"] { border-color: #8b5cf6; color: #a78bfa; }
 .jobs-pager .pager-info { margin-left: auto; }
-.job-eta { font-size: 0.72rem; color: #64748b; white-space: nowrap; text-align: right; }
+.job-eta { font-size: 0.72rem; color: #64748b; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
 .job-body { display: none; border-top: 1px solid #2d3748; padding: 1rem; }
 .job-item.open .job-body { display: block; }
 .job-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
@@ -799,6 +815,8 @@ input[type="number"] { max-width: 160px; }
 .job-stage-fill.done { background: linear-gradient(90deg, #10b981, #059669); }
 .job-stage-count { font-size: 0.72rem; color: #cbd5e1; font-family: "JetBrains Mono","Fira Code",monospace; }
 .job-stage-count .fail { color: #fca5a5; }
+.job-stage-lines { display: flex; flex-direction: column; gap: 0.15rem; }
+.job-stage-lines > div { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.68rem; color: #94a3b8; font-family: "JetBrains Mono","Fira Code",monospace; }
 .job-detail-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
 .job-warnings { list-style: none; margin: 0 0 0.5rem; padding: 0; display: grid; gap: 0.3rem; }
 .job-warnings li { padding-left: 0.75rem; border-left: 3px solid #f59e0b; color: #fcd34d; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 0.72rem; line-height: 1.5; }
@@ -829,7 +847,21 @@ input[type="number"] { max-width: 160px; }
 .cq-figure-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.75rem; }
 .cq-figure { background: #0f1117; border: 1px solid #2d3748; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
 .cq-figure-img { display: block; width: 100%; height: 150px; object-fit: contain; background: #fff; cursor: zoom-in; }
-.cq-figure-img.zoomed { height: auto; max-height: none; cursor: zoom-out; }
+.fig-kind-badge { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: #0f172a; background: #a78bfa; border-radius: 999px; padding: 0.05rem 0.4rem; }
+.fig-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; max-height: 150px; overflow: auto; display: block; }
+.fig-table th, .fig-table td { border: 1px solid #2d3748; padding: 0.15rem 0.35rem; text-align: left; vertical-align: top; }
+.fig-table th { background: #1e293b; color: #cbd5e1; }
+.fig-table td { color: #cbd5e1; }
+/* ── Figure modal (shared lightbox) ── */
+.fig-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(2, 6, 23, 0.88); display: flex; align-items: center; justify-content: center; padding: 2rem; }
+.fig-modal[hidden] { display: none; }
+.fig-modal-box { position: relative; display: flex; flex-direction: column; gap: 0.6rem; max-width: 100%; max-height: 100%; }
+.fig-modal-img { max-width: 90vw; max-height: 78vh; object-fit: contain; background: #fff; border: 1px solid #334155; border-radius: 8px; }
+.fig-modal-caption { font-size: 0.78rem; color: #cbd5e1; line-height: 1.5; max-width: 90vw; }
+.fig-modal-status { font-size: 0.75rem; color: #94a3b8; }
+.fig-modal-status[hidden] { display: none; }
+.fig-modal-close { position: absolute; top: -0.5rem; right: -0.5rem; width: 2rem; height: 2rem; border-radius: 999px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 0.9rem; cursor: pointer; }
+.fig-modal-close:hover { background: #334155; }
 .cq-figure-noimg { height: 60px; display: flex; align-items: center; justify-content: center; color: #475569; font-size: 0.7rem; border-bottom: 1px solid #2d3748; }
 .cq-figure-meta { padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
 .cq-figure-id { font-family: "JetBrains Mono","Fira Code",monospace; font-size: 0.68rem; color: #a78bfa; display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
@@ -963,12 +995,19 @@ const JS = `
     return ratios.reduce(function (a, b) { return a + b; }, 0) / ratios.length;
   }
 
+  // Cost and tokens as separate fixed-column values in the job list; joined
+  // for the detail chips.
+  function fmtMoney(job) {
+    return typeof job.costUsd === "number" ? "$" + job.costUsd.toFixed(4) : "—";
+  }
+  function fmtTokens(job) {
+    if (typeof job.tokensUsed !== "number") return "—";
+    return job.tokensUsed + (typeof job.tokenBudget === "number" ? "/" + job.tokenBudget : "") + " Tok";
+  }
   function fmtCost(job) {
     var parts = [];
     if (typeof job.costUsd === "number") parts.push("$" + job.costUsd.toFixed(4));
-    if (typeof job.tokensUsed === "number") {
-      parts.push(job.tokensUsed + (typeof job.tokenBudget === "number" ? "/" + job.tokenBudget : "") + " Tok");
-    }
+    if (typeof job.tokensUsed === "number") parts.push(fmtTokens(job));
     return parts.join(" · ") || "—";
   }
 
@@ -1032,6 +1071,50 @@ const JS = `
     "</div>";
   }
 
+  // The stage cards of the operator view. Seven bars per job are more than an
+  // operator reads at a glance, so the stages that rarely move are folded into
+  // one card each with the stages they belong to: the card's bar is the group
+  // total, and the individual stages are listed beneath it. The "finished"
+  // stage is not a checkpoint but derived by the service from Search's final
+  // commit.
+  var STAGE_GROUPS = [
+    { label: "Analyse", stages: ["analyzed"] },
+    { label: "Vision", stages: ["vision1", "vision2"] },
+    { label: "Raffung + Kacheln", stages: ["refined", "tiled"] },
+    { label: "Docpass", stages: ["docpass"] },
+    { label: "Emitted", stages: ["emitted"] },
+    { label: "Finished", stages: ["finished"] }
+  ];
+
+  function renderStageGroups(progress) {
+    return STAGE_GROUPS.map(function (g) {
+      var total = 0, done = 0, failed = 0, seen = false;
+      var lines = [];
+      g.stages.forEach(function (s) {
+        var p = progress ? progress[s] : null;
+        if (!p) return;
+        seen = true;
+        total += p.total;
+        done += p.done;
+        failed += p.failed;
+        lines.push('<div class="job-stage-line"><span>' + escapeHtml(s) + "</span><span>" + p.done + "/" + p.total +
+          (p.failed ? ' <span class="fail">(' + p.failed + ")</span>" : "") + "</span></div>");
+      });
+      if (!seen) return renderStage(g.label, null);
+      var pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      var cls = failed > 0 ? "failed" : (total > 0 && done >= total ? "done" : "");
+      return '<div class="job-stage">' +
+        '<div class="job-stage-name">' + escapeHtml(g.label) + "</div>" +
+        '<div class="job-stage-track" role="progressbar" aria-label="' + escapeHtml(g.label) + ' Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-valuetext="' + done + " von " + total + (failed ? ", " + failed + " fehlgeschlagen" : "") + '">' +
+          '<span class="job-stage-fill ' + cls + '" style="width:' + pct + '%"></span>' +
+        "</div>" +
+        (lines.length > 1
+          ? '<div class="job-stage-lines">' + lines.join("") + "</div>"
+          : '<div class="job-stage-count">' + done + "/" + total + (failed ? ' <span class="fail">(' + failed + " Fehler)</span>" : "") + "</div>") +
+      "</div>";
+    }).join("");
+  }
+
   function jobStats(job) {
     var stats = [];
     if (typeof job.pageCount === "number") stats.push(job.pageCount + " Seiten");
@@ -1066,7 +1149,7 @@ const JS = `
       var eta = fmtEta(job);
       api.setBar(it, overallRatio(job), job.status === "completed");
       api.setMsg(it, "Job " + statusLabel(job.status) + (job.pauseReason ? " (" + job.pauseReason + ")" : "") + (eta ? " · Restzeit " + eta : ""));
-      api.setStages(it, PAGE_STAGES.map(function (s) { return renderStage(s, job.progress ? job.progress[s] : null); }).join(""));
+      api.setStages(it, renderStageGroups(job.progress));
       api.setStats(it, jobStats(job));
       var warnings = Array.isArray(job.warnings) ? job.warnings : [];
       if (warnings.length < seenWarnings) seenWarnings = 0;   // a retry reset them
@@ -1168,12 +1251,82 @@ const JS = `
     }
   }
 
-  // ── Queue: shared engine for the convert, ingest and new-job tabs ─────────────
-  // Each entry is one source: a dropped file or, in the new-job tab, a source
-  // URL or a stored sha256. Processing is sequential — one source in flight,
-  // the rest pending — but a tab may supply prepareOne, which runs for every
-  // pending source concurrently before processing starts (the new-job tab uses
-  // it so all uploads move at once while the first job is still running).
+  // ── Figure modal ───────────────────────────────────────────────────────────
+  // One shared lightbox for every image gallery (convert figures, job figures
+  // and tables). The image source is set only from a data: URL the caller has
+  // already validated or an object URL this page rendered itself — never from
+  // markup. Closes on ✕, backdrop click or Escape; focus returns to the caller.
+  var figModal = null;
+  function ensureFigureModal() {
+    if (figModal) return figModal;
+    var backdrop = document.createElement("div");
+    backdrop.className = "fig-modal";
+    backdrop.hidden = true;
+    var box = document.createElement("div");
+    box.className = "fig-modal-box";
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "fig-modal-close";
+    closeBtn.setAttribute("aria-label", "Dialog schließen");
+    closeBtn.textContent = "✕";
+    var img = document.createElement("img");
+    img.className = "fig-modal-img";
+    img.alt = "";
+    var status = document.createElement("div");
+    status.className = "fig-modal-status";
+    status.setAttribute("role", "status");
+    var cap = document.createElement("div");
+    cap.className = "fig-modal-caption";
+    box.append(closeBtn, status, img, cap);
+    backdrop.append(box);
+    document.body.append(backdrop);
+    var lastFocus = null;
+    var request = 0;
+    function close() {
+      request += 1;                 // invalidate an in-flight load
+      backdrop.hidden = true;
+      img.removeAttribute("src");
+      status.textContent = "";
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    backdrop.addEventListener("click", function (e) { if (e.target === backdrop) close(); });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) { if (!backdrop.hidden && e.key === "Escape") close(); });
+    figModal = {
+      // caption/alt are plain text (textContent only). "load" is a function
+      // returning a Promise for the image URL; a status line covers the wait.
+      show: function (captionText, altText, load) {
+        lastFocus = document.activeElement;
+        var token = ++request;
+        cap.textContent = captionText || "";
+        img.alt = altText || "";
+        img.removeAttribute("src");
+        status.textContent = "Bild wird geladen …";
+        status.hidden = false;
+        backdrop.hidden = false;
+        closeBtn.focus();
+        Promise.resolve(load()).then(
+          function (url) {
+            if (token !== request || backdrop.hidden) return;
+            img.src = url;
+            status.hidden = true;
+          },
+          function (err) {
+            if (token !== request || backdrop.hidden) return;
+            status.textContent = "Bild konnte nicht geladen werden: " + (err && err.message ? err.message : err);
+          }
+        );
+      },
+      close: close
+    };
+    return figModal;
+  }
+  function openFigureModal(captionText, altText, load) { ensureFigureModal().show(captionText, altText, load); }
+
+  // ── Queue: shared engine for the convert and ingest tabs ─────────────────
+  // Each entry is one file. Processing is sequential — one file in flight, the
+  // rest pending. (The new-job tab does not use this engine: its sources are
+  // uploaded immediately on drop and shown inside the drop zone.)
   function createQueue(opts) {
     var items = [];          // { kind, file, value, name, status, markdown, el, refs:{...} }
     var running = false;
@@ -1203,6 +1356,14 @@ const JS = `
       if (it.refs.statusEl) {
         it.refs.statusEl.className = "cq-status " + status;
         it.refs.statusEl.textContent = label;
+      }
+      // While an item runs, its ✕ is a stop control (processOne registers an
+      // AbortController on it.abort); otherwise it removes the entry.
+      if (it.refs.removeEl) {
+        var stop = status === "running" && !!it.abortable;
+        it.refs.removeEl.textContent = stop ? "■" : "✕";
+        it.refs.removeEl.title = stop ? "Abbrechen" : "Entfernen";
+        it.refs.removeEl.setAttribute("aria-label", stop ? "Abbrechen" : "Entfernen");
       }
       updateControls();
       updateProgress();
@@ -1262,8 +1423,14 @@ const JS = `
           img.className = "cq-figure-img";
           img.src = url;
           img.alt = f.description ? String(f.description).slice(0, 200) : "Abbildung " + f.id;
-          img.title = "Klicken zum Vergrößern";
-          img.addEventListener("click", function () { img.classList.toggle("zoomed"); });
+          img.title = "Klicken für große Ansicht";
+          img.addEventListener("click", function () {
+            openFigureModal(
+              "Seite " + f.page + " · " + f.id + (f.description ? " — " + f.description : ""),
+              img.alt,
+              function () { return url; }
+            );
+          });
           card.append(img);
         } else {
           var none = document.createElement("div");
@@ -1351,6 +1518,7 @@ const JS = `
       it.el = el;
       it.refs = {
         statusEl: el.querySelector(".cq-status"),
+        removeEl: el.querySelector(".cq-remove"),
         barEl: el.querySelector(".cq-progress-bar"),
         msgEl: el.querySelector(".cq-progress-msg"),
         progressHeadEl: el.querySelector(".cq-progress-head"),
@@ -1369,7 +1537,13 @@ const JS = `
         el.classList.toggle("open");
       });
       el.querySelector(".cq-remove").addEventListener("click", function () {
-        if (running && it.status === "running") return;   // don't yank the in-flight file
+        if (it.status === "running" && it.abort) {
+          // Stop the in-flight request; processOne reports "abgebrochen".
+          // The entry stays so the operator sees the outcome.
+          it.abort.abort();
+          return;
+        }
+        if (running && it.status === "running") return;   // not abortable (e.g. a tracked job keeps running)
         var idx = items.indexOf(it);
         if (idx >= 0) { items.splice(idx, 1); el.remove(); updateControls(); updateProgress(); }
       });
@@ -1398,7 +1572,10 @@ const JS = `
       var it = {
         kind: entry.kind, file: entry.file || null, value: entry.value || "", filename: entry.filename || "",
         name: entry.name, title: entry.title || entry.name, dedupKey: key,
-        status: "pending", markdown: "", el: null, refs: {}, prepPromise: null, prep: null
+        status: "pending", markdown: "", el: null, refs: {}, prepPromise: null, prep: null,
+        // Set by a tab whose processOne can be cancelled mid-flight
+        // (abortable: true, abort: an AbortController while it runs).
+        abortable: !!opts.abortable, abort: null
       };
       items.push(it);
       render(it);
@@ -1495,7 +1672,24 @@ const JS = `
     dropzoneId: "convert-dropzone",
     fileInputId: "convert-file-input",
     autoStartId: "convert-auto-start",
+    abortable: true,
     processOne: async function (it, api) {
+      // Register the abort controller before the first status change so the ✕
+      // is a stop control for the whole request — including the time the
+      // server queues the file before converting.
+      var controller = new AbortController();
+      it.abort = controller;
+      var markdown = "";
+      var pageCount = 0;
+      var totalTokens = 0;
+      var finished = false;
+      function reportAbort() {
+        it.abort = null;
+        api.setBar(it, 1, false);
+        api.setStatus(it, "err", "abgebrochen");
+        api.setMsg(it, "Konvertierung abgebrochen." + (markdown ? " Das Teilergebnis bleibt sichtbar." : ""), true);
+      }
+      try {
       api.setStatus(it, "running", "läuft");
       api.setMsg(it, "Wird übertragen …");
       api.setBar(it, 0.02, false);
@@ -1505,16 +1699,11 @@ const JS = `
       var headers = { accept: "text/event-stream", "x-reference": asciiHeaderValue(it.file.name) };
       if ($("convert-include-figures") && $("convert-include-figures").checked) headers["x-include-figure-data"] = "1";
 
-      var response = await fetch("/ui/convert", { method: "POST", headers: headers, body: body, credentials: "same-origin" });
+      var response = await fetch("/ui/convert", { method: "POST", headers: headers, body: body, credentials: "same-origin", signal: controller.signal });
       if (!response.ok || !response.body) {
         var detail = await response.text().catch(function () { return ""; });
         throw new Error("HTTP " + response.status + (detail ? ": " + detail.slice(0, 300) : ""));
       }
-
-      var markdown = "";
-      var pageCount = 0;
-      var totalTokens = 0;
-      var finished = false;
 
       await readEvents(response, function (event, data) {
         if (event === "accepted") {
@@ -1577,6 +1766,12 @@ const JS = `
         // Stream ended without a terminal event — treat as done if we got output.
         if (markdown) { api.setBar(it, 1, true); api.setStatus(it, "ok", "fertig"); api.setMsg(it, "Fertig."); }
         else throw new Error("Der Stream endete ohne Ergebnis.");
+      }
+      it.abort = null;
+      } catch (err) {
+        if (controller.signal.aborted && !finished) { reportAbort(); return; }
+        it.abort = null;
+        throw err;
       }
     },
   });
@@ -1741,12 +1936,20 @@ const JS = `
     // from and carries its own sha256; after a failed or refused chunk the
     // session's confirmed offset is read back (HEAD) and the upload continues
     // from there, so an interrupted transfer never restarts from zero.
-    async function uploadResumable(file, reference, it, api) {
-      var openRes = await postJson(UPLOADS_PATH, { reference: reference, size: file.size });
+    // Progress is reported through onProgress(ratio, text) and onWarn(text)
+    // so the upload is independent of how (or whether) the caller renders it;
+    // signal aborts the transfer when the operator removes the file again.
+    async function uploadResumable(file, reference, onProgress, onWarn, signal) {
+      var openRes = await fetch(UPLOADS_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ reference: reference, size: file.size }),
+        signal: signal
+      });
       var session = await readJson(openRes);
       if (!openRes.ok) throw new Error("Upload-Sitzung konnte nicht geöffnet werden: " + errorText(session, openRes));
       var uploadId = session.upload_id;
-      api.addLog(it, "Upload-Sitzung " + uploadId + " geöffnet.");
 
       var offset = 0;
       var attempts = 0;
@@ -1760,7 +1963,7 @@ const JS = `
         var res = null;
         var failure = "";
         try {
-          res = await fetch(UPLOADS_PATH + "/" + encodeURIComponent(uploadId), { method: "PATCH", headers: headers, body: chunk, credentials: "same-origin" });
+          res = await fetch(UPLOADS_PATH + "/" + encodeURIComponent(uploadId), { method: "PATCH", headers: headers, body: chunk, credentials: "same-origin", signal: signal });
         } catch (err) {
           failure = "Netzwerkfehler: " + (err && err.message ? err.message : err);
         }
@@ -1769,8 +1972,7 @@ const JS = `
           offset = Number.isInteger(next) && next > offset ? next : end;
           attempts = 0;
           var secs = Math.max(0.001, (Date.now() - started) / 1000);
-          api.setBar(it, file.size ? offset / file.size : 1, false);
-          api.setMsg(it, "Upload " + formatBytes(offset) + " / " + formatBytes(file.size) + " · " + formatBytes(offset / secs) + "/s");
+          onProgress(file.size ? offset / file.size : 1, "Upload " + formatBytes(offset) + " / " + formatBytes(file.size) + " · " + formatBytes(offset / secs) + "/s");
           continue;
         }
         if (res !== null) {
@@ -1784,21 +1986,31 @@ const JS = `
         if (attempts >= UPLOAD_MAX_ATTEMPTS) throw new Error("Upload nach " + attempts + " Versuchen abgebrochen: " + failure);
         var retryAfter = res !== null ? Number(res.headers.get("retry-after")) : NaN;
         var waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : Math.min(30000, 500 * Math.pow(2, attempts));
-        api.addLog(it, "Teil ab Byte " + offset + " fehlgeschlagen (" + failure + "); neuer Versuch in " + Math.round(waitMs / 1000) + " s.", "warn");
+        onWarn("Teil ab Byte " + offset + " fehlgeschlagen (" + failure + "); neuer Versuch in " + Math.round(waitMs / 1000) + " s.");
         await sleep(waitMs);
         offset = await confirmedOffset(uploadId);
       }
 
-      var doneRes = await postJson(UPLOADS_PATH + "/" + encodeURIComponent(uploadId) + "/complete", {});
+      var doneRes = await fetch(UPLOADS_PATH + "/" + encodeURIComponent(uploadId) + "/complete", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: "{}",
+        signal: signal
+      });
       var stored = await readJson(doneRes);
       if (!doneRes.ok) throw new Error("Upload konnte nicht abgeschlossen werden: " + errorText(stored, doneRes));
-      api.setBar(it, 1, false);
       return stored;
     }
 
-    async function pullSourceUrl(url, reference, it, api) {
-      api.setMsg(it, "Quelle wird vom Server geladen …");
-      var res = await postJson(UPLOADS_PATH, { reference: reference, source_url: url });
+    async function pullSourceUrl(url, reference, signal) {
+      var res = await fetch(UPLOADS_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ reference: reference, source_url: url }),
+        signal: signal
+      });
       var data = await readJson(res);
       if (!res.ok) throw new Error("source_url abgelehnt: " + errorText(data, res));
       return data;
@@ -1876,82 +2088,210 @@ const JS = `
       return body;
     }
 
-    var newjobQueue = createQueue({
-      mode: "newjob",
-      queueId: "newjob-queue",
-      startBtnId: "newjob-start-btn",
-      clearBtnId: "newjob-clear-btn",
-      progressId: "newjob-progress",
-      dropzoneId: "newjob-dropzone",
-      fileInputId: "newjob-file-input",
-      autoStartId: "newjob-auto-start",
-      // Prepare runs for every pending source at once, before and alongside
-      // processing: the form is validated and the source is brought into the
-      // store (chunked upload or server-side URL pull) so that no upload waits
-      // for another document's job to finish. The result is picked up by
-      // processOne when the item's turn in the (sequential) job-creation queue
-      // arrives.
-      prepareOne: async function (it, api) {
-        // Validate the form before a single byte moves.
-        var metadata = readMetadataField();
-        var sourceName = it.kind === "file" ? it.file.name : it.kind === "url" ? urlFilename(it.value) : (it.filename || "");
-        var reference = $("newjob-reference").value.trim() || sourceName || it.value;
-        var filename = sourceName;
-        buildJobRequest(reference, "0".repeat(64), filename, it.file, metadata);   // validate the form early
+    // The sources of the New Job tab live as cards inside the drop zone, not
+    // in a queue below the form: dropping a file starts its upload right away
+    // and the card shows the live progress. "Job anlegen" turns every ready
+    // source into a job and removes it from the page, so the next batch can be
+    // dropped while the server works through the previous one.
+    var dzEl = $("newjob-dropzone");
+    var dzFiles = $("newjob-dropzone-files");
+    var dzInput = $("newjob-file-input");
+    var createBtn = $("newjob-create-btn");
+    var clearBtn = $("newjob-clear-btn");
+    var progressEl = $("newjob-progress");
+    var jobsLinkEl = $("newjob-jobs-link");
+    var sources = [];   // { kind, file, value, filename, name, sha, metadata, status, abort, el, refs }
+    var creating = false;
 
+    function updateControls() {
+      var ready = sources.filter(function (s) { return s.status === "ready"; }).length;
+      var errs = sources.filter(function (s) { return s.status === "error"; }).length;
+      createBtn.disabled = creating || ready === 0;
+      clearBtn.disabled = creating || sources.length === 0;
+      progressEl.textContent = sources.length
+        ? ready + "/" + sources.length + " bereit" + (errs ? " · " + errs + " Fehler" : "")
+        : "";
+      dzEl.classList.toggle("has-files", sources.length > 0);
+    }
+
+    function setCard(s, status, msg, isErr, ratio) {
+      s.status = status;
+      if (msg !== undefined) {
+        s.refs.msg.textContent = msg;
+        s.refs.msg.classList.toggle("err", !!isErr);
+      }
+      if (ratio !== undefined) {
+        s.refs.bar.style.width = Math.max(0, Math.min(1, ratio)) * 100 + "%";
+        s.refs.bar.classList.toggle("ok", status === "ready");
+      }
+      updateControls();
+    }
+
+    function removeSource(s) {
+      if (creating && s.status === "creating") return;   // its job request is in flight
+      var idx = sources.indexOf(s);
+      if (idx >= 0) sources.splice(idx, 1);
+      if (s.abort) s.abort.abort();     // an in-flight upload is cancelled, not left running
+      if (s.el) s.el.remove();
+      updateControls();
+    }
+
+    function addCard(entry) {
+      var s = {
+        kind: entry.kind, file: entry.file || null, value: entry.value || "",
+        filename: entry.filename || "", name: entry.name, sha: "", metadata: undefined,
+        status: "pending", abort: new AbortController(), el: null, refs: {}
+      };
+      var el = document.createElement("div");
+      el.className = "dz-file";
+      el.innerHTML =
+        '<div class="dz-file-head">' +
+          '<span class="dz-file-name"></span>' +
+          '<span class="dz-file-size"></span>' +
+          '<button type="button" class="cq-remove" aria-label="Entfernen">✕</button>' +
+        "</div>" +
+        '<div class="dz-file-track"><div class="dz-file-bar"></div></div>' +
+        '<div class="dz-file-msg"></div>';
+      // File names and URLs are untrusted: textContent only.
+      el.querySelector(".dz-file-name").textContent = s.name;
+      el.querySelector(".dz-file-size").textContent = s.kind === "file" ? formatBytes(s.file.size) : s.kind === "url" ? "URL" : "sha256";
+      el.addEventListener("click", function (ev) { ev.stopPropagation(); });   // a card is not the drop zone
+      el.querySelector(".cq-remove").addEventListener("click", function () { removeSource(s); });
+      dzFiles.append(el);
+      s.el = el;
+      s.refs = { bar: el.querySelector(".dz-file-bar"), msg: el.querySelector(".dz-file-msg") };
+      sources.push(s);
+      updateControls();
+      return s;
+    }
+
+    function referenceFor(s, filename) {
+      return $("newjob-reference").value.trim() || filename || s.value;
+    }
+
+    // Bring one source into the store: chunked upload for a file, server-side
+    // pull for a URL, nothing to do for an already stored sha256. Runs the
+    // moment the source is added, concurrently with the others, so no upload
+    // waits for a form button or for another document.
+    async function prepareSource(s) {
+      try {
+        var metadata = readMetadataField();
+        var sourceName = s.kind === "file" ? s.file.name : s.kind === "url" ? urlFilename(s.value) : (s.filename || "");
+        var reference = referenceFor(s, sourceName);
+        var filename = sourceName;
+        buildJobRequest(reference, "0".repeat(64), filename, s.file, metadata);   // fail fast on an invalid form
         var sha;
-        if (it.kind === "file") {
-          api.setStatus(it, "running", "Upload");
-          api.setMsg(it, "Upload wird vorbereitet …");
-          var stored = await uploadResumable(it.file, reference, it, api);
+        if (s.kind === "file") {
+          setCard(s, "uploading", "Upload wird vorbereitet …", false, 0);
+          var stored = await uploadResumable(
+            s.file, reference,
+            function (ratio, text) { if (s.status === "uploading") setCard(s, "uploading", text, false, ratio); },
+            function (text) { if (s.status === "uploading") setCard(s, "uploading", text, true); },
+            s.abort.signal
+          );
+          if (sources.indexOf(s) < 0 || s.status !== "uploading") return;   // removed meanwhile
           sha = stored.sha256;
-          api.addLog(it, "Quelle gespeichert: sha256 " + sha + (stored.deduped ? " (war bereits vorhanden)" : ""));
-        } else if (it.kind === "url") {
-          api.setStatus(it, "running", "Quelle wird geladen");
-          var pulled = await pullSourceUrl(it.value, reference, it, api);
+          setCard(s, "ready", "Hochgeladen · sha256 " + sha.slice(0, 16) + "…" + (stored.deduped ? " (war bereits vorhanden)" : ""), false, 1);
+        } else if (s.kind === "url") {
+          setCard(s, "uploading", "Quelle wird vom Server geladen …", false, 0);
+          var pulled = await pullSourceUrl(s.value, reference, s.abort.signal);
+          if (sources.indexOf(s) < 0 || s.status !== "uploading") return;
           sha = pulled.sha256;
           // The server names the pull from the final URL or its Content-Type,
           // which types the job when the URL itself has no extension.
           if (!filename && pulled.filename) filename = pulled.filename;
-          if (pulled.content_type) api.addLog(it, "Content-Type: " + pulled.content_type + (pulled.filename ? " → " + pulled.filename : ""));
-          api.addLog(it, "Quelle geladen: " + formatBytes(pulled.size || 0) + ", sha256 " + sha + (pulled.deduped ? " (war bereits vorhanden)" : ""));
+          setCard(s, "ready", "Geladen " + formatBytes(pulled.size || 0) + " · sha256 " + sha.slice(0, 16) + "…" + (pulled.deduped ? " (war bereits vorhanden)" : ""), false, 1);
         } else {
-          sha = it.value;
+          sha = s.value;
+          setCard(s, "ready", "Quelle bereits gespeichert · sha256 " + sha.slice(0, 16) + "…", false, 1);
         }
-        return { sha: sha, filename: filename, metadata: metadata };
-      },
-      processOne: async function (it, api) {
-        // Wait for this source's preparation (upload/pull), which started in
-        // parallel with every other pending source when the queue began.
-        var prep = it.prep;
-        if (!prep && it.prepPromise) await it.prepPromise;
-        prep = it.prep;
-        if (prep && !prep.ok) throw prep.error;
-        api.setStatus(it, "running", "läuft");
-        var sha = prep ? prep.sha : it.value;
-        var filename = prep ? prep.filename : (it.kind === "file" ? it.file.name : it.kind === "url" ? urlFilename(it.value) : (it.filename || ""));
-        var metadata = prep ? prep.metadata : readMetadataField();
-        var reference = $("newjob-reference").value.trim() || (it.kind === "file" ? it.file.name : filename) || it.value;
-        var request = buildJobRequest(reference, sha, filename, it.file, metadata);
+        s.sha = sha;
+        s.filename = filename;
+        s.metadata = metadata;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;   // the operator removed it
+        setCard(s, "error", String(err && err.message ? err.message : err), true);
+      }
+    }
 
-        api.setMsg(it, "Job wird angelegt …");
-        var res = await postJson(JOBS_PATH, request);
-        var job = await readJson(res);
-        if (!res.ok) throw new Error("Job konnte nicht angelegt werden: " + errorText(job, res));
-        api.addLog(it, "Job " + job.jobId + " angelegt (" + statusLabel(job.status) + ").");
-        api.setJobLink(it, job.jobId);
+    function addSource(entry) {
+      if (sources.some(function (s) { return s.kind === entry.kind && (s.value || s.file) === (entry.value || entry.file) && s.filename === entry.filename; })) return;
+      prepareSource(addCard(entry));
+    }
 
-        if (!$("newjob-follow").checked) {
-          api.setBar(it, 1, true);
-          api.setStatus(it, "ok", "angelegt");
-          api.setMsg(it, "Job angelegt; Fortschritt im Jobs-Tab.");
-          return;
+    function addFiles(fileList) {
+      Array.prototype.forEach.call(fileList, function (f) {
+        addSource({ kind: "file", file: f, name: f.name });
+      });
+    }
+
+    // Trigger the asynchronous processing of every uploaded source: one job
+    // per source, then the card disappears so the drop zone is free again.
+    // The jobs themselves are followed in the Jobs tab.
+    async function createJobs() {
+      if (creating) return;
+      var ready = sources.filter(function (s) { return s.status === "ready"; });
+      if (!ready.length) return;
+      creating = true;
+      updateControls();
+      var created = [];
+      var failed = 0;
+      for (var i = 0; i < ready.length; i++) {
+        var s = ready[i];
+        setCard(s, "creating", "Job wird angelegt …", false);
+        try {
+          var request = buildJobRequest(referenceFor(s, s.filename), s.sha, s.filename, s.file, s.metadata);
+          var res = await postJson(JOBS_PATH, request);
+          var job = await readJson(res);
+          if (!res.ok) throw new Error(errorText(job, res));
+          created.push(job.jobId);
+          removeSource(s);
+        } catch (err) {
+          failed += 1;
+          setCard(s, "error", "Job nicht angelegt: " + (err && err.message ? err.message : err), true);
         }
-        api.setStatus(it, "running", "Job läuft");
-        api.setBar(it, 0, false);
-        var finalJob = await trackJob(job.jobId, it, api);
-        finishTrackedJob(it, api, finalJob);
-      },
+      }
+      creating = false;
+      updateControls();
+
+      jobsLinkEl.innerHTML = "";
+      if (created.length) {
+        var link = document.createElement("button");
+        link.type = "button";
+        link.className = "cq-link";
+        link.textContent = created.length === 1
+          ? "1 Job angelegt — im Jobs-Tab verfolgen"
+          : created.length + " Jobs angelegt — im Jobs-Tab verfolgen";
+        if (created.length === 1) link.title = created[0];
+        link.addEventListener("click", function () {
+          jobsLinkEl.innerHTML = "";
+          if (created.length === 1) showJobInJobsTab(created[0]);
+          else $("tab-jobs").click();
+        });
+        jobsLinkEl.append(link);
+      }
+      if (failed) progressEl.textContent = progressEl.textContent + " · " + failed + " Job(s) fehlgeschlagen";
+    }
+
+    dzEl.addEventListener("click", function () { dzInput.click(); });
+    dzEl.addEventListener("keydown", function (e) {
+      if (e.target !== dzEl) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); dzInput.click(); }
+    });
+    dzInput.addEventListener("change", function () { addFiles(dzInput.files); dzInput.value = ""; });
+    dzEl.addEventListener("dragover", function (e) { e.preventDefault(); dzEl.classList.add("drag-over"); });
+    dzEl.addEventListener("dragleave", function () { dzEl.classList.remove("drag-over"); });
+    dzEl.addEventListener("drop", function (e) {
+      e.preventDefault();
+      dzEl.classList.remove("drag-over");
+      if (e.dataTransfer) addFiles(e.dataTransfer.files);
+    });
+    createBtn.addEventListener("click", createJobs);
+    clearBtn.addEventListener("click", function () {
+      if (creating) return;
+      sources.slice().forEach(removeSource);
+      jobsLinkEl.innerHTML = "";
+      updateControls();
     });
 
     var addUrlBtn = $("newjob-add-url-btn");
@@ -1961,7 +2301,7 @@ const JS = `
       if (!url) return;
       if (!/^https?:\\/\\//i.test(url)) { urlInput.setCustomValidity("Nur http(s)-URLs"); urlInput.reportValidity(); return; }
       urlInput.setCustomValidity("");
-      newjobQueue.addSource({ kind: "url", value: url, key: url, name: urlFilename(url) || url, title: url });
+      addSource({ kind: "url", value: url, name: urlFilename(url) || url });
       urlInput.value = "";
     };
     addUrlBtn.addEventListener("click", addUrl);
@@ -1975,7 +2315,7 @@ const JS = `
       if (!/^[0-9a-f]{64}$/.test(sha)) { shaInput.setCustomValidity("sha256 muss aus 64 Hex-Zeichen bestehen"); shaInput.reportValidity(); return; }
       shaInput.setCustomValidity("");
       var fname = shaFilename.value.trim();
-      newjobQueue.addSource({ kind: "sha", value: sha, filename: fname, key: sha + "|" + fname, name: fname || sha.slice(0, 16) + "…", title: sha });
+      addSource({ kind: "sha", value: sha, filename: fname, name: fname || sha.slice(0, 16) + "…" });
       shaInput.value = "";
       shaFilename.value = "";
     };
@@ -2161,13 +2501,14 @@ const JS = `
         '<span class="job-ref" title="' + escapeHtml(job.reference) + '">' + escapeHtml(job.reference) +
           (stageNow ? ' <span class="job-stage-now">· ' + escapeHtml(stageNow) + "</span>" : "") +
         "</span>" +
-        '<span class="job-status ' + escapeHtml(job.status) + '">' + escapeHtml(statusText) + "</span>" +
+        '<span class="job-status ' + escapeHtml(job.status) + '" title="' + escapeHtml(statusText) + '">' + escapeHtml(statusText) + "</span>" +
         '<span class="job-mini-progress' + (indeterminate ? " indeterminate" : "") + '" role="progressbar" aria-label="Fortschritt gesamt" aria-valuemin="0" aria-valuemax="100"' +
           (indeterminate ? ' aria-valuetext="läuft, noch keine Stufe abgeschlossen"' : ' aria-valuenow="' + pct + '" aria-valuetext="' + pct + ' Prozent, ' + escapeHtml(pages) + '"') + ">" +
           '<span class="job-mini-bar' + (barDone ? " done" : "") + '" style="width:' + pct + '%"></span>' +
         "</span>" +
         '<span class="job-pages">' + escapeHtml(pages) + "</span>" +
-        '<span class="job-cost">' + escapeHtml(fmtCost(job)) + "</span>" +
+        '<span class="job-cost" title="Kosten">' + escapeHtml(fmtMoney(job)) + "</span>" +
+        '<span class="job-tokens" title="Tokens">' + escapeHtml(fmtTokens(job)) + "</span>" +
         '<span class="job-eta">' + escapeHtml(fmtEta(job)) + "</span>" +
       "</div>" +
       '<div class="job-body" id="job-body-' + escapeHtml(job.jobId) + '"></div>';
@@ -2273,7 +2614,9 @@ const JS = `
         var pill = item.querySelector(".job-status");
         if (pill) {
           pill.className = "job-status " + job.status;
-          pill.textContent = statusLabel(job.status) + (job.pauseReason ? " (" + job.pauseReason + ")" : "");
+          var pillText = statusLabel(job.status) + (job.pauseReason ? " (" + job.pauseReason + ")" : "");
+          pill.textContent = pillText;
+          pill.title = pillText;
         }
         item.dataset.status = job.status;
       }
@@ -2286,9 +2629,7 @@ const JS = `
       // Per-stage progress.
       var stagesWrap = document.createElement("div");
       stagesWrap.className = "job-stages";
-      stagesWrap.innerHTML = PAGE_STAGES.map(function (s) {
-        return renderStage(s, job.progress ? job.progress[s] : null);
-      }).join("");
+      stagesWrap.innerHTML = renderStageGroups(job.progress);
       bodyEl.append(stagesWrap);
 
       // Cost + ETA chips.
@@ -2410,18 +2751,40 @@ const JS = `
     return wrap;
   }
 
-  // The job's figures (GET /ui/jobs/{id}/figures) as a gallery. The crops are
-  // not stored; each thumbnail renders on demand from the source with the
-  // figure's bbox (POST /ui/render), one at a time to stay under the render
-  // rate limit. A click loads a larger render. Model text via textContent only.
+  // The job's figures AND tables (GET /ui/jobs/{id}/figures) as a gallery. The
+  // crops are not stored; each thumbnail renders on demand from the source with
+  // the block's bbox (POST /ui/render), one at a time to stay under the render
+  // rate limit. A click opens the shared modal with a larger render; a table
+  // without a bbox shows its cells as a text table instead. Model text via
+  // textContent only.
   var JOB_FIGURE_THUMB_PX = 480;
   var JOB_FIGURE_FULL_PX = 1600;
+  function hasBbox(fig) {
+    return Array.isArray(fig.bbox) && fig.bbox.length === 4 && fig.bbox[0] < fig.bbox[2] && fig.bbox[1] < fig.bbox[3];
+  }
+  // A minimal cell-grid table from the block's headerRows/rows (textContent only).
+  function buildCellTable(headerRows, rows) {
+    var table = document.createElement("table");
+    table.className = "fig-table";
+    function addRow(cells, head) {
+      var tr = document.createElement("tr");
+      (Array.isArray(cells) ? cells : []).forEach(function (c) {
+        var td = document.createElement(head ? "th" : "td");
+        td.textContent = c === null || c === undefined ? "" : String(c);
+        tr.append(td);
+      });
+      table.append(tr);
+    }
+    (Array.isArray(headerRows) ? headerRows : []).forEach(function (r) { addRow(r.cells || r, true); });
+    (Array.isArray(rows) ? rows : []).forEach(function (r) { addRow(r.cells || r, false); });
+    return table;
+  }
   function renderJobFigures(job) {
     var wrap = document.createElement("div");
     wrap.className = "job-preview";
     var title = document.createElement("div");
     title.className = "job-subtitle";
-    title.textContent = "Abbildungen";
+    title.textContent = "Abbildungen und Tabellen";
     var status = document.createElement("div");
     status.className = "job-preview-meta";
     status.setAttribute("role", "status");
@@ -2432,7 +2795,7 @@ const JS = `
 
     async function renderCrop(fig, px) {
       var body = { source: job.sourceSha256, page: fig.page, targetPixels: px, filename: job.sourceFilename || job.reference };
-      if (Array.isArray(fig.bbox) && fig.bbox.length === 4 && fig.bbox[0] < fig.bbox[2] && fig.bbox[1] < fig.bbox[3]) body.bbox = fig.bbox;
+      if (hasBbox(fig)) body.bbox = fig.bbox;
       var res = await postJson("/ui/render", body);
       if (!res.ok) throw new Error(errorText(await readJson(res), res));
       return URL.createObjectURL(await res.blob());
@@ -2445,18 +2808,20 @@ const JS = `
         if (!res.ok) { status.textContent = "Abbildungen nicht lesbar: " + errorText(data, res); return; }
         var figures = Array.isArray(data.figures) ? data.figures : [];
         if (!figures.length) {
-          status.textContent = isTerminalStatus(job.status) ? "Keine Abbildungen erkannt." : "Noch keine Abbildungen (Job läuft).";
+          status.textContent = isTerminalStatus(job.status) ? "Keine Abbildungen oder Tabellen erkannt." : "Noch keine Abbildungen (Job läuft).";
           if (!isTerminalStatus(job.status)) delete jobsFigures[job.jobId];   // look again on the next refresh
           return;
         }
-        status.textContent = figures.length + " Abbildung(en)";
+        var tableCount = figures.filter(function (f) { return f.kind === "table"; }).length;
+        status.textContent = figures.length + " Element(e)" + (tableCount ? " · davon " + tableCount + " Tabelle(n)" : "");
         var cards = figures.map(function (f) {
+          var isTable = f.kind === "table";
           var card = document.createElement("figure");
           card.className = "cq-figure";
           var img = document.createElement("img");
           img.className = "cq-figure-img";
           img.alt = f.description ? String(f.description).slice(0, 200) : "Abbildung " + f.figureId;
-          img.title = "Klicken für größere Darstellung";
+          img.title = "Klicken für große Ansicht";
           var none = document.createElement("div");
           none.className = "cq-figure-noimg";
           none.textContent = "wird gerendert …";
@@ -2465,28 +2830,40 @@ const JS = `
           var idRow = document.createElement("div");
           idRow.className = "cq-figure-id";
           var idText = document.createElement("span");
-          idText.textContent = "Seite " + f.page + " · " + f.figureId + (f.kind ? " · " + f.kind : "");
+          idText.textContent = "Seite " + f.page + " · " + f.figureId;
           idRow.append(idText);
+          if (isTable) {
+            var badge = document.createElement("span");
+            badge.className = "fig-kind-badge";
+            badge.textContent = "Tabelle";
+            idRow.append(badge);
+          }
           var desc = document.createElement("div");
           desc.className = "cq-figure-desc";
           desc.textContent = (f.caption ? f.caption + " — " : "") + (f.description || "");
           meta.append(idRow, desc);
-          card.append(none, meta);
+          // A table without a located region shows its cells as a text table;
+          // with a bbox it renders the page region like a figure.
+          if (isTable && !hasBbox(f)) {
+            none.textContent = "keine Region erkannt";
+            var tbl = buildCellTable(f.headerRows, f.rows);
+            card.append(none, tbl, meta);
+          } else {
+            card.append(none, meta);
+            img.addEventListener("click", function () {
+              openFigureModal(
+                "Seite " + f.page + " · " + f.figureId + (isTable ? " · Tabelle" : "") +
+                  (f.caption ? " — " + f.caption : "") + (f.description ? " — " + f.description : ""),
+                img.alt,
+                function () { return renderCrop(f, JOB_FIGURE_FULL_PX); }
+              );
+            });
+          }
           grid.append(card);
-          var large = false;
-          img.addEventListener("click", async function () {
-            if (large) { img.classList.toggle("zoomed"); return; }
-            try {
-              var url = await renderCrop(f, JOB_FIGURE_FULL_PX);
-              URL.revokeObjectURL(img.src);
-              img.src = url;
-              large = true;
-              img.classList.add("zoomed");
-            } catch (e) { status.textContent = "Rendern fehlgeschlagen: " + (e && e.message ? e.message : e); }
-          });
-          return { f: f, img: img, none: none };
+          return { f: f, img: img, none: none, thumb: !isTable || hasBbox(f) };
         });
         for (var i = 0; i < cards.length; i++) {
+          if (!cards[i].thumb) continue;
           try {
             cards[i].img.src = await renderCrop(cards[i].f, JOB_FIGURE_THUMB_PX);
             cards[i].none.replaceWith(cards[i].img);

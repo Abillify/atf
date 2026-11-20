@@ -497,6 +497,43 @@ describe("GET /v2/jobs/{id}/figures", () => {
     ]);
   });
 
+  it("includes table blocks alongside the figures", async () => {
+    const baseUrl = await buildApp();
+    const id = (await createJob(baseUrl)).body.jobId;
+    await fakeStore.stageEmitBatch({
+      job_id: id,
+      seq: 1,
+      digest: "d1",
+      page_from: 1,
+      page_to: 1,
+      payload: {
+        type: "page",
+        page: 1,
+        record: {
+          page: 1,
+          blocks: [
+            { id: "p1-b1", page: 1, type: "paragraph", text: "x" },
+            {
+              id: "p1-tb1", page: 1, type: "table", tableId: "p1-t1", caption: "Tabelle 1",
+              headerRows: [["Betrag", "Datum"]], rows: [["10,00", "01.02."]], bbox: [0.1, 0.3, 0.9, 0.5],
+            },
+            { id: "p1-tb2", page: 1, type: "table", tableId: "p1-t2", headerRows: [], rows: [["a"]] },
+          ],
+        },
+      },
+    } as never);
+
+    const res = await request(baseUrl).get(`/ui/jobs/${id}/figures`);
+    expect(res.status).toBe(200);
+    expect(res.body.figures).toEqual([
+      {
+        figureId: "p1-t1", page: 1, bbox: [0.1, 0.3, 0.9, 0.5], kind: "table", caption: "Tabelle 1",
+        description: "Tabelle 1", headerRows: [["Betrag", "Datum"]], rows: [["10,00", "01.02."]],
+      },
+      { figureId: "p1-t2", page: 1, kind: "table", description: "", headerRows: [], rows: [["a"]] },
+    ]);
+  });
+
   it("is a 404 for an unknown job", async () => {
     const baseUrl = await buildApp();
     const res = await request(baseUrl).get("/v2/jobs/00000000-0000-4000-8000-000000000000/figures");

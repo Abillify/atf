@@ -109,6 +109,20 @@ describe("getUiPageHtml · Document Intelligence v2", () => {
     expect(html).toContain("x-chunk-checksum-sha256");
   });
 
+  it("shows dropped files as upload cards inside the drop zone", () => {
+    const html = render({ jobsEnabled: true });
+    // The card host lives inside the drop zone, before the file input.
+    const dz = html.slice(html.indexOf('id="newjob-dropzone"'), html.indexOf('id="newjob-file-input"'));
+    expect(dz).toContain('id="newjob-dropzone-files"');
+    // The upload starts on drop and "Job anlegen" is enabled once all uploads
+    // settled; the old queue/autostart/follow controls are gone.
+    expect(html).toContain('id="newjob-create-btn" disabled');
+    expect(html).not.toContain('id="newjob-queue"');
+    expect(html).not.toContain('id="newjob-start-btn"');
+    expect(html).not.toContain('id="newjob-auto-start"');
+    expect(html).not.toContain('id="newjob-follow"');
+  });
+
   it("shows the v2 identity headers on the ingest tab only on the v2 path", () => {
     const v2 = render({ jobsEnabled: true });
     expect(v2).toContain('id="ingest-dedup"');
@@ -136,5 +150,53 @@ describe("getUiPageHtml · Document Intelligence v2", () => {
     expect(html).toContain("resumePolicy");
     expect(html).toContain('id="jobs-filter-status"');
     expect(html).toContain('id="jobs-filter-text"');
+  });
+});
+
+describe("getUiPageHtml · console UX round 2", () => {
+  it("renames the ingest and new-job tabs", () => {
+    const html = render({ jobsEnabled: true });
+    expect(html).toContain("📥</span> Einfaches Indexieren");
+    expect(html).toContain("🧩</span> Erweitertes Indexieren");
+    expect(html).toContain(">Einfaches Indexieren</p>");
+    expect(html).toContain("Erweitertes Indexieren (Document Intelligence v2)");
+    // The old labels are gone.
+    expect(html).not.toContain(">Indexieren</button>");
+    expect(html).not.toContain(">Neuer Job</button>");
+  });
+
+  it("groups the stage counts into cards including analyzed and finished", () => {
+    const html = render({ jobsEnabled: true });
+    // The grouped renderer replaces the flat per-stage list in both places the
+    // stage counts are rendered (queue card and job detail).
+    expect(html).toContain("function renderStageGroups(progress)");
+    expect(html).toContain("renderStageGroups(job.progress)");
+    const groups = html.slice(html.indexOf("var STAGE_GROUPS"), html.indexOf("function renderStageGroups"));
+    for (const stage of ["analyzed", "vision1", "vision2", "refined", "tiled", "docpass", "emitted", "finished"]) {
+      expect(groups).toContain(`"${stage}"`);
+    }
+    // Vision 1 + 2 share one card; refined + tiled share another.
+    expect(groups).toContain('stages: ["vision1", "vision2"]');
+    expect(groups).toContain('stages: ["refined", "tiled"]');
+  });
+
+  it("opens figures and tables in a modal", () => {
+    const html = render({ jobsEnabled: true });
+    expect(html).toContain('backdrop.className = "fig-modal"');
+    expect(html).toContain("function openFigureModal(");
+    // The Jobs-tab gallery covers tables, too.
+    expect(html).toContain("Abbildungen und Tabellen");
+    expect(html).toContain('badge.className = "fig-kind-badge"');
+  });
+
+  it("makes a running convert abortable and reports the abort", () => {
+    const html = render({ jobsEnabled: true });
+    // The convert queue opts into abortable items; the ✕ becomes ■ while running.
+    expect(html).toContain("abortable: true");
+    expect(html).toContain('stop ? "■" : "✕"');
+    // Aborting cancels the in-flight request and reports "abgebrochen".
+    expect(html).toContain("new AbortController()");
+    expect(html).toContain('signal: controller.signal');
+    expect(html).toContain('api.setStatus(it, "err", "abgebrochen")');
   });
 });

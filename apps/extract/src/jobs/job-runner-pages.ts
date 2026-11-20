@@ -32,6 +32,7 @@ import {
 } from "../pipeline/markdown-blocks.js";
 import type { PageAnalysis } from "../pipeline/bbox-layout.js";
 import { snapFigureBBox } from "../pipeline/bbox-snap.js";
+import { locateTableBBox } from "../pipeline/table-bbox.js";
 import type { PageImage } from "./page-renderer.js";
 import type {
   VisionStageParsed,
@@ -115,6 +116,33 @@ function toBBox(bbox: BoundingBox): BBox {
 /** The page-image asset id for a page. */
 export function pageAssetId(reference: string, page: number): string {
   return buildAssetId(reference, pageLocalId(page));
+}
+
+/**
+ * Locate every table of a Pass-1 Markdown in the page's S2 geometry. Returns
+ * the located boxes keyed by the table's 1-based ordinal in reading order (the
+ * order {@link parseMarkdownBlocks} stamps its `p<page>-t<n>` ids), or
+ * `undefined` when nothing was located — the key is then absent from the
+ * checkpoint entirely, keeping it small. Deterministic and model-free; see
+ * {@link ../pipeline/table-bbox.ts} for the matching rules.
+ */
+export function computeTableBboxes(
+  markdown: string,
+  page: number,
+  analysis: PageAnalysis | null | undefined,
+): Record<string, BBox> | undefined {
+  if (analysis == null || analysis.lines.length === 0) return undefined;
+  if (!/<table|^\s*\|/im.test(markdown)) return undefined;
+  const items = parseMarkdownBlocks(markdown, { page, source: "vision" }).items;
+  const out: Record<string, BBox> = {};
+  let ordinal = 0;
+  for (const item of items) {
+    if (item.kind !== "block" || item.block.type !== "table") continue;
+    ordinal += 1;
+    const bbox = locateTableBBox(item.block, analysis);
+    if (bbox !== undefined) out[String(ordinal)] = bbox;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -234,8 +262,20 @@ export function buildPageRecord(
       page,
       source: parsed.usedOcr ? "vision" : "text-layer",
     });
+    // The table ordinals (1-based, reading order) whose region the S2 analysis
+    // located during the vision stage. The bbox is applied to the block here —
+    // not inside the Markdown mapping — so the mapping stays a pure function
+    // of the model output and a checkpoint without the map (written before
+    // table location existed) simply emits bbox-less tables, as before.
+    const tableBboxes = parsed.tableBboxes ?? {};
+    let tableOrdinal = 0;
     for (const item of body.items) {
       if (item.kind === "block") {
+        if (item.block.type === "table") {
+          tableOrdinal += 1;
+          const bbox = tableBboxes[String(tableOrdinal)];
+          if (bbox !== undefined) item.block.bbox = bbox;
+        }
         blocks.push(item.block);
         continue;
       }

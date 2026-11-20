@@ -252,6 +252,92 @@ describe("job-runner · Pass-1 Markdown → typed blocks", () => {
   });
 });
 
+// ── table regions located from the S2 geometry ───────────────────────────
+
+describe("job-runner · table bbox from the S2 geometry", () => {
+  // The column-aligned geometry lines (c0a c0b c0c …) double as the table's
+  // rows, so the locator can match them without a model.
+  const tableMarkdown =
+    "# 5 Übersicht\n\n" +
+    '<table><thead><tr><th>c0a</th><th>c0b</th><th>c0c</th></tr></thead>' +
+    "<tr><td>c1a</td><td>c1b</td><td>c1c</td></tr>" +
+    "<tr><td>c2a</td><td>c2b</td><td>c2c</td></tr></table>";
+
+  it("stamps the located region onto the table block", async () => {
+    const store = createFakeJobStore();
+    const job = await seedJob(store);
+    const vision = scriptedVision(() => body(tableMarkdown));
+    const outcome = await runner(
+      store,
+      fakePrepared({ pageCount: 1, pdf: true, rawText: () => tableMarkdown }),
+      vision,
+      { analyzer: analyzerFrom((p) => geometry(p, "5 Übersicht", "Text.", { columns: true })) },
+    ).run(ctx(store, job));
+    expect(outcome).toEqual({ status: "completed" });
+
+    const record = recordOf(store, job.id, 1);
+    expect(pageRecordSchema.safeParse(record).success).toBe(true);
+    const table = record.blocks.find((b) => b.type === "table") as TableBlock;
+    // Union of the three matched S2 lines: x 0.1–0.71, y 0.3–0.38.
+    const bbox = table.bbox ?? [];
+    expect(bbox).toHaveLength(4);
+    expect(bbox[0]).toBeCloseTo(0.1, 10);
+    expect(bbox[1]).toBeCloseTo(0.3, 10);
+    expect(bbox[2]).toBeCloseTo(0.71, 10);
+    expect(bbox[3]).toBeCloseTo(0.38, 10);
+
+    // Persisted on the checkpoint, so a resume does not need the analysis.
+    const stage = await store.getStage("page", { job_id: job.id, page: 1, stage: VISION1_STAGE });
+    const parsed = (stage?.output as { parsed?: { tableBboxes?: Record<string, unknown> } } | null)?.parsed;
+    expect(parsed?.tableBboxes).toBeDefined();
+  });
+
+  it("keeps the located region across a resume that never re-runs the analysis", async () => {
+    const store = createFakeJobStore();
+    const job = await seedJob(store);
+    const vision = scriptedVision(() => body(tableMarkdown));
+    await runner(
+      store,
+      fakePrepared({ pageCount: 1, pdf: true, rawText: () => tableMarkdown }),
+      vision,
+      { analyzer: analyzerFrom((p) => geometry(p, "5 Übersicht", "Text.", { columns: true })) },
+    ).run(ctx(store, job));
+    const before = recordOf(store, job.id, 1);
+    const located = (before.blocks.find((b) => b.type === "table") as TableBlock).bbox;
+    expect(located).toBeDefined();
+
+    await store.invalidateDownstream(
+      job.id,
+      { fromPage: 1, stages: [CROPS_STAGE, EMITTED_STAGE, DOCPASS_STAGE], deleteAssets: false },
+      undefined,
+    );
+    const resumed = await reclaim(store, job);
+    // No analyzer at all on the replay: the bbox can only come from the checkpoint.
+    await runner(store, fakePrepared({ pageCount: 1 }), scriptedVision(() => body(tableMarkdown))).run(
+      ctx(store, resumed),
+    );
+    expect(recordOf(store, job.id, 1)).toEqual(before);
+  });
+
+  it("leaves the table without a bbox when the geometry does not contain it", async () => {
+    const store = createFakeJobStore();
+    const job = await seedJob(store);
+    const vision = scriptedVision(() => body(tableMarkdown));
+    await runner(
+      store,
+      fakePrepared({ pageCount: 1, pdf: true, rawText: () => tableMarkdown }),
+      vision,
+      { analyzer: analyzerFrom((p) => geometry(p, "5 Übersicht", "Text.")) },
+    ).run(ctx(store, job));
+
+    const table = recordOf(store, job.id, 1).blocks.find((b) => b.type === "table") as TableBlock;
+    expect(table.bbox).toBeUndefined();
+    const stage = await store.getStage("page", { job_id: job.id, page: 1, stage: VISION1_STAGE });
+    const parsed = (stage?.output as { parsed?: { tableBboxes?: unknown } } | null)?.parsed;
+    expect(parsed?.tableBboxes).toBeUndefined();
+  });
+});
+
 // ── previous-page context (S3) ───────────────────────────────────────────
 
 describe("job-runner · previous-page context (design §5 S3)", () => {
