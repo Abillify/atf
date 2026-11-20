@@ -184,6 +184,7 @@ import {
   OCR_FALLBACK_WARNING,
   TRUNCATION_WARNING,
   buildPageRecord,
+  computeTableBboxes,
   emptyRecord,
   errMessage,
   figureOrdinalOf,
@@ -210,6 +211,8 @@ function pricingOf(pricing: ModelPricing | undefined): { pricing?: ModelPricing 
 }
 
 export const RENDER_STAGE = "render";
+/** S2 layout analysis, checkpointed per page before the vision stage. */
+export const ANALYZED_STAGE = "analyzed";
 export const VISION1_STAGE = "vision1";
 export const CROPS_STAGE = "crops";
 /** The per-figure Pass-2 stage; keyed per figure. */
@@ -300,7 +303,7 @@ function stageMetricLabel(stage: string): string {
  * pipeline snapshot (`index.ts`), so a deployment that changes it trips a
  * pinned job's `resume_policy` instead of silently mixing two behaviours.
  */
-export const PIPELINE_REVISION = "2.1.0";
+export const PIPELINE_REVISION = "2.2.0";
 
 /** The persisted parsed shape of the vision stage, enough to rebuild a page. */
 export interface VisionStageParsed {
@@ -348,6 +351,17 @@ export interface VisionStageParsed {
    * written before this field existed still loads.
    */
   tables?: Array<{ index: number; continues: boolean; continuationOf: boolean }>;
+  /**
+   * The deterministically located table regions (S2 geometry, no model):
+   * keyed by the table's 1-based ordinal in the page's reading order (the
+   * order {@link ../pipeline/markdown-blocks.ts} stamps its `p<page>-t<n>`
+   * ids), valued by {@link ../pipeline/table-bbox.locateTableBBox}. Persisted
+   * on the checkpoint so `buildPageRecord` can stamp the block bbox on a
+   * resume or reparse without re-running the analysis. Optional so a
+   * checkpoint written before table location existed still loads; its tables
+   * then carry no bbox, exactly as before.
+   */
+  tableBboxes?: Record<string, BBox>;
   warnings: string[];
   usedOcr: boolean;
   usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
@@ -1901,6 +1915,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             })
           ).class
         : "text");
+    // Re-locate the table regions when the reparse re-ran the S2 analysis;
+    // otherwise keep the previously located boxes (a reparse must not lose
+    // geometry it already had).
+    const tableBboxes =
+      analysis !== null
+        ? computeTableBboxes(parsedPage.markdown, page, analysis)
+        : prev?.tableBboxes;
     const truncated = prev?.truncated ?? response?.truncated ?? false;
     const hash =
       prev?.renderHash !== undefined
@@ -1917,6 +1938,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         continues: t.continues,
         continuationOf: t.continuationOf,
       })),
+      ...(tableBboxes !== undefined ? { tableBboxes } : {}),
       warnings: [
         ...parsedPage.warnings,
         ...(truncated ? [TRUNCATION_WARNING] : []),
@@ -2554,6 +2576,32 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       `fastPath:${fastPathEnabled ? fastPathMaxInkRatio : "off"}`,
     ]);
 
+    // ── analyzed stage (S2 layout analysis, deterministic checkpoint) ──────
+    // The page analyzer itself runs inside the vision closure below (its
+    // heading candidates feed the prompt); this checkpoint only records that
+    // S2 ran for the page, so the progress view counts it like every other
+    // stage — including fast-path and dedup pages. The payload stays a tiny
+    // marker: the analysis itself is recomputed deterministically, never
+    // persisted. No budget: no model call happens here.
+    if (preparedAnalyzer !== null) {
+      try {
+        await stageRunner.runStage<{ page: number; ok: true }, null>({
+          unit: "page",
+          key: key(ANALYZED_STAGE),
+          inputHash: preparedAnalyzer.inputHash(job.source_sha256, page),
+          fn: async () => ({ raw: null, parsed: { page, ok: true } }),
+        });
+      } catch (error) {
+        // The analyzer never throws (it degrades to an empty analysis), so a
+        // failure here is a checkpoint-store problem. It must not fail the
+        // page — the vision stage reports any real error.
+        logger.warn(
+          { jobId: job.id, page, error: errMessage(error) },
+          "analyzed checkpoint failed",
+        );
+      }
+    }
+
     // ── vision stage (render + model + parse, one checkpoint) ─────────────
     // Set only when the page actually reached the vision model: a fast-path
     // page, a render-hash dedup reuse, or a checkpoint replay runs no model
@@ -2617,9 +2665,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // Best-effort and order-independent: the analyzer never throws (it
           // degrades to an empty analysis), so a page with no text layer or a
           // container without `-bbox-layout` simply passes no hints. The
-          // analysis is cheap (no model) and not itself checkpointed here — the
-          // ordered `analyzed` stage is task 2.6's concern; here we only need
-          // the per-page heading candidates the prompt consumes.
+          // analysis is cheap (no model) and recomputed here deterministically;
+          // the ordered `analyzed` checkpoint above only records that S2 ran.
           const analysis = await runPageAnalysis(preparedAnalyzer, page);
           const headingCandidates = analysis?.headingCandidates.map((c) => ({
             numbering: c.numbering,
@@ -2754,6 +2801,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             rendered.image,
             analysis,
           );
+          // Deterministic table-region location from the S2 geometry (no
+          // model): persisted so buildPageRecord stamps the block bbox on a
+          // resume without re-running the analysis.
+          const tableBboxes = computeTableBboxes(parsed.markdown, page, analysis);
           const stageParsed: VisionStageParsed = {
             summary: parsed.summary,
             markdown: parsed.markdown,
@@ -2763,6 +2814,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               continues: t.continues,
               continuationOf: t.continuationOf,
             })),
+            ...(tableBboxes !== undefined ? { tableBboxes } : {}),
             warnings: [
               ...parsed.warnings,
               ...(response.truncated ? [TRUNCATION_WARNING] : []),

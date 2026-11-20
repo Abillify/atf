@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Extract** (console): a table block now carries the page region its rows
+  occupy. The vision stage locates every Pass-1 table in the deterministic S2
+  text geometry (`pdftext -bbox-layout`) by matching its rows to the page's
+  text lines and taking the union box of the matched window — no model, no
+  guesswork, and deliberately conservative: a table whose rows cannot be
+  matched confidently keeps no bbox and is shown as a cell grid, exactly as
+  before. The located region is persisted on the `vision1` checkpoint, so a
+  resume or reparse stamps it without re-running the analysis, and the console
+  gallery renders the crop like it already does for figures. `PIPELINE_REVISION`
+  is 2.2.0.
+
 ## [0.27.2] - 2026-11-18
 
 ### Fixed

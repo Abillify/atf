@@ -378,9 +378,12 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   }
 
   // ── GET /v2/jobs/{id}/figures ─────────────────────────────────────────────
-  // The figure blocks of the job's staged page records, in page order. The
-  // crop bytes are not stored (they re-render from the source), so a client
-  // shows them through POST /v2/render with the figure's normalised bbox.
+  // The figure AND table blocks of the job's staged page records, in page
+  // order. The crop bytes are not stored (they re-render from the source), so
+  // a client shows them through POST /v2/render with the block's normalised
+  // bbox. Tables carry their structured cells (`headerRows`/`rows`) so a
+  // client without a bbox — or one that prefers data over pixels — can render
+  // the table itself; `kind` is the literal "table" for them.
   const figuresHandler: RequestHandler = (req, res, next) => {
     void listFigures(req, res).catch(next);
   };
@@ -395,16 +398,32 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
       const record = (batch.payload as { record?: { blocks?: unknown } } | null)?.record;
       const blocks = Array.isArray(record?.blocks) ? (record.blocks as Array<Record<string, unknown>>) : [];
       for (const block of blocks) {
-        if (block["type"] !== "figure") continue;
-        figures.push({
-          figureId: block["figureId"],
-          page: block["page"],
-          ...(Array.isArray(block["bbox"]) ? { bbox: block["bbox"] } : {}),
-          kind: block["kind"],
-          ...(typeof block["caption"] === "string" ? { caption: block["caption"] } : {}),
-          description: block["description"],
-          ...(typeof block["assetId"] === "string" ? { assetId: block["assetId"] } : {}),
-        });
+        if (block["type"] === "figure") {
+          figures.push({
+            figureId: block["figureId"],
+            page: block["page"],
+            ...(Array.isArray(block["bbox"]) ? { bbox: block["bbox"] } : {}),
+            kind: block["kind"],
+            ...(typeof block["caption"] === "string" ? { caption: block["caption"] } : {}),
+            description: block["description"],
+            ...(typeof block["assetId"] === "string" ? { assetId: block["assetId"] } : {}),
+          });
+          continue;
+        }
+        if (block["type"] === "table") {
+          // Tables have no dedicated crop asset; the bbox (when the extractor
+          // located one) renders the region from the source page.
+          figures.push({
+            figureId: block["tableId"],
+            page: block["page"],
+            ...(Array.isArray(block["bbox"]) ? { bbox: block["bbox"] } : {}),
+            kind: "table",
+            ...(typeof block["caption"] === "string" ? { caption: block["caption"] } : {}),
+            description: typeof block["caption"] === "string" ? block["caption"] : "",
+            ...(Array.isArray(block["headerRows"]) ? { headerRows: block["headerRows"] } : {}),
+            ...(Array.isArray(block["rows"]) ? { rows: block["rows"] } : {}),
+          });
+        }
       }
     }
     res.status(200).json({ jobId: id, sourceSha256: row.source_sha256, figures });

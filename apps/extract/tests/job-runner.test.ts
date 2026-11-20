@@ -716,6 +716,97 @@ describe("job-runner · S2 heading hints and v2 figure kind (task 2.3)", () => {
 		]);
 	});
 
+	it("checkpoints the ordered analyzed stage for every page", async () => {
+		// The progress view counts `analyzed`; the runner must persist one done
+		// checkpoint per page, before the vision stage runs.
+		const store = createFakeJobStore();
+		const job = await seedClaimedJob(store);
+		await store.setJobStatus(job.id, "preparing");
+
+		const order: string[] = [];
+		const vision: VisionClient = {
+			async analyzePage(input) {
+				order.push(`vision:${input.page}`);
+				return {
+					raw: `<summary>S${input.page}</summary><figures></figures><markdown>Seite ${input.page}</markdown>`,
+					usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+					requests: 1,
+					truncated: false,
+					maxTokens: 8192,
+				};
+			},
+			async analyzeFigure() {
+				return {
+					raw: '{"format":"markdown","text":"stub"}',
+					usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+					requests: 1,
+					truncated: false,
+					maxTokens: 8192,
+				};
+			},
+			async probe() {
+				return { available: true };
+			},
+		};
+
+		const analyzer = {
+			forSource() {
+				return {
+					async analyze(page: number) {
+						order.push(`analyzed:${page}`);
+						return {
+							page,
+							size: { widthPt: 595, heightPt: 842 },
+							blocks: [],
+							lines: [],
+							words: [],
+							headingCandidates: [],
+						};
+					},
+					async capability() {
+						return { supported: true, version: "24.0" };
+					},
+					inputHash() {
+						return "analyzed-hash";
+					},
+				};
+			},
+		};
+
+		const prepared = {
+			...fakePrepared({ pageCount: 2 }),
+			pdfPath: "/tmp/x.pdf",
+			home: "/tmp",
+		};
+		const runner = createJobRunner({
+			store,
+			vision,
+			renderer: fakeRenderer(prepared),
+			events: createJobEventBus(),
+			config: {
+				pageConcurrency: 1,
+				visionTokenEstimate: 10,
+				visionModel: "test-vlm",
+				renderDpi: 200,
+				figureDpi: 300,
+				figurePass2Kinds: [],
+				figurePass2MinArea: 0.02,
+				labelCoverageMin: 60,
+			},
+			analyzer,
+			logger: testLogger,
+		});
+
+		await runner.run(runnerCtx(store, { ...job, status: "preparing" }));
+
+		const done = await store.listStagesByStatus("page", job.id, "done");
+		const analyzed = done.filter((r) => r.stage === "analyzed");
+		expect(analyzed.map((r) => r.page).sort()).toEqual([1, 2]);
+		expect(analyzed.every((r) => r.input_hash === "analyzed-hash")).toBe(true);
+		// The checkpoint precedes the model call for the same page.
+		expect(order.slice(0, 2)).toEqual(["analyzed:1", "vision:1"]);
+	});
+
 	it("carries the model's figure kind and caption into the page record", async () => {
 		const store = createFakeJobStore();
 		const job = await seedClaimedJob(store);
