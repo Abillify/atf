@@ -52,8 +52,5 @@ yanked = "deny"
 # with the `cargo audit --ignore` list in .github/workflows/ci.yml; drop these
 # entries once a stable updater release depends on zip >= 9.
 ignore = [
-    { id = "RUSTSEC-2026-0367", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
     { id = "RUSTSEC-2026-0368", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
-    { id = "RUSTSEC-2026-0369", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
-    { id = "RUSTSEC-2026-0429", reason = "zip extraction only after updater signature verification; no zip >= 9 for tauri-plugin-updater 2.x" },
 ]
