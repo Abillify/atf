@@ -12,7 +12,7 @@
 #   docker build -f deploy/images/Dockerfile.search -t atf-search .
 #
 # Digests are updated by Dependabot (docker ecosystem).
-FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS deps
+FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18 AS deps
 WORKDIR /repo
 # .dockerignore excludes node_modules, dist, .next and test artifacts, so the
 # context stays small even though this is a monorepo.
@@ -29,7 +29,7 @@ RUN bun install --frozen-lockfile --production --filter @atf/search
 RUN mkdir -p /native-libs \
     && cp -L /usr/lib/*/libstdc++.so.6 /usr/lib/*/libgcc_s.so.1 /native-libs/
 
-FROM oven/bun:1.4.4-distroless@sha256:153a951ae40106e125898103e6e990ee0f38e6aee7f561029e26cf9fbed23470 AS runtime
+FROM oven/bun:1.4.5-distroless@sha256:3a210956422ad81cf7532e1fc1f2eb9275d6ef4c2337a9d25d530f798e80726a AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 # C++ ABI runtime libraries for sharp (see deps stage); /usr/lib is on the
