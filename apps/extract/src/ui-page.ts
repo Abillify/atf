@@ -2763,6 +2763,14 @@ const JS = `
     return Array.isArray(fig.bbox) && fig.bbox.length === 4 && fig.bbox[0] < fig.bbox[2] && fig.bbox[1] < fig.bbox[3];
   }
   // A minimal cell-grid table from the block's headerRows/rows (textContent only).
+  // A cell is either a string or an object carrying spans ({ text, colspan,
+  // rowspan, header }) — String() on the latter would print "[object Object]",
+  // so read its text like cellText() does elsewhere.
+  function cellText(c) {
+    if (c === null || c === undefined) return "";
+    if (typeof c === "object") return c.text === null || c.text === undefined ? "" : String(c.text);
+    return String(c);
+  }
   function buildCellTable(headerRows, rows) {
     var table = document.createElement("table");
     table.className = "fig-table";
@@ -2770,7 +2778,7 @@ const JS = `
       var tr = document.createElement("tr");
       (Array.isArray(cells) ? cells : []).forEach(function (c) {
         var td = document.createElement(head ? "th" : "td");
-        td.textContent = c === null || c === undefined ? "" : String(c);
+        td.textContent = cellText(c);
         tr.append(td);
       });
       table.append(tr);
