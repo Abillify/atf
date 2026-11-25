@@ -468,7 +468,7 @@ function FlowCanvasInner({
         fitView={defaultViewport === undefined}
         fitViewOptions={{ maxZoom: 1 }}
         minZoom={0.1}
-        colorMode={colorScheme}
+        forceColorMode={colorScheme}
         proOptions={{ hideAttribution: true }}
       >
         <Background />
