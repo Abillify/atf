@@ -46,11 +46,11 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "723fbbb29b4b395281eb825572983afd028a8fd2384fc2bd00b5950c7533e4f7"
+        "value": "db9af1cab88bb5f8a7fd7e1988d20cc4d6b55879211d6a6e1403c029c0d59daf"
       },
       {
         "name": "atf:cargo-lock:sha256",
-        "value": "218420be9d6a7332df59f7166a26c476fc876bb791d37db6e579101f0f4d15d4"
+        "value": "ba59bb5f5474468256f6cb6c05a068274c63c5e87f3c30b1a853d77883d03501"
       }
     ]
   },
@@ -76,16 +76,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.142",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.146",
       "group": "@ai-sdk",
       "name": "amazon-bedrock",
-      "version": "5.0.142",
+      "version": "5.0.146",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.142",
+      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.146",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -95,16 +95,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.105",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.107",
       "group": "@ai-sdk",
       "name": "anthropic",
-      "version": "4.0.105",
+      "version": "4.0.107",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.105",
+      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.107",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -114,16 +114,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.126",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.130",
       "group": "@ai-sdk",
       "name": "azure",
-      "version": "4.0.126",
+      "version": "4.0.130",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.126",
+      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.130",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -133,16 +133,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.87",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.89",
       "group": "@ai-sdk",
       "name": "deepseek",
-      "version": "3.0.87",
+      "version": "3.0.89",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.87",
+      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.89",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -152,16 +152,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.146",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.151",
       "group": "@ai-sdk",
       "name": "gateway",
-      "version": "4.0.146",
+      "version": "4.0.151",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.146",
+      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.151",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -171,16 +171,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.121",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.123",
       "group": "@ai-sdk",
       "name": "google",
-      "version": "4.0.121",
+      "version": "4.0.123",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.121",
+      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.123",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -190,16 +190,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.118",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.122",
       "group": "@ai-sdk",
       "name": "openai",
-      "version": "4.0.118",
+      "version": "4.0.122",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.118",
+      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.122",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -209,16 +209,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.38",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.39",
       "group": "@ai-sdk",
       "name": "provider",
-      "version": "4.0.38",
+      "version": "4.0.39",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.38",
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.39",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -228,16 +228,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.81",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.83",
       "group": "@ai-sdk",
       "name": "provider-utils",
-      "version": "5.0.81",
+      "version": "5.0.83",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.81",
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.83",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -304,16 +304,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1169.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1174.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-agent-runtime",
-      "version": "3.1169.0",
+      "version": "3.1174.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1169.0",
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1174.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -323,16 +323,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1169.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1174.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-runtime",
-      "version": "3.1169.0",
+      "version": "3.1174.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1169.0",
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1174.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -627,16 +627,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1169.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1174.0",
       "group": "@aws-sdk",
       "name": "token-providers",
-      "version": "3.1169.0",
+      "version": "3.1174.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1169.0",
+      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1174.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1482,16 +1482,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.4.1",
+      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.5.0",
       "group": "@langchain",
       "name": "core",
-      "version": "1.4.1",
+      "version": "1.5.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Fcore@1.4.1",
+      "purl": "pkg:npm/%40langchain%2Fcore@1.5.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1501,16 +1501,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.7.4",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.7.5",
       "group": "@langchain",
       "name": "langgraph",
-      "version": "1.7.4",
+      "version": "1.7.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph@1.7.4",
+      "purl": "pkg:npm/%40langchain%2Flanggraph@1.7.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1520,16 +1520,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.2",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.3",
       "group": "@langchain",
       "name": "langgraph-checkpoint",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.2",
+      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.2.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1539,16 +1539,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.16.0",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.17.0",
       "group": "@langchain",
       "name": "langgraph-sdk",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.16.0",
+      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.17.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2755,16 +2755,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.10",
+      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.13",
       "group": "@testing-library",
       "name": "user-event",
-      "version": "14.6.10",
+      "version": "14.6.13",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.10",
+      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.13",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3686,16 +3686,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fcoverage-v8@5.1.0",
+      "bom-ref": "pkg:npm/%40vitest%2Fcoverage-v8@5.1.1",
       "group": "@vitest",
       "name": "coverage-v8",
-      "version": "5.1.0",
+      "version": "5.1.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fcoverage-v8@5.1.0",
+      "purl": "pkg:npm/%40vitest%2Fcoverage-v8@5.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3762,6 +3762,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40vitest%2Fmocker@5.1.1",
+      "group": "@vitest",
+      "name": "mocker",
+      "version": "5.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40vitest%2Fmocker@5.1.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40vitest%2Fspy@5.1.0",
       "group": "@vitest",
       "name": "spy",
@@ -3772,6 +3791,25 @@
         }
       ],
       "purl": "pkg:npm/%40vitest%2Fspy@5.1.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40vitest%2Fspy@5.1.1",
+      "group": "@vitest",
+      "name": "spy",
+      "version": "5.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40vitest%2Fspy@5.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3800,16 +3838,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40xyflow%2Freact@12.12.0",
+      "bom-ref": "pkg:npm/%40xyflow%2Freact@13.0.2",
       "group": "@xyflow",
       "name": "react",
-      "version": "12.12.0",
+      "version": "13.0.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40xyflow%2Freact@12.12.0",
+      "purl": "pkg:npm/%40xyflow%2Freact@13.0.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3819,16 +3857,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40xyflow%2Fsystem@0.0.83",
+      "bom-ref": "pkg:npm/%40xyflow%2Fsystem@1.0.0",
       "group": "@xyflow",
       "name": "system",
-      "version": "0.0.83",
+      "version": "1.0.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40xyflow%2Fsystem@0.0.83",
+      "purl": "pkg:npm/%40xyflow%2Fsystem@1.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3946,15 +3984,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/ai@7.0.173",
+      "bom-ref": "pkg:npm/ai@7.0.178",
       "name": "ai",
-      "version": "7.0.173",
+      "version": "7.0.178",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/ai@7.0.173",
+      "purl": "pkg:npm/ai@7.0.178",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8032,15 +8070,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/express-rate-limit@8.7.4",
+      "bom-ref": "pkg:npm/express-rate-limit@8.7.5",
       "name": "express-rate-limit",
-      "version": "8.7.4",
+      "version": "8.7.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/express-rate-limit@8.7.4",
+      "purl": "pkg:npm/express-rate-limit@8.7.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8050,15 +8088,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-check@4.10.2",
+      "bom-ref": "pkg:npm/fast-check@4.10.3",
       "name": "fast-check",
-      "version": "4.10.2",
+      "version": "4.10.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/fast-check@4.10.2",
+      "purl": "pkg:npm/fast-check@4.10.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8140,15 +8178,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-xml-builder@1.3.1",
+      "bom-ref": "pkg:npm/fast-xml-builder@1.3.2",
       "name": "fast-xml-builder",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/fast-xml-builder@1.3.1",
+      "purl": "pkg:npm/fast-xml-builder@1.3.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8158,15 +8196,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-xml-parser@5.12.0",
+      "bom-ref": "pkg:npm/fast-xml-parser@5.12.1",
       "name": "fast-xml-parser",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/fast-xml-parser@5.12.0",
+      "purl": "pkg:npm/fast-xml-parser@5.12.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11308,15 +11346,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/lucide-react@1.62.0",
+      "bom-ref": "pkg:npm/lucide-react@1.77.0",
       "name": "lucide-react",
-      "version": "1.62.0",
+      "version": "1.77.0",
       "licenses": [
         {
           "expression": "ISC"
         }
       ],
-      "purl": "pkg:npm/lucide-react@1.62.0",
+      "purl": "pkg:npm/lucide-react@1.77.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11371,6 +11409,24 @@
         }
       ],
       "purl": "pkg:npm/magic-string@1.4.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/magic-string@1.4.5",
+      "name": "magic-string",
+      "version": "1.4.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/magic-string@1.4.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14386,24 +14442,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/qs@6.15.3",
-      "name": "qs",
-      "version": "6.15.3",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "purl": "pkg:npm/qs@6.15.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/qs@6.17.0",
       "name": "qs",
       "version": "6.17.0",
@@ -14413,6 +14451,24 @@
         }
       ],
       "purl": "pkg:npm/qs@6.17.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/qs@6.17.1",
+      "name": "qs",
+      "version": "6.17.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:npm/qs@6.17.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14665,6 +14721,24 @@
         }
       ],
       "purl": "pkg:npm/react@19.3.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/react-compiler-runtime@1.0.0",
+      "name": "react-compiler-runtime",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/react-compiler-runtime@1.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16870,15 +16944,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/superagent@10.3.0",
+      "bom-ref": "pkg:npm/superagent@10.4.2",
       "name": "superagent",
-      "version": "10.3.0",
+      "version": "10.4.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/superagent@10.3.0",
+      "purl": "pkg:npm/superagent@10.4.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16888,15 +16962,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/supertest@7.3.1",
+      "bom-ref": "pkg:npm/supertest@7.3.2",
       "name": "supertest",
-      "version": "7.3.1",
+      "version": "7.3.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/supertest@7.3.1",
+      "purl": "pkg:npm/supertest@7.3.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17212,15 +17286,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri@2.12.5",
+      "bom-ref": "pkg:cargo/tauri@2.12.7",
       "name": "tauri",
-      "version": "2.12.5",
+      "version": "2.12.7",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri@2.12.5",
+      "purl": "pkg:cargo/tauri@2.12.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17230,15 +17304,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-build@2.7.4",
+      "bom-ref": "pkg:cargo/tauri-build@2.7.6",
       "name": "tauri-build",
-      "version": "2.7.4",
+      "version": "2.7.6",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-build@2.7.4",
+      "purl": "pkg:cargo/tauri-build@2.7.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17248,15 +17322,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-codegen@2.7.4",
+      "bom-ref": "pkg:cargo/tauri-codegen@2.7.6",
       "name": "tauri-codegen",
-      "version": "2.7.4",
+      "version": "2.7.6",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-codegen@2.7.4",
+      "purl": "pkg:cargo/tauri-codegen@2.7.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17266,15 +17340,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-macros@2.7.4",
+      "bom-ref": "pkg:cargo/tauri-macros@2.7.6",
       "name": "tauri-macros",
-      "version": "2.7.4",
+      "version": "2.7.6",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-macros@2.7.4",
+      "purl": "pkg:cargo/tauri-macros@2.7.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17392,15 +17466,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-runtime@2.12.2",
+      "bom-ref": "pkg:cargo/tauri-runtime@2.12.4",
       "name": "tauri-runtime",
-      "version": "2.12.2",
+      "version": "2.12.4",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-runtime@2.12.2",
+      "purl": "pkg:cargo/tauri-runtime@2.12.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17410,15 +17484,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-runtime-wry@2.12.3",
+      "bom-ref": "pkg:cargo/tauri-runtime-wry@2.12.5",
       "name": "tauri-runtime-wry",
-      "version": "2.12.3",
+      "version": "2.12.5",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-runtime-wry@2.12.3",
+      "purl": "pkg:cargo/tauri-runtime-wry@2.12.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17428,15 +17502,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/tauri-utils@2.10.2",
+      "bom-ref": "pkg:cargo/tauri-utils@2.10.4",
       "name": "tauri-utils",
-      "version": "2.10.2",
+      "version": "2.10.4",
       "licenses": [
         {
           "expression": "Apache-2.0 OR MIT"
         }
       ],
-      "purl": "pkg:cargo/tauri-utils@2.10.2",
+      "purl": "pkg:cargo/tauri-utils@2.10.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -17707,6 +17781,24 @@
         }
       ],
       "purl": "pkg:npm/tinybench@6.2.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/tinybench@6.2.5",
+      "name": "tinybench",
+      "version": "6.2.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/tinybench@6.2.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18841,6 +18933,24 @@
         }
       ],
       "purl": "pkg:npm/vitest@5.1.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/vitest@5.1.1",
+      "name": "vitest",
+      "version": "5.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/vitest@5.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -20758,15 +20868,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/zustand@4.5.7",
+      "bom-ref": "pkg:npm/zustand@5.1.0",
       "name": "zustand",
-      "version": "4.5.7",
+      "version": "5.1.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/zustand@4.5.7",
+      "purl": "pkg:npm/zustand@5.1.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
