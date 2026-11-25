@@ -50,7 +50,7 @@
       },
       {
         "name": "atf:cargo-lock:sha256",
-        "value": "ba59bb5f5474468256f6cb6c05a068274c63c5e87f3c30b1a853d77883d03501"
+        "value": "eaea816d6f2e0847da17cd4f4e45fa9f20e15566969c935517fba445fadb3f4c"
       }
     ]
   },
@@ -5964,15 +5964,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/cookie@0.18.2",
+      "bom-ref": "pkg:cargo/cookie@0.18.3",
       "name": "cookie",
-      "version": "0.18.2",
+      "version": "0.18.3",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/cookie@0.18.2",
+      "purl": "pkg:cargo/cookie@0.18.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8520,15 +8520,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/form_urlencoded@1.2.2",
+      "bom-ref": "pkg:cargo/form_urlencoded@1.2.3",
       "name": "form_urlencoded",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/form_urlencoded@1.2.2",
+      "purl": "pkg:cargo/form_urlencoded@1.2.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18708,15 +18708,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/url@2.5.8",
+      "bom-ref": "pkg:cargo/url@2.5.9",
       "name": "url",
-      "version": "2.5.8",
+      "version": "2.5.9",
       "licenses": [
         {
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/url@2.5.8",
+      "purl": "pkg:cargo/url@2.5.9",
       "properties": [
         {
           "name": "atf:compliance:classification",
