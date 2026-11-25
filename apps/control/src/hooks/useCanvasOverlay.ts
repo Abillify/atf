@@ -8,8 +8,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import {
-  applyEdgeChanges,
-  applyNodeChanges,
+  EdgeChangeset,
+  NodeChangeset,
   type Edge,
   type EdgeChange,
   type Node,
@@ -65,7 +65,8 @@ export function useCanvasOverlay({
   const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
 
   const handleNodesChange = useCallback(
-    (changes: NodeChange[]) => {
+    (changeset: NodeChangeset<Node>) => {
+      const changes = changeset.toArray();
       const overlayDims = changes.filter(
         (c): c is Extract<NodeChange, { type: "dimensions" }> =>
           c.type === "dimensions" &&
@@ -105,7 +106,9 @@ export function useCanvasOverlay({
       );
       if (own.length === 0) return;
       onNodesChange(
-        applyNodeChanges(own, nodes as unknown as Node[]) as unknown as RFNode[],
+        new NodeChangeset(own).applyTo(
+          nodes as unknown as Node[],
+        ) as unknown as RFNode[],
       );
     },
     [editable, onNodesChange, nodes, ghostIds],
@@ -128,7 +131,8 @@ export function useCanvasOverlay({
   }
 
   const handleEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
+    (changeset: EdgeChangeset<Edge>) => {
+      const changes = changeset.toArray();
       const channelSelects = changes.filter(
         (c): c is Extract<EdgeChange, { type: "select" }> =>
           c.type === "select" && "id" in c && isChannelEdgeId(c.id),
@@ -147,8 +151,7 @@ export function useCanvasOverlay({
       const own = changes.filter((c) => !("id" in c) || !isOverlayEdgeId(c.id));
       if (own.length === 0) return;
       onEdgesChange(
-        applyEdgeChanges(
-          own,
+        new EdgeChangeset(own).applyTo(
           edges as unknown as Edge[],
         ) as unknown as RFEdge[],
       );
