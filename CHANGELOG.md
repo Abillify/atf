@@ -18,6 +18,27 @@ releases:
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-11-25
+
+### Fixed
+
+- **Gate** (monitor): session and state cookies are now sealed with
+  AES-256-GCM under a key derived from `monitoring.oidc.sessionSecret`
+  (HKDF-SHA256) instead of a base64url body with an HMAC signature. The
+  verified id_token claims a session carries (subject, e-mail, tenant,
+  tool scopes) no longer appear in clear text in the browser's cookie
+  jar; the GCM tag replaces the HMAC as the integrity check, and forged,
+  tampered, or pre-sealing cookies are rejected identically. Rotating
+  the session secret (or the monitoring token, for the token-session
+  cookie) invalidates cookies sealed under the old key.
+- **Extract** (console): a cell-grid table whose cells carry spans
+  (objects with `text`/`colspan`/`rowspan`) rendered `[object Object]`
+  instead of the cell text.
+- Dependency updates: npm and Bun base images (1.4.5), the Tauri stack
+  in outpost-desktop (2.12.7), CodeQL action 4.39.4, and the Rust
+  advisory fixes RUSTSEC-2026-0592 (`url` 2.5.9) and RUSTSEC-2026-0594
+  (`cookie` 0.18.3).
+
 ## [0.28.0] - 2026-11-20
 
 ### Added
@@ -1941,7 +1962,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.28.1...HEAD
+[0.28.1]: https://github.com/Abillify/atf/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/Abillify/atf/compare/v0.27.2...v0.28.0
 [0.27.2]: https://github.com/Abillify/atf/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/Abillify/atf/compare/v0.27.0...v0.27.1
