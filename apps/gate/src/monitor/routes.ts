@@ -13,6 +13,10 @@ import type { AuthContext } from "../auth/context.ts";
 import { normalizeHeaders } from "../auth/context.ts";
 import { logger } from "../logger.ts";
 import { verifyIdToken } from "./oidc-verify.ts";
+import {
+  decryptCookiePayload,
+  encryptCookiePayload,
+} from "./session-cipher.ts";
 import { McpToolDispatcher, type McpServerDeps } from "../mcp/server.ts";
 import { resolveTenantForIssuer } from "../auth/authenticator.ts";
 
@@ -135,8 +139,9 @@ function shapeForViewer(event: MonitorEvent, config: MonitoringConfig): MonitorE
 
 // ---------------------------------------------------------------------------
 // OIDC login — authorization-code flow against an external provider (e.g.
-// Authentik). Session/state are kept in signed, HttpOnly cookies rather than
-// server-side storage so the monitor stays stateless across restarts/replicas.
+// Authentik). Session/state are kept in encrypted (AES-256-GCM), HttpOnly
+// cookies rather than server-side storage so the monitor stays stateless
+// across restarts/replicas while the cookie payload stays confidential.
 // ---------------------------------------------------------------------------
 
 const SESSION_COOKIE = "mcpgate_monitor_session";
@@ -188,27 +193,18 @@ async function discover(issuer: string): Promise<DiscoveryDoc> {
   return doc;
 }
 
-function sign(body: string, secret: string): string {
-  return createHmac("sha256", secret).update(body).digest("base64url");
+// Cookie payloads are sealed with AES-256-GCM (`session-cipher.ts`): the GCM
+// tag provides integrity, encryption provides confidentiality, so the
+// browser-held cookie never exposes its contents in clear text.
+function sealCookie(payload: object, secret: string): string {
+  return encryptCookiePayload(payload, secret);
 }
 
-function signCookie(payload: object, secret: string): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${body}.${sign(body, secret)}`;
-}
-
-function verifyCookie<T>(value: string | undefined, secret: string): T | undefined {
-  if (!value) return undefined;
-  const dot = value.lastIndexOf(".");
-  if (dot < 0) return undefined;
-  const body = value.slice(0, dot);
-  const mac = value.slice(dot + 1);
-  if (!safeTokenEqual(mac, sign(body, secret))) return undefined;
-  try {
-    return JSON.parse(Buffer.from(body, "base64url").toString()) as T;
-  } catch {
-    return undefined;
-  }
+function openCookie<T>(
+  value: string | undefined,
+  secret: string,
+): T | undefined {
+  return decryptCookiePayload<T>(value, secret);
 }
 
 function parseCookies(req: Request): Record<string, string> {
@@ -263,7 +259,7 @@ function claimStrings(value: unknown): string[] {
 
 function readSessionCookie(req: Request, oidc: OidcConfig): MonitorSession | undefined {
   const cookies = parseCookies(req);
-  const session = verifyCookie<Partial<MonitorSession>>(
+  const session = openCookie<Partial<MonitorSession>>(
     cookies[SESSION_COOKIE],
     oidc.sessionSecret,
   );
@@ -289,7 +285,7 @@ function readSessionCookie(req: Request, oidc: OidcConfig): MonitorSession | und
 }
 
 function readTokenSessionCookie(req: Request, token: string): boolean {
-  const session = verifyCookie<{ exp?: unknown }>(
+  const session = openCookie<{ exp?: unknown }>(
     parseCookies(req)[TOKEN_SESSION_COOKIE],
     tokenSessionSecret(token),
   );
@@ -369,7 +365,7 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     if (!config.token) { res.status(404).json({ error: "No monitoring token is configured" }); return; }
     if (!bearerMatches(req, config.token)) { res.status(401).json({ error: "Unauthorized" }); return; }
     const exp = Math.floor(Date.now() / 1000) + TOKEN_SESSION_MAX_AGE_S;
-    const cookie = signCookie({ exp }, tokenSessionSecret(config.token));
+    const cookie = sealCookie({ exp }, tokenSessionSecret(config.token));
     res.setHeader(
       "Set-Cookie",
       `${TOKEN_SESSION_COOKIE}=${cookie}; Path=/;${secureAttr(req)} HttpOnly; SameSite=Strict; Max-Age=${TOKEN_SESSION_MAX_AGE_S}`,
@@ -395,12 +391,14 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
       // PKCE (RFC 7636, S256): the verifier never leaves this service except in
       // the token request, so an authorization code intercepted on the redirect
       // is useless. `nonce` binds the ID token to this login attempt. Both ride
-      // in the signed, HttpOnly state cookie.
+      // in the encrypted, HttpOnly state cookie.
       const codeVerifier = randomBytes(32).toString("base64url");
-      const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+      const codeChallenge = createHash("sha256")
+        .update(codeVerifier)
+        .digest("base64url");
       const nonce = randomBytes(16).toString("hex");
       const stateExp = Math.floor(Date.now() / 1000) + 300;
-      const stateCookie = signCookie(
+      const stateCookie = sealCookie(
         { state, nonce, cv: codeVerifier, exp: stateExp },
         oidc.sessionSecret,
       );
@@ -437,10 +435,12 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     const oidc = config.oidc;
 
     const cookies = parseCookies(req);
-    const statePayload = verifyCookie<{ state: string; nonce?: string; cv?: string; exp: number }>(
-      cookies[STATE_COOKIE],
-      oidc.sessionSecret,
-    );
+    const statePayload = openCookie<{
+      state: string;
+      nonce?: string;
+      cv?: string;
+      exp: number;
+    }>(cookies[STATE_COOKIE], oidc.sessionSecret);
     res.setHeader("Set-Cookie", `${STATE_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
 
     const queryState = typeof req.query.state === "string" ? req.query.state : undefined;
@@ -542,7 +542,7 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
       }
 
       const exp = Math.floor(Date.now() / 1000) + oidc.sessionMaxAge;
-      let sessionCookie = signCookie({ ...session, exp }, oidc.sessionSecret);
+      let sessionCookie = sealCookie({ ...session, exp }, oidc.sessionSecret);
       if (sessionCookie.length > MAX_SESSION_COOKIE_CHARS) {
         // Browsers drop oversized cookies and the login would silently fail:
         // keep only the claims the tenant and scope decisions rest on.
@@ -554,7 +554,10 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
             .filter((name) => name in session.claims)
             .map((name) => [name, session.claims[name]]),
         );
-        sessionCookie = signCookie({ ...session, claims: minimal, exp }, oidc.sessionSecret);
+        sessionCookie = sealCookie(
+          { ...session, claims: minimal, exp },
+          oidc.sessionSecret,
+        );
       }
       const secure = req.secure || req.headers["x-forwarded-proto"] === "https" ? " Secure;" : "";
       res.setHeader(

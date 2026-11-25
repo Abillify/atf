@@ -1330,7 +1330,7 @@ export const MonitoringConfigSchema = z.object({
   /**
    * Alternative/additional login for human operators: OAuth2/OIDC against an
    * external provider (e.g. Authentik). When set, `GET /monitor/login` starts
-   * the authorization-code flow and a signed session cookie is accepted
+   * the authorization-code flow and an encrypted session cookie is accepted
    * everywhere `monitoring.token` would be. Both can be configured together —
    * either one is sufficient to authorize a request.
    *
@@ -1360,7 +1360,7 @@ export const MonitoringConfigSchema = z.object({
         /** Must exactly match the redirect URI registered with the provider. */
         redirectUri: z.string().url(),
         scopes: z.array(z.string()).default(["openid", "profile", "email"]),
-        /** Secret used to HMAC-sign the session/state cookies. */
+        /** Secret that derives the AES-256-GCM key sealing the session/state cookies. */
         sessionSecret: z.string().min(1),
         /** Session lifetime in seconds. */
         sessionMaxAge: z.coerce.number().int().positive().default(28_800),

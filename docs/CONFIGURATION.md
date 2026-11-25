@@ -994,7 +994,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `monitoring.cluster.redisUrl` | string | — | — |
 | `monitoring.enabled` | boolean | `true` | — |
 | `monitoring.includeToolContent` | boolean | `false` | Whether the monitor stream may carry the full tool result in `meta.content`. Default `false`: the result is replaced by `meta.contentDigest` (SHA-256 hex over its JSON plus the UTF-8 byte length), so the dashboard shows that a tool returned data and of what size without leaking the data itself. |
-| `monitoring.oidc` | object | — | Alternative/additional login for human operators: OAuth2/OIDC against an external provider (e.g. Authentik). When set, `GET /monitor/login` starts the authorization-code flow and a signed session cookie is accepted everywhere `monitoring.token` would be. Both can be configured together — either one is sufficient to authorize a request. `config.yaml` substitutes unset `${VAR:-}` env vars with `""`, not `undefined` — so the preprocess below treats an object whose required fields are all blank as "not configured" rather than failing validation. |
+| `monitoring.oidc` | object | — | Alternative/additional login for human operators: OAuth2/OIDC against an external provider (e.g. Authentik). When set, `GET /monitor/login` starts the authorization-code flow and an encrypted session cookie is accepted everywhere `monitoring.token` would be. Both can be configured together — either one is sufficient to authorize a request. `config.yaml` substitutes unset `${VAR:-}` env vars with `""`, not `undefined` — so the preprocess below treats an object whose required fields are all blank as "not configured" rather than failing validation. |
 | `monitoring.oidc.clientId` | string | — | — |
 | `monitoring.oidc.clientSecret` | string | — | — |
 | `monitoring.oidc.groupsClaim` | string | `"groups"` | id_token claim that carries the user's groups (for `requiredGroups`). |
@@ -1003,7 +1003,7 @@ Generated from apps/gate/src/config/schema.ts by bun run config-reference. Keys 
 | `monitoring.oidc.requiredGroups` | array | — | Group names (from the id_token `groups` claim) that grant monitor access. Empty = every authenticated user of the provider may log in; non-empty = the callback rejects anyone who is not a member of at least one listed group, so a shared IdP cannot hand its whole user base a dashboard that shows tool arguments and results. |
 | `monitoring.oidc.scopes` | array | — | — |
 | `monitoring.oidc.sessionMaxAge` | number | `28800` | Session lifetime in seconds. |
-| `monitoring.oidc.sessionSecret` | string | — | Secret used to HMAC-sign the session/state cookies. |
+| `monitoring.oidc.sessionSecret` | string | — | Secret that derives the AES-256-GCM key sealing the session/state cookies. |
 | `monitoring.playground` | object | — | Tool Playground (execute tools from the dashboard). Disabled by default because it runs tools out-of-band from a normal MCP session. When enabled it requires `monitoring.token` to be set, and write-access tools stay blocked unless `allowWrite` is also enabled. |
 | `monitoring.playground.allowWrite` | boolean | `false` | — |
 | `monitoring.playground.enabled` | boolean | `false` | — |

@@ -8,6 +8,7 @@ import { createHash, generateKeyPairSync, sign as cryptoSign, type JsonWebKey } 
 import type { Express } from "express";
 import { AppConfigSchema } from "../../src/config/schema.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
+import { decryptCookiePayload } from "../../src/monitor/session-cipher.ts";
 import { FakeDb } from "../helpers/fake-db.ts";
 
 function listen(app: Express): Promise<{ server: Server; port: number }> {
@@ -434,25 +435,36 @@ describe("Monitor playground · verified claims of the session", () => {
     const port = await start(
       {},
       { extraClaims: { department: "ops" } },
-      { monitoring: { playground: { enabled: true } }, extra: { tools: [claimTool] } },
+      {
+        monitoring: { playground: { enabled: true } },
+        extra: { tools: [claimTool] },
+      },
     );
     const callbackRes = await loginAndCallback(port);
     const sessionCookie = getCookie(callbackRes, "mcpgate_monitor_session");
     expect(sessionCookie).toBeDefined();
-    const payload = JSON.parse(
-      Buffer.from(String(sessionCookie).split(".")[0] ?? "", "base64url").toString(),
-    ) as { claims: Record<string, unknown> };
+    // The cookie is sealed (AES-256-GCM): its claims are only visible after
+    // decrypting with the configured session secret, never in clear text.
+    expect(String(sessionCookie)).not.toContain("ops");
+    const payload = decryptCookiePayload<{ claims: Record<string, unknown> }>(
+      String(sessionCookie),
+      "test-session-secret",
+    );
+    if (!payload) throw new Error("session cookie failed to decrypt");
     expect(payload.claims.department).toBe("ops");
     expect(payload.claims).not.toHaveProperty("nonce");
 
-    const res = await fetch(`http://127.0.0.1:${port}/monitor/tools/claim_orders/run`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie: `mcpgate_monitor_session=${sessionCookie}`,
+    const res = await fetch(
+      `http://127.0.0.1:${port}/monitor/tools/claim_orders/run`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: `mcpgate_monitor_session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ args: {} }),
       },
-      body: JSON.stringify({ args: {} }),
-    });
+    );
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
     expect(fakeDb?.last("main")?.bindings).toContain("ops");
   });

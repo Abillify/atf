@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { createHmac } from "node:crypto";
 import type { Server } from "node:http";
 import express from "express";
 import { AppConfigSchema, type MonitoringConfig } from "../../src/config/schema.ts";
 import { MonitorBus, type MonitorEvent, type MonitorEventInput } from "../../src/monitor/events.ts";
 import { createMonitorRouter } from "../../src/monitor/routes.ts";
+import { encryptCookiePayload } from "../../src/monitor/session-cipher.ts";
 
 const SESSION_SECRET = "s".repeat(40);
 const MONITOR_TOKEN = "m-secret";
@@ -32,7 +32,7 @@ function config(over: Record<string, unknown> = {}): MonitoringConfig {
   return parsed.monitoring;
 }
 
-/** Forge a signed monitor OIDC session cookie for a tenant. */
+/** Seal a monitor OIDC session cookie for a tenant, as the callback does. */
 function oidcCookie(tenantId: string): string {
   const payload = {
     sub: "user-1",
@@ -41,10 +41,59 @@ function oidcCookie(tenantId: string): string {
     tenantId,
     exp: Math.floor(Date.now() / 1000) + 3600,
   };
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const mac = createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
-  return `mcpgate_monitor_session=${body}.${mac}`;
+  return `mcpgate_monitor_session=${encryptCookiePayload(payload, SESSION_SECRET)}`;
 }
+
+describe("Monitor session cookie confidentiality", () => {
+  it("seals the cookie so its value never carries the claims in clear text", () => {
+    const cookie = oidcCookie("t1");
+    const value = cookie.slice("mcpgate_monitor_session=".length);
+    // Neither the raw value nor its base64url-decoded form may expose claims.
+    expect(value).not.toContain("user-1");
+    expect(value).not.toContain("t1");
+    const decoded = Buffer.from(
+      value.replace(/^v1\./, ""),
+      "base64url",
+    ).toString("latin1");
+    expect(decoded).not.toContain("user-1");
+    expect(decoded).not.toContain("tenantId");
+  });
+
+  it("rejects a cookie sealed under a different secret", async () => {
+    const bus = new MonitorBus();
+    const port = await start(bus, config());
+    const foreign = encryptCookiePayload(
+      {
+        sub: "user-1",
+        username: "user-1",
+        scopes: [],
+        tenantId: "t1",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      },
+      "x".repeat(40),
+    );
+    const res = await fetch(`http://127.0.0.1:${port}/monitor/stream`, {
+      headers: { cookie: `mcpgate_monitor_session=${foreign}` },
+    });
+    expect(res.status).toBe(401);
+    res.body?.cancel();
+  });
+
+  it("rejects a tampered cookie (GCM tag failure)", async () => {
+    const bus = new MonitorBus();
+    const port = await start(bus, config());
+    const cookie = oidcCookie("t1");
+    const value = cookie.slice("mcpgate_monitor_session=".length);
+    // Flip one character of the ciphertext part.
+    const i = value.length - 4;
+    const flipped = `${value.slice(0, i)}${value[i] === "A" ? "B" : "A"}${value.slice(i + 1)}`;
+    const res = await fetch(`http://127.0.0.1:${port}/monitor/stream`, {
+      headers: { cookie: `mcpgate_monitor_session=${flipped}` },
+    });
+    expect(res.status).toBe(401);
+    res.body?.cancel();
+  });
+});
 
 let server: Server | undefined;
 afterEach(() => {
