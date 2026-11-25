@@ -143,6 +143,14 @@ const SUPPLEMENTAL_RULES: SupplementalRule[] = [
 			"The package is published by React and omits the React repository license file.",
 	},
 	{
+		packagePattern: /^react-compiler-runtime$/,
+		expectedLicense: "MIT",
+		files: ["licenses/react-MIT.txt"],
+		attribution: "React upstream LICENSE",
+		reason:
+			"The package is published from the React repository (compiler/packages) and omits the React repository license file.",
+	},
+	{
 		packagePattern: /^js-tiktoken$/,
 		expectedLicense: "MIT",
 		files: ["licenses/js-tiktoken-MIT.txt"],
