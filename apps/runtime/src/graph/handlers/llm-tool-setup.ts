@@ -366,6 +366,9 @@ export async function setupLlmTools(params: {
           ...(runtime.ctx.ssoToken !== undefined
             ? { authToken: runtime.ctx.ssoToken }
             : {}),
+          ...(runtime.ctx.requestParams !== undefined
+            ? { requestParams: runtime.ctx.requestParams }
+            : {}),
         });
         for (const hit of hits) {
           const k = toolKeyByRef[hit.ref];
@@ -411,6 +414,9 @@ export async function setupLlmTools(params: {
                   ...(runtime.ctx.ssoToken !== undefined
                     ? { authToken: runtime.ctx.ssoToken }
                     : {}),
+                  ...(runtime.ctx.requestParams !== undefined
+                    ? { requestParams: runtime.ctx.requestParams }
+                    : {}),
                 }),
               ),
             );
@@ -428,6 +434,9 @@ export async function setupLlmTools(params: {
             : {}),
           ...(runtime.ctx.ssoToken !== undefined
             ? { authToken: runtime.ctx.ssoToken }
+            : {}),
+          ...(runtime.ctx.requestParams !== undefined
+            ? { requestParams: runtime.ctx.requestParams }
             : {}),
           ...(groupsSummary !== "" ? { groupsSummary } : {}),
           ...(toolGroupSummarizer !== undefined

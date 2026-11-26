@@ -29,7 +29,7 @@ export function createCapabilityDocument(input: {
 export interface CapabilityProvider {
   getTransactionCapabilities?(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<CapabilityDocument | undefined>;
 }
 
@@ -40,6 +40,12 @@ export interface CapabilityProvider {
  */
 export interface CapabilityNegotiationOptions {
   authToken?: string;
+  /**
+   * Request metadata used to resolve a `urlTemplate` peer. Without it a
+   * templated server cannot be probed, which surfaces as "not advertised"
+   * (legacy call in optional mode, fail-closed in required mode).
+   */
+  requestParams?: Record<string, unknown>;
 }
 
 export async function negotiateCapabilities(
@@ -49,9 +55,20 @@ export async function negotiateCapabilities(
   opts: CapabilityNegotiationOptions = {},
 ): Promise<{ capabilities: CapabilityDocument; negotiated: boolean }> {
   try {
+    const discoveryOpts =
+      opts.authToken !== undefined || opts.requestParams !== undefined
+        ? {
+            ...(opts.authToken !== undefined
+              ? { authToken: opts.authToken }
+              : {}),
+            ...(opts.requestParams !== undefined
+              ? { requestParams: opts.requestParams }
+              : {}),
+          }
+        : undefined;
     const capabilities = await provider.getTransactionCapabilities?.(
       serverName,
-      opts.authToken !== undefined ? { authToken: opts.authToken } : undefined,
+      discoveryOpts,
     );
     if (
       capabilities?.protocol === TRANSACTION_PROTOCOL_VERSION &&

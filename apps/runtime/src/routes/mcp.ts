@@ -99,7 +99,9 @@ export function createMcpRouter(deps: McpRouterDeps): Hono {
           return {
             id: cfg.name,
             name: cfg.name,
-            url: cfg.url,
+            // A urlTemplate server has no fixed endpoint; show the template so
+            // operators can still tell which peer family it targets.
+            url: cfg.url ?? cfg.urlTemplate ?? "",
             transport: cfg.transport,
             status: "connected" as const,
             tools: tools.map((name) => ({ name, description: "", authorized: true })),
@@ -108,7 +110,7 @@ export function createMcpRouter(deps: McpRouterDeps): Hono {
           return {
             id: cfg.name,
             name: cfg.name,
-            url: cfg.url,
+            url: cfg.url ?? cfg.urlTemplate ?? "",
             transport: cfg.transport,
             status: "error" as const,
             error: err instanceof Error ? err.message : String(err),

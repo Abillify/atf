@@ -68,6 +68,7 @@ import {
   isConnectionError,
   isSessionExpiredError,
 } from "./client-errors.js";
+import { resolveServerUrl } from "./url-template.js";
 import type {
   McpWrapperService,
   SchemaCompatibilityMode,
@@ -159,6 +160,21 @@ const defaultTokenExchangerFactory = (
     ...(logger !== undefined ? { logger } : {}),
   });
 };
+
+/**
+ * Identity hash for a per-caller MCP session: the caller's bearer token plus,
+ * for a `urlTemplate` server, the endpoint URL resolved for this request.
+ * Two peers behind one template config (e.g. one per deployment) therefore
+ * never share a session, schema scope, or capability-cache entry — the same
+ * caller hitting deployment A must not reuse deployment B's session.
+ * For static-URL servers this equals the historical `sha256(token)`.
+ */
+function sessionIdentityHash(
+  token: string,
+  resolvedUrl: string | undefined,
+): string {
+  return sha256(resolvedUrl === undefined ? token : `${token}\u0000${resolvedUrl}`);
+}
 
 const DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS = 300_000;
 const MAX_PREPARED_EVIDENCE_CALL_TTL_MS = 2_147_483_647;
@@ -448,10 +464,14 @@ export class McpWrapper implements McpWrapperService {
       ([name, value]) =>
         name.toLowerCase() === "authorization" && value.trim().length > 0,
     );
-    if (config.forwardAuthToken === true && !hasBootstrapAuthorization) {
-      // Startup has no caller identity. Connecting here would issue an
-      // unauthenticated initialize/server-discover request, produce a misleading
-      // 401, and prevent otherwise valid caller-scoped flows from compiling.
+    if (
+      config.urlTemplate !== undefined ||
+      (config.forwardAuthToken === true && !hasBootstrapAuthorization)
+    ) {
+      // Startup has no caller identity — and a urlTemplate endpoint has no
+      // fixed URL at all — so connecting here would issue an unauthenticated
+      // initialize/server-discover request, produce a misleading 401, and
+      // prevent otherwise valid caller-scoped flows from compiling.
       // _getTokenClient() establishes the authenticated session on first use.
       this.clients.delete(config.name);
       this.instructions.delete(config.name);
@@ -604,6 +624,7 @@ export class McpWrapper implements McpWrapperService {
     client: Client | undefined,
     subjectToken: string | undefined,
     error: unknown,
+    resolvedUrl?: string,
   ): Promise<void> {
     const exchanger = this.tokenExchangers.get(serverName);
     if (
@@ -617,7 +638,13 @@ export class McpWrapper implements McpWrapperService {
     }
     exchanger.invalidate(subjectToken);
     try {
-      await this._recoverClient(serverName, client, subjectToken);
+      await this._recoverClient(
+        serverName,
+        client,
+        subjectToken,
+        undefined,
+        resolvedUrl,
+      );
     } catch {
       // Intentionally ignored: the original 401 is the relevant failure.
     }
@@ -648,7 +675,17 @@ export class McpWrapper implements McpWrapperService {
   private async _createClient(
     config: McpServerConfig,
     authToken?: string,
+    resolvedUrl?: string,
   ): Promise<Client> {
+    // A `urlTemplate` server has no static endpoint: the concrete URL resolved
+    // for this request replaces `url` on a config copy, so every transport
+    // below (and the stateless 2026 client) sees a plain concrete URL.
+    const endpointUrl = resolvedUrl ?? config.url;
+    if (endpointUrl === undefined) {
+      throw new Error(
+        `MCP server ${config.name} requires a request-resolved URL that is missing here`,
+      );
+    }
     const configuredProfile =
       config.profile ?? config.protocolVersion ?? "2025";
     if (
@@ -679,7 +716,10 @@ export class McpWrapper implements McpWrapperService {
           "MCP 2026-07-28 is supported only with the http transport",
         );
       }
-      const native = new Stateless2026Client(config, bearer);
+      const native = new Stateless2026Client(
+        { ...config, url: endpointUrl },
+        bearer,
+      );
       await native.connect();
       return trackBearer(native as unknown as Client);
     }
@@ -704,7 +744,7 @@ export class McpWrapper implements McpWrapperService {
     switch (config.transport) {
       case "http": {
         const headers = httpHeaders();
-        transport = new StreamableHTTPClientTransport(new URL(config.url), {
+        transport = new StreamableHTTPClientTransport(new URL(endpointUrl), {
           requestInit:
             Object.keys(headers).length > 0 ? { headers } : undefined,
           // All SDK legs (POST JSON-RPC) go through the Egress_Guard.
@@ -720,7 +760,7 @@ export class McpWrapper implements McpWrapperService {
         // silently dropped `config.headers` and `forwardAuthToken` entirely —
         // an SSE MCP server behind auth could not be reached at all.
         const headers = httpHeaders();
-        transport = new SSEClientTransport(new URL(config.url), {
+        transport = new SSEClientTransport(new URL(endpointUrl), {
           // POST-back legs of the SDK use this fetch — guarded too.
           fetch: this.fetchFn,
           ...(Object.keys(headers).length > 0
@@ -744,7 +784,7 @@ export class McpWrapper implements McpWrapperService {
         break;
       }
       case "stdio":
-        transport = new StdioClientTransport({ command: config.url });
+        transport = new StdioClientTransport({ command: endpointUrl });
         break;
       default: {
         const _exhaustive: never = config.transport;
@@ -793,7 +833,10 @@ export class McpWrapper implements McpWrapperService {
       ([name, value]) =>
         name.toLowerCase() === "authorization" && value.trim().length > 0,
     );
-    if (config.forwardAuthToken === true && !hasBootstrapAuthorization) {
+    if (
+      config.urlTemplate !== undefined ||
+      (config.forwardAuthToken === true && !hasBootstrapAuthorization)
+    ) {
       // Caller-scoped server without a shared session — same semantics as
       // connect(): drop any stale shared client and let the next caller
       // establish its authenticated session on first use.
@@ -906,13 +949,33 @@ export class McpWrapper implements McpWrapperService {
    * connection error (server restarted / process died), the session is
    * re-initialised and the request is retried once.
    */
+  /**
+   * Concrete request endpoint for a server config: undefined for a static
+   * `url` (the historical single-session identity), the resolved URL for a
+   * `urlTemplate` server. Throws fail-closed when the template cannot be
+   * resolved from the request metadata — a templated server must never fall
+   * back to a default peer.
+   */
+  private _resolveEndpoint(
+    config: McpServerConfig,
+    requestParams: Record<string, unknown> | undefined,
+  ): string | undefined {
+    if (config.urlTemplate === undefined) return undefined;
+    return resolveServerUrl(config, requestParams);
+  }
+
   async listTools(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<string[]> {
+    const resolvedUrl = this._resolveEndpoint(
+      this._requireConfig(serverName),
+      opts?.requestParams,
+    );
     const session = await this._getDiscoverySession(
       serverName,
       opts?.authToken,
+      resolvedUrl,
     );
     try {
       const tools = await listAllTools(session.client);
@@ -923,6 +986,8 @@ export class McpWrapper implements McpWrapperService {
           serverName,
           session.client,
           session.authToken,
+          undefined,
+          resolvedUrl,
         );
       } else {
         throw err;
@@ -934,6 +999,7 @@ export class McpWrapper implements McpWrapperService {
     const recovered = await this._getDiscoverySession(
       serverName,
       opts?.authToken,
+      resolvedUrl,
     );
     try {
       return (await listAllTools(recovered.client)).map((tool) => tool.name);
@@ -945,6 +1011,7 @@ export class McpWrapper implements McpWrapperService {
   private async _native2026ClientLease(
     serverName: string,
     authToken?: string,
+    resolvedUrl?: string,
   ): Promise<{ client: Stateless2026Client; release: () => void }> {
     const config = this._requireConfig(serverName);
     if (
@@ -959,7 +1026,7 @@ export class McpWrapper implements McpWrapperService {
       config.forwardAuthToken === true &&
       authToken !== undefined &&
       authToken !== ""
-        ? await this._acquireTokenClient(serverName, authToken)
+        ? await this._acquireTokenClient(serverName, authToken, resolvedUrl)
         : { client: await this._sharedClient(serverName), release: () => {} };
     if (!((lease.client as unknown) instanceof Stateless2026Client)) {
       lease.release();
@@ -973,11 +1040,12 @@ export class McpWrapper implements McpWrapperService {
 
   async listResources(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<{ resources: McpResourceDescriptor[] } & McpCacheMetadata> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     const resources: McpResourceDescriptor[] = [];
     let cursor: string | undefined;
@@ -1005,13 +1073,14 @@ export class McpWrapper implements McpWrapperService {
 
   async listResourceTemplates(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<
     { resourceTemplates: McpResourceTemplateDescriptor[] } & McpCacheMetadata
   > {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     const resourceTemplates: McpResourceTemplateDescriptor[] = [];
     let cursor: string | undefined;
@@ -1040,11 +1109,16 @@ export class McpWrapper implements McpWrapperService {
   async readResource(
     serverName: string,
     uri: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<{ contents: unknown[] } & McpCacheMetadata> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     try {
       return await lease.client.readResource(uri, opts?.signal);
@@ -1055,11 +1129,12 @@ export class McpWrapper implements McpWrapperService {
 
   async listPrompts(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<{ prompts: McpPromptDescriptor[] } & McpCacheMetadata> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     const prompts: McpPromptDescriptor[] = [];
     let cursor: string | undefined;
@@ -1089,11 +1164,16 @@ export class McpWrapper implements McpWrapperService {
     serverName: string,
     name: string,
     args: Record<string, unknown> = {},
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<{ description?: string; messages: unknown[] }> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     try {
       return await lease.client.getPrompt(name, args, opts?.signal);
@@ -1105,11 +1185,16 @@ export class McpWrapper implements McpWrapperService {
   async getTask(
     serverName: string,
     taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     try {
       return await lease.client.getTask(taskId, opts?.signal);
@@ -1122,11 +1207,16 @@ export class McpWrapper implements McpWrapperService {
     serverName: string,
     taskId: string,
     input: Record<string, unknown>,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     try {
       return await lease.client.updateTask(taskId, input, opts?.signal);
@@ -1138,11 +1228,16 @@ export class McpWrapper implements McpWrapperService {
   async cancelTask(
     serverName: string,
     taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus> {
     const lease = await this._native2026ClientLease(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(this._requireConfig(serverName), opts?.requestParams),
     );
     try {
       return await lease.client.cancelTask(taskId, opts?.signal);
@@ -1158,14 +1253,14 @@ export class McpWrapper implements McpWrapperService {
    */
   async getTransactionCapabilities(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<CapabilityDocument | undefined> {
     // Discovery must observe the same MCP session the tool call will use.
     // A forwardAuthToken peer authenticates the transport per caller, so the
     // unauthenticated/bootstrap session may legitimately expose a different
     // tool list (or reject the request outright) than the caller's session.
-    const forwardAuth =
-      this._requireConfig(serverName).forwardAuthToken === true;
+    const config = this._requireConfig(serverName);
+    const forwardAuth = config.forwardAuthToken === true;
     const authToken =
       forwardAuth && opts?.authToken !== undefined && opts.authToken !== ""
         ? opts.authToken
@@ -1176,12 +1271,15 @@ export class McpWrapper implements McpWrapperService {
       // absence across callers.
       return undefined;
     }
+    // A urlTemplate peer resolves its endpoint from the request metadata; a
+    // discovery without that context cannot know which peer to probe.
+    const resolvedUrl = this._resolveEndpoint(config, opts?.requestParams);
     // Keyed per session identity so one caller's negative result cannot mask
     // another caller's advertised v1 support.
     const cacheKey =
       authToken === undefined
         ? serverName
-        : `${serverName}\u0000${sha256(authToken)}`;
+        : `${serverName}\u0000${sessionIdentityHash(authToken, resolvedUrl)}`;
     const cached = this.capabilityCache.get(cacheKey);
     if (cached !== undefined && cached.expiresAt > Date.now()) {
       return cached.value;
@@ -1189,7 +1287,7 @@ export class McpWrapper implements McpWrapperService {
 
     const lease =
       authToken !== undefined
-        ? await this._acquireTokenClient(serverName, authToken)
+        ? await this._acquireTokenClient(serverName, authToken, resolvedUrl)
         : { client: await this._sharedClient(serverName), release: () => {} };
     let value: CapabilityDocument | undefined;
     try {
@@ -1230,13 +1328,15 @@ export class McpWrapper implements McpWrapperService {
   async getFilteredToolSchema(
     serverName: string,
     toolName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<FilteredToolSchema> {
     const config = this._requireConfig(serverName);
+    const resolvedUrl = this._resolveEndpoint(config, opts?.requestParams);
     const doFetch = async (): Promise<FilteredToolSchema> => {
       const session = await this._getDiscoverySession(
         serverName,
         opts?.authToken,
+        resolvedUrl,
       );
       try {
         const tool = await this.schemaCache.fetchRawTool(
@@ -1363,12 +1463,15 @@ export class McpWrapper implements McpWrapperService {
         const session = await this._getDiscoverySession(
           serverName,
           opts?.authToken,
+          resolvedUrl,
         );
         try {
           await this._recoverClient(
             serverName,
             session.client,
             session.authToken,
+            undefined,
+            resolvedUrl,
           );
         } finally {
           session.release();
@@ -1392,11 +1495,15 @@ export class McpWrapper implements McpWrapperService {
   async refreshSchemaIfChanged(
     serverName: string,
     toolName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<boolean> {
     const session = await this._getDiscoverySession(
       serverName,
       opts?.authToken,
+      this._resolveEndpoint(
+        this._requireConfig(serverName),
+        opts?.requestParams,
+      ),
     );
     try {
       // Bypass cache to get the live schema from every tools/list page.
@@ -1525,14 +1632,21 @@ export class McpWrapper implements McpWrapperService {
         "Missing required protected parameter value: user_token (ssoToken) is empty in request context",
       );
     }
+    // Fail closed before any session work when a urlTemplate endpoint cannot
+    // be resolved from this request's metadata.
+    const resolvedUrl = this._resolveEndpoint(config, ctx.requestParams);
     const normalizedArgs = nfcNormalizeDeep(args) as Record<string, unknown>;
     let lease: ClientLease;
     if (forwardAuth) {
       const recovery = this.reconnects.get(
-        this._reconnectKey(serverName, ctx.ssoToken),
+        this._reconnectKey(serverName, ctx.ssoToken, resolvedUrl),
       );
       if (recovery !== undefined) await recovery;
-      lease = await this._acquireTokenClient(serverName, ctx.ssoToken);
+      lease = await this._acquireTokenClient(
+        serverName,
+        ctx.ssoToken,
+        resolvedUrl,
+      );
     } else {
       // _sharedClient awaits an in-flight recovery and connects on demand.
       lease = { client: await this._sharedClient(serverName), release: () => {} };
@@ -1543,7 +1657,9 @@ export class McpWrapper implements McpWrapperService {
         lease.client,
         toolName,
         serverName,
-        forwardAuth ? sha256(ctx.ssoToken) : undefined,
+        forwardAuth
+          ? sessionIdentityHash(ctx.ssoToken, resolvedUrl)
+          : undefined,
       );
     } catch {
       rawTool = undefined;
@@ -1720,6 +1836,11 @@ export class McpWrapper implements McpWrapperService {
     // For forwardAuthToken servers, route through per-caller session. If that
     // exact session is currently being replaced, wait for the shared recovery
     // instead of observing the intentional temporary cache gap.
+    // A urlTemplate server resolves its endpoint from this request's metadata
+    // once, up front: fail closed before any session work, and every retry /
+    // recovery below reuses the same resolved URL so one logical call always
+    // targets one peer.
+    const resolvedUrl = this._resolveEndpoint(config, ctx.requestParams);
     const acquireClient = async (): Promise<ClientLease> => {
       if (!forwardAuth) {
         // Shared session: waits for an in-flight recovery and, when the
@@ -1731,10 +1852,14 @@ export class McpWrapper implements McpWrapperService {
         };
       }
       const recovery = this.reconnects.get(
-        this._reconnectKey(serverName, ctx.ssoToken),
+        this._reconnectKey(serverName, ctx.ssoToken, resolvedUrl),
       );
       if (recovery !== undefined) await recovery;
-      return await this._acquireTokenClient(serverName, ctx.ssoToken);
+      return await this._acquireTokenClient(
+        serverName,
+        ctx.ssoToken,
+        resolvedUrl,
+      );
     };
 
     // Generate this once for the entire logical call, not per transport
@@ -1749,7 +1874,9 @@ export class McpWrapper implements McpWrapperService {
         metadataLease.client,
         toolName,
         serverName,
-        forwardAuth ? sha256(ctx.ssoToken) : undefined,
+        forwardAuth
+          ? sessionIdentityHash(ctx.ssoToken, resolvedUrl)
+          : undefined,
       );
     } catch {
       rawTool = undefined;
@@ -1847,6 +1974,7 @@ export class McpWrapper implements McpWrapperService {
               attemptClient,
               forwardAuth ? ctx.ssoToken : undefined,
               signal,
+              resolvedUrl,
             );
           }
         },
@@ -1863,6 +1991,7 @@ export class McpWrapper implements McpWrapperService {
         attemptClient,
         forwardAuth ? ctx.ssoToken : undefined,
         lastAttemptError,
+        resolvedUrl,
       );
       throw error;
     });
@@ -2048,6 +2177,7 @@ export class McpWrapper implements McpWrapperService {
   private async _getDiscoverySession(
     serverName: string,
     authToken?: string,
+    resolvedUrl?: string,
   ): Promise<{
     client: Client;
     authToken?: string;
@@ -2062,14 +2192,18 @@ export class McpWrapper implements McpWrapperService {
         );
       }
       const recovery = this.reconnects.get(
-        this._reconnectKey(serverName, authToken),
+        this._reconnectKey(serverName, authToken, resolvedUrl),
       );
       if (recovery !== undefined) await recovery;
-      const lease = await this._acquireTokenClient(serverName, authToken);
+      const lease = await this._acquireTokenClient(
+        serverName,
+        authToken,
+        resolvedUrl,
+      );
       return {
         client: lease.client,
         authToken,
-        schemaScope: sha256(authToken),
+        schemaScope: sessionIdentityHash(authToken, resolvedUrl),
         release: lease.release,
       };
     }
@@ -2162,8 +2296,9 @@ export class McpWrapper implements McpWrapperService {
     if (existing !== undefined && pending === undefined) return existing;
     if (pending === undefined) {
       if (
-        config.forwardAuthToken === true &&
-        !this._hasBootstrapAuthorization(config)
+        config.urlTemplate !== undefined ||
+        (config.forwardAuthToken === true &&
+          !this._hasBootstrapAuthorization(config))
       ) {
         throw new Error(
           `MCP server not found: ${serverName} (caller-scoped server has no shared session)`,
@@ -2241,11 +2376,15 @@ export class McpWrapper implements McpWrapperService {
     return attempt;
   }
 
-  private _reconnectKey(serverName: string, token?: string): string {
+  private _reconnectKey(
+    serverName: string,
+    token?: string,
+    resolvedUrl?: string,
+  ): string {
     const tokenKey =
       token === undefined
         ? "shared"
-        : crypto.createHash("sha256").update(token).digest("hex");
+        : sessionIdentityHash(token, resolvedUrl);
     return `${serverName}:${tokenKey}`;
   }
 
@@ -2254,9 +2393,10 @@ export class McpWrapper implements McpWrapperService {
     failedClient: Client,
     token?: string,
     signal?: AbortSignal,
+    resolvedUrl?: string,
   ): Promise<void> {
     const config = this._requireConfig(serverName);
-    const key = this._reconnectKey(serverName, token);
+    const key = this._reconnectKey(serverName, token, resolvedUrl);
     // Shared session: a failed recovery surfaces in the same "temporarily
     // unavailable" form as the on-demand connect in _sharedClient (cause kept
     // in the text), never as the raw handshake error. A caller abort keeps its
@@ -2280,7 +2420,8 @@ export class McpWrapper implements McpWrapperService {
       return;
     }
 
-    const tokenKey = token === undefined ? undefined : sha256(token);
+    const tokenKey =
+      token === undefined ? undefined : sessionIdentityHash(token, resolvedUrl);
     const currentEntry =
       tokenKey === undefined
         ? undefined
@@ -2316,7 +2457,7 @@ export class McpWrapper implements McpWrapperService {
         }
       }
 
-      const pending = this._createClient(config, token);
+      const pending = this._createClient(config, token, resolvedUrl);
       let replacement: Client;
       try {
         // Handshake bound, not the per-request retry timeout: a slow but
@@ -2358,7 +2499,10 @@ export class McpWrapper implements McpWrapperService {
           void replacement.close().catch(() => {});
         }
       }
-      const schemaScope = token === undefined ? "shared" : sha256(token);
+      const schemaScope =
+        token === undefined
+          ? "shared"
+          : sessionIdentityHash(token, resolvedUrl);
       this.schemaCache.invalidateDiscovery(serverName, schemaScope);
       this._invalidateCapabilities(serverName);
     })();
@@ -2394,9 +2538,10 @@ export class McpWrapper implements McpWrapperService {
   private async _getTokenClient(
     serverName: string,
     token: string,
+    resolvedUrl?: string,
   ): Promise<Client> {
     const config = this._requireConfig(serverName);
-    const tokenKey = sha256(token);
+    const tokenKey = sessionIdentityHash(token, resolvedUrl);
 
     let perServer = this.tokenClients.get(serverName);
     if (perServer === undefined) {
@@ -2409,7 +2554,7 @@ export class McpWrapper implements McpWrapperService {
       // token is still valid: rebuild the session (the exchange cache misses
       // for a lapsed token, so this mints a fresh one). One attempt only — an
       // IdP issuing lifetimes below the margin must not cause a rebuild loop.
-      await this._recoverClient(serverName, existing.client, token);
+      await this._recoverClient(serverName, existing.client, token, undefined, resolvedUrl);
       const rebuilt = this.tokenClients.get(serverName)?.get(tokenKey);
       if (rebuilt !== undefined) {
         rebuilt.lastUsed = Date.now();
@@ -2429,7 +2574,7 @@ export class McpWrapper implements McpWrapperService {
     if (inFlight !== undefined) return (await inFlight).client;
 
     const creation = (async (): Promise<TokenClientEntry> => {
-      const client = await this._createClient(config, token);
+      const client = await this._createClient(config, token, resolvedUrl);
       const raced = perServer.get(tokenKey);
       if (raced !== undefined) {
         void client.close().catch(() => {});
@@ -2457,14 +2602,15 @@ export class McpWrapper implements McpWrapperService {
   private async _acquireTokenClient(
     serverName: string,
     token: string,
+    resolvedUrl?: string,
   ): Promise<ClientLease> {
-    const client = await this._getTokenClient(serverName, token);
+    const client = await this._getTokenClient(serverName, token, resolvedUrl);
     const perServer = this.tokenClients.get(serverName);
-    const entry = perServer?.get(sha256(token));
+    const entry = perServer?.get(sessionIdentityHash(token, resolvedUrl));
     if (entry === undefined || entry.client !== client) {
       // Recovery may have replaced the just-created generation. Retry against
       // the current pool entry rather than leasing an untracked client.
-      return await this._acquireTokenClient(serverName, token);
+      return await this._acquireTokenClient(serverName, token, resolvedUrl);
     }
     entry.leases += 1;
     entry.lastUsed = Date.now();

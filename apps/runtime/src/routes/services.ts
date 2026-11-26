@@ -68,7 +68,8 @@ export function createServicesRouter(deps: ServicesRouterDeps): Hono {
       deps.config.mcpServers.map(async (cfg): Promise<McpServerStatus> => {
         const base = {
           name: cfg.name,
-          url: cfg.url,
+          // Show the urlTemplate for a per-request endpoint (no static url).
+          url: cfg.url ?? cfg.urlTemplate ?? "",
           transport: cfg.transport,
         };
         if (deps.mcpWrapper === undefined) {

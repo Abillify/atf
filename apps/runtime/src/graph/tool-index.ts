@@ -36,12 +36,27 @@ import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 
 export interface ToolIndexAuthOptions {
   authToken?: string;
+  /**
+   * Request metadata of the current run. For a `urlTemplate` MCP server the
+   * concrete peer is derived from these params, so cached schemas / embeddings
+   * are scoped by them: two peers behind one template (or a request without
+   * the params a template needs) must never share a cache entry. Requests
+   * that differ only in irrelevant params re-embed — a deliberate, cheap
+   * fail-safe over parsing the template here.
+   */
+  requestParams?: Record<string, unknown>;
 }
 
-function tokenScope(authToken: string | undefined): string {
-  return authToken === undefined || authToken === ""
-    ? "shared"
-    : crypto.createHash("sha256").update(authToken, "utf8").digest("hex");
+function tokenScope(opts: ToolIndexAuthOptions): string {
+  const base =
+    opts.authToken === undefined || opts.authToken === ""
+      ? "shared"
+      : crypto.createHash("sha256").update(opts.authToken, "utf8").digest("hex");
+  if (opts.requestParams === undefined) return base;
+  return crypto
+    .createHash("sha256")
+    .update(`${base}\u0000${JSON.stringify(opts.requestParams)}`, "utf8")
+    .digest("hex");
 }
 
 function scopedKey(scope: string, key: string): string {
@@ -149,7 +164,7 @@ export class McpCapabilityIndex {
    * known-failed is skipped. Embeds missing refs in parallel.
    */
   async ensure(pool: readonly string[], opts: ToolIndexAuthOptions = {}): Promise<void> {
-    const scope = tokenScope(opts.authToken);
+    const scope = tokenScope(opts);
     const tasks: Promise<void>[] = [];
     const servers = new Set<string>();
     for (const ref of pool) {
@@ -351,11 +366,12 @@ export class McpCapabilityIndex {
       minScore?: number;
       kinds?: readonly McpCapabilityKind[];
       authToken?: string;
+      requestParams?: Record<string, unknown>;
     },
   ): Promise<McpCapabilityHit[]> {
     const q = query.trim();
     if (q === "" || servers.length === 0) return [];
-    const scope = tokenScope(opts.authToken);
+    const scope = tokenScope(opts);
     await Promise.all(
       [...new Set(servers)].map((server) => this.ensureServerCapabilities(server, scope, opts)),
     );
@@ -382,7 +398,7 @@ export class McpCapabilityIndex {
 
   /** Returns the cached (filtered) description for a tool ref, if embedded. */
   getDescription(ref: string, opts: ToolIndexAuthOptions = {}): string | undefined {
-    return this.descriptions.get(scopedKey(tokenScope(opts.authToken), ref));
+    return this.descriptions.get(scopedKey(tokenScope(opts), ref));
   }
 
   /**
@@ -394,11 +410,16 @@ export class McpCapabilityIndex {
   async select(
     query: string,
     pool: readonly string[],
-    opts: { topK: number; minScore?: number; authToken?: string },
+    opts: {
+      topK: number;
+      minScore?: number;
+      authToken?: string;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<ToolSelectionHit[]> {
     const q = query.trim();
     if (q === "" || pool.length === 0) return [];
-    const scope = tokenScope(opts.authToken);
+    const scope = tokenScope(opts);
     await this.ensure(pool, opts);
     const queryEmbedding = await this.embedder.embed(q);
 
