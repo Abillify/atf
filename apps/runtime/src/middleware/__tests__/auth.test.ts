@@ -18,6 +18,7 @@ import {
   extractBodyToken,
   extractCookieToken,
   isValidJwtFormat,
+  issuerDefaultTenantMap,
 } from "../auth.js";
 
 // ---------------------------------------------------------------------------
@@ -740,5 +741,37 @@ describe("authMiddleware — tenant identity requires verification (Req 7.4)", (
       principal: { tenantId?: string };
     };
     expect(principal.tenantId).toBe("standalone");
+  });
+});
+
+describe("issuerDefaultTenantMap — JWT_ADDITIONAL_ISSUERS → issuer default map", () => {
+  test("undefined issuers yield no map (feature off is byte-identical)", () => {
+    expect(issuerDefaultTenantMap(undefined)).toBeUndefined();
+  });
+
+  test("an empty list yields no map", () => {
+    expect(issuerDefaultTenantMap([])).toBeUndefined();
+  });
+
+  test("entries without defaultTenantId are skipped; an all-empty list yields no map", () => {
+    expect(
+      issuerDefaultTenantMap([
+        { issuer: "https://a.example/" },
+        { issuer: "https://b.example/", audience: "aud" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  test("only entries with defaultTenantId are mapped, keyed by issuer", () => {
+    expect(
+      issuerDefaultTenantMap([
+        { issuer: "https://a.example/" },
+        { issuer: "https://b.example/", defaultTenantId: "acme" },
+        { issuer: "https://c.example/", audience: "aud", defaultTenantId: "globex" },
+      ]),
+    ).toEqual({
+      "https://b.example/": "acme",
+      "https://c.example/": "globex",
+    });
   });
 });
