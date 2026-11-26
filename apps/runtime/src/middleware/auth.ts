@@ -116,7 +116,9 @@ export function issuerMayClaimTenant(
  * byte-identical to before.
  */
 export function issuerDefaultTenantMap(
-  issuers: readonly { issuer: string; defaultTenantId?: string }[] | undefined,
+  issuers:
+    | readonly { issuer: string; audience?: string; defaultTenantId?: string }[]
+    | undefined,
 ): Record<string, string> | undefined {
   if (issuers === undefined) return undefined;
   const map: Record<string, string> = {};
