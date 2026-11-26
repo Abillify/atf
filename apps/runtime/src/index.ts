@@ -661,6 +661,31 @@ if (import.meta.main) {
     );
   }
 
+  // Auto session naming: same side-model choice as the learning pass (a short
+  // generation over a bounded turn), same late binding (the provider factory
+  // lives with the engine). Only meaningful with durable (Postgres) sessions.
+  if (assistantsResult !== undefined && assistantsResult.runtime.stores.sessionStore !== undefined) {
+    const namingModelConfig = config.memoryExtractionModel ?? config.defaultLlm;
+    if (namingModelConfig !== undefined) {
+      const { createSessionMetadataGenerator } = await import(
+        "./assistants/session-metadata.js"
+      );
+      assistantsResult.runtime.setSessionMetadata(
+        createSessionMetadataGenerator({
+          sessionStore: assistantsResult.runtime.stores.sessionStore,
+          model: createLlmProvider(namingModelConfig, config),
+          indexDocument: (params) => assistantsResult.runtime.indexSessionDocument(params),
+          logger,
+        }),
+      );
+    } else {
+      logger.warn(
+        "Assistant sessions are durable but no default LLM is configured, " +
+          "so sessions will not be titled or tagged automatically.",
+      );
+    }
+  }
+
   // Wire the tracer into the engine — pass it to buildEngine via config (it reads
   // TRACING_ENABLED from config already; the tracer is passed at construction).
   // Note: setTracer() does not exist on GraphEngineService; the tracer is wired
@@ -1128,6 +1153,7 @@ if (import.meta.main) {
       providerKeyStore,
       byokResolver,
       approvalGate,
+      mediaStore,
       replayService,
       replayStore,
       canaryManager,

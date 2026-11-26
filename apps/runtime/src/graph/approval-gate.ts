@@ -95,6 +95,19 @@ export function approvalRequestedBy(ctx: {
   return trimmed !== undefined && trimmed !== "" ? trimmed : undefined;
 }
 
+/**
+ * Caller-scoping key for an approval: SHA-256 of the end user's bearer token
+ * (never the token itself). Recorded on the pending record so the caller-scoped
+ * approvals API can list/decide exactly the approvals opened by the SAME
+ * caller, without exposing anyone else's. Returns undefined for anonymous
+ * callers (empty bearer), which keeps their approvals operator-plane-only.
+ */
+export function approvalOwnerKey(ctx: { ssoToken?: string }): string | undefined {
+  const token = ctx.ssoToken;
+  if (token === undefined || token === "") return undefined;
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 // ---------------------------------------------------------------------------
 // Approval records
 // ---------------------------------------------------------------------------
@@ -132,6 +145,14 @@ export interface ApprovalRequest {
    * it directly are responsible for a sane value.
    */
   timeoutMs?: number;
+  /**
+   * Caller-scoping key: SHA-256 of the end user's bearer token, recorded at
+   * request time. Never the token itself. The caller-scoped approvals API
+   * (`GET /v1/approvals/mine`) matches it against the hash of the requesting
+   * caller's bearer, so a user can only ever see and decide their OWN pending
+   * approvals — unlike the operator plane, which sees all.
+   */
+  ownerKey?: string;
 }
 
 export interface PendingApproval extends ApprovalRequest {

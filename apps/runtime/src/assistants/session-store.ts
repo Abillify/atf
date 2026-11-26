@@ -29,11 +29,17 @@ const REARMABLE_TOOL_STATUS: ReadonlySet<AssistantToolStatus> = new Set<Assistan
   "cancelled",
 ]);
 
+/** Conversational state of the last chat turn, surfaced in the session overview. */
+export type AssistantSessionStatus = "running" | "completed" | "error";
+
 export interface AssistantSessionSummary {
   conversationId: string;
   parentConversationId?: string;
   forkedFromSequence?: number;
   title?: string;
+  status: AssistantSessionStatus;
+  tags: string[];
+  lastError?: string;
   lastSequence: number;
   createdAt: string;
   updatedAt: string;
@@ -155,6 +161,24 @@ export interface AssistantSessionStore extends TranscriptStore, AssistantToolJou
   }): Promise<AssistantSessionSummary>;
   softDeleteSession(scope: AssistantScope, conversationId: string): Promise<boolean>;
   restoreSession(scope: AssistantScope, conversationId: string): Promise<boolean>;
+  /** Single session by conversation id (excluding soft-deleted rows). */
+  getSession(scope: AssistantScope, conversationId: string): Promise<AssistantSessionSummary | undefined>;
+  /** User-facing metadata update (rename, tag management). Undefined fields are untouched. */
+  updateSession(params: {
+    scope: AssistantScope;
+    conversationId: string;
+    title?: string | null;
+    tags?: string[];
+  }): Promise<AssistantSessionSummary | undefined>;
+  /** Metadata search over session titles and tags (the SQL half of hybrid search). */
+  searchSessions(scope: AssistantScope, query: string, options?: { limit?: number }): Promise<AssistantSessionSummary[]>;
+  /** Chat-turn lifecycle hook: marks the session running/completed/error. */
+  setSessionStatus(params: {
+    scope: AssistantScope;
+    conversationId: string;
+    status: AssistantSessionStatus;
+    error?: string;
+  }): Promise<void>;
   createSnapshot(params: {
     scope: AssistantScope;
     conversationId: string;
@@ -259,7 +283,8 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
 
   async listSessions(scope: AssistantScope, options: { includeDeleted?: boolean; limit?: number } = {}): Promise<AssistantSessionSummary[]> {
     const rows = await this.inTenant(scope, (db) => db.query<SessionRow>(
-      `SELECT conversation_id, parent_conversation_id, forked_from_sequence, title, last_sequence, created_at, updated_at, deleted_at
+      `SELECT conversation_id, parent_conversation_id, forked_from_sequence, title, status, tags, last_error,
+              last_sequence, created_at, updated_at, deleted_at
          FROM assistant_sessions
         WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3
           AND ($4::boolean OR deleted_at IS NULL)
@@ -267,6 +292,72 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
       [scope.tenantId, scope.userId, scope.assistantId, options.includeDeleted === true, Math.min(Math.max(options.limit ?? 50, 1), 200)],
     ));
     return rows.map(this.toSessionSummary);
+  }
+
+  async getSession(scope: AssistantScope, conversationId: string): Promise<AssistantSessionSummary | undefined> {
+    const rows = await this.inTenant(scope, (db) => db.query<SessionRow>(
+      `SELECT conversation_id, parent_conversation_id, forked_from_sequence, title, status, tags, last_error,
+              last_sequence, created_at, updated_at, deleted_at
+         FROM assistant_sessions
+        WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4
+          AND deleted_at IS NULL`,
+      [scope.tenantId, scope.userId, scope.assistantId, conversationId],
+    ));
+    const row = rows[0];
+    return row === undefined ? undefined : this.toSessionSummary(row);
+  }
+
+  async updateSession(params: {
+    scope: AssistantScope;
+    conversationId: string;
+    title?: string | null;
+    tags?: string[];
+  }): Promise<AssistantSessionSummary | undefined> {
+    const rows = await this.inTenant(params.scope, (db) => db.query<SessionRow>(
+      `UPDATE assistant_sessions
+          SET title = CASE WHEN $5::boolean THEN $6 ELSE title END,
+              tags = CASE WHEN $7::boolean THEN $8 ELSE tags END,
+              updated_at = now()
+        WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4
+          AND deleted_at IS NULL
+        RETURNING conversation_id, parent_conversation_id, forked_from_sequence, title, status, tags, last_error,
+                  last_sequence, created_at, updated_at, deleted_at`,
+      [params.scope.tenantId, params.scope.userId, params.scope.assistantId, params.conversationId,
+        params.title !== undefined, params.title ?? null,
+        params.tags !== undefined, params.tags ?? []],
+    ));
+    const row = rows[0];
+    return row === undefined ? undefined : this.toSessionSummary(row);
+  }
+
+  async searchSessions(scope: AssistantScope, query: string, options: { limit?: number } = {}): Promise<AssistantSessionSummary[]> {
+    const pattern = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await this.inTenant(scope, (db) => db.query<SessionRow>(
+      `SELECT conversation_id, parent_conversation_id, forked_from_sequence, title, status, tags, last_error,
+              last_sequence, created_at, updated_at, deleted_at
+         FROM assistant_sessions
+        WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND deleted_at IS NULL
+          AND (title ILIKE $4 ESCAPE '\\' OR EXISTS (
+                 SELECT 1 FROM unnest(tags) AS t(tag) WHERE t.tag ILIKE $4 ESCAPE '\\'))
+        ORDER BY updated_at DESC LIMIT $5`,
+      [scope.tenantId, scope.userId, scope.assistantId, pattern, Math.min(Math.max(options.limit ?? 20, 1), 100)],
+    ));
+    return rows.map(this.toSessionSummary);
+  }
+
+  async setSessionStatus(params: {
+    scope: AssistantScope;
+    conversationId: string;
+    status: AssistantSessionStatus;
+    error?: string;
+  }): Promise<void> {
+    await this.inTenant(params.scope, (db) => db.query(
+      `UPDATE assistant_sessions
+          SET status = $5, last_error = $6, updated_at = now()
+        WHERE tenant_id = $1 AND user_id = $2 AND assistant_id = $3 AND conversation_id = $4`,
+      [params.scope.tenantId, params.scope.userId, params.scope.assistantId, params.conversationId,
+        params.status, params.error ?? null],
+    ));
   }
 
   async forkSession(params: Parameters<AssistantSessionStore["forkSession"]>[0]): Promise<AssistantSessionSummary> {
@@ -560,7 +651,11 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
   private toSessionSummary = (row: SessionRow): AssistantSessionSummary => ({
     conversationId: row.conversation_id, ...(row.parent_conversation_id !== null ? { parentConversationId: row.parent_conversation_id } : {}),
     ...(row.forked_from_sequence !== null ? { forkedFromSequence: Number(row.forked_from_sequence) } : {}),
-    ...(row.title !== null ? { title: row.title } : {}), lastSequence: Number(row.last_sequence), createdAt: this.iso(row.created_at),
+    ...(row.title !== null ? { title: row.title } : {}),
+    status: (row.status ?? "completed") as AssistantSessionStatus,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    ...(row.last_error !== null ? { lastError: row.last_error } : {}),
+    lastSequence: Number(row.last_sequence), createdAt: this.iso(row.created_at),
     updatedAt: this.iso(row.updated_at), ...(row.deleted_at !== null ? { deletedAt: this.iso(row.deleted_at) } : {}),
   });
 
@@ -583,7 +678,7 @@ export class PostgresAssistantSessionStore implements AssistantSessionStore {
 }
 
 interface SessionEventRow { id: string; execution_id: string; conversation_id: string; sequence: number | string; role: string; name: string | null; content: string; created_at: string | Date; }
-interface SessionRow { conversation_id: string; parent_conversation_id: string | null; forked_from_sequence: number | string | null; title: string | null; last_sequence: number | string; created_at: string | Date; updated_at: string | Date; deleted_at: string | Date | null; }
+interface SessionRow { conversation_id: string; parent_conversation_id: string | null; forked_from_sequence: number | string | null; title: string | null; status?: string | null; tags?: string[] | null; last_error?: string | null; last_sequence: number | string; created_at: string | Date; updated_at: string | Date; deleted_at: string | Date | null; }
 interface SnapshotRow { id: string; conversation_id: string; sequence: number | string; kind: "summary" | "checkpoint"; content: string; source_from_sequence: number | string | null; source_to_sequence: number | string | null; created_at: string | Date; }
 interface ToolRow { conversation_id: string; tool_call_id: string; operation_id: string; sequence: number | string; execution_id: string; tool_name: string; args: unknown; status: string; attempts: number | string; lease_expires_at: string | Date | null; result: unknown | null; error: string | null; created_at: string | Date; updated_at: string | Date; }
 

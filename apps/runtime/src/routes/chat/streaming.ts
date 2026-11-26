@@ -435,6 +435,7 @@ export async function executeNonStreaming(
   );
 
   const collectedContent: string[] = [];
+  const collectedReasoning: string[] = [];
   const toolCallAccumulator = new Map<
     string,
     { id: string; name: string; arguments: string }
@@ -495,6 +496,18 @@ export async function executeNonStreaming(
           }
         }
 
+        // Process reasoning (thinking) deltas — surfaced on the assembled
+        // message as reasoning_content so non-streaming clients (e.g. the
+        // abiliware chat widget via the moleculer proxy) can show the
+        // model's thoughts. Same OpenAI-compatible field name as the
+        // streaming delta.
+        if (
+          choice?.delta?.reasoning_content != null &&
+          choice.delta.reasoning_content !== ""
+        ) {
+          collectedReasoning.push(choice.delta.reasoning_content);
+        }
+
         // Check for error finish_reason
         if (choice?.finish_reason === "error") {
           hasError = true;
@@ -546,6 +559,7 @@ export async function executeNonStreaming(
     },
   }));
   const hasToolCalls = collectedToolCalls.length > 0;
+  const reasoningText = collectedReasoning.join("");
 
   return {
     // Derived from the execution id, NOT a fresh UUID. The streaming path
@@ -565,6 +579,7 @@ export async function executeNonStreaming(
           role: "assistant",
           content: collectedContent.join(""),
           ...(hasToolCalls ? { tool_calls: collectedToolCalls } : {}),
+          ...(reasoningText !== "" ? { reasoning_content: reasoningText } : {}),
         },
         finish_reason: hasError
           ? "error"
