@@ -139,6 +139,8 @@ export interface ManagementRouteDeps {
   providerKeyStore: PersistenceResult["providerKeyStore"];
   byokResolver: PersistenceResult["byokResolver"];
   approvalGate: GuardrailsResult["approvalGate"];
+  /** Uploaded chat media (images); served through the assistants media routes. */
+  mediaStore: EngineResult["mediaStore"];
   replayService: EngineResult["replayService"];
   replayStore: EngineResult["replayStore"];
   canaryManager: CanaryManager;
@@ -229,6 +231,7 @@ export async function registerManagementRoutes(
     providerKeyStore,
     byokResolver,
     approvalGate,
+    mediaStore,
     replayService,
     replayStore,
     canaryManager,
@@ -337,10 +340,22 @@ export async function registerManagementRoutes(
           ? { rocketChat: assistantsResult.rocketChat }
           : {}),
         ...(sessionIndex !== undefined ? { sessionIndex } : {}),
+        mediaStore,
         logger,
       }),
     );
     logger.info("Assistant management API enabled at /v1/assistants/*");
+
+    // Caller-scoped approvals: a chat user sees and decides ONLY the pending
+    // approvals they caused (owner key = hash of their bearer). Same /v1 plane
+    // as the assistants API, so the auth middleware already ran.
+    if (approvalGate !== undefined) {
+      const { createApprovalsMineRouter } = await import(
+        "../routes/approvals-mine.js"
+      );
+      app.route("/", createApprovalsMineRouter({ approvalGate }));
+      logger.info("Caller approvals API enabled at /v1/approvals/mine*");
+    }
 
     // Rocket.Chat's webhook is mounted once, after the optional end-user OIDC
     // connect configuration has been resolved below. Mounting a legacy router

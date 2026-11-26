@@ -48,6 +48,7 @@ import {
   isRetryRequest,
   resolveSafeRetryIntent,
 } from "../../assistants/retry-intent.js";
+import { safeSetSessionStatus } from "../../assistants/session-metadata.js";
 
 /**
  * Node configuration.
@@ -224,15 +225,31 @@ export function createAssistantContextNodeHandler(
     // the request that caused it. Transcript failure is observable but does not
     // turn an otherwise usable assistant into an unavailable one.
     // A shadow/replay re-run must not append the original request a second time.
+    //
+    // Dedupe: a tool-loop continuation replays the ORIGINAL user message (plus
+    // assistant tool_calls + tool results) under a new execution id. Appending
+    // it again would fill the transcript — and thus GET messages / search
+    // snippets — with duplicate user events. Skip when the query is empty or
+    // identical to the last persisted user entry (a genuine repeat always sits
+    // behind the assistant's reply, so its last entry is not this same user
+    // message).
     let persistedUserEvent: Awaited<ReturnType<NonNullable<typeof assistants.stores.transcripts>["append"]>> | undefined;
     if (ctx.suppressSideEffects !== true) {
+      const userQueryText = lastUserQuery(state);
       try {
-        persistedUserEvent = await assistants.stores.transcripts?.append(scope, {
-          executionId: ctx.executionId,
-          conversationId,
-          role: "user",
-          content: lastUserQuery(state),
-        });
+        const recent = await assistants.stores.transcripts?.read(scope, conversationId, 1);
+        const lastEntry = recent?.length ? recent[recent.length - 1] : undefined;
+        const duplicateUserEvent =
+          userQueryText === "" ||
+          (lastEntry !== undefined && lastEntry.role === "user" && lastEntry.content === userQueryText);
+        if (!duplicateUserEvent) {
+          persistedUserEvent = await assistants.stores.transcripts?.append(scope, {
+            executionId: ctx.executionId,
+            conversationId,
+            role: "user",
+            content: userQueryText,
+          });
+        }
       } catch (error) {
         runtime.onNodeDiagnostic?.(node.id, {
           level: "warn",
@@ -240,6 +257,13 @@ export function createAssistantContextNodeHandler(
           message: error instanceof Error ? error.message : String(error),
         });
       }
+      // The session overview shows 'running' while this turn is in flight; the
+      // terminal status is written by assistant-learn (or a failed turn's error
+      // path). Best-effort: a missing status row only makes the list stale.
+      await safeSetSessionStatus(
+        assistants.stores.sessionStore,
+        { scope, conversationId, status: "running" },
+      );
     }
     if (persistedUserEvent !== undefined) {
       try {

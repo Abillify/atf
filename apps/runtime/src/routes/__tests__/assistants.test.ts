@@ -30,7 +30,10 @@ import { InMemoryProposalStore } from "../../assistants/proposal-store.js";
 import { InMemorySkillCanaryStore } from "../../assistants/skill-canary.js";
 import { InMemorySkillStore } from "../../assistants/skill-store.js";
 import { InMemorySoulStore } from "../../assistants/soul-store.js";
+import { Hono } from "hono";
 import { AssistantWorkspaceResolver } from "../../assistants/workspace.js";
+import { InMemoryMediaStore } from "../../graph/media-store.js";
+import { TOKEN_KEY } from "../../middleware/auth.js";
 import { createAssistantsRouter } from "../assistants.js";
 import type { AssistantSessionStore } from "../../assistants/session-store.js";
 import type { AssistantSessionIndex } from "../../assistants/session-index.js";
@@ -711,6 +714,233 @@ describe("durable session recovery and snapshot projection", () => {
         { tenantId: "acme", userId: BOB, assistantId: "molty" },
         { tenantId: "acme", userId: BOB, assistantId: "molty" },
       ]);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("session metadata, messages, hybrid search, and media upload", () => {
+  test("PATCH /sessions/:conversationId updates title/tags and returns 404 when missing or deleted", async () => {
+    const h = harness();
+    try {
+      const updatedSummary = {
+        conversationId: "conv-1",
+        title: "Neuer Titel",
+        status: "completed" as const,
+        tags: ["mahnwesen"],
+        lastSequence: 2,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:01:00.000Z",
+      };
+      h.runtime.stores.sessionStore = {
+        updateSession: async (params: { conversationId: string }) =>
+          params.conversationId === "conv-1" ? updatedSummary : undefined,
+      } as unknown as AssistantSessionStore;
+
+      const app = createAssistantsRouter({ runtime: h.runtime });
+      const ok = await app.request("/v1/assistants/molty/sessions/conv-1", {
+        method: "PATCH",
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: "Neuer Titel", tags: ["mahnwesen"] }),
+      });
+      expect(ok.status).toBe(200);
+      expect(((await ok.json()) as { session: { title: string } }).session.title).toBe("Neuer Titel");
+
+      const missing = await app.request("/v1/assistants/molty/sessions/deleted-or-missing", {
+        method: "PATCH",
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: "Geht nicht" }),
+      });
+      expect(missing.status).toBe(404);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("GET /sessions/:conversationId/messages returns session events in caller scope", async () => {
+    const h = harness();
+    try {
+      const readCalls: Array<{ scope: AssistantScope; id: string; limit: number }> = [];
+      h.runtime.stores.sessionStore = {
+        read: async (scope: AssistantScope, id: string, limit: number) => {
+          readCalls.push({ scope, id, limit });
+          return [
+            {
+              sequence: 1,
+              kind: "user",
+              payload: { content: "Hallo" },
+              createdAt: "2026-03-01T00:00:00.000Z",
+            },
+          ];
+        },
+      } as unknown as AssistantSessionStore;
+      const app = createAssistantsRouter({ runtime: h.runtime });
+      const res = await app.request("/v1/assistants/molty/sessions/conv-msg/messages?limit=50", {
+        headers: { "X-OpenWebUI-User-Id": ALICE, "X-Tenant-Id": "acme" },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        messages: Array<{ sequence: number; kind: string; payload: { content: string } }>;
+      };
+      expect(body.messages).toHaveLength(1);
+      expect(body.messages[0]).toMatchObject({ kind: "user", payload: { content: "Hallo" } });
+      expect(readCalls).toEqual([
+        {
+          scope: { tenantId: "acme", userId: ALICE, assistantId: "molty" },
+          id: "conv-msg",
+          limit: 50,
+        },
+      ]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("GET /sessions/search merges metadata + vector hits, skips missing/deleted rows, and marks degraded", async () => {
+    const h = harness();
+    try {
+      const metaRow = {
+        conversationId: "conv-meta",
+        title: "Vertrag Alpha",
+        status: "completed" as const,
+        tags: ["vertrag"],
+        lastSequence: 1,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:01:00.000Z",
+      };
+      const contentRow = {
+        conversationId: "conv-content",
+        title: "Sonstiges",
+        status: "completed" as const,
+        tags: [],
+        lastSequence: 1,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:02:00.000Z",
+      };
+      h.runtime.stores.sessionStore = {
+        searchSessions: async () => [metaRow],
+        getSession: async (_scope: AssistantScope, id: string) =>
+          id === "conv-content" ? contentRow : undefined,
+      } as unknown as AssistantSessionStore;
+
+      const wrapWithToken = (inner: ReturnType<typeof createAssistantsRouter>) => {
+        const outer = new Hono<{ Variables: { [TOKEN_KEY]: string } }>();
+        outer.use("*", async (c, next) => {
+          c.set(TOKEN_KEY, "tok-1");
+          await next();
+        });
+        outer.route("/", inner);
+        return outer;
+      };
+
+      const sessionIndex: AssistantSessionIndex = {
+        ingestEvent: async () => {},
+        search: async () => ({
+          results: [
+            { conversation_id: "conv-meta", content: "Alpha Treffer" },
+            { conversation_id: "conv-content", content: "Inhalt Treffer" },
+            { conversation_id: "conv-deleted", content: "Geloeschter Treffer" },
+          ],
+        }),
+      };
+      const app = wrapWithToken(createAssistantsRouter({ runtime: h.runtime, sessionIndex }));
+      const res = await app.request("/v1/assistants/molty/sessions/search?q=Alpha", {
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+        },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        sessions: Array<{ conversationId: string; match: string }>;
+        degraded?: boolean;
+      };
+      expect(body.degraded).toBeUndefined();
+      expect(body.sessions.map((s) => [s.conversationId, s.match])).toEqual([
+        ["conv-meta", "both"],
+        ["conv-content", "content"],
+      ]);
+
+      const failingIndex: AssistantSessionIndex = {
+        ingestEvent: async () => {},
+        search: async () => {
+          throw new Error("vector down");
+        },
+      };
+      const degradedApp = wrapWithToken(
+        createAssistantsRouter({
+          runtime: h.runtime,
+          sessionIndex: failingIndex,
+        }),
+      );
+      const degradedRes = await degradedApp.request("/v1/assistants/molty/sessions/search?q=Alpha", {
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+        },
+      });
+      expect(degradedRes.status).toBe(200);
+      const degradedBody = (await degradedRes.json()) as {
+        sessions: Array<{ conversationId: string; match: string }>;
+        degraded?: boolean;
+      };
+      expect(degradedBody.degraded).toBe(true);
+      expect(degradedBody.sessions.map((s) => s.conversationId)).toEqual(["conv-meta"]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("POST /media validates mime type and magic bytes before storing", async () => {
+    const h = harness();
+    try {
+      const mediaStore = new InMemoryMediaStore();
+      const app = createAssistantsRouter({ runtime: h.runtime, mediaStore });
+      const validPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+      const ok = await app.request("/v1/assistants/molty/media", {
+        method: "POST",
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+          "Content-Type": "image/png",
+        },
+        body: validPng,
+      });
+      expect(ok.status).toBe(201);
+      const okBody = (await ok.json()) as { id: string; url: string; mimeType: string };
+      expect(okBody.url).toBe(`/v1/media/${okBody.id}.png`);
+      expect(mediaStore.get(okBody.id)?.data).toEqual(validPng);
+
+      const spoofed = await app.request("/v1/assistants/molty/media", {
+        method: "POST",
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+          "Content-Type": "image/png",
+        },
+        body: new TextEncoder().encode("<svg>not a png</svg>"),
+      });
+      expect(spoofed.status).toBe(415);
+
+      const unsupported = await app.request("/v1/assistants/molty/media", {
+        method: "POST",
+        headers: {
+          "X-OpenWebUI-User-Id": ALICE,
+          "X-Tenant-Id": "acme",
+          "Content-Type": "image/svg+xml",
+        },
+        body: new TextEncoder().encode("<svg/>"),
+      });
+      expect(unsupported.status).toBe(415);
     } finally {
       h.cleanup();
     }

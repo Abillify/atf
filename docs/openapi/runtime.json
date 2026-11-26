@@ -2381,13 +2381,13 @@
         "x-enabled-when": "assistantsResult !== undefined"
       }
     },
-    "/v1/assistants/{id}/sessions/{conversationId}/fork": {
-      "post": {
+    "/v1/assistants/{id}/sessions/{conversationId}": {
+      "patch": {
         "tags": [
           "Assistants"
         ],
         "summary": "Assistants API: threads, runs, schedules, skills",
-        "operationId": "post__v1_assistants_id_sessions_conversationId_fork",
+        "operationId": "patch__v1_assistants_id_sessions_conversationId_",
         "parameters": [
           {
             "name": "id",
@@ -2444,9 +2444,7 @@
           }
         ],
         "x-enabled-when": "assistantsResult !== undefined"
-      }
-    },
-    "/v1/assistants/{id}/sessions/{conversationId}": {
+      },
       "delete": {
         "tags": [
           "Assistants"
@@ -2471,6 +2469,126 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "assistantsResult !== undefined"
+      }
+    },
+    "/v1/assistants/{id}/sessions/{conversationId}/messages": {
+      "get": {
+        "tags": [
+          "Assistants"
+        ],
+        "summary": "Assistants API: threads, runs, schedules, skills",
+        "operationId": "get__v1_assistants_id_sessions_conversationId_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "assistantsResult !== undefined"
+      }
+    },
+    "/v1/assistants/{id}/sessions/{conversationId}/fork": {
+      "post": {
+        "tags": [
+          "Assistants"
+        ],
+        "summary": "Assistants API: threads, runs, schedules, skills",
+        "operationId": "post__v1_assistants_id_sessions_conversationId_fork",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success",
@@ -2757,6 +2875,63 @@
           },
           {
             "name": "toolCallId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "assistantsResult !== undefined"
+      }
+    },
+    "/v1/assistants/{id}/media": {
+      "post": {
+        "tags": [
+          "Assistants"
+        ],
+        "summary": "Assistants API: threads, runs, schedules, skills",
+        "operationId": "post__v1_assistants_id_media",
+        "parameters": [
+          {
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -4258,6 +4433,100 @@
           }
         ],
         "x-enabled-when": "assistantsResult !== undefined"
+      }
+    },
+    "/v1/approvals/mine": {
+      "get": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Inference-plane endpoint",
+        "operationId": "get__v1_approvals_mine",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "approvalGate !== undefined"
+      }
+    },
+    "/v1/approvals/mine/{id}/decide": {
+      "post": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Inference-plane endpoint",
+        "operationId": "post__v1_approvals_mine_id_decide",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "approvalGate !== undefined"
       }
     },
     "/admin/assistants": {

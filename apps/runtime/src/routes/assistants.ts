@@ -61,6 +61,7 @@ import {
 import { decideGrantCreation } from "../assistants/messaging-policy.js";
 import { OrgSkillScanBlockedError, installOrgSkill, OrgSkillNotInstallableError } from "../assistants/org-skill-registry.js";
 import { resolveAssistantCaller } from "./assistant-caller.js";
+import type { MediaStore } from "../graph/media-store.js";
 
 // ---------------------------------------------------------------------------
 // Identity extraction
@@ -84,6 +85,86 @@ function assistantRunPayload(
     ...(delivery !== undefined ? { delivery } : {}),
     ...(bindingId !== undefined ? { bindingId } : {}),
   };
+}
+
+/**
+ * Extracts per-conversation hits from a Vectorsearch MCP search result.
+ *
+ * The MCP payload is a JSON-encoded tool result whose exact envelope can vary
+ * (array of hits, or an object with a `results`/`hits` array), so the parse is
+ * defensive: anything without a usable `conversation_id` metadata entry is
+ * skipped rather than failing the whole search.
+ */
+function extractSessionContentHits(raw: unknown): { conversationId: string; snippets: string[] }[] {
+  const candidates: unknown[] = [];
+  const collectText = (value: unknown): void => {
+    if (typeof value === "string") {
+      try {
+        candidates.push(JSON.parse(value));
+      } catch {
+        /* not JSON — ignore this content part */
+      }
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if (obj.type === "text" && typeof obj.text === "string") { collectText(obj.text); return; }
+      candidates.push(value);
+    }
+  };
+  if (Array.isArray(raw)) raw.forEach(collectText);
+  else collectText(raw);
+
+  const hits: { conversationId: string; snippets: string[] }[] = [];
+  const seen = new Set<string>();
+  const visit = (node: unknown, depth: number): void => {
+    if (node === null || typeof node !== "object" || depth > 4) return;
+    if (Array.isArray(node)) {
+      for (const entry of node) visit(entry, depth + 1);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    const meta = (obj.metadata ?? obj.meta) as Record<string, unknown> | undefined;
+    const conversationId = obj.conversation_id ?? meta?.conversation_id;
+    if (typeof conversationId === "string" && conversationId.length > 0) {
+      const snippet = typeof obj.content === "string" ? obj.content.slice(0, 400)
+        : typeof obj.snippet === "string" ? obj.snippet.slice(0, 400) : "";
+      const existing = hits.find((hit) => hit.conversationId === conversationId);
+      if (existing !== undefined) {
+        if (snippet !== "" && existing.snippets.length < 3) existing.snippets.push(snippet);
+      } else if (!seen.has(conversationId)) {
+        seen.add(conversationId);
+        hits.push({ conversationId, snippets: snippet !== "" ? [snippet] : [] });
+      }
+      return;
+    }
+    for (const key of ["results", "hits", "documents", "matches", "data"]) {
+      if (obj[key] !== undefined) visit(obj[key], depth + 1);
+    }
+  };
+  for (const candidate of candidates) visit(candidate, 0);
+  return hits;
+}
+
+function matchesImageMagicBytes(bytes: Uint8Array, mimeType: string): boolean {
+  if (mimeType === "image/png") {
+    return bytes.length >= 8 &&
+      bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+      bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+  }
+  if (mimeType === "image/jpeg") {
+    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (mimeType === "image/gif") {
+    return bytes.length >= 4 &&
+      bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38;
+  }
+  if (mimeType === "image/webp") {
+    return bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +259,8 @@ export interface AssistantsRouterDeps {
   rocketChat?: RocketChatChannel;
   /** Optional MCP-backed Vectorsearch projection; absent means durable browsing still works. */
   sessionIndex?: AssistantSessionIndex;
+  /** Media store for user uploads; absent means the upload endpoint returns 503. */
+  mediaStore?: MediaStore;
   logger?: Logger;
 }
 
@@ -367,6 +450,44 @@ export function createAssistantsRouter(
     return ctx.json({ sessions });
   });
 
+  app.patch("/v1/assistants/:id/sessions/:conversationId", async (ctx) => {
+    const scoped = resolveScope(ctx.req.raw.headers, ctx.get(AUTH_PRINCIPAL_KEY), ctx.req.param("id"));
+    if (!scoped.ok) return ctx.json(errorBody(scoped.message), scoped.status);
+    const store = requireSessionStore(ctx);
+    if (store === undefined) return ctx.json(errorBody("Durable assistant sessions require PostgreSQL persistence.", "not_found"), 404);
+    const parsed = z.object({
+      title: z.string().max(240).nullable().optional(),
+      tags: z.array(z.string().min(1).max(64)).max(20).optional(),
+    }).safeParse(await ctx.req.json().catch(() => ({})));
+    if (!parsed.success) return ctx.json(errorBody(parsed.error.issues[0]?.message ?? "Invalid body"), 400);
+    if (parsed.data.title === undefined && parsed.data.tags === undefined) {
+      return ctx.json(errorBody("No session fields supplied."), 400);
+    }
+    const session = await store.updateSession({
+      scope: scoped.scope,
+      conversationId: ctx.req.param("conversationId"),
+      ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
+      ...(parsed.data.tags !== undefined ? { tags: parsed.data.tags } : {}),
+    });
+    return session === undefined
+      ? ctx.json(errorBody("Session not found.", "not_found"), 404)
+      : ctx.json({ session });
+  });
+
+  app.get("/v1/assistants/:id/sessions/:conversationId/messages", async (ctx) => {
+    const scoped = resolveScope(ctx.req.raw.headers, ctx.get(AUTH_PRINCIPAL_KEY), ctx.req.param("id"));
+    if (!scoped.ok) return ctx.json(errorBody(scoped.message), scoped.status);
+    const store = requireSessionStore(ctx);
+    if (store === undefined) return ctx.json(errorBody("Durable assistant sessions require PostgreSQL persistence.", "not_found"), 404);
+    const rawLimit = Number(ctx.req.query("limit") ?? "500");
+    const messages = await store.read(
+      scoped.scope,
+      ctx.req.param("conversationId"),
+      Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 2_000) : 500,
+    );
+    return ctx.json({ messages });
+  });
+
   app.post("/v1/assistants/:id/sessions/:conversationId/fork", async (ctx) => {
     const scoped = resolveScope(ctx.req.raw.headers, ctx.get(AUTH_PRINCIPAL_KEY), ctx.req.param("id"));
     if (!scoped.ok) return ctx.json(errorBody(scoped.message), scoped.status);
@@ -480,32 +601,135 @@ export function createAssistantsRouter(
   // Hybrid retrieval is delegated to the configured Vectorsearch MCP server.
   // No filesystem/SQL substring fallback is provided here: callers either get
   // scoped hybrid retrieval or an explicit degraded-mode response.
+  // -- Media upload ----------------------------------------------------------
+
+  /**
+   * User image upload (chat attachments). Authenticated, unlike the GET
+   * /v1/media/:id capability route: uploads must not be an anonymous write
+   * surface. Bytes land in the same short-lived store the generate_image tool
+   * uses; the response URL is relative because the public origin is the
+   * reverse proxy's, not this process's.
+   */
+  app.post("/v1/assistants/:id/media", async (ctx) => {
+    const scoped = resolveScope(ctx.req.raw.headers, ctx.get(AUTH_PRINCIPAL_KEY), ctx.req.param("id"));
+    if (!scoped.ok) return ctx.json(errorBody(scoped.message), scoped.status);
+    if (deps.mediaStore === undefined) {
+      return ctx.json(errorBody("Media upload is not enabled on this instance.", "service_unavailable"), 503);
+    }
+    const body = await ctx.req.raw.arrayBuffer().catch(() => undefined);
+    if (body === undefined || body.byteLength === 0) {
+      return ctx.json(errorBody("Request body must contain image bytes."), 400);
+    }
+    if (body.byteLength > 8 * 1024 * 1024) {
+      return ctx.json(errorBody("Image exceeds the 8 MiB upload limit."), 413);
+    }
+    const declared = ctx.req.header("Content-Type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    const allowed = new Map<string, string>([
+      ["image/png", "png"],
+      ["image/jpeg", "jpg"],
+      ["image/webp", "webp"],
+      ["image/gif", "gif"],
+    ]);
+    const ext = allowed.get(declared);
+    if (ext === undefined) {
+      return ctx.json(errorBody("Unsupported image type. Allowed: image/png, image/jpeg, image/webp, image/gif."), 415);
+    }
+    const bytes = new Uint8Array(body);
+    if (!matchesImageMagicBytes(bytes, declared)) {
+      return ctx.json(errorBody("Image payload does not match the declared Content-Type."), 415);
+    }
+    const id = deps.mediaStore.put(bytes, declared);
+    return ctx.json({ id, url: `/v1/media/${id}.${ext}`, mimeType: declared, size: body.byteLength }, 201);
+  });
+
   app.get("/v1/assistants/:id/sessions/search", async (ctx) => {
     const scoped = resolveScope(ctx.req.raw.headers, ctx.get(AUTH_PRINCIPAL_KEY), ctx.req.param("id"));
     if (!scoped.ok) return ctx.json(errorBody(scoped.message), scoped.status);
-    if (sessionIndex === undefined) {
-      return ctx.json(errorBody("Assistant session search requires the configured Vectorsearch MCP integration.", "service_unavailable"), 503);
-    }
     const query = (ctx.req.query("q") ?? "").trim();
     if (query.length === 0 || query.length > 2_000) {
       return ctx.json(errorBody("Query must contain 1 to 2000 characters."), 400);
     }
+    const rawLimit = Number(ctx.req.query("limit") ?? "20");
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 20;
+    const store = runtime.stores.sessionStore;
+    // SQL half: substring matches on session titles and tags (authoritative rows).
+    const metadataHits = store !== undefined
+      ? await store.searchSessions(scoped.scope, query, { limit })
+      : [];
+    // Vector half: semantic content matches via Vectorsearch. When the index is
+    // down or unconfigured, metadata search still answers — the session list
+    // must not depend on a secondary system for its own names.
+    type ContentHit = { conversationId: string; snippets: string[] };
+    let contentHits: ContentHit[] = [];
+    let vectorAttempted = false;
+    let vectorAvailable = false;
     const token = ctx.get(TOKEN_KEY) ?? "";
-    if (token === "") return ctx.json(errorBody("No authenticated user identity.", "authentication_error"), 401);
-    try {
-      const rawLimit = Number(ctx.req.query("limit") ?? "20");
-      const result = await sessionIndex.search({
-        scope: scoped.scope,
-        query,
-        ...(ctx.req.query("conversationId") !== undefined ? { conversationId: ctx.req.query("conversationId") } : {}),
-        ...(Number.isFinite(rawLimit) ? { limit: rawLimit } : {}),
-        token,
-      });
-      return ctx.json({ result });
-    } catch (error) {
-      deps.logger?.warn("Assistant session Vectorsearch query failed", { assistantId: scoped.scope.assistantId, error: error instanceof Error ? error.message : String(error) });
-      return ctx.json(errorBody("Assistant session search is temporarily unavailable.", "service_unavailable"), 503);
+    if (sessionIndex !== undefined && token !== "") {
+      vectorAttempted = true;
+      try {
+        const raw = await sessionIndex.search({
+          scope: scoped.scope,
+          query,
+          ...(ctx.req.query("conversationId") !== undefined ? { conversationId: ctx.req.query("conversationId") } : {}),
+          limit,
+          token,
+        });
+        contentHits = extractSessionContentHits(raw);
+        vectorAvailable = true;
+      } catch (error) {
+        deps.logger?.warn("Assistant session Vectorsearch query failed", { assistantId: scoped.scope.assistantId, error: error instanceof Error ? error.message : String(error) });
+      }
     }
+    // Merge by conversation id; enrich content-only hits with the authoritative row.
+    const byConversation = new Map<string, {
+      conversationId: string;
+      title?: string;
+      tags: string[];
+      status: string;
+      updatedAt: string;
+      match: "metadata" | "content" | "both";
+      snippets: string[];
+    }>();
+    for (const hit of metadataHits) {
+      byConversation.set(hit.conversationId, {
+        conversationId: hit.conversationId,
+        ...(hit.title !== undefined ? { title: hit.title } : {}),
+        tags: hit.tags,
+        status: hit.status,
+        updatedAt: hit.updatedAt,
+        match: "metadata",
+        snippets: [],
+      });
+    }
+    for (const hit of contentHits) {
+      const existing = byConversation.get(hit.conversationId);
+      if (existing !== undefined) {
+        existing.match = "both";
+        existing.snippets.push(...hit.snippets);
+        continue;
+      }
+      const row = store !== undefined
+        ? await store.getSession(scoped.scope, hit.conversationId)
+        : undefined;
+      if (store !== undefined && row === undefined) {
+        continue;
+      }
+      byConversation.set(hit.conversationId, {
+        conversationId: hit.conversationId,
+        ...(row?.title !== undefined ? { title: row.title } : {}),
+        tags: row?.tags ?? [],
+        status: row?.status ?? "completed",
+        updatedAt: row?.updatedAt ?? "",
+        match: "content",
+        snippets: hit.snippets,
+      });
+    }
+    const sessions = [...byConversation.values()].slice(0, limit);
+    return ctx.json({
+      sessions,
+      // Distinguish "index unavailable" from "no matches" so the client can say so.
+      ...(vectorAttempted && !vectorAvailable ? { degraded: true } : {}),
+    });
   });
 
   // -- Durable runs and schedules ------------------------------------------

@@ -34,6 +34,7 @@ import type {
 } from "../types/flow.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../types/monitoring.js";
+import { approvalOwnerKey } from "./approval-gate.js";
 import { applyStickyArgs, resolveForcedToolArgs } from "./tool-args-merge.js";
 import { getPiiContextScope, getPiiToolBoundary } from "./pii-tool-boundary.js";
 import { hasFindings } from "./output-guardrails.js";
@@ -880,12 +881,14 @@ export async function buildAiTools(
                     Math.min(approval.gate.timeoutMs, expiresAtMs - Date.now()),
                   )
                 : undefined;
+              const ownerKey = approvalOwnerKey(ctx);
               const decision = await approval.gate.request(
                 {
                   executionId: ctx.executionId,
                   nodeId: node.id,
                   tool: toolRef,
                   args: outboundArgs,
+                  ...(ownerKey !== undefined ? { ownerKey } : {}),
                   title: request.title,
                   message: request.message,
                   ...(request.fields !== undefined

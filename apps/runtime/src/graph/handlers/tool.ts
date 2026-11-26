@@ -37,7 +37,7 @@ import {
 } from "../reranker.js";
 import { buildGroundingSections } from "../rag-grounding.js";
 import { toolFailureClassFromContent } from "../message-mapping.js";
-import { approvalRequestedBy } from "../approval-gate.js";
+import { approvalOwnerKey, approvalRequestedBy } from "../approval-gate.js";
 import { getPiiContextScope, getPiiToolBoundary } from "../pii-tool-boundary.js";
 import { policyRequiresToolApproval } from "../../compliance/policy-evaluator.js";
 import type { AgentState } from "../graph-engine.js";
@@ -297,6 +297,7 @@ export function createToolNodeHandler(
                 policyApproval?.required === true);
             if (needsApproval) {
               const requestedBy = approvalRequestedBy(runtime.ctx);
+              const ownerKey = approvalOwnerKey(runtime.ctx);
               const decision = await approvalGate.request(
                 {
                   executionId: runtime.ctx.executionId,
@@ -307,6 +308,7 @@ export function createToolNodeHandler(
                     ? { tenantId: runtime.ctx.clientId }
                     : {}),
                   ...(requestedBy !== undefined ? { requestedBy } : {}),
+                  ...(ownerKey !== undefined ? { ownerKey } : {}),
                   ...(policyApproval?.timeoutMs !== undefined
                     ? { timeoutMs: policyApproval.timeoutMs }
                     : {}),

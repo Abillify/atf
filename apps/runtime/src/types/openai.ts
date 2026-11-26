@@ -87,6 +87,14 @@ export interface ChatMessage {
    * returned on the assistant message when the model emits client-tool calls.
    */
   tool_calls?: MessageToolCall[];
+  /**
+   * Reasoning / thinking content (only present on assistant responses when the
+   * model produced reasoning and thinking is enabled). Mirrors the streaming
+   * `delta.reasoning_content` on the assembled non-streaming message so
+   * non-streaming clients can show the model's thoughts. Additive — clients
+   * that don't expect it ignore it.
+   */
+  reasoning_content?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ import { assistantMemoryScope } from "../memory-store.js";
 import type { AgentState } from "../graph-engine.js";
 import { resolveAssistantScope, type TurnTrigger } from "../../assistants/types.js";
 import { countModelIterations } from "../../assistants/review-gating.js";
+import { safeSetSessionStatus } from "../../assistants/session-metadata.js";
 
 const configSchema = z.object({
   /**
@@ -259,6 +260,33 @@ export function createAssistantLearnNodeHandler(
         code: "assistant_transcript_tool_persist_failed",
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+
+    // Terminal conversational status for the session overview. An errored turn
+    // keeps its first error message; an abort is not an error — the user chose
+    // to stop, so the session reads as completed.
+    const turnError = errored
+      ? state.errors.map((entry) => entry.message).find((message) => typeof message === "string" && message.length > 0)
+      : undefined;
+    await safeSetSessionStatus(
+      assistants.stores.sessionStore,
+      { scope, conversationId, status: errored ? "error" : "completed", ...(turnError !== undefined ? { error: turnError.slice(0, 2_000) } : {}) },
+    );
+
+    // Name an untitled session in the background once a successful answer
+    // exists. Fire-and-forget: naming must never delay or fail the turn, and
+    // the generator itself is idempotent (it only acts while the title is empty).
+    if (!errored && finalAssistantMessage !== undefined) {
+      const generator = assistants.sessionMetadata;
+      if (generator !== undefined) {
+        void generator.maybeGenerate({
+          scope,
+          conversationId,
+          query: lastUserQuery(state),
+          answer: contentToTranscriptText(finalAssistantMessage.content),
+          token: ctx.ssoToken,
+        });
+      }
     }
 
     try {

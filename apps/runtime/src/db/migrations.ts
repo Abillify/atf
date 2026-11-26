@@ -1768,6 +1768,22 @@ export const MIGRATIONS: readonly Migration[] = [
        $do$`,
     ],
   },
+  {
+    version: 54,
+    name: "assistant session conversational status, tags and error detail",
+    statements: [
+      // Conversational run state for the session overview (laeuft / fertig /
+      // fehler). Distinct from the per-tool journal: this reflects the last
+      // chat turn. Tags power the auto-categorised overview; the GIN index
+      // keeps the tag filter in session search cheap.
+      `ALTER TABLE assistant_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed'
+         CHECK (status IN ('running', 'completed', 'error'))`,
+      `ALTER TABLE assistant_sessions ADD COLUMN IF NOT EXISTS last_error TEXT`,
+      `ALTER TABLE assistant_sessions ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
+      `CREATE INDEX IF NOT EXISTS assistant_sessions_tags_idx
+         ON assistant_sessions USING GIN (tags)`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => Math.max(m.version, max),

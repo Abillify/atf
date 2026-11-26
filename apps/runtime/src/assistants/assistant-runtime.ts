@@ -127,6 +127,10 @@ export interface AssistantRuntimeOptions {
   toolJournal?: AssistantToolJournal;
   /** Authoritative session lifecycle (lineage, snapshots and recovery). */
   sessionStore?: AssistantSessionStore;
+  /** Auto title/tag generation for untitled sessions after a completed turn.
+   * Late-bindable via {@link AssistantRuntime.setSessionMetadata} because the
+   * side model becomes available only after the engine is built. */
+  sessionMetadata?: import("./session-metadata.js").SessionMetadataGenerator;
   /** Durable runs and scheduled run slots (PostgreSQL deployments only). */
   runStore?: PostgresAssistantRunStore;
   /** Optional MCP-backed projection; append failures remain best-effort. */
@@ -169,6 +173,16 @@ export class AssistantRuntime {
 
   async indexSessionDocument(params: Parameters<AssistantSessionIndex["ingestEvent"]>[0]): Promise<void> {
     await this.sessionIndex?.ingestEvent(params);
+  }
+
+  /** Late wiring: the metadata generator needs a model from the engine bootstrap. */
+  setSessionMetadata(generator: import("./session-metadata.js").SessionMetadataGenerator | undefined): void {
+    this.options.sessionMetadata = generator;
+  }
+
+  /** Auto title/tags for an untitled session; undefined when naming is not wired. */
+  get sessionMetadata(): import("./session-metadata.js").SessionMetadataGenerator | undefined {
+    return this.options.sessionMetadata;
   }
 
   /**
