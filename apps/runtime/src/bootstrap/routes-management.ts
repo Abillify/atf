@@ -52,6 +52,7 @@ import type { TriggerScheduler } from "../graph/trigger-scheduler.js";
 import type { FlowMcpServer } from "../mcp/flow-mcp-server.js";
 import {
   authMiddleware,
+  issuerDefaultTenantMap,
   type ApiKeyResolver,
   type AuthContext,
 } from "../middleware/auth.js";
@@ -263,6 +264,13 @@ export async function registerManagementRoutes(
       tenantIsolationEnabled: config.tenantIsolationEnabled,
       ...(config.jwtIssuerTenants !== undefined
         ? { issuerTenants: config.jwtIssuerTenants }
+        : {}),
+      ...(issuerDefaultTenantMap(config.inferenceExtraOidcIssuers) !== undefined
+        ? {
+            issuerDefaultTenants: issuerDefaultTenantMap(
+              config.inferenceExtraOidcIssuers,
+            ),
+          }
         : {}),
       defaultTenantId: config.defaultTenantId ?? "default",
     }),

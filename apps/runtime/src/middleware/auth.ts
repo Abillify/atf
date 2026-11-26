@@ -85,6 +85,13 @@ export interface AuthMiddlewareOptions {
   defaultTenantId?: string;
   /** Issuer → allowed tenants (`JWT_ISSUER_TENANTS`); see {@link issuerMayClaimTenant}. */
   issuerTenants?: Record<string, readonly string[]>;
+  /**
+   * Issuer → tenant granted to verified tokens from that issuer which carry no
+   * tenant claim (`JWT_ADDITIONAL_ISSUERS[].defaultTenantId`). Only consulted
+   * while tenant isolation is enabled; the result still has to pass the
+   * {@link issuerMayClaimTenant} binding.
+   */
+  issuerDefaultTenants?: Record<string, string>;
 }
 
 /**
@@ -100,6 +107,25 @@ export function issuerMayClaimTenant(
 ): boolean {
   const allowed = binding[issuer ?? ""];
   return allowed !== undefined && (allowed.includes("*") || allowed.includes(tenantId));
+}
+
+/**
+ * Derives the issuer → default-tenant map (`AuthMiddlewareOptions.issuerDefaultTenants`)
+ * from the parsed `JWT_ADDITIONAL_ISSUERS` list. Returns `undefined` when no
+ * entry configures a `defaultTenantId`, so deployments without the feature are
+ * byte-identical to before.
+ */
+export function issuerDefaultTenantMap(
+  issuers:
+    | readonly { issuer: string; audience?: string; defaultTenantId?: string }[]
+    | undefined,
+): Record<string, string> | undefined {
+  if (issuers === undefined) return undefined;
+  const map: Record<string, string> = {};
+  for (const entry of issuers) {
+    if (entry.defaultTenantId !== undefined) map[entry.issuer] = entry.defaultTenantId;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
 }
 
 /**
@@ -419,10 +445,20 @@ export function authMiddleware(
     // it the request falls back to the deployment's default tenant.
     const claimedTenant =
       verifier?.enabled === true ? resolveTenantClaim(claims) : undefined;
+    // Issuer-pinned default tenant: an IdP application whose tokens carry no
+    // tenant claim (e.g. a plain OIDC login app) can still be mapped to one
+    // tenant per verified issuer. The `iss` claim is trustworthy here because
+    // the signature check above passed against that issuer's JWKS.
+    const tokenIssuer =
+      typeof claims?.iss === "string" ? claims.iss : undefined;
+    const issuerFallbackTenant =
+      verifier?.enabled === true && claimedTenant === undefined
+        ? options.issuerDefaultTenants?.[tokenIssuer ?? ""]
+        : undefined;
     const tenantId =
       options.tenantIsolationEnabled === false
         ? defaultTenantId
-        : claimedTenant;
+        : (claimedTenant ?? issuerFallbackTenant);
     if (options.tenantIsolationEnabled === true && tenantId === undefined) {
       return ctx.json(
         {
@@ -435,13 +471,14 @@ export function authMiddleware(
         401,
       );
     }
+    const tenantToBind = claimedTenant ?? issuerFallbackTenant;
     if (
       options.issuerTenants !== undefined &&
-      claimedTenant !== undefined &&
+      tenantToBind !== undefined &&
       !issuerMayClaimTenant(
         options.issuerTenants,
-        typeof claims?.iss === "string" ? claims.iss : undefined,
-        claimedTenant,
+        tokenIssuer,
+        tenantToBind,
       )
     ) {
       return ctx.json(

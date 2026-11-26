@@ -24,6 +24,7 @@ import type { TenantStore } from "../graph/tenant-manager.js";
 import { resolveApiKey } from "../middleware/api-key-auth.js";
 import {
   authMiddleware,
+  issuerDefaultTenantMap,
   TRACE_CONTEXT_KEY,
   type AuthContext,
 } from "../middleware/auth.js";
@@ -258,6 +259,13 @@ export function createHttpMiddleware(
         tenantIsolationEnabled: config.tenantIsolationEnabled,
         ...(config.jwtIssuerTenants !== undefined
           ? { issuerTenants: config.jwtIssuerTenants }
+          : {}),
+        ...(issuerDefaultTenantMap(config.inferenceExtraOidcIssuers) !== undefined
+          ? {
+              issuerDefaultTenants: issuerDefaultTenantMap(
+                config.inferenceExtraOidcIssuers,
+              ),
+            }
           : {}),
         defaultTenantId: config.defaultTenantId ?? "default",
       }),

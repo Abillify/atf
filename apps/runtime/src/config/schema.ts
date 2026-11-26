@@ -364,7 +364,12 @@ export interface AppConfig {
   oidcAudience?: string;
   /** JWT claim names containing flow authorization scopes. Default: scope, scp. */
   flowScopeClaims?: string[];
-  inferenceExtraOidcIssuers?: { issuer: string; audience?: string }[];
+  inferenceExtraOidcIssuers?: {
+    issuer: string;
+    audience?: string;
+    /** Tenant granted to verified tokens from this issuer that carry no tenant claim. */
+    defaultTenantId?: string;
+  }[];
   /**
    * Issuer → tenant binding (`JWT_ISSUER_TENANTS`): which tenants a token from
    * each issuer may claim. When set, a verified token whose `iss` is not listed,
@@ -1397,12 +1402,15 @@ export const EnvSchema = z.object({
         .filter((claim) => claim !== "");
       return [...new Set(claims.length > 0 ? claims : ["scope", "scp"])];
     }),
-  /** JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. The list is platform-wide (operator-managed, not per tenant): every listed issuer is trusted for the whole runtime, so bind each one to its tenants with JWT_ISSUER_TENANTS. */
+  /** JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…", "defaultTenantId": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. The list is platform-wide (operator-managed, not per tenant): every listed issuer is trusted for the whole runtime, so bind each one to its tenants with JWT_ISSUER_TENANTS. `defaultTenantId` optionally maps tokens from this issuer that carry no tenant claim (`tenant_id`/`client_id`/`tid`) to a fixed tenant; it is honoured only while tenant isolation is enabled and remains subject to the JWT_ISSUER_TENANTS binding. */
   JWT_ADDITIONAL_ISSUERS: z
     .string()
     .optional()
     .transform(
-      (raw, ctx): { issuer: string; audience?: string }[] | undefined => {
+      (
+        raw,
+        ctx,
+      ): { issuer: string; audience?: string; defaultTenantId?: string }[] | undefined => {
         if (raw === undefined || raw.trim() === "") return undefined;
         let parsed: unknown;
         try {
@@ -1418,6 +1426,7 @@ export const EnvSchema = z.object({
           z.object({
             issuer: z.string().url(),
             audience: z.string().min(1).optional(),
+            defaultTenantId: z.string().min(1).optional(),
           }),
         );
         const result = schema.safeParse(parsed);
@@ -1425,7 +1434,7 @@ export const EnvSchema = z.object({
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message:
-              "JWT_ADDITIONAL_ISSUERS must be a JSON array of {issuer:url, audience?:string}",
+              "JWT_ADDITIONAL_ISSUERS must be a JSON array of {issuer:url, audience?:string, defaultTenantId?:string}",
           });
           return z.NEVER;
         }
