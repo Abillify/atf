@@ -18,6 +18,26 @@ releases:
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-26
+
+### Added
+
+- **Runtime** (MCP): an HTTP/SSE MCP server can declare `urlTemplate`
+  instead of a fixed `url` — a URL containing exactly one
+  `{{requestParams.<dot.path>}}` placeholder that is resolved per request
+  from the calling request's parameters (e.g. a per-customer deployment
+  endpoint). Templated servers require `forwardAuthToken: true`, are
+  excluded from shared-session reuse, and their session and tool-scope
+  identity is hashed over token *and* resolved URL, so two deployments
+  never share a client. Static servers are unaffected: with no template
+  the identity hash is byte-identical to before. Resolution fails closed
+  (missing/empty value, malformed URL, non-http(s) scheme, embedded
+  credentials).
+- **Runtime** (auth): `issuerDefaultTenantMap` — an issuer-pinned default
+  tenant for verified tokens that carry no tenant claim. The mapping is
+  keyed by the verified token issuer, so a token from issuer A can never
+  pick up issuer B's default tenant.
+
 ## [0.28.1] - 2026-11-25
 
 ### Fixed
@@ -1962,7 +1982,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.28.1...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/Abillify/atf/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/Abillify/atf/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/Abillify/atf/compare/v0.27.2...v0.28.0
 [0.27.2]: https://github.com/Abillify/atf/compare/v0.27.1...v0.27.2
