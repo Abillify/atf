@@ -624,6 +624,86 @@ describe("authMiddleware — tenant identity requires verification (Req 7.4)", (
     }
   });
 
+  test("issuer defaultTenantId grants a tenant to a claim-less verified token", async () => {
+    // A plain OIDC login app whose tokens carry no tenant_id/client_id/tid can
+    // still be mapped to one tenant, bound to the verified issuer.
+    const verifier: JwtVerifier = {
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => ({ iss: "https://cognito.example/app" }),
+    };
+    const res = await ping(
+      makePrincipalApp(verifier, {
+        tenantIsolationEnabled: true,
+        issuerDefaultTenants: { "https://cognito.example/app": "acme" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const { principal } = (await res.json()) as {
+      principal: { tenantId?: string; verified: boolean };
+    };
+    expect(principal.verified).toBe(true);
+    expect(principal.tenantId).toBe("acme");
+  });
+
+  test("issuer defaultTenantId does not apply to a different issuer", async () => {
+    const verifier: JwtVerifier = {
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => ({ iss: "https://other.example/app" }),
+    };
+    const res = await ping(
+      makePrincipalApp(verifier, {
+        tenantIsolationEnabled: true,
+        issuerDefaultTenants: { "https://cognito.example/app": "acme" },
+      }),
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("no tenant claim");
+  });
+
+  test("issuer defaultTenantId still honours the JWT_ISSUER_TENANTS binding", async () => {
+    const verifier: JwtVerifier = {
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => ({ iss: "https://cognito.example/app" }),
+    };
+    // The default tenant "acme" is not bound to this issuer → rejected.
+    const res = await ping(
+      makePrincipalApp(verifier, {
+        tenantIsolationEnabled: true,
+        issuerTenants: { "https://cognito.example/app": ["globex"] },
+        issuerDefaultTenants: { "https://cognito.example/app": "acme" },
+      }),
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("not bound to the claimed tenant");
+  });
+
+  test("a verified tenant claim outranks the issuer default tenant", async () => {
+    const verifier: JwtVerifier = {
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => ({
+        iss: "https://cognito.example/app",
+        tenant_id: "real",
+      }),
+    };
+    const res = await ping(
+      makePrincipalApp(verifier, {
+        tenantIsolationEnabled: true,
+        issuerDefaultTenants: { "https://cognito.example/app": "fallback" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const { principal } = (await res.json()) as {
+      principal: { tenantId?: string };
+    };
+    expect(principal.tenantId).toBe("real");
+  });
+
   test("unverified claims with tenant isolation enabled → 401", async () => {
     const verifier: JwtVerifier = {
       enabled: false,
