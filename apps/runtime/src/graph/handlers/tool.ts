@@ -371,6 +371,7 @@ export function createToolNodeHandler(
               const annotations = await runtime.mcpWrapper
                 .getFilteredToolSchema(serverName, bareName, {
                   authToken: runtime.ctx.ssoToken,
+                  requestParams: runtime.ctx.requestParams,
                 })
                 .then((schema) => schema.annotations)
                 .catch(() => undefined);
@@ -435,8 +436,12 @@ export function createToolNodeHandler(
             runtime.mcpWrapper,
             serverName,
             process.env,
-            // Negotiate on the same session the call will use (forwardAuthToken).
-            { authToken: runtime.ctx.ssoToken },
+            // Negotiate on the same session the call will use (forwardAuthToken)
+            // and the same resolved peer (urlTemplate).
+            {
+              authToken: runtime.ctx.ssoToken,
+              requestParams: runtime.ctx.requestParams,
+            },
           );
           // Token-exchange peers authenticate the EXCHANGED subject, not the
           // caller's login `sub`; the envelope must bind the same identity.

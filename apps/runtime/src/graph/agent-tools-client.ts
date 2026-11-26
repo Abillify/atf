@@ -75,6 +75,11 @@ export function buildToolSelectionMetaTool(opts: {
   /** Caller bearer for token-scoped semantic tool discovery. */
   authToken?: string;
   /**
+   * Request metadata of the current run, used to scope discovery for a
+   * `urlTemplate` MCP server (its peer is derived from these params).
+   */
+  requestParams?: Record<string, unknown>;
+  /**
    * Optional summary of the tool groups NOT already advertised to the model,
    * appended to the tool description so the model knows what it can request.
    */
@@ -108,6 +113,7 @@ export function buildToolSelectionMetaTool(opts: {
     topK,
     minScore,
     authToken,
+    requestParams,
     groupsSummary,
     getInstructions,
     activate,
@@ -163,6 +169,7 @@ export function buildToolSelectionMetaTool(opts: {
         topK,
         ...(minScore !== undefined ? { minScore } : {}),
         ...(authToken !== undefined ? { authToken } : {}),
+        ...(requestParams !== undefined ? { requestParams } : {}),
       });
       const keys: string[] = [];
       const servers = new Set<string>();

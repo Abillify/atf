@@ -449,6 +449,15 @@ export class Stateless2026Client {
       params,
       requestMeta ?? {},
     );
+    // The wrapper always constructs this client from a config copy with a
+    // concrete endpoint (`url` for static servers, the request-resolved URL
+    // for templated ones). Guard anyway so a mis-wired config fails loudly
+    // instead of fetching `undefined`.
+    if (this.config.url === undefined) {
+      throw new Error(
+        `MCP server "${this.config.name}" requires a concrete url at request time`,
+      );
+    }
     const response = await this.fetchFn(this.config.url, {
       method: "POST",
       headers,

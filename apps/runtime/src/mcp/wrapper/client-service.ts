@@ -53,45 +53,68 @@ export interface McpWrapperService {
    * (HTTP 404) but may also be called explicitly.
    */
   reconnect(serverName: string): Promise<void>;
-  listTools(serverName: string, opts?: { authToken?: string }): Promise<string[]>;
+  listTools(
+    serverName: string,
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
+  ): Promise<string[]>;
   listResources?(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<{ resources: McpResourceDescriptor[] } & McpCacheMetadata>;
   listResourceTemplates?(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<{ resourceTemplates: McpResourceTemplateDescriptor[] } & McpCacheMetadata>;
   readResource?(
     serverName: string,
     uri: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<{ contents: unknown[] } & McpCacheMetadata>;
   listPrompts?(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<{ prompts: McpPromptDescriptor[] } & McpCacheMetadata>;
   getPrompt?(
     serverName: string,
     name: string,
     args?: Record<string, unknown>,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<{ description?: string; messages: unknown[] }>;
   getTask?(
     serverName: string,
     taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus>;
   updateTask?(
     serverName: string,
     taskId: string,
     input: Record<string, unknown>,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus>;
   cancelTask?(
     serverName: string,
     taskId: string,
-    opts?: { authToken?: string; signal?: AbortSignal },
+    opts?: {
+      authToken?: string;
+      signal?: AbortSignal;
+      requestParams?: Record<string, unknown>;
+    },
   ): Promise<McpTaskStatus>;
   /**
    * Discovers v1 support without allocating a normal transaction invocation.
@@ -104,7 +127,7 @@ export interface McpWrapperService {
    */
   getTransactionCapabilities?(
     serverName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<CapabilityDocument | undefined>;
   /**
    * Returns the server-level MCP `instructions` captured at connect/reconnect
@@ -132,12 +155,12 @@ export interface McpWrapperService {
   getFilteredToolSchema(
     serverName: string,
     toolName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<FilteredToolSchema>;
   refreshSchemaIfChanged(
     serverName: string,
     toolName: string,
-    opts?: { authToken?: string },
+    opts?: { authToken?: string; requestParams?: Record<string, unknown> },
   ): Promise<boolean>;
   /**
    * Rebinds an evidence contract to the exact argument representation that

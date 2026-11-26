@@ -405,6 +405,7 @@ export async function buildAiTools(
     try {
       filtered = await mcpWrapper.getFilteredToolSchema(serverName, bareName, {
         authToken: ctx.ssoToken,
+        requestParams: ctx.requestParams,
       });
     } catch (err) {
       // Skip tools whose schema cannot be fetched, but remember them (and why)
@@ -693,8 +694,9 @@ export async function buildAiTools(
             mcpWrapper,
             serverName,
             process.env,
-            // Negotiate on the same session the call will use (forwardAuthToken).
-            { authToken: ctx.ssoToken },
+            // Negotiate on the same session the call will use (forwardAuthToken)
+            // and the same resolved peer (urlTemplate).
+            { authToken: ctx.ssoToken, requestParams: ctx.requestParams },
           );
           // Token-exchange peers authenticate the EXCHANGED subject, not the
           // caller's login `sub`; the envelope must bind the same identity.

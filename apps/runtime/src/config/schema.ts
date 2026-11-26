@@ -97,7 +97,23 @@ export interface TokenExchangeConfig {
 
 export interface McpServerConfig {
   name: string;
-  url: string;
+  /**
+   * Static endpoint URL (or, for `stdio`, the command to spawn). Mutually
+   * exclusive with {@link urlTemplate} — exactly one of the two must be set.
+   */
+  url?: string;
+  /**
+   * Request-time endpoint template, e.g. `{{requestParams.deployment.url}}/mcp`.
+   * Exactly one `{{requestParams.<dot.path>}}` placeholder is substituted from
+   * the execution context's `requestParams` per request; the result must be an
+   * absolute `http(s)` URL without credentials. Requires `forwardAuthToken:
+   * true` (the endpoint is caller-supplied data, so sessions must never be
+   * shared across callers) and an HTTP-based transport. Sessions, schema and
+   * capability caches are keyed per resolved URL in addition to the caller
+   * token, so one config entry can front many peers (e.g. one per deployment)
+   * without leaking state between them.
+   */
+  urlTemplate?: string;
   transport: "http" | "stdio" | "sse";
   /** Explicit wire profile for HTTP. Omitted/"2025" keeps the existing SDK transport. */
   profile?: "2025" | "2026-07-28";
@@ -934,32 +950,93 @@ export const ServiceLinkConfigSchema = z.object({
     }),
 });
 
-export const McpServerConfigSchema = z.object({
-  name: z.string().min(1),
-  url: z.string().min(1),
-  transport: z.enum(["http", "stdio", "sse"]),
-  profile: z.enum(["2025", "2026-07-28"]).optional(),
-  protocolVersion: z.enum(["2025", "2026-07-28"]).optional(),
-  requestTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
-  connectTimeoutMs: z.number().int().min(500).max(120_000).optional(),
-  retryAttempts: z.number().int().min(1).max(10).optional(),
-  taskPollingIntervalMs: z.number().int().min(0).max(60_000).optional(),
-  taskPollingMaxAttempts: z.number().int().min(1).max(10_000).optional(),
-  taskPollingDeadlineMs: z.number().int().min(1).max(3_600_000).optional(),
-  taskMode: z.enum(["poll", "handle"]).optional(),
-  protectedParams: z.array(z.string()).optional(),
-  injectedParams: z.record(z.string(), z.unknown()).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  allowAnonymous: z.boolean().optional(),
-  /**
-   * Whether results of this server count as trusted for
-   * `TAINT_MODE=on-untrusted-source`. Absent = untrusted: an unlabelled
-   * result taints the execution.
-   */
-  contentTrust: z.enum(["trusted", "untrusted"]).optional(),
-  forwardAuthToken: z.boolean().optional(),
-  tokenExchange: TokenExchangeConfigSchema.optional(),
-});
+/**
+ * A `urlTemplate` is exactly one `{{requestParams.<dot.path>}}` placeholder
+ * embedded in literal text (e.g. `{{requestParams.deployment.url}}/mcp`).
+ * Only `requestParams.` tokens exist — a template must never reach JWT claims,
+ * headers, or anything else beyond the caller's request metadata.
+ */
+const URL_TEMPLATE_TOKEN = /\{\{\s*requestParams\.[A-Za-z0-9_.]+\s*\}\}/u;
+/** Every `{{ … }}` group, used to reject templates with extra/foreign tokens. */
+const ANY_TEMPLATE_TOKEN = /\{\{[^{}]*\}\}/gu;
+
+export const McpServerConfigSchema = z
+  .object({
+    name: z.string().min(1),
+    url: z.string().min(1).optional(),
+    urlTemplate: z.string().min(1).optional(),
+    transport: z.enum(["http", "stdio", "sse"]),
+    profile: z.enum(["2025", "2026-07-28"]).optional(),
+    protocolVersion: z.enum(["2025", "2026-07-28"]).optional(),
+    requestTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+    connectTimeoutMs: z.number().int().min(500).max(120_000).optional(),
+    retryAttempts: z.number().int().min(1).max(10).optional(),
+    taskPollingIntervalMs: z.number().int().min(0).max(60_000).optional(),
+    taskPollingMaxAttempts: z.number().int().min(1).max(10_000).optional(),
+    taskPollingDeadlineMs: z.number().int().min(1).max(3_600_000).optional(),
+    taskMode: z.enum(["poll", "handle"]).optional(),
+    protectedParams: z.array(z.string()).optional(),
+    injectedParams: z.record(z.string(), z.unknown()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    allowAnonymous: z.boolean().optional(),
+    /**
+     * Whether results of this server count as trusted for
+     * `TAINT_MODE=on-untrusted-source`. Absent = untrusted: an unlabelled
+     * result taints the execution.
+     */
+    contentTrust: z.enum(["trusted", "untrusted"]).optional(),
+    forwardAuthToken: z.boolean().optional(),
+    tokenExchange: TokenExchangeConfigSchema.optional(),
+  })
+  .superRefine((cfg, ctx) => {
+    if (cfg.url === undefined && cfg.urlTemplate === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["url"],
+        message: `MCP server "${cfg.name}" must set either url or urlTemplate`,
+      });
+      return;
+    }
+    if (cfg.url !== undefined && cfg.urlTemplate !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["urlTemplate"],
+        message: `MCP server "${cfg.name}" must set exactly one of url and urlTemplate, not both`,
+      });
+      return;
+    }
+    if (cfg.urlTemplate === undefined) return;
+    const tokens = cfg.urlTemplate.match(ANY_TEMPLATE_TOKEN) ?? [];
+    if (tokens.length !== 1 || !URL_TEMPLATE_TOKEN.test(cfg.urlTemplate)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["urlTemplate"],
+        message:
+          `MCP server "${cfg.name}" urlTemplate must be exactly one ` +
+          '"{{requestParams.<dot.path>}}" placeholder embedded in literal text, ' +
+          `got "${cfg.urlTemplate}"`,
+      });
+    }
+    // A templated endpoint is always an HTTP peer; stdio spawns a local
+    // command and has no URL to resolve.
+    if (cfg.transport === "stdio") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["urlTemplate"],
+        message: `MCP server "${cfg.name}" cannot combine urlTemplate with transport "stdio"`,
+      });
+    }
+    // The resolved endpoint comes from caller-supplied request data, so every
+    // session must be bound to an authenticated caller identity — a shared or
+    // anonymous session could be reused across tenants/deployments.
+    if (cfg.forwardAuthToken !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["urlTemplate"],
+        message: `MCP server "${cfg.name}" requires forwardAuthToken: true when urlTemplate is set`,
+      });
+    }
+  });
 
 export const LlmParametersSchema = z
   .object({
