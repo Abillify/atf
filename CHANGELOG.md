@@ -18,6 +18,39 @@ releases:
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-27
+
+### Added
+
+- **Runtime** (assistants): conversational session metadata. An untitled
+  session gets an auto-generated title and tags after its first completed
+  turn (`session-metadata.ts`); the title is projected into the Vectorsearch
+  session index so a semantic session search matches on it. Run state is
+  tracked per session (`running` / `completed` / `error` with an error
+  detail) via best-effort status updates that never fail the chat turn.
+  Migration 54 adds the `status`, `last_error`, and `tags` columns with a GIN
+  index on `tags`.
+- **Runtime** (assistants API): `PATCH /v1/assistants/:id/sessions/:conversationId`
+  to set a title/tags, `GET .../sessions/:conversationId/messages` to read
+  back a session transcript, and a hybrid `GET .../sessions/search` that
+  combines a metadata filter with a vector search and degrades to the
+  metadata results alone when Vectorsearch is unreachable.
+- **Runtime** (assistants API): `POST /v1/assistants/:id/media` uploads chat
+  images through a MIME allowlist with magic-byte validation
+  (PNG/JPEG/GIF/WEBP); a body whose bytes do not match the declared MIME is
+  rejected with `415`.
+- **Runtime** (approvals): `GET /v1/approvals/mine` — a caller-scoped view of
+  the pending approvals a chat user caused, keyed by the SHA-256 of their
+  bearer token, so a user sees and decides only their own approvals.
+- **Runtime** (OpenAI-compatible streaming): `reasoning_content` from a
+  reasoning model is passed through on streamed assistant deltas.
+
+### Fixed
+
+- **Runtime** (assistants): soft-deleted sessions are excluded from
+  `updateSession` and from the hybrid session search, so a deleted session
+  can no longer be updated or resurface in results.
+
 ## [0.29.0] - 2026-11-26
 
 ### Added
@@ -1982,7 +2015,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/Abillify/atf/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/Abillify/atf/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/Abillify/atf/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/Abillify/atf/compare/v0.27.2...v0.28.0
