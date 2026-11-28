@@ -89,6 +89,14 @@ export interface TokenExchangeConfig {
   /** `requested_token_type`. Optional; defaults to access_token at the IdP. */
   requestedTokenType?: string;
   timeoutMs?: number;
+  /**
+   * Optional list of OIDC `iss` values for which the RFC 8693 token exchange
+   * should run. When omitted, every non-empty caller token triggers the
+   * exchange. When set, caller tokens whose decoded `iss` matches an entry
+   * (trailing slashes ignored) are exchanged; tokens from other trusted
+   * issuers are forwarded unchanged via `forwardAuthToken`.
+   */
+  subjectIssuers?: string[];
   /** Actor for a delegation (OBO) exchange. Absent → impersonation (`sub` = user, no `act`). */
   actor?: TokenExchangeActorConfig;
   /** Resolved from `clientSecretEnv` by the loader. Never set in config files. */
@@ -904,6 +912,7 @@ export const TokenExchangeConfigSchema = z
     scope: z.string().min(1).optional(),
     requestedTokenType: z.string().min(1).optional(),
     timeoutMs: z.number().int().min(1_000).max(60_000).optional(),
+    subjectIssuers: z.array(z.string().min(1)).min(1).optional(),
     actor: TokenExchangeActorConfigSchema.optional(),
   })
   .refine((cfg) => cfg.tokenEndpoint !== undefined || cfg.issuer !== undefined, {

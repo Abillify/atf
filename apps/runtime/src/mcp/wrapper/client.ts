@@ -161,6 +161,10 @@ const defaultTokenExchangerFactory = (
   });
 };
 
+function normaliseIssuerUrl(issuer: string): string {
+  return issuer.trim().replace(/\/+$/, "");
+}
+
 /**
  * Identity hash for a per-caller MCP session: the caller's bearer token plus,
  * for a `urlTemplate` server, the endpoint URL resolved for this request.
@@ -531,6 +535,7 @@ export class McpWrapper implements McpWrapperService {
   ): Promise<string | undefined> {
     if (!this.tokenExchangers.has(serverName)) return undefined;
     if (subjectToken === undefined || subjectToken === "") return undefined;
+    if (!this._shouldExchangeSubjectToken(serverName, subjectToken)) return undefined;
     // Same cached exchange the subsequent callTool uses — no extra IdP round
     // trip. The payload is only read (not trusted) to mirror the subject the
     // peer will verify itself; the peer still validates signature and claims.
@@ -562,9 +567,42 @@ export class McpWrapper implements McpWrapperService {
   }
 
   /**
+   * Returns true when a caller's subject token is eligible for RFC 8693 token
+   * exchange on `serverName`. When `tokenExchange.subjectIssuers` is omitted,
+   * every subject token is exchanged (existing behaviour). When configured,
+   * only tokens whose decoded `iss` matches one of the listed issuers
+   * (trailing slashes ignored) are exchanged; tokens from other trusted
+   * issuers are passed through unchanged via `forwardAuthToken`.
+   */
+  private _shouldExchangeSubjectToken(
+    serverName: string,
+    subjectToken: string,
+  ): boolean {
+    const subjectIssuers =
+      this.configs.get(serverName)?.tokenExchange?.subjectIssuers;
+    if (subjectIssuers === undefined || subjectIssuers.length === 0) {
+      return true;
+    }
+    let iss: unknown;
+    try {
+      iss = decodeJwt(subjectToken).iss;
+    } catch {
+      return false;
+    }
+    if (typeof iss !== "string" || iss.trim() === "") {
+      return false;
+    }
+    const normalisedIss = normaliseIssuerUrl(iss);
+    return subjectIssuers.some(
+      (allowed) => normaliseIssuerUrl(allowed) === normalisedIss,
+    );
+  }
+
+  /**
    * Resolves the bearer actually forwarded to a server from the caller's
    * subject token. For a token-exchange server this performs the RFC 8693
-   * exchange (cached); for every other server the subject token is returned
+   * exchange (cached) when the subject token's issuer is eligible; for every
+   * other server or non-matching issuer the subject token is returned
    * unchanged. A failed exchange throws — fail-closed — so a session is never
    * created with the wrong-audience subject token as a silent fallback.
    */
@@ -576,7 +614,8 @@ export class McpWrapper implements McpWrapperService {
     if (
       exchanger === undefined ||
       subjectToken === undefined ||
-      subjectToken === ""
+      subjectToken === "" ||
+      !this._shouldExchangeSubjectToken(serverName, subjectToken)
     ) {
       return { bearer: subjectToken };
     }
@@ -592,8 +631,9 @@ export class McpWrapper implements McpWrapperService {
   /**
    * Decides whether a failed request warrants rebuilding its session: session
    * expiry and connection loss always do; a 401 does only on a token-exchange
-   * server with a caller token, where the cached exchanged token for that
-   * caller is dropped first so the rebuilt session carries a fresh one.
+   * server with an exchange-eligible caller token, where the cached exchanged
+   * token for that caller is dropped first so the rebuilt session carries a
+   * fresh one.
    */
   private _shouldRecover(
     serverName: string,
@@ -606,6 +646,7 @@ export class McpWrapper implements McpWrapperService {
       exchanger !== undefined &&
       subjectToken !== undefined &&
       subjectToken !== "" &&
+      this._shouldExchangeSubjectToken(serverName, subjectToken) &&
       isAuthRejectedError(err)
     ) {
       exchanger.invalidate(subjectToken);
