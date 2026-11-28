@@ -20,6 +20,7 @@ import type { ExecRuntime } from "../exec-runtime.js";
 import {
   sanitizeSystemMessages,
   ensureValidConversationStart,
+  removeOrphanedToolCalls,
   ensureTrailingUserTurn,
   resolveTurnContext,
   deduplicateRagContext,
@@ -349,7 +350,34 @@ export async function buildLlmMessages(params: {
     );
   }
 
-  const validStart = ensureValidConversationStart(historyBudgeted.messages);
+  // Drop tool-call parts the AI SDK prompt builder would reject: a call whose
+  // result does not immediately follow, or a duplicate reusing an id whose
+  // result was already consumed. Without this, a poisoned thread (persisted
+  // passthrough call with DLP-stripped args vs. client replay with real args →
+  // duplicated assistant tool-call in the checkpoint) fails every subsequent
+  // turn with AI_MissingToolResultsError before the request reaches the model.
+  const orphaned = removeOrphanedToolCalls(historyBudgeted.messages);
+  if (orphaned.removedToolCalls > 0 || orphaned.removedToolResults > 0) {
+    runtime.onNodeDiagnostic?.(node.id, {
+      level: "warn",
+      code: "prompt_orphaned_tool_calls_removed",
+      message:
+        "The conversation history contained tool calls without a matching " +
+        "immediately-following tool result (or duplicate tool-call ids); " +
+        "removed them from the prompt so the model request stays valid.",
+      details: {
+        removed_tool_calls: orphaned.removedToolCalls,
+        removed_tool_results: orphaned.removedToolResults,
+      },
+    });
+    runtime.metrics.recordCounter(
+      "aiperator_prompt_orphaned_tool_calls_removed",
+      { node: node.id },
+      orphaned.removedToolCalls,
+    );
+  }
+
+  const validStart = ensureValidConversationStart(orphaned.messages);
 
   // A prompt that ENDS on an assistant turn asks the model to open a second
   // consecutive assistant turn, which local Qwen builds answer with an
