@@ -648,7 +648,7 @@ Changes since 0.21.0 that need operator attention:
 3. Search: the IP rate limit (`RATE_LIMIT`, default 120 requests per minute) now also covers the read routes (`/documents`, `/document`, `/summaries`, `/folders`, `/collection-stats`), the collection admin routes, `/ui` and the browser login. A client that polls these routes from one IP above the limit gets 429; raise `RATE_LIMIT` (or call through the Gate) if that is expected traffic. The MCP endpoints stay unlimited here. Extract limits `POST /login` and the OIDC routes the same way.
 4. Gate: with `server.cors.origins: ["*"]` the CORS answer is a literal `*` without credentials. A browser client that needs cookies across origins must be listed by its origin.
 
-### 0.30 → next (unreleased)
+### 0.30 → 0.31
 
 1. **`urlTemplate` needs an origin allowlist.** An MCP server with `urlTemplate` must now list
    `urlTemplateAllowedOrigins` (`["https://*.example.com", "https://erp.customer.example:8443"]`);
