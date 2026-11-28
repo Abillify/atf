@@ -41,7 +41,10 @@ import type { Logger } from "../observability/logger.js";
 /**
  * Decides whether a tool reference requires approval. A tool matches when it is
  * listed (by full ref `server/tool`, bare name, or `server/*` / `*` wildcard)
- * in either the node-level list or the global list.
+ * in either the node-level list or the global list. A pattern containing `*`
+ * elsewhere is a glob (`*` = any run of characters): one with a `/` is matched
+ * against the full ref (`abiliware/update_*`), one without against the bare
+ * tool name (`update_*`, `*_case`).
  */
 export function toolRequiresApproval(
   toolRef: string,
@@ -62,8 +65,21 @@ export function toolRequiresApproval(
     if (p === toolRef) return true;
     if (p === bareName) return true;
     if (serverName !== "" && p === `${serverName}/*`) return true;
+    if (p.includes("*")) {
+      const subject = p.includes("/") ? toolRef : bareName;
+      if (globMatches(p, subject)) return true;
+    }
   }
   return false;
+}
+
+/** `*` matches any run of characters (including none); everything else is literal. */
+function globMatches(pattern: string, subject: string): boolean {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/gu, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${source}$`, "u").test(subject);
 }
 
 /**

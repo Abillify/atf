@@ -39,6 +39,7 @@ value; histograms expose `_bucket`, `_count` and `_sum` series per metric.
 | aiperator_flow_load_failures | runtime | gauge | Number of flow files currently failing to load. | warn when > 0 |
 | aiperator_groundedness_total | runtime | counter | Groundedness-gate outcomes by result. | — |
 | aiperator_approvals_total | runtime | counter | Approval-gate decisions by decision. | — |
+| aiperator_approvals_relayed_total | runtime | counter | Local pre-action approvals relayed to an MCP server's own approval request for the same call (`APPROVAL_RELAY_LOCAL_DECISION`), by `tool`. | — |
 | aiperator_audit_write_failures_total | runtime | counter | Audit-log write failures. | — |
 | aiperator_audit_forward_entries_total | runtime | counter | Audit entries delivered to the SIEM webhook (`AUDIT_FORWARD_URL`), counted per batch after HTTP 2xx. | — |
 | aiperator_audit_forward_failures_total | runtime | counter | Failed SIEM forwarding attempts, labelled `reason` (`http_<status>` for a rejection, `transport` for a connection error or timeout). | warn when steadily increasing |

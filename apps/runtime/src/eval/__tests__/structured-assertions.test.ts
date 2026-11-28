@@ -83,6 +83,38 @@ describe("toolCalled assertion", () => {
   });
 });
 
+describe("clientToolCalled assertion", () => {
+  const clientToolCalls = [
+    { name: "search_records", arguments: { page: "identity", term: "Meier" } },
+    { name: "suggest_followups", arguments: { questions: ["a", "b"] } },
+  ];
+  test("matches by exact name and optional argument subset", () => {
+    expect(check({ type: "clientToolCalled", name: "search_records" }, { clientToolCalls }).passed).toBe(true);
+    expect(
+      check({ type: "clientToolCalled", name: "search_records", args: { page: "identity" } }, { clientToolCalls }).passed,
+    ).toBe(true);
+    const wrongArgs = check(
+      { type: "clientToolCalled", name: "search_records", args: { page: "case" } },
+      { clientToolCalls },
+    );
+    expect(wrongArgs.passed).toBe(false);
+    expect(wrongArgs.detail).toContain("search_records, suggest_followups");
+    expect(check({ type: "clientToolCalled", name: "records" }, { clientToolCalls }).passed).toBe(false);
+  });
+  test("max: 0 asserts the client tool was NOT requested", () => {
+    expect(check({ type: "clientToolCalled", name: "open_dialog", max: 0 }, { clientToolCalls }).passed).toBe(true);
+    expect(check({ type: "clientToolCalled", name: "search_records", max: 0 }, { clientToolCalls }).passed).toBe(false);
+  });
+  test("fails closed when the executor reported no client tool calls", () => {
+    expect(check({ type: "clientToolCalled", name: "x", max: 0 }).detail).toContain("did not report client tool calls");
+  });
+  test("is accepted by the matrix task schema", () => {
+    expect(
+      parseTaskAssertions([{ type: "clientToolCalled", name: "x", min: 1, args: { a: 1 } }]).ok,
+    ).toBe(true);
+  });
+});
+
 describe("maxTokens assertion", () => {
   test("compares the total, and fails closed without usage", () => {
     expect(check({ type: "maxTokens", value: 100 }, { totalTokens: 100 }).passed).toBe(true);

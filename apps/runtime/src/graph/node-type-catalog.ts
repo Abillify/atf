@@ -111,7 +111,7 @@ export const COMMON_CONFIG_FIELDS: ConfigField[] = [
     kind: "tool-list",
     label: "Tools requiring approval",
     description:
-      "Tool refs or patterns (`server/tool`, `server/*`, bare name) that must be approved by a human before this node may call them. The call pauses, an approval request appears in Approvals / the client stream, and it is denied automatically when nobody answers in time (fail-closed). Applies to `llm` agent loops and `tool` nodes.",
+      "Tool refs or patterns (`server/tool`, `server/*`, bare name, or a `*` glob such as `abiliware/update_*`) that must be approved by a human before this node may call them. The call pauses, an approval request appears in Approvals / the client stream, and it is denied automatically when nobody answers in time (fail-closed). Applies to `llm` agent loops and `tool` nodes; an MCP server that asks for approval of the same call itself gets the local decision relayed once (`APPROVAL_RELAY_LOCAL_DECISION`).",
     example: ["taiga/task_create", "parking/*"],
   },
   {

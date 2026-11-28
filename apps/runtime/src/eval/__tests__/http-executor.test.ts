@@ -230,3 +230,75 @@ describe("createHttpExecutor trace fetch", () => {
     expect(result.budgetExceeded).toBe(false);
   });
 });
+
+describe("createHttpExecutor — client tools (passthrough flows)", () => {
+  const tools = [
+    {
+      type: "function",
+      function: {
+        name: "switch_color_mode",
+        parameters: { type: "object", properties: { mode: { type: "string" } } },
+      },
+    },
+  ];
+
+  it("sends tools and tool_choice and reports the handed-back tool calls", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/v1/chat/completions")) {
+        sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          id: "chatcmpl-exec-9",
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  { id: "c1", type: "function", function: { name: "switch_color_mode", arguments: '{"mode":"dark"}' } },
+                  { id: "c2", type: "function", function: { name: "broken", arguments: "{not json" } },
+                  { id: "c3", type: "function", function: {} },
+                ],
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({}, 404);
+    }) as unknown as typeof fetch;
+
+    const execute = createHttpExecutor("http://rt", undefined, fetchFn);
+    const result = await execute("abiliware", [{ role: "user", content: "darkmode" }], undefined, {
+      tools,
+      toolChoice: "auto",
+    });
+
+    expect(sentBody?.tools).toEqual(tools);
+    expect(sentBody?.tool_choice).toBe("auto");
+    expect(result.text).toBe("");
+    expect(result.clientToolCalls).toEqual([
+      { name: "switch_color_mode", arguments: { mode: "dark" } },
+      { name: "broken", arguments: "{not json" },
+    ]);
+    // Trace unavailable (404): the response's finish reason is the fallback.
+    expect(result.finishReason).toBe("tool_calls");
+  });
+
+  it("sends neither field without client tools and reports an empty list", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/v1/chat/completions")) {
+        sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse(completionBody());
+      }
+      return jsonResponse({}, 404);
+    }) as unknown as typeof fetch;
+    const result = await createHttpExecutor("http://rt", undefined, fetchFn)("demo", [
+      { role: "user", content: "hi" },
+    ]);
+    expect(sentBody).not.toHaveProperty("tools");
+    expect(sentBody).not.toHaveProperty("tool_choice");
+    expect(result.clientToolCalls).toEqual([]);
+  });
+});

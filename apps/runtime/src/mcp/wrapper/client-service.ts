@@ -150,8 +150,14 @@ export interface McpWrapperService {
    * follows the target provider's subject mode and can differ from the
    * caller's own `sub`. A transaction envelope must bind THIS subject.
    * Throws when the exchange fails (fail-closed, like the call itself).
+   * `requestParams` resolves a `urlTemplate` endpoint, whose origin selects
+   * the audience of an `audienceByOrigin` exchange.
    */
-  targetSubject?(serverName: string, subjectToken: string | undefined): Promise<string | undefined>;
+  targetSubject?(
+    serverName: string,
+    subjectToken: string | undefined,
+    requestParams?: Record<string, unknown>,
+  ): Promise<string | undefined>;
   getFilteredToolSchema(
     serverName: string,
     toolName: string,

@@ -30,6 +30,10 @@ import type {
 import type { LlmConfig } from "../types/flow.js";
 import type { LlmStreamFallbackPolicy } from "../llm-stream-fallback-policy.js";
 import { parseCurrency, type Currency } from "../util/currency.js";
+import {
+  originMatches,
+  parseOriginPattern,
+} from "../mcp/wrapper/url-template.js";
 import type { ErasureTargetConfig } from "../compliance/erasure-targets.js";
 import { SECURE_DEFAULTS } from "./defaults.js";
 
@@ -82,8 +86,20 @@ export interface TokenExchangeConfig {
   /** Environment variable name holding the exchange client secret. Never the secret itself. */
   clientSecretEnv: string;
   clientAuth?: "client_secret_post" | "client_secret_basic";
-  /** Target provider's `client_id` — the RFC 8693 `audience`. */
-  audience: string;
+  /**
+   * Target provider's `client_id` — the RFC 8693 `audience`. Required unless
+   * {@link audienceByOrigin} is set; together with it, the fallback for
+   * origins the map does not list.
+   */
+  audience?: string;
+  /**
+   * Per-endpoint audience for a `urlTemplate` server, keyed by the exact
+   * origin (`https://erp-a.example.com`) the template resolved to. Each origin
+   * gets a token minted for its own audience, so one deployment's token is not
+   * accepted by another. An origin missing from the map falls back to
+   * {@link audience} when that is set, and is refused otherwise.
+   */
+  audienceByOrigin?: Record<string, string>;
   /** Space-delimited scopes to request. Some IdPs (Authentik) mint no scope when omitted. */
   scope?: string;
   /** `requested_token_type`. Optional; defaults to access_token at the IdP. */
@@ -122,6 +138,15 @@ export interface McpServerConfig {
    * without leaking state between them.
    */
   urlTemplate?: string;
+  /**
+   * Origins a {@link urlTemplate} may resolve to — required whenever
+   * `urlTemplate` is set. Each entry is `scheme://host[:port]` or
+   * `scheme://*.host[:port]` (`*` matches one or more leading labels, never the
+   * bare `host`). A request whose resolved endpoint matches no entry is refused
+   * before any connection is made, so a caller cannot redirect its forwarded
+   * bearer, or the tool descriptions the model sees, to a host of its choice.
+   */
+  urlTemplateAllowedOrigins?: string[];
   transport: "http" | "stdio" | "sse";
   /** Explicit wire profile for HTTP. Omitted/"2025" keeps the existing SDK transport. */
   profile?: "2025" | "2026-07-28";
@@ -633,6 +658,12 @@ export interface AppConfig {
    * See `APPROVAL_LINK_CONFIRM`.
    */
   approvalLinkConfirm?: boolean;
+  /**
+   * Relay a local pre-action approval to an MCP server's own approval request
+   * for the same call; default true when unset. See
+   * `APPROVAL_RELAY_LOCAL_DECISION`.
+   */
+  approvalRelayLocalDecision?: boolean;
   approvalBaseUrl?: string;
   /** Explicit browser origins permitted to embed in-chat approval widgets. */
   approvalFrameAncestors?: string[];
@@ -908,7 +939,10 @@ export const TokenExchangeConfigSchema = z
     clientId: z.string().min(1),
     clientSecretEnv: z.string().min(1),
     clientAuth: z.enum(["client_secret_post", "client_secret_basic"]).optional(),
-    audience: z.string().min(1),
+    audience: z.string().min(1).optional(),
+    audienceByOrigin: z
+      .record(z.string().min(1), z.string().min(1))
+      .optional(),
     scope: z.string().min(1).optional(),
     requestedTokenType: z.string().min(1).optional(),
     timeoutMs: z.number().int().min(1_000).max(60_000).optional(),
@@ -917,6 +951,34 @@ export const TokenExchangeConfigSchema = z
   })
   .refine((cfg) => cfg.tokenEndpoint !== undefined || cfg.issuer !== undefined, {
     message: "tokenExchange requires either tokenEndpoint or issuer",
+  })
+  .refine(
+    (cfg) =>
+      cfg.audience !== undefined ||
+      (cfg.audienceByOrigin !== undefined &&
+        Object.keys(cfg.audienceByOrigin).length > 0),
+    { message: "tokenExchange requires audience or a non-empty audienceByOrigin" },
+  )
+  .superRefine((cfg, ctx) => {
+    for (const origin of Object.keys(cfg.audienceByOrigin ?? {})) {
+      let canonical: string | undefined;
+      try {
+        canonical = new URL(origin).origin;
+      } catch {
+        canonical = undefined;
+      }
+      if (
+        canonical === undefined ||
+        origin.includes("*") ||
+        canonical !== origin
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["audienceByOrigin", origin],
+          message: `audienceByOrigin key "${origin}" must be an exact origin such as https://erp.example.com (lower-case, no path or trailing slash, no wildcard)`,
+        });
+      }
+    }
   });
 
 /**
@@ -974,6 +1036,7 @@ export const McpServerConfigSchema = z
     name: z.string().min(1),
     url: z.string().min(1).optional(),
     urlTemplate: z.string().min(1).optional(),
+    urlTemplateAllowedOrigins: z.array(z.string().min(1)).optional(),
     transport: z.enum(["http", "stdio", "sse"]),
     profile: z.enum(["2025", "2026-07-28"]).optional(),
     protocolVersion: z.enum(["2025", "2026-07-28"]).optional(),
@@ -1014,7 +1077,61 @@ export const McpServerConfigSchema = z
       });
       return;
     }
-    if (cfg.urlTemplate === undefined) return;
+    if (cfg.urlTemplate === undefined) {
+      if (cfg.urlTemplateAllowedOrigins !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["urlTemplateAllowedOrigins"],
+          message: `MCP server "${cfg.name}" sets urlTemplateAllowedOrigins without urlTemplate`,
+        });
+      }
+      if (cfg.tokenExchange?.audienceByOrigin !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tokenExchange", "audienceByOrigin"],
+          message: `MCP server "${cfg.name}" sets tokenExchange.audienceByOrigin without urlTemplate`,
+        });
+      }
+      return;
+    }
+    const allowedOrigins = cfg.urlTemplateAllowedOrigins ?? [];
+    if (allowedOrigins.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["urlTemplateAllowedOrigins"],
+        message:
+          `MCP server "${cfg.name}" requires urlTemplateAllowedOrigins when urlTemplate is set ` +
+          '(e.g. ["https://*.example.com"]); the endpoint comes from request metadata and receives the caller\'s bearer',
+      });
+    }
+    for (const [index, pattern] of allowedOrigins.entries()) {
+      const parsed = parseOriginPattern(pattern);
+      if (typeof parsed === "string") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["urlTemplateAllowedOrigins", index],
+          message: `MCP server "${cfg.name}" urlTemplateAllowedOrigins: ${parsed}`,
+        });
+      }
+    }
+    for (const origin of Object.keys(cfg.tokenExchange?.audienceByOrigin ?? {})) {
+      let url: URL | undefined;
+      try {
+        url = new URL(origin);
+      } catch {
+        url = undefined;
+      }
+      if (
+        url !== undefined &&
+        !allowedOrigins.some((pattern) => originMatches(pattern, url))
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tokenExchange", "audienceByOrigin", origin],
+          message: `MCP server "${cfg.name}" tokenExchange.audienceByOrigin key "${origin}" is not covered by urlTemplateAllowedOrigins`,
+        });
+      }
+    }
     const tokens = cfg.urlTemplate.match(ANY_TEMPLATE_TOKEN) ?? [];
     if (tokens.length !== 1 || !URL_TEMPLATE_TOKEN.test(cfg.urlTemplate)) {
       ctx.addIssue({
@@ -2306,7 +2423,12 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
-  /** Comma-separated tool patterns (`server/tool`, wildcards allowed) that always need human approval. */
+  /**
+   * Comma-separated tool patterns that always need human approval: a full ref
+   * (`server/tool`), a bare tool name, `server/*`, `*`, or a glob with `*`
+   * (`abiliware/update_*`). Applies to `tool` nodes and to MCP tools an `llm`
+   * node calls; MCP servers that gate a call themselves are asked in addition.
+   */
   APPROVAL_REQUIRE_TOOLS: z
     .string()
     .optional()
@@ -2332,6 +2454,21 @@ export const EnvSchema = z.object({
    * one-click behaviour.
    */
   APPROVAL_LINK_CONFIRM: z
+    .string()
+    .optional()
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
+  /**
+   * A tool call in an `llm` node that matches APPROVAL_REQUIRE_TOOLS (or the
+   * node's `config.requiresApproval`) is confirmed locally before the call.
+   * When the MCP server then asks for approval of the same call as well, the
+   * local decision answers the server's first request instead of asking the
+   * same human again (default). Set false to put the server's own request
+   * (with its title, message and fields) in front of the reviewer as well.
+   */
+  APPROVAL_RELAY_LOCAL_DECISION: z
     .string()
     .optional()
     .transform(

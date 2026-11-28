@@ -21,7 +21,9 @@ import * as fs from "node:fs";
 import {
   runEval,
   formatReport,
+  type ClientToolCall,
   type EvalDataset,
+  type FlowExecutionRequest,
   type FlowExecutionResult,
   type Judge,
 } from "./eval-runner.js";
@@ -86,6 +88,30 @@ export function executionIdFromCompletionId(
   if (id.startsWith("chatcmpl-replay-")) return undefined;
   if (id.startsWith("chatcmpl-")) return id.slice("chatcmpl-".length) || undefined;
   return undefined;
+}
+
+/**
+ * The `tool_calls` of a chat completion answer as {@link ClientToolCall}s: the
+ * client tools a passthrough flow handed back. Malformed entries are skipped;
+ * arguments that are not valid JSON stay the raw string.
+ */
+export function parseClientToolCalls(raw: unknown): ClientToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  const calls: ClientToolCall[] = [];
+  for (const entry of raw) {
+    const fn = (entry as { function?: { name?: unknown; arguments?: unknown } } | null)?.function;
+    if (fn === undefined || typeof fn.name !== "string" || fn.name === "") continue;
+    let args: unknown = fn.arguments;
+    if (typeof args === "string") {
+      try {
+        args = args.trim() === "" ? {} : JSON.parse(args);
+      } catch {
+        /* keep the raw string */
+      }
+    }
+    calls.push({ name: fn.name, arguments: args ?? {} });
+  }
+  return calls;
 }
 
 /** What {@link summarizeDebugTrace} extracts from a debug trace. */
@@ -197,11 +223,17 @@ export function createHttpExecutor(
    * `toolCalled` and trace-based assertions can pass against a server.
    */
   fetchTrace = true,
-): (flow: string, messages: ChatMessage[], metadata?: Record<string, unknown>) => Promise<BenchHttpExecutionResult> {
+): (
+  flow: string,
+  messages: ChatMessage[],
+  metadata?: Record<string, unknown>,
+  request?: FlowExecutionRequest,
+) => Promise<BenchHttpExecutionResult> {
   return async (
     flow: string,
     messages: ChatMessage[],
     metadata?: Record<string, unknown>,
+    request?: FlowExecutionRequest,
   ): Promise<BenchHttpExecutionResult> => {
     const startedAt = Date.now();
     const headers: Record<string, string> = {
@@ -213,6 +245,8 @@ export function createHttpExecutor(
       messages,
       stream: false,
       ...(metadata !== undefined ? { metadata } : {}),
+      ...(request?.tools !== undefined ? { tools: request.tools } : {}),
+      ...(request?.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
     };
     const res = await fetchFn(
       `${baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
@@ -227,7 +261,10 @@ export function createHttpExecutor(
     }
     const json = (await res.json()) as {
       id?: string;
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        finish_reason?: string;
+        message?: { content?: string | null; tool_calls?: unknown };
+      }>;
       usage?: {
         prompt_tokens: number;
         completion_tokens: number;
@@ -235,8 +272,13 @@ export function createHttpExecutor(
       };
     };
     const text = json.choices?.[0]?.message?.content ?? "";
+    const responseFinishReason = json.choices?.[0]?.finish_reason;
     const result: BenchHttpExecutionResult = {
       text,
+      clientToolCalls: parseClientToolCalls(json.choices?.[0]?.message?.tool_calls),
+      ...(typeof responseFinishReason === "string"
+        ? { finishReason: responseFinishReason }
+        : {}),
       ...(json.usage !== undefined ? { usage: json.usage } : {}),
       wallMs: Date.now() - startedAt,
       cascadeEscalated: false,

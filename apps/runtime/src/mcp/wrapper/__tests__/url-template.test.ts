@@ -13,6 +13,8 @@
 import { describe, test, expect } from "bun:test";
 import {
   hasUrlTemplate,
+  originMatches,
+  parseOriginPattern,
   resolveServerUrl,
   urlTemplatePath,
 } from "../url-template.js";
@@ -20,6 +22,11 @@ import {
 const templated = {
   name: "abiliware",
   urlTemplate: "{{requestParams.deployment.url}}/mcp",
+  urlTemplateAllowedOrigins: [
+    "https://tenant.example",
+    "http://x",
+    "https://x.example",
+  ],
 };
 
 describe("hasUrlTemplate / urlTemplatePath", () => {
@@ -67,7 +74,11 @@ describe("resolveServerUrl — templated configs", () => {
   test("normalizes the resolved URL", () => {
     expect(
       resolveServerUrl(
-        { name: "s", urlTemplate: "{{requestParams.base}}" },
+        {
+          name: "s",
+          urlTemplate: "{{requestParams.base}}",
+          urlTemplateAllowedOrigins: ["https://example.com"],
+        },
         { base: "HTTPS://Example.COM" },
       ),
     ).toBe("https://example.com/");
@@ -134,5 +145,96 @@ describe("resolveServerUrl — templated configs", () => {
     expect(() => resolveServerUrl(templated, {})).toThrow(
       /abiliware.*urlTemplate/s,
     );
+  });
+});
+
+describe("resolveServerUrl — urlTemplateAllowedOrigins", () => {
+  const erp = {
+    name: "abiliware",
+    urlTemplate: "{{requestParams.deployment.url}}/mcp",
+    urlTemplateAllowedOrigins: [
+      "https://*.abillify.io",
+      "https://erp.kunde.example:8443",
+    ],
+  };
+  const at = (url: string) => resolveServerUrl(erp, { deployment: { url } });
+
+  test("a templated config without an allowlist is refused (fail closed)", () => {
+    expect(() =>
+      resolveServerUrl(
+        { name: "s", urlTemplate: "{{requestParams.u}}" },
+        { u: "https://a.example" },
+      ),
+    ).toThrow(/no urlTemplateAllowedOrigins/);
+  });
+
+  test("wildcard covers one or more leading labels", () => {
+    expect(at("https://tenant-a.abillify.io")).toBe(
+      "https://tenant-a.abillify.io/mcp",
+    );
+    expect(at("https://a.b.abillify.io")).toBe("https://a.b.abillify.io/mcp");
+  });
+
+  test("wildcard never covers the bare suffix or a look-alike host", () => {
+    expect(() => at("https://abillify.io")).toThrow(/not listed/);
+    expect(() => at("https://evilabillify.io")).toThrow(/not listed/);
+    expect(() => at("https://abillify.io.attacker.example")).toThrow(/not listed/);
+  });
+
+  test("scheme and port must match exactly", () => {
+    expect(() => at("http://tenant-a.abillify.io")).toThrow(/not listed/);
+    expect(() => at("https://tenant-a.abillify.io:8443")).toThrow(/not listed/);
+    expect(at("https://erp.kunde.example:8443")).toBe(
+      "https://erp.kunde.example:8443/mcp",
+    );
+    expect(() => at("https://erp.kunde.example")).toThrow(/not listed/);
+  });
+
+  test("host comparison ignores case", () => {
+    expect(at("https://TENANT-A.Abillify.IO")).toBe(
+      "https://tenant-a.abillify.io/mcp",
+    );
+  });
+
+  test("the error names the refused origin but not the full URL", () => {
+    expect(() => at("https://attacker.example/steal?x=1")).toThrow(
+      /origin "https:\/\/attacker\.example"/,
+    );
+  });
+});
+
+describe("parseOriginPattern / originMatches", () => {
+  test("accepts exact and wildcard origins, with and without port", () => {
+    expect(parseOriginPattern("https://erp.example.com")).toEqual({
+      protocol: "https:",
+      host: "erp.example.com",
+      wildcard: false,
+      port: "",
+    });
+    expect(parseOriginPattern("http://*.example.com:8080/")).toEqual({
+      protocol: "http:",
+      host: "example.com",
+      wildcard: true,
+      port: "8080",
+    });
+  });
+
+  test("default port in the pattern equals no port", () => {
+    expect(
+      originMatches("https://erp.example.com:443", new URL("https://erp.example.com/x")),
+    ).toBe(true);
+  });
+
+  test("rejects paths, other schemes, inner wildcards and public-suffix wildcards", () => {
+    for (const bad of [
+      "https://erp.example.com/mcp",
+      "ftp://erp.example.com",
+      "https://erp.*.example.com",
+      "https://*.com",
+      "*.example.com",
+      "https://user:pw@erp.example.com",
+    ]) {
+      expect(typeof parseOriginPattern(bad)).toBe("string");
+    }
   });
 });

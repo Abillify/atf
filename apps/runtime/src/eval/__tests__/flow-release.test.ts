@@ -685,3 +685,43 @@ describe("release receipts", () => {
     expect(verifyReleaseReceiptSignature(restored, key.publicKeyRaw)).toBe(true);
   });
 });
+
+describe("runBenchCases — client tools", () => {
+  test("passes a case's tools/toolChoice to the executor and scores clientToolCalled", async () => {
+    const tools = [{ type: "function" as const, function: { name: "switch_color_mode" } }];
+    const seen: unknown[] = [];
+    const executor: FlowExecutor = async (_flow, _messages, _metadata, request) => {
+      seen.push(request);
+      return {
+        text: "",
+        clientToolCalls:
+          request?.tools !== undefined
+            ? [{ name: "switch_color_mode", arguments: { mode: "dark" } }]
+            : [],
+      };
+    };
+    const bench: BenchFile = {
+      version: 1,
+      flow: "abiliware",
+      thresholds: { passRate: 1 },
+      cases: [
+        {
+          id: "dark",
+          messages: [{ role: "user", content: "darkmode" }],
+          tools,
+          toolChoice: "auto",
+          assert: [{ type: "clientToolCalled", name: "switch_color_mode", args: { mode: "dark" } }],
+        },
+        {
+          id: "plain",
+          messages: [{ role: "user", content: "hallo" }],
+          assert: [{ type: "clientToolCalled", name: "switch_color_mode", max: 0 }],
+        },
+      ],
+    };
+    const { report } = await runBenchCases(bench, executor, 1);
+    expect(seen).toContainEqual({ tools, toolChoice: "auto" });
+    expect(seen).toContainEqual(undefined);
+    expect(report.cases.every((c) => c.passed)).toBe(true);
+  });
+});

@@ -45,6 +45,14 @@ export interface AgentApprovalHooks {
   gate: ApprovalRegistry;
   notify?: (pending: PendingApproval) => void;
   onDecision?: (toolRef: string, approved: boolean) => void;
+  /**
+   * Answer an MCP server's `input_required` approval with the local
+   * pre-action decision a human already gave for the same call, instead of
+   * asking again (default true; APPROVAL_RELAY_LOCAL_DECISION=false asks twice).
+   */
+  relayLocalDecision?: boolean;
+  /** Called when a local decision was relayed to the server's approval request. */
+  onRelay?: (toolRef: string) => void;
 }
 
 /** Egress-DLP wiring passed to {@link buildAiTools}. */

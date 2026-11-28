@@ -70,6 +70,20 @@ export const AssertionSchema = z.discriminatedUnion("type", [
       max: z.number().int().nonnegative().max(1000).optional(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("clientToolCalled"),
+      name: z.string().min(1).max(200),
+      min: z.number().int().nonnegative().max(1000).optional(),
+      max: z.number().int().nonnegative().max(1000).optional(),
+      args: z
+        .record(z.string().min(1).max(200), z.unknown())
+        .refine((value) => Object.keys(value).length <= 20, {
+          message: "args may list at most 20 keys",
+        })
+        .optional(),
+    })
+    .strict(),
   z.object({ type: z.literal("maxTokens"), value: z.number().int().positive().finite() }).strict(),
   z
     .object({

@@ -26,7 +26,11 @@ const POLICY: CompliancePolicy = {
 };
 
 describe("buildAiTools — mcpgate approval authority", () => {
-  it("does not perform a local static or compliance-policy approval before an MCP call", async () => {
+  // Static patterns (APPROVAL_REQUIRE_TOOLS / requiresApproval) DO gate an
+  // llm node's MCP call locally now — see agent-tools-local-approval.test.ts.
+  // The compliance policy's approvalRules stay a `tool`-node mechanism: for
+  // the agent loop the MCP server remains the authority on policy approvals.
+  it("does not perform a compliance-policy approval before an MCP call", async () => {
     let calls = 0;
     const mcp: McpWrapperService = {
       connect: async () => {},
@@ -46,9 +50,9 @@ describe("buildAiTools — mcpgate approval authority", () => {
     const approval = {
       gate: {
         enabled: true,
-        globalPatterns: ["*"],
+        globalPatterns: [],
         timeoutMs: 1,
-        requires: () => true,
+        requires: () => false,
         request: async () => {
           throw new Error("local approval must not be requested");
         },
