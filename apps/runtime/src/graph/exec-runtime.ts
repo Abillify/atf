@@ -1014,6 +1014,152 @@ export function ensureValidConversationStart(
 }
 
 /**
+ * Removes tool-call parts that the AI SDK prompt builder would reject.
+ *
+ * `convertToLanguageModelPrompt` (ai@7) requires that every `tool-call` part in
+ * an assistant message is answered by a matching `tool-result` part in the
+ * tool message(s) IMMEDIATELY following it. A `tool-call` whose result is
+ * missing there — or a duplicate `tool-call` reusing an id whose result was
+ * already consumed by an earlier call — throws `AI_MissingToolResultsError`
+ * and aborts the whole request before it ever reaches the model.
+ *
+ * How a poisoned thread arises (the production regression this guards):
+ * a passthrough (client-executed) tool call is persisted with empty args
+ * (`aiResponseMessagesToBaseMessages` strips them for DLP), but the client
+ * replays the same call with its real args. The threaded-history fingerprint
+ * differs, so the whole client transcript is appended instead of just the new
+ * tool result — leaving TWO assistant messages with the SAME tool-call id and
+ * only ONE result, sitting after the second call. The id-set based
+ * `filterOrphanedToolResults` cannot see this (the id does have a result
+ * somewhere), so both calls survive into the prompt and the first one — now
+ * followed by system/user messages rather than its result — fails.
+ *
+ * This pass is the prompt-level safety net: it walks the message list, and for
+ * each assistant tool-call keeps it only when an unconsumed matching result
+ * directly follows. Each id is consumed once, so a duplicate call is dropped
+ * while the call that actually owns the result is kept. Assistant messages
+ * left with no content and tool messages left with no results are dropped.
+ *
+ * Pure and idempotent: a structurally valid prompt is returned by identity, so
+ * the cacheable prefix is untouched. Returns counts of what was removed so the
+ * caller can emit a diagnostic.
+ */
+export function removeOrphanedToolCalls(messages: ModelMessage[]): {
+  messages: ModelMessage[];
+  removedToolCalls: number;
+  removedToolResults: number;
+} {
+  const partId = (part: unknown): string | undefined => {
+    const id = (part as { toolCallId?: unknown }).toolCallId;
+    return typeof id === "string" ? id : undefined;
+  };
+  const partType = (part: unknown): string | undefined =>
+    (part as { type?: unknown }).type as string | undefined;
+
+  // Pass 1: for every assistant tool-call occurrence, decide whether it owns
+  // an unconsumed result in the contiguous run of tool messages right after
+  // it. Keyed by message index, not id alone — two assistant messages may
+  // share one id and only the occurrence adjacent to the result may survive.
+  const keptByIndex = new Map<number, Set<string>>();
+  const consumed = new Set<string>();
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m === undefined || m.role !== "assistant" || !Array.isArray(m.content))
+      continue;
+    const callIds = m.content
+      .filter((p) => partType(p) === "tool-call")
+      .map(partId)
+      .filter((id): id is string => id !== undefined);
+    if (callIds.length === 0) continue;
+    const available = new Set<string>();
+    for (let j = i + 1; j < messages.length; j++) {
+      const next = messages[j];
+      if (next === undefined || next.role !== "tool") break;
+      if (Array.isArray(next.content)) {
+        for (const p of next.content) {
+          if (partType(p) === "tool-result") {
+            const id = partId(p);
+            if (id !== undefined) available.add(id);
+          }
+        }
+      }
+    }
+    const kept = new Set<string>();
+    for (const id of callIds) {
+      if (available.has(id) && !consumed.has(id)) {
+        kept.add(id);
+        consumed.add(id);
+      }
+    }
+    if (kept.size > 0) keptByIndex.set(i, kept);
+  }
+  const keptResultIds = new Set<string>(consumed);
+
+  // Pass 2: rebuild, dropping unowned tool-call parts and orphaned results.
+  let removedToolCalls = 0;
+  let removedToolResults = 0;
+  let changed = false;
+  const out: ModelMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m === undefined) continue;
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+      const hasCall = m.content.some((p) => partType(p) === "tool-call");
+      if (!hasCall) {
+        out.push(m);
+        continue;
+      }
+      const keptIds = keptByIndex.get(i);
+      const kept = m.content.filter((p) => {
+        if (partType(p) !== "tool-call") return true;
+        const id = partId(p);
+        const keep = id !== undefined && keptIds?.has(id) === true;
+        if (!keep) removedToolCalls++;
+        return keep;
+      });
+      if (kept.length === 0) {
+        changed = true;
+        continue; // assistant left empty — drop it
+      }
+      if (kept.length !== m.content.length) {
+        changed = true;
+        out.push({ ...m, content: kept } as ModelMessage);
+      } else {
+        out.push(m);
+      }
+      continue;
+    }
+    if (m.role === "tool" && Array.isArray(m.content)) {
+      const kept = m.content.filter((p) => {
+        if (partType(p) !== "tool-result") return true;
+        const id = partId(p);
+        const keep = id !== undefined && keptResultIds.has(id);
+        if (!keep) removedToolResults++;
+        return keep;
+      });
+      if (kept.length === 0) {
+        changed = true;
+        continue; // tool message left empty — drop it
+      }
+      if (kept.length !== m.content.length) {
+        changed = true;
+        out.push({ ...m, content: kept } as ModelMessage);
+      } else {
+        out.push(m);
+      }
+      continue;
+    }
+    out.push(m);
+  }
+
+  return {
+    messages: changed ? out : messages,
+    removedToolCalls,
+    removedToolResults,
+  };
+}
+
+/**
  * Default text for the turn {@link ensureTrailingUserTurn} appends. Deliberately
  * task-neutral: it must not describe an outcome, only re-open the model's turn
  * and mark the preceding assistant content as engine-supplied context.

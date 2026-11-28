@@ -118,7 +118,7 @@ export interface RegenerateCheckpointCandidate {
  * Tool linkage is folded in so two structurally different tool interactions
  * cannot collide on their text alone.
  */
-function fingerprint(message: BaseMessage): string {
+function fingerprint(message: BaseMessage, includeArgs: boolean): string {
   const role = message._getType();
   const content =
     typeof message.content === "string"
@@ -135,7 +135,17 @@ function fingerprint(message: BaseMessage): string {
               const call = c as { name?: unknown; args?: unknown };
               return {
                 name: typeof call.name === "string" ? call.name : "",
-                args: call.args ?? null,
+                // Args are compared only in the strict key. The persisted side
+                // strips tool-call arguments for DLP
+                // (`aiResponseMessagesToBaseMessages` writes `args: {}`), while
+                // a full-history client replays the same call WITH its real
+                // arguments — a strict-only key then never matches, the whole
+                // client transcript is appended as a new tail, and the thread
+                // ends up with two assistant messages sharing one tool-call id
+                // (poisoning every later turn with AI_MissingToolResultsError).
+                // The loose key (role + text + call names) still distinguishes
+                // structurally different tool interactions by name.
+                args: includeArgs ? (call.args ?? null) : undefined,
               };
             }),
           )}`
@@ -166,16 +176,23 @@ export function reconcileThreadedHistory(
 
   // Pre-compute the persisted fingerprints once: the walk is O(n·m) in the worst
   // case, but the cursor only ever moves forward, so in practice it is linear.
-  const persistedKeys = persisted.map(fingerprint);
+  // Two keys per message: the strict one (tool-call arguments included) and a
+  // loose one without them. A match on either is enough — see
+  // {@link fingerprint} for why the strict key alone cannot match a replayed
+  // passthrough tool call.
+  const persistedStrict = persisted.map((m) => fingerprint(m, true));
+  const persistedLoose = persisted.map((m) => fingerprint(m, false));
 
   let cursor = 0;
   let lastMatchedPersistedIndex = -1;
   let firstNewIndex = incoming.length;
   for (let i = 0; i < incoming.length; i++) {
-    const target = fingerprint(incoming[i] as BaseMessage);
+    const msg = incoming[i] as BaseMessage;
+    const strict = fingerprint(msg, true);
+    const loose = fingerprint(msg, false);
     let matchedAt = -1;
-    for (let j = cursor; j < persistedKeys.length; j++) {
-      if (persistedKeys[j] === target) {
+    for (let j = cursor; j < persistedStrict.length; j++) {
+      if (persistedStrict[j] === strict || persistedLoose[j] === loose) {
         matchedAt = j;
         break;
       }
@@ -279,13 +296,22 @@ export function findRegenerateBaseCheckpoint(
   userIndex: number,
   candidates: Iterable<RegenerateCheckpointCandidate>,
 ): string | undefined {
-  const prefixKeys = persisted.slice(0, userIndex).map(fingerprint);
+  const prefixStrict = persisted
+    .slice(0, userIndex)
+    .map((m) => fingerprint(m, true));
+  const prefixLoose = persisted
+    .slice(0, userIndex)
+    .map((m) => fingerprint(m, false));
   for (const candidate of candidates) {
     if (candidate.source !== "input") continue;
     if (candidate.messages.length !== userIndex) continue;
     let matches = true;
     for (let i = 0; i < userIndex; i++) {
-      if (fingerprint(candidate.messages[i] as BaseMessage) !== prefixKeys[i]) {
+      const msg = candidate.messages[i] as BaseMessage;
+      if (
+        fingerprint(msg, true) !== prefixStrict[i] &&
+        fingerprint(msg, false) !== prefixLoose[i]
+      ) {
         matches = false;
         break;
       }
