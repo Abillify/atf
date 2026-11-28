@@ -280,3 +280,66 @@ describe("MCP wrapper — target subject for transaction envelopes", () => {
     expect(await wrapper.targetSubject?.("vectorsearch", "user-subject-token")).toBeUndefined();
   });
 });
+
+describe("MCP wrapper — tokenExchange.subjectIssuers filter", () => {
+  const b64url = (value: object): string =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const jwtWithClaims = (claims: Record<string, unknown>): string =>
+    `${b64url({ alg: "RS256", typ: "JWT" })}.${b64url(claims)}.sig`;
+
+  const filteredConfig: McpServerConfig = {
+    ...exchangeConfig,
+    tokenExchange: {
+      ...exchangeConfig.tokenExchange,
+      subjectIssuers: ["https://idp.example.com/application/o/app/"],
+    },
+  } as McpServerConfig;
+
+  test("exchanges tokens whose iss matches subjectIssuers (ignoring trailing slash)", async () => {
+    let exchanges = 0;
+    const wrapper = createMcpWrapper({
+      clientFactory,
+      tokenExchangerFactory: exchangerFor(() => {
+        exchanges += 1;
+        return { access_token: jwtWithClaims({ sub: "exchanged-sub" }), expires_in: 300 };
+      }),
+    });
+    await wrapper.connect(filteredConfig);
+
+    const authentikToken = jwtWithClaims({
+      iss: "https://idp.example.com/application/o/app",
+      sub: "authentik-user",
+    });
+    expect(await wrapper.targetSubject?.("vectorsearch", authentikToken)).toBe("exchanged-sub");
+    await wrapper.callTool("vectorsearch", "t", {}, mkCtx({ ssoToken: authentikToken }));
+
+    expect(exchanges).toBe(1);
+    const withAuth = created.filter((c) => c.authorization() !== undefined);
+    expect(withAuth).toHaveLength(1);
+    expect(withAuth[0]?.authorization()).not.toContain(authentikToken);
+  });
+
+  test("passes through tokens from non-matching trusted issuers without exchange", async () => {
+    let exchanges = 0;
+    const wrapper = createMcpWrapper({
+      clientFactory,
+      tokenExchangerFactory: exchangerFor(() => {
+        exchanges += 1;
+        return { access_token: "should-not-be-used", expires_in: 300 };
+      }),
+    });
+    await wrapper.connect(filteredConfig);
+
+    const cognitoToken = jwtWithClaims({
+      iss: "https://other-idp.example.com/pool",
+      sub: "cognito-user",
+    });
+    expect(await wrapper.targetSubject?.("vectorsearch", cognitoToken)).toBeUndefined();
+    await wrapper.callTool("vectorsearch", "t", {}, mkCtx({ ssoToken: cognitoToken }));
+
+    expect(exchanges).toBe(0);
+    const withAuth = created.filter((c) => c.authorization() !== undefined);
+    expect(withAuth).toHaveLength(1);
+    expect(withAuth[0]?.authorization()).toBe(`Bearer ${cognitoToken}`);
+  });
+});
