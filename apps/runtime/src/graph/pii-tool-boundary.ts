@@ -103,7 +103,7 @@ export function createPiiToolBoundary(
   const list = patterns.map((p) => p.trim()).filter((p) => p !== "");
   if (list.length === 0) return undefined;
   // Same pattern grammar as `APPROVAL_REQUIRE_TOOLS`: full ref, bare tool
-  // name, `server/*`, `*`.
+  // name, `server/*`, `*`, or a `*` glob (`crm/update_*`).
   const applies = (toolRef: string): boolean =>
     toolRequiresApproval(toolRef, undefined, list);
   return {

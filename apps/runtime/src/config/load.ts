@@ -489,6 +489,7 @@ export function loadConfig(): AppConfig {
     approvalRequireTools: env.APPROVAL_REQUIRE_TOOLS,
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,
     approvalLinkConfirm: env.APPROVAL_LINK_CONFIRM,
+    approvalRelayLocalDecision: env.APPROVAL_RELAY_LOCAL_DECISION,
     approvalBaseUrl: env.APPROVAL_BASE_URL,
     approvalMessageLocale: env.APPROVAL_MESSAGE_LOCALE,
     approvalFrameAncestors: env.APPROVAL_FRAME_ANCESTORS,

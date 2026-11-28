@@ -9,7 +9,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { createGraphEngine } from "../graph-engine.js";
-import { createApprovalGate } from "../approval-gate.js";
+import { approvalOwnerKey, createApprovalGate } from "../approval-gate.js";
 import {
   createExecutionTaint,
   enforceTaintApproval,
@@ -257,6 +257,31 @@ describe("enforceTaintApproval / isReadOnlyTool (pure rule)", () => {
     annotations: undefined,
     ctx: { executionId: "e1" },
   };
+
+  test("the taint approval carries the caller's owner key for /v1/approvals/mine", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const taint = createExecutionTaint();
+    taint.mark("srv/read");
+    const gate = {
+      enabled: true,
+      globalPatterns: [],
+      timeoutMs: 1000,
+      requires: () => false,
+      request: async (req: Record<string, unknown>) => {
+        seen.push(req);
+        return { approved: true };
+      },
+      resolve: () => false,
+      listPending: () => [],
+      listResolved: () => [],
+      getResolved: () => undefined,
+    };
+    await enforceTaintApproval({ taint, gate: gate as never }, {
+      ...call,
+      ctx: { executionId: "e1", ssoToken: "caller-token" },
+    });
+    expect(seen[0]?.ownerKey).toBe(approvalOwnerKey({ ssoToken: "caller-token" }));
+  });
 
   test("a clean execution never asks", async () => {
     const decision = await enforceTaintApproval(

@@ -67,7 +67,7 @@ function exchangerFor(response: () => { access_token: string; expires_in: number
         tokenEndpoint: "https://idp.example/token",
         clientId: "atf-runtime",
         clientSecret: "s",
-        audience: config.tokenExchange.audience,
+        audience: config.tokenExchange.audience ?? "unset",
       },
       { fetchImpl: fetch },
     );
@@ -219,7 +219,7 @@ describe("MCP wrapper — token exchange", () => {
                 tokenEndpoint: "https://idp.example/token",
                 clientId: "c",
                 clientSecret: "s",
-                audience: config.tokenExchange.audience,
+                audience: config.tokenExchange.audience ?? "unset",
               },
               { fetchImpl: failingFetch },
             ),
@@ -341,5 +341,83 @@ describe("MCP wrapper — tokenExchange.subjectIssuers filter", () => {
     const withAuth = created.filter((c) => c.authorization() !== undefined);
     expect(withAuth).toHaveLength(1);
     expect(withAuth[0]?.authorization()).toBe(`Bearer ${cognitoToken}`);
+  });
+});
+
+describe("MCP wrapper — tokenExchange.audienceByOrigin", () => {
+  const audiences: string[] = [];
+  const perAudienceFactory = (config: McpServerConfig): TokenExchanger | undefined => {
+    const tx = config.tokenExchange;
+    if (tx?.audience === undefined) return undefined;
+    const audience = tx.audience;
+    const fetch: FetchLike = async () => {
+      audiences.push(audience);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: `token-for-${audience}`, expires_in: 300 }),
+        text: async () => "",
+      };
+    };
+    return new TokenExchanger(
+      { tokenEndpoint: "https://idp.example/token", clientId: "c", clientSecret: "s", audience },
+      { fetchImpl: fetch },
+    );
+  };
+  const templated = (audience?: string): McpServerConfig =>
+    ({
+      name: "abiliware",
+      urlTemplate: "{{requestParams.deployment.url}}/mcp",
+      urlTemplateAllowedOrigins: ["https://*.abillify.io"],
+      transport: "http",
+      forwardAuthToken: true,
+      tokenExchange: {
+        tokenEndpoint: "https://idp.example/token",
+        clientId: "atf-token-broker",
+        clientSecretEnv: "IGNORED",
+        clientSecret: "resolved",
+        ...(audience !== undefined ? { audience } : {}),
+        audienceByOrigin: {
+          "https://a.abillify.io": "erp-a",
+          "https://b.abillify.io": "erp-b",
+        },
+      },
+    }) as McpServerConfig;
+  const at = (url: string): RequestContext =>
+    mkCtx({ requestParams: { deployment: { url } } } as Partial<RequestContext>);
+
+  beforeEach(() => {
+    audiences.length = 0;
+  });
+
+  test("each origin receives a token minted for its own audience", async () => {
+    const wrapper = createMcpWrapper({ clientFactory, tokenExchangerFactory: perAudienceFactory });
+    await wrapper.connect(templated());
+
+    await wrapper.callTool("abiliware", "t", {}, at("https://a.abillify.io"));
+    await wrapper.callTool("abiliware", "t", {}, at("https://b.abillify.io"));
+
+    expect(audiences).toEqual(["erp-a", "erp-b"]);
+    const bearers = created.map((c) => c.authorization()).filter((a) => a !== undefined);
+    expect(bearers).toEqual(["Bearer token-for-erp-a", "Bearer token-for-erp-b"]);
+  });
+
+  test("an unmapped origin without fallback audience fails closed", async () => {
+    const wrapper = createMcpWrapper({ clientFactory, tokenExchangerFactory: perAudienceFactory });
+    await wrapper.connect(templated());
+
+    await expect(
+      wrapper.callTool("abiliware", "t", {}, at("https://c.abillify.io")),
+    ).rejects.toThrow(/no audience configured for origin https:\/\/c\.abillify\.io/);
+    expect(audiences).toEqual([]);
+    expect(created.some((c) => c.authorization()?.includes("user-subject-token"))).toBe(false);
+  });
+
+  test("an unmapped origin uses the fallback audience when one is set", async () => {
+    const wrapper = createMcpWrapper({ clientFactory, tokenExchangerFactory: perAudienceFactory });
+    await wrapper.connect(templated("erp-default"));
+
+    await wrapper.callTool("abiliware", "t", {}, at("https://c.abillify.io"));
+    expect(audiences).toEqual(["erp-default"]);
   });
 });

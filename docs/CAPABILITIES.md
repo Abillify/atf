@@ -387,8 +387,15 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
 Consequential actions can require a human decision before they execute.
 
 - **Configurable scope.** Approval requirements are set per flow step or globally, with
-  wildcard patterns such as every write tool of a given system
-  (`APPROVAL_GATE_ENABLED`, `APPROVAL_REQUIRE_TOOLS`).
+  wildcard and glob patterns such as every write tool of a given system (`crm/*`,
+  `crm/update_*`) (`APPROVAL_GATE_ENABLED`, `APPROVAL_REQUIRE_TOOLS`). They apply to `tool`
+  nodes and to the MCP tools an `llm` node calls.
+- **Server-driven and local approval together.** An MCP 2026 server can ask for approval
+  itself (`input_required`); a tool that also matches the local patterns is confirmed before
+  the call, so a server that forgets to gate a write tool cannot act unconfirmed. When both
+  ask for the same call, the local decision answers the server's first request instead of
+  asking the reviewer twice (`APPROVAL_RELAY_LOCAL_DECISION`, default on;
+  `aiperator_approvals_relayed_total`).
 - **Pause instead of execute.** When the model wants a tool that requires approval, execution
   pauses and reports a pending approval with the tool name, the tenant, and the planned
   arguments. Credentials are never included in that payload.
@@ -601,9 +608,12 @@ the security value of the control depends on knowing which paths it does not cov
   Studio test runs, each with a reference answer, and removed again (`DELETE /eval/cases/:id`).
 - **Structured eval assertions.** Eval cases and matrix tasks accept `contains`, `regex`,
   `jsonPath` (restricted `$.a.b[0]` syntax), `toolCalled` (min/max, `server/tool` or bare
-  name), `maxTokens`, `finishReason` (`equals`/`notEquals`) and `noDiagnostic` (e.g.
-  `loop_blocked`, which checks the execution trace); a cell passes when its reference score
-  and every assertion do.
+  name), `clientToolCalled` (a client-declared tool the answer handed back as `tool_calls`,
+  with optional argument subset), `maxTokens`, `finishReason` (`equals`/`notEquals`) and
+  `noDiagnostic` (e.g. `loop_blocked`, which checks the execution trace); a cell passes when
+  its reference score and every assertion do. Bench cases can declare the client's `tools`
+  and `toolChoice`, so passthrough flows — where a frontend executes UI tools itself — are
+  testable like any other flow.
 - **Evidence-bound flow releases.** `bun run scripts/cli.ts flows release` (in `apps/runtime`) gates a flow release on a versioned
   bench file (`flows/bench/<flowId>.bench.yaml`): recorded conversations with assertions,
   a required pass rate plus optional thresholds (p50 latency, p50 tokens, cascade escalation

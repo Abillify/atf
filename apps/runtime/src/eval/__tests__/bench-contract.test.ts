@@ -203,3 +203,47 @@ describe("BenchFileSchema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("bench contract — client tools", () => {
+  const base = {
+    version: 1,
+    flow: "abiliware",
+    thresholds: { passRate: 1 },
+  };
+  const tool = {
+    type: "function",
+    function: { name: "navigate_to_page", parameters: { type: "object" } },
+  };
+
+  test("accepts client tools, tool_choice and a clientToolCalled assertion", () => {
+    const parsed = BenchFileSchema.safeParse({
+      ...base,
+      cases: [
+        {
+          id: "nav",
+          messages: [{ role: "user", content: "zeig mir die Buchungen" }],
+          tools: [tool],
+          toolChoice: "auto",
+          assert: [
+            { type: "clientToolCalled", name: "navigate_to_page", args: { page: "transaction" } },
+            { type: "toolCalled", name: "abiliware/update_record", max: 0 },
+          ],
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  test("rejects tool_choice without tools and duplicate tool names", () => {
+    const noTools = BenchFileSchema.safeParse({
+      ...base,
+      cases: [{ id: "a", messages: [{ role: "user", content: "x" }], toolChoice: "auto" }],
+    });
+    expect(noTools.success).toBe(false);
+    const dup = BenchFileSchema.safeParse({
+      ...base,
+      cases: [{ id: "a", messages: [{ role: "user", content: "x" }], tools: [tool, tool] }],
+    });
+    expect(dup.success).toBe(false);
+  });
+});

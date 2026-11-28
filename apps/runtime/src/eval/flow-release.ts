@@ -405,13 +405,15 @@ export async function runBenchCases(
     messages: c.messages,
     assert: c.assert,
     metadata: c.metadata,
+    ...(c.tools !== undefined ? { tools: c.tools } : {}),
+    ...(c.toolChoice !== undefined ? { toolChoice: c.toolChoice } : {}),
   }));
 
   const tokensByMessages = new Map<unknown, number | undefined>();
   const revisionByMessages = new Map<unknown, ObservedRevision>();
   const extrasByMessages = new Map<unknown, BenchExecutionExtras>();
-  const wrapped: FlowExecutor = async (flowId, messages, metadata) => {
-    const result = await executor(flowId, messages, metadata);
+  const wrapped: FlowExecutor = async (flowId, messages, metadata, request) => {
+    const result = await executor(flowId, messages, metadata, request);
     tokensByMessages.set(messages, totalTokensOf(result.usage));
     revisionByMessages.set(messages, {
       ...(result.flowVersion !== undefined ? { flowVersion: result.flowVersion } : {}),

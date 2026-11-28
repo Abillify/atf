@@ -34,7 +34,11 @@ import type {
 } from "../types/flow.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../types/monitoring.js";
-import { approvalOwnerKey } from "./approval-gate.js";
+import {
+  approvalOwnerKey,
+  approvalRequestedBy,
+  type ApprovalDecision,
+} from "./approval-gate.js";
 import { applyStickyArgs, resolveForcedToolArgs } from "./tool-args-merge.js";
 import { getPiiContextScope, getPiiToolBoundary } from "./pii-tool-boundary.js";
 import { hasFindings } from "./output-guardrails.js";
@@ -472,10 +476,15 @@ export async function buildAiTools(
     const key = uniqueToolKey(tools, serverName, bareName);
     keyByRef[toolRef] = key;
 
-    // Approval is intentionally server-driven for MCP actions. mcpgate evaluates
-    // its GovernancePolicy and, only when needed, responds with the opaque
-    // `input_required` continuation handled below. Aiperator never creates a
-    // second pre-action approval decision for the same tool call.
+    // Approval is server-driven for MCP actions first: mcpgate (or any MCP
+    // 2026 server) evaluates its own policy and, only when needed, responds
+    // with the opaque `input_required` continuation handled below. A tool
+    // that ALSO matches APPROVAL_REQUIRE_TOOLS or the node's
+    // `config.requiresApproval` is confirmed locally before the call as a
+    // second line of defence, so a server that forgets to gate a write tool
+    // cannot act unconfirmed. When that server then asks as well, the local
+    // decision is relayed once (APPROVAL_RELAY_LOCAL_DECISION, default on)
+    // instead of asking the same human twice for the same call.
 
     // `ToolSet`'s value union requires INPUT/OUTPUT to be `any`/`never` (it is
     // a heterogeneous record of differently-shaped tools), so the concretely
@@ -618,6 +627,38 @@ export async function buildAiTools(
             };
           }
         }
+        // Local pre-action approval (see the comment above the tool
+        // definition). Runs after the egress scrub, so the reviewer sees the
+        // arguments that would leave the platform.
+        let localApproval: ApprovalDecision | undefined;
+        if (approval?.gate.requires(toolRef, node.config) === true) {
+          const ownerKey = approvalOwnerKey(ctx);
+          const requestedBy = approvalRequestedBy(ctx);
+          const decision = await approval.gate.request(
+            {
+              executionId: ctx.executionId,
+              nodeId: node.id,
+              tool: toolRef,
+              args: outboundArgs,
+              ...(ctx.clientId !== undefined ? { tenantId: ctx.clientId } : {}),
+              ...(requestedBy !== undefined ? { requestedBy } : {}),
+              ...(ownerKey !== undefined ? { ownerKey } : {}),
+            },
+            approval.notify,
+          );
+          approval.onDecision?.(toolRef, decision.approved);
+          if (!decision.approved) {
+            return {
+              isError: true,
+              error: "approval_denied",
+              message:
+                decision.reason ??
+                "The requested action was not approved by a human reviewer.",
+              ...(decision.timedOut === true ? { timedOut: true } : {}),
+            };
+          }
+          localApproval = decision;
+        }
         const contextualized = await enrichToolArguments(
           mcpWrapper,
           toolContext,
@@ -702,7 +743,11 @@ export async function buildAiTools(
           // Token-exchange peers authenticate the EXCHANGED subject, not the
           // caller's login `sub`; the envelope must bind the same identity.
           const targetUserId = transactionEnabled
-            ? await mcpWrapper.targetSubject?.(serverName, ctx.ssoToken)
+            ? await mcpWrapper.targetSubject?.(
+                serverName,
+                ctx.ssoToken,
+                ctx.requestParams,
+              )
             : undefined;
           const transactionInvocation = transactionEnabled
             ? await getTransactionOrchestrator()?.begin(
@@ -835,6 +880,11 @@ export async function buildAiTools(
             // after the original call. Aiperator does not make a preceding local
             // policy decision and never substitutes for the server's opaque
             // requestState decision.
+            let relayableApproval =
+              localApproval !== undefined &&
+              approval?.relayLocalDecision !== false
+                ? localApproval
+                : undefined;
             while (result.resultType === "input_required") {
               await settleJournal(async () =>
                 journal?.journal.markAwaitingApproval?.({
@@ -882,7 +932,15 @@ export async function buildAiTools(
                   )
                 : undefined;
               const ownerKey = approvalOwnerKey(ctx);
-              const decision = await approval.gate.request(
+              // A human already approved exactly this call locally: answer the
+              // server's first request with that decision (once) instead of
+              // asking again. Later rounds of the same call ask normally.
+              const serverRequestExpired =
+                Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+              const relayed = serverRequestExpired ? undefined : relayableApproval;
+              relayableApproval = undefined;
+              if (relayed !== undefined) approval.onRelay?.(toolRef);
+              const decision = relayed ?? await approval.gate.request(
                 {
                   executionId: ctx.executionId,
                   nodeId: node.id,
@@ -911,7 +969,9 @@ export async function buildAiTools(
                 },
                 approval.notify,
               );
-              approval.onDecision?.(toolRef, decision.approved);
+              if (relayed === undefined) {
+                approval.onDecision?.(toolRef, decision.approved);
+              }
               let resumed: Awaited<
                 ReturnType<NonNullable<typeof result.resolveApproval>>
               >;

@@ -171,6 +171,69 @@ On the receiving side, an mcpgate `oauth.actorPolicy` can require delegation
 (`allowedActorSubjects`). The actor is recorded on every `tool_call` monitor event for audit even
 when no policy gates on it.
 
+### Only some issuers: `subjectIssuers`
+
+A Runtime that trusts several issuers (`JWT_ADDITIONAL_ISSUERS`) can receive caller tokens that the
+exchanging IdP does not know — an exchange then fails, and so would the call. List the issuers whose
+tokens should be exchanged in `tokenExchange.subjectIssuers`; a token from any other trusted issuer
+is forwarded unchanged (passthrough), so the server must then trust that issuer itself. Matching
+compares the decoded `iss` with trailing slashes ignored. Omitting the list keeps the default:
+every caller token is exchanged.
+
+```yaml
+  tokenExchange:
+    tokenEndpoint: https://id.example/application/o/token/
+    clientId: atf-token-broker
+    clientSecretEnv: TOKEN_EXCHANGE_CLIENT_SECRET
+    audience: atf-vectorsearch
+    subjectIssuers: ["https://id.example/application/o/atf/"]   # exchange only these
+```
+
+## Per-request endpoints: `urlTemplate`
+
+One MCP server entry can front many peers — one per customer deployment of the same application —
+when the endpoint comes from the request instead of the configuration:
+
+```yaml
+- name: erp
+  urlTemplate: "{{requestParams.deployment.url}}/mcp"   # exactly one requestParams placeholder
+  urlTemplateAllowedOrigins:                            # required with urlTemplate
+    - "https://*.erp.example"                           # one or more labels, never erp.example itself
+    - "https://erp.customer.example:8443"               # scheme, host and port must match exactly
+  transport: http
+  profile: "2026-07-28"
+  forwardAuthToken: true                                # required with urlTemplate
+```
+
+`requestParams` is the `metadata` object of the chat request. The resolved URL must be an absolute
+`http(s)` URL without credentials **and** its origin must match an entry of
+`urlTemplateAllowedOrigins`; anything else fails the call before a connection is made, never falling
+back to another peer. The allowlist is what keeps a caller from naming a host of its own: that host
+would receive the caller's forwarded bearer and could hand the model arbitrary tool descriptions.
+Sessions, schema and capability caches are keyed by `(caller token, resolved URL)`, so two
+deployments never share state.
+
+### One audience per deployment: `tokenExchange.audienceByOrigin`
+
+With plain passthrough every deployment behind the template receives the same caller token, so a
+token captured by one deployment is accepted by the others. `audienceByOrigin` exchanges the caller
+token for a token minted for the resolved deployment only:
+
+```yaml
+  tokenExchange:
+    tokenEndpoint: https://id.example/application/o/token/
+    clientId: atf-token-broker
+    clientSecretEnv: TOKEN_EXCHANGE_CLIENT_SECRET
+    audienceByOrigin:                      # exact origins, each covered by urlTemplateAllowedOrigins
+      "https://acme.erp.example": erp-acme
+      "https://globex.erp.example": erp-globex
+    # audience: erp-shared                 # optional fallback for origins the map does not list
+```
+
+An origin missing from the map uses `audience` when it is set and is refused otherwise
+(fail-closed). Each audience gets its own exchanger and token cache; `subjectIssuers` applies as
+above.
+
 ## Security and operations
 
 1. For tenant-scoped or user-scoped resources and evidence, always convey the caller's identity

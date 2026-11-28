@@ -89,6 +89,7 @@ function mkTemplatedConfig(over: Partial<McpServerConfig> = {}): McpServerConfig
     name: "abiliware",
     url: undefined,
     urlTemplate: TEMPLATE,
+    urlTemplateAllowedOrigins: ["https://tenant-a.example", "https://tenant-b.example", "https://x.example"],
     transport: "http",
     forwardAuthToken: true,
     ...over,

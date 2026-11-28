@@ -16,7 +16,11 @@
  * write tool (fail safe, the same rule shadow and replay runs apply).
  */
 
-import type { ApprovalRegistry, PendingApproval } from "./approval-gate.js";
+import {
+  approvalOwnerKey,
+  type ApprovalRegistry,
+  type PendingApproval,
+} from "./approval-gate.js";
 import type { ExecRuntime } from "./exec-runtime.js";
 import type { RequestContext } from "../types/monitoring.js";
 import type { NodeDiagnosticInput } from "../types/debug-trace.js";
@@ -129,7 +133,8 @@ export async function enforceTaintApproval(
     ctx: Pick<
       RequestContext,
       "executionId" | "clientId" | "userName" | "userEmail" | "userId"
-    >;
+    > &
+      Partial<Pick<RequestContext, "ssoToken">>;
   },
 ): Promise<TaintDecision> {
   if (!guard.taint.tainted || isReadOnlyTool(call.annotations)) {
@@ -151,6 +156,7 @@ export async function enforceTaintApproval(
   }
   const requestedBy =
     call.ctx.userName ?? call.ctx.userEmail ?? call.ctx.userId;
+  const ownerKey = approvalOwnerKey(call.ctx);
   const decision = await guard.gate.request(
     {
       executionId: call.ctx.executionId,
@@ -167,6 +173,10 @@ export async function enforceTaintApproval(
       ...(requestedBy !== undefined && requestedBy.trim() !== ""
         ? { requestedBy }
         : {}),
+      // Without the owner key the caller-scoped inbox (`/v1/approvals/mine`)
+      // never shows this approval, and an embedded chat that polls it can only
+      // watch it time out.
+      ...(ownerKey !== undefined ? { ownerKey } : {}),
     },
     guard.notify,
   );

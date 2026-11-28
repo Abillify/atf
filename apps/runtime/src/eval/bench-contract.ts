@@ -37,15 +37,62 @@ const BenchMessageSchema = z
   })
   .strict();
 
+/** Most client tools one bench case may declare. */
+export const MAX_CLIENT_TOOLS_PER_BENCH_CASE = 64;
+
+/**
+ * One OpenAI function tool the caller declares. The Runtime passes such tools
+ * through to the model and hands their calls back unexecuted (the client runs
+ * them), so a bench case for a passthrough flow must declare them as the real
+ * client does — otherwise the model never sees them.
+ */
+const BenchClientToolSchema = z
+  .object({
+    type: z.literal("function"),
+    function: z
+      .object({
+        name: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/u, "tool names use letters, digits, _ and -"),
+        description: z.string().max(4_000).optional(),
+        parameters: z.record(z.string(), z.unknown()).optional(),
+        strict: z.boolean().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const BenchCaseSchema = z
   .object({
     id: z.string().min(1).max(200),
     messages: z.array(BenchMessageSchema).min(1).max(50),
     /** Extra keys merged into the chat request (user, metadata, ...). */
     metadata: z.record(z.string(), z.unknown()).optional(),
+    /** Client-declared tools sent as the request's `tools` (passthrough flows). */
+    tools: z.array(BenchClientToolSchema).max(MAX_CLIENT_TOOLS_PER_BENCH_CASE).optional(),
+    /** The request's `tool_choice`; needs `tools`. */
+    toolChoice: z
+      .union([
+        z.enum(["auto", "none", "required"]),
+        z
+          .object({
+            type: z.literal("function"),
+            function: z.object({ name: z.string().min(1).max(64) }).strict(),
+          })
+          .strict(),
+      ])
+      .optional(),
     assert: z.array(AssertionSchema).max(MAX_ASSERTIONS_PER_BENCH_CASE).optional(),
   })
-  .strict();
+  .strict()
+  .refine((c) => c.toolChoice === undefined || c.tools !== undefined, {
+    message: "toolChoice needs tools",
+    path: ["toolChoice"],
+  })
+  .refine(
+    (c) =>
+      c.tools === undefined ||
+      new Set(c.tools.map((t) => t.function.name)).size === c.tools.length,
+    { message: "client tool names must be unique", path: ["tools"] },
+  );
 
 const BenchThresholdsSchema = z
   .object({

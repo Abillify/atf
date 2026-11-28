@@ -122,6 +122,12 @@ const defaultTokenExchangerFactory = (
 ): TokenExchanger | undefined => {
   const tx = config.tokenExchange;
   if (tx === undefined) return undefined;
+  if (tx.audience === undefined) {
+    // An `audienceByOrigin` server gets one exchanger per resolved audience
+    // (see McpWrapper._exchangerFor), each built from a config copy that
+    // carries that audience; a base exchanger without one is never built.
+    return undefined;
+  }
   if (tx.clientSecret === undefined || tx.clientSecret === "") {
     throw new Error(
       `MCP server ${config.name} tokenExchange.clientSecret was not resolved before wrapper construction`,
@@ -315,6 +321,12 @@ export class McpWrapper implements McpWrapperService {
    * {@link bearerExpiries}) or was rejected with 401 is rebuilt in place.
    */
   private readonly tokenExchangers = new Map<string, TokenExchanger>();
+  /**
+   * Exchangers of `tokenExchange.audienceByOrigin` servers, one per
+   * (server, audience), keyed `${server}\u0000${audience}` and built lazily on
+   * the first request that resolves to an origin with that audience.
+   */
+  private readonly audienceExchangers = new Map<string, TokenExchanger>();
 
   /** Builds a {@link TokenExchanger} for a server config (injectable for tests). */
   private readonly tokenExchangerFactory: (
@@ -449,10 +461,7 @@ export class McpWrapper implements McpWrapperService {
   async connect(config: McpServerConfig): Promise<void> {
     // Build (or drop) the per-server token exchanger before anything else, so a
     // reconnect that changed the auth config takes effect immediately.
-    const exchanger = this.tokenExchangerFactory(config);
-    if (exchanger !== undefined)
-      this.tokenExchangers.set(config.name, exchanger);
-    else this.tokenExchangers.delete(config.name);
+    this._installTokenExchanger(config);
 
     if (config.allowAnonymous === true && config.forwardAuthToken === true) {
       throw new Error(
@@ -524,6 +533,79 @@ export class McpWrapper implements McpWrapperService {
     return this.instructions.get(serverName);
   }
 
+  /**
+   * (Re)builds the token exchanger(s) of a server from its config. A plain
+   * `tokenExchange` gets one exchanger for its `audience`; an
+   * `audienceByOrigin` server drops every cached per-audience exchanger so a
+   * changed map takes effect, and builds them again on demand.
+   */
+  private _installTokenExchanger(config: McpServerConfig): void {
+    const prefix = `${config.name}\u0000`;
+    for (const key of this.audienceExchangers.keys()) {
+      if (key.startsWith(prefix)) this.audienceExchangers.delete(key);
+    }
+    if (config.tokenExchange?.audienceByOrigin !== undefined) {
+      this.tokenExchangers.delete(config.name);
+      return;
+    }
+    const exchanger = this.tokenExchangerFactory(config);
+    if (exchanger !== undefined)
+      this.tokenExchangers.set(config.name, exchanger);
+    else this.tokenExchangers.delete(config.name);
+  }
+
+  /** True when the server exchanges caller tokens at all (any audience mode). */
+  private _hasTokenExchange(serverName: string): boolean {
+    return (
+      this.tokenExchangers.has(serverName) ||
+      this.configs.get(serverName)?.tokenExchange?.audienceByOrigin !== undefined
+    );
+  }
+
+  /**
+   * The exchanger for one request. For an `audienceByOrigin` server the
+   * audience is looked up by the origin of the request-resolved endpoint
+   * (falling back to `tokenExchange.audience`); an origin with neither throws,
+   * fail-closed, instead of minting a token for some other deployment.
+   */
+  private _exchangerFor(
+    serverName: string,
+    resolvedUrl: string | undefined,
+  ): TokenExchanger | undefined {
+    const config = this.configs.get(serverName);
+    const tx = config?.tokenExchange;
+    if (config === undefined || tx?.audienceByOrigin === undefined) {
+      return this.tokenExchangers.get(serverName);
+    }
+    if (resolvedUrl === undefined) {
+      throw new Error(
+        `Token exchange for MCP server ${serverName} needs the request-resolved endpoint to pick an audience`,
+      );
+    }
+    const origin = new URL(resolvedUrl).origin;
+    const audience = tx.audienceByOrigin[origin] ?? tx.audience;
+    if (audience === undefined) {
+      throw new Error(
+        `Token exchange for MCP server ${serverName}: no audience configured for origin ${origin} ` +
+          "(tokenExchange.audienceByOrigin has no entry and no fallback audience is set)",
+      );
+    }
+    const key = `${serverName}\u0000${audience}`;
+    const cached = this.audienceExchangers.get(key);
+    if (cached !== undefined) return cached;
+    const built = this.tokenExchangerFactory({
+      ...config,
+      tokenExchange: { ...tx, audience },
+    });
+    if (built === undefined) {
+      throw new Error(
+        `Token exchange for MCP server ${serverName}: no exchanger could be built for audience ${audience}`,
+      );
+    }
+    this.audienceExchangers.set(key, built);
+    return built;
+  }
+
   forwardsCallerSession(serverName: string): boolean {
     const config = this.configs.get(serverName);
     return config !== undefined && config.tokenExchange === undefined;
@@ -532,14 +614,24 @@ export class McpWrapper implements McpWrapperService {
   async targetSubject(
     serverName: string,
     subjectToken: string | undefined,
+    requestParams?: Record<string, unknown>,
   ): Promise<string | undefined> {
-    if (!this.tokenExchangers.has(serverName)) return undefined;
+    if (!this._hasTokenExchange(serverName)) return undefined;
     if (subjectToken === undefined || subjectToken === "") return undefined;
     if (!this._shouldExchangeSubjectToken(serverName, subjectToken)) return undefined;
+    const config = this.configs.get(serverName);
+    const resolvedUrl =
+      config !== undefined
+        ? this._resolveEndpoint(config, requestParams)
+        : undefined;
     // Same cached exchange the subsequent callTool uses — no extra IdP round
     // trip. The payload is only read (not trusted) to mirror the subject the
     // peer will verify itself; the peer still validates signature and claims.
-    const { bearer } = await this._resolveBearer(serverName, subjectToken);
+    const { bearer } = await this._resolveBearer(
+      serverName,
+      subjectToken,
+      resolvedUrl,
+    );
     if (bearer === undefined) return undefined;
     try {
       const sub = decodeJwt(bearer).sub;
@@ -609,16 +701,18 @@ export class McpWrapper implements McpWrapperService {
   private async _resolveBearer(
     serverName: string,
     subjectToken: string | undefined,
+    resolvedUrl?: string,
   ): Promise<{ bearer: string | undefined; expiresAt?: number }> {
-    const exchanger = this.tokenExchangers.get(serverName);
     if (
-      exchanger === undefined ||
+      !this._hasTokenExchange(serverName) ||
       subjectToken === undefined ||
       subjectToken === "" ||
       !this._shouldExchangeSubjectToken(serverName, subjectToken)
     ) {
       return { bearer: subjectToken };
     }
+    const exchanger = this._exchangerFor(serverName, resolvedUrl);
+    if (exchanger === undefined) return { bearer: subjectToken };
     const result = await exchanger.exchange(subjectToken);
     if (!result.ok) {
       throw new Error(
@@ -639,9 +733,15 @@ export class McpWrapper implements McpWrapperService {
     serverName: string,
     err: unknown,
     subjectToken?: string,
+    resolvedUrl?: string,
   ): boolean {
     if (isSessionExpiredError(err) || isConnectionError(err)) return true;
-    const exchanger = this.tokenExchangers.get(serverName);
+    let exchanger: TokenExchanger | undefined;
+    try {
+      exchanger = this._exchangerFor(serverName, resolvedUrl);
+    } catch {
+      exchanger = undefined;
+    }
     if (
       exchanger !== undefined &&
       subjectToken !== undefined &&
@@ -667,7 +767,12 @@ export class McpWrapper implements McpWrapperService {
     error: unknown,
     resolvedUrl?: string,
   ): Promise<void> {
-    const exchanger = this.tokenExchangers.get(serverName);
+    let exchanger: TokenExchanger | undefined;
+    try {
+      exchanger = this._exchangerFor(serverName, resolvedUrl);
+    } catch {
+      exchanger = undefined;
+    }
     if (
       exchanger === undefined ||
       client === undefined ||
@@ -743,6 +848,7 @@ export class McpWrapper implements McpWrapperService {
     const { bearer, expiresAt: bearerExpiresAt } = await this._resolveBearer(
       config.name,
       authToken,
+      resolvedUrl,
     );
     // Remember when an exchanged bearer lapses, so the session carrying it is
     // rebuilt before use instead of failing every call with 401.
@@ -865,10 +971,7 @@ export class McpWrapper implements McpWrapperService {
     const oldClient = this.clients.get(serverName);
 
     // Keep parity with connect(): a reconnect may carry updated auth config.
-    const exchanger = this.tokenExchangerFactory(config);
-    if (exchanger !== undefined)
-      this.tokenExchangers.set(config.name, exchanger);
-    else this.tokenExchangers.delete(config.name);
+    this._installTokenExchanger(config);
 
     const hasBootstrapAuthorization = Object.entries(config.headers ?? {}).some(
       ([name, value]) =>
@@ -1022,7 +1125,7 @@ export class McpWrapper implements McpWrapperService {
       const tools = await listAllTools(session.client);
       return tools.map((tool) => tool.name);
     } catch (err) {
-      if (this._shouldRecover(serverName, err, session.authToken)) {
+      if (this._shouldRecover(serverName, err, session.authToken, resolvedUrl)) {
         await this._recoverClient(
           serverName,
           session.client,
@@ -1500,7 +1603,7 @@ export class McpWrapper implements McpWrapperService {
     try {
       return await doFetch();
     } catch (err) {
-      if (this._shouldRecover(serverName, err, opts?.authToken)) {
+      if (this._shouldRecover(serverName, err, opts?.authToken, resolvedUrl)) {
         const session = await this._getDiscoverySession(
           serverName,
           opts?.authToken,
@@ -2002,6 +2105,7 @@ export class McpWrapper implements McpWrapperService {
               serverName,
               error,
               forwardAuth ? ctx.ssoToken : undefined,
+              resolvedUrl,
             )
           ) {
             return;

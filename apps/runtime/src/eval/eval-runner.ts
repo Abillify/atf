@@ -27,6 +27,21 @@ export type Assertion =
    * without them the assertion fails rather than passes by default.
    */
   | { type: "toolCalled"; name: string; min?: number; max?: number }
+  /**
+   * The answer handed client-declared tool `name` (from the case's `tools`)
+   * back to the caller as a `tool_calls` entry — the passthrough a frontend
+   * executes itself — at least `min` (default 1) and at most `max` times.
+   * With `args`, at least `min` of those calls must carry every listed
+   * top-level argument with a deep-equal value. `max: 0` asserts the tool was
+   * NOT requested. Fails when the executor reports no client tool calls.
+   */
+  | {
+      type: "clientToolCalled";
+      name: string;
+      min?: number;
+      max?: number;
+      args?: Record<string, unknown>;
+    }
   /** Total tokens (prompt + completion) of the run stay at or below `value`. */
   | { type: "maxTokens"; value: number }
   /**
@@ -51,6 +66,23 @@ export interface EvalCase {
   assert?: Assertion[];
   expected?: string;
   metadata?: Record<string, unknown>;
+  /** OpenAI `tools` the caller declares (client-executed, passed through). */
+  tools?: unknown[];
+  /** OpenAI `tool_choice` sent with `tools`. */
+  toolChoice?: unknown;
+}
+
+/** One `tool_calls` entry of the answer: a client tool the flow handed back. */
+export interface ClientToolCall {
+  name: string;
+  /** Parsed `function.arguments`; the raw string when it is not valid JSON. */
+  arguments: unknown;
+}
+
+/** Request fields beyond messages/metadata that an executor sends along. */
+export interface FlowExecutionRequest {
+  tools?: unknown[];
+  toolChoice?: unknown;
 }
 
 export interface EvalDataset {
@@ -66,6 +98,8 @@ export interface FlowExecutionResult {
   cost?: number;
   /** Tool refs in call order (`server/tool`), for `toolCalled` assertions. */
   toolCalls?: string[];
+  /** Client tools the answer handed back (`tool_calls`), for `clientToolCalled`. */
+  clientToolCalls?: ClientToolCall[];
   /** Finish reason of the execution (from the debug trace), when reported. */
   finishReason?: string;
   /** Diagnostic codes recorded during the execution, in trace order. */
@@ -80,6 +114,7 @@ export type FlowExecutor = (
   flowId: string,
   messages: EvalMessage[],
   metadata?: Record<string, unknown>,
+  request?: FlowExecutionRequest,
 ) => Promise<FlowExecutionResult>;
 
 export interface JudgeInput {
@@ -144,6 +179,7 @@ export interface AssertionContext {
   latencyMs: number;
   cost: number;
   toolCalls?: readonly string[];
+  clientToolCalls?: readonly ClientToolCall[];
   totalTokens?: number;
   finishReason?: string;
   diagnostics?: readonly string[];
@@ -282,6 +318,29 @@ export function evaluateAssertion(
       }
       return pass();
     }
+    case "clientToolCalled": {
+      if (ctx.clientToolCalls === undefined) {
+        return fail("the executor did not report client tool calls, so clientToolCalled cannot be checked");
+      }
+      const named = ctx.clientToolCalls.filter((call) => call.name === assertion.name);
+      const expectedArgs = assertion.args;
+      const matching =
+        expectedArgs === undefined
+          ? named
+          : named.filter((call) => argsInclude(call.arguments, expectedArgs));
+      const min = assertion.min ?? (assertion.max === 0 ? 0 : 1);
+      if (matching.length < min) {
+        const seen = ctx.clientToolCalls.map((call) => call.name).join(", ") || "none";
+        return fail(
+          `${assertion.name}${expectedArgs !== undefined ? ` with ${JSON.stringify(expectedArgs)}` : ""} ` +
+            `was requested ${matching.length}x, expected at least ${min} (client tool calls: ${seen})`,
+        );
+      }
+      if (assertion.max !== undefined && matching.length > assertion.max) {
+        return fail(`${assertion.name} was requested ${matching.length}x, expected at most ${assertion.max}`);
+      }
+      return pass();
+    }
     case "maxTokens": {
       if (ctx.totalTokens === undefined) {
         return fail("the executor did not report token usage, so maxTokens cannot be checked");
@@ -324,6 +383,13 @@ function totalTokensOf(usage: TokenUsage | undefined): number | undefined {
   const parts = [usage.prompt_tokens, usage.completion_tokens].filter((n): n is number => typeof n === "number");
   return parts.length > 0 ? parts.reduce((a, b) => a + b, 0) : undefined;
 }
+/** Every key of `expected` is present in `actual` (an object) with a deep-equal value. */
+function argsInclude(actual: unknown, expected: Record<string, unknown>): boolean {
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) return false;
+  const record = actual as Record<string, unknown>;
+  return Object.entries(expected).every(([key, value]) => jsonEqual(record[key], value));
+}
+
 function clampScore(score: number): number {
   return Math.max(0, Math.min(1, score));
 }
@@ -336,7 +402,16 @@ async function runCase(
   const started = Date.now();
   const flow = evalCase.flow ?? "";
   try {
-    const output = await executor(flow, evalCase.messages, evalCase.metadata);
+    const request: FlowExecutionRequest = {
+      ...(evalCase.tools !== undefined ? { tools: evalCase.tools } : {}),
+      ...(evalCase.toolChoice !== undefined ? { toolChoice: evalCase.toolChoice } : {}),
+    };
+    const output = await executor(
+      flow,
+      evalCase.messages,
+      evalCase.metadata,
+      Object.keys(request).length > 0 ? request : undefined,
+    );
     const responseText = output.response ?? output.text ?? "";
     const latencyMs = output.latencyMs ?? Date.now() - started;
     const cost = output.cost ?? 0;
@@ -351,6 +426,9 @@ async function runCase(
             latencyMs,
             cost,
             ...(output.toolCalls !== undefined ? { toolCalls: output.toolCalls } : {}),
+            ...(output.clientToolCalls !== undefined
+              ? { clientToolCalls: output.clientToolCalls }
+              : {}),
             ...(output.finishReason !== undefined ? { finishReason: output.finishReason } : {}),
             ...(output.diagnostics !== undefined ? { diagnostics: output.diagnostics } : {}),
             ...(totalTokensOf(output.usage) !== undefined

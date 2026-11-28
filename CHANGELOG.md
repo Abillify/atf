@@ -18,6 +18,39 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Runtime** (MCP): `urlTemplateAllowedOrigins` — the origins a `urlTemplate` server may resolve
+  to (`scheme://host[:port]`, `*.` wildcard for leading labels). A request whose endpoint matches
+  no entry fails before any connection, so a caller cannot send its forwarded bearer, or let the
+  model load tool descriptions, from a host of its choice.
+- **Runtime** (MCP): `tokenExchange.subjectIssuers` — only caller tokens whose `iss` is listed go
+  through the RFC 8693 exchange; tokens of other trusted issuers are forwarded unchanged.
+- **Runtime** (MCP): `tokenExchange.audienceByOrigin` — one RFC 8693 audience per resolved
+  `urlTemplate` origin, so each deployment behind one template receives a token only it accepts.
+  `tokenExchange.audience` becomes the optional fallback.
+- **Runtime** (approvals): `APPROVAL_REQUIRE_TOOLS` and a node's `requiresApproval` now gate the
+  MCP tools an `llm` node calls (before the call), not only `tool` nodes. When the server asks for
+  the same call too, the local decision is relayed once (`APPROVAL_RELAY_LOCAL_DECISION`, default
+  on; metric `aiperator_approvals_relayed_total`).
+- **Runtime** (approvals): `*` globs in approval patterns (`crm/update_*`, `*_case`); the same
+  grammar applies to `PII_VAULT_DETOKENIZE_TOOLS`.
+- **Runtime** (eval): bench cases accept `tools` and `toolChoice` (sent as the request's `tools` /
+  `tool_choice`), and the `clientToolCalled` assertion checks the client tools a passthrough flow
+  handed back, optionally with an argument subset. The HTTP executor reports them as
+  `clientToolCalls` and uses the response's `finish_reason` when no trace is available.
+
+### Changed
+
+- **Runtime** (MCP): **breaking** — a `urlTemplate` server without `urlTemplateAllowedOrigins` is
+  rejected at config load (see "0.30 → next" in [docs/UPGRADE.md](docs/UPGRADE.md)).
+
+### Fixed
+
+- **Runtime** (approvals): approvals requested by the injection-taint rule carry the caller's
+  owner key, so they appear in `GET /v1/approvals/mine`; an embedded chat that polls it no longer
+  only sees them time out.
+
 ## [0.30.0] - 2026-11-27
 
 ### Added

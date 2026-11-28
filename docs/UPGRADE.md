@@ -648,7 +648,28 @@ Changes since 0.21.0 that need operator attention:
 3. Search: the IP rate limit (`RATE_LIMIT`, default 120 requests per minute) now also covers the read routes (`/documents`, `/document`, `/summaries`, `/folders`, `/collection-stats`), the collection admin routes, `/ui` and the browser login. A client that polls these routes from one IP above the limit gets 429; raise `RATE_LIMIT` (or call through the Gate) if that is expected traffic. The MCP endpoints stay unlimited here. Extract limits `POST /login` and the OIDC routes the same way.
 4. Gate: with `server.cors.origins: ["*"]` the CORS answer is a literal `*` without credentials. A browser client that needs cookies across origins must be listed by its origin.
 
-### 0.25 → next (unreleased)
+### 0.30 → next (unreleased)
+
+1. **`urlTemplate` needs an origin allowlist.** An MCP server with `urlTemplate` must now list
+   `urlTemplateAllowedOrigins` (`["https://*.example.com", "https://erp.customer.example:8443"]`);
+   without it the Runtime refuses to start, and a request whose resolved endpoint matches no
+   entry fails before any connection. Add every origin your callers send in the template's
+   `requestParams` path.
+2. **`APPROVAL_REQUIRE_TOOLS` and `requiresApproval` now apply to MCP tools in `llm` nodes.**
+   They were documented to, but only `tool` nodes enforced them. After the upgrade a matching
+   tool an `llm` node calls pauses for a human decision before the call. Check the patterns
+   you set — a broad `*` or `server/*` now gates every agent-loop call of that server. Where
+   the MCP server asks for the same call as well, the local decision is relayed once
+   (`APPROVAL_RELAY_LOCAL_DECISION=false` asks again).
+3. **Approval patterns accept `*` globs** (`abiliware/update_*`, `*_case`). Patterns without a
+   `*` behave as before. The same grammar applies to `PII_VAULT_DETOKENIZE_TOOLS`.
+4. **Taint approvals carry the caller's owner key**, so they now appear in
+   `GET /v1/approvals/mine` for the user who caused them.
+5. **New, opt-in:** `tokenExchange.audienceByOrigin` (one audience per `urlTemplate` origin;
+   `tokenExchange.audience` becomes optional when it is set), bench case `tools`/`toolChoice`
+   and the `clientToolCalled` assertion.
+
+### 0.25 → 0.26
 
 1. **Approval links ask twice.** `GET /monitoring/approvals/:id/decide` renders a confirmation
    page; only the second, signed click decides (`APPROVAL_LINK_CONFIRM=false` restores one

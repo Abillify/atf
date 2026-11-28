@@ -451,6 +451,7 @@ export function createToolNodeHandler(
             ? await runtime.mcpWrapper.targetSubject?.(
                 serverName,
                 runtime.ctx.ssoToken,
+                runtime.ctx.requestParams,
               )
             : undefined;
           const transactionInvocation = transactionEnabled

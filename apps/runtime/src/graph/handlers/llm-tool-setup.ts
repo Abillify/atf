@@ -159,6 +159,13 @@ export async function setupLlmTools(params: {
                   decision: approved ? "approved" : "denied",
                   tool: toolRef,
                 }),
+              relayLocalDecision:
+                runtime.appConfig.approvalRelayLocalDecision !== false,
+              onRelay: (toolRef) =>
+                runtime.metrics.recordCounter(
+                  "aiperator_approvals_relayed_total",
+                  { tool: toolRef },
+                ),
             }
           : undefined,
         toolEgressGuardrail !== undefined
