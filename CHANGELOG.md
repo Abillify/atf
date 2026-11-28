@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-28
+
 ### Added
 
 - **Runtime** (MCP): `urlTemplateAllowedOrigins` — the origins a `urlTemplate` server may resolve
@@ -43,10 +45,15 @@ releases:
 ### Changed
 
 - **Runtime** (MCP): **breaking** — a `urlTemplate` server without `urlTemplateAllowedOrigins` is
-  rejected at config load (see "0.30 → next" in [docs/UPGRADE.md](docs/UPGRADE.md)).
+  rejected at config load (see "0.30 → 0.31" in [docs/UPGRADE.md](docs/UPGRADE.md)).
 
 ### Fixed
 
+- **Runtime** (OpenAI-compatible chat): a replayed conversation whose last assistant turn holds
+  client `tool_calls` that never received a `tool` result no longer poisons the thread. The
+  unanswered calls are completed with an error result before the model is called again, so a
+  passthrough client that drops a tool round (or abandons it) recovers on its next request
+  instead of failing every later turn with a missing-tool-result error.
 - **Runtime** (approvals): approvals requested by the injection-taint rule carry the caller's
   owner key, so they appear in `GET /v1/approvals/mine`; an embedded chat that polls it no longer
   only sees them time out.
@@ -2048,7 +2055,8 @@ link paths were adjusted for the new location. The published GitHub releases
 remain the release notes for those versions, and the version links at the bottom
 of this file still resolve for them.
 
-[Unreleased]: https://github.com/Abillify/atf/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/Abillify/atf/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/Abillify/atf/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/Abillify/atf/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/Abillify/atf/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/Abillify/atf/compare/v0.28.0...v0.28.1
